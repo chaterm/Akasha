@@ -265,38 +265,38 @@ Rate of Cognitive Compounding > headcount is the new measure of organizational i
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
-│                    Organizational Signals                      │
-│  Docs / Chat / Meetings / Code / Tickets / Logs / Monitoring  │
+│                    Organizational Signals                    │
+│  Docs / Chat / Meetings / Code / Tickets / Logs / Monitoring │
 └──────────────────────────────────────────────────────────────┘
                             ↓
 ┌──────────────────────────────────────────────────────────────┐
-│                    Ingestion & Encoding                        │
-│  Capture / Clean / Entity Extract / Relation Extract / Perm   │
+│                    Ingestion & Encoding                      │
+│  Capture / Clean / Entity Extract / Relation Extract / Perm  │
 └──────────────────────────────────────────────────────────────┘
                             ↓
 ┌──────────────────────────────────────────────────────────────┐
-│                 Three-Layer Memory System                      │
-│  Factual Memory / Interaction Memory / Action Memory          │
+│                 Three-Layer Memory System                    │
+│  Factual Memory / Interaction Memory / Action Memory         │
 └──────────────────────────────────────────────────────────────┘
                             ↓
 ┌──────────────────────────────────────────────────────────────┐
-│                      Context Graph                            │
-│  People / Services / Decisions / Events / Skills / Perms      │
+│                      Context Graph                           │
+│  People / Services / Decisions / Events / Skills / Perms     │
 └──────────────────────────────────────────────────────────────┘
                             ↓
 ┌──────────────────────────────────────────────────────────────┐
-│                    Reasoning Layer                             │
-│  RAG / Graph Reasoning / Metacognition / Planning             │
+│                    Reasoning Layer                           │
+│  RAG / Graph Reasoning / Metacognition / Planning            │
 └──────────────────────────────────────────────────────────────┘
                             ↓
 ┌──────────────────────────────────────────────────────────────┐
-│                     Agent Layer                                │
-│  Copilot / Workflow / Skill / Tool Calling / Guardrails       │
+│                     Agent Layer                              │
+│  Copilot / Workflow / Skill / Tool Calling / Guardrails      │
 └──────────────────────────────────────────────────────────────┘
                             ↓
 ┌──────────────────────────────────────────────────────────────┐
-│                Cognitive Compounding Loop                      │
-│  Execute / Verify / Learn / Compound / Evolve Skills          │
+│                Cognitive Compounding Loop                    │
+│  Execute / Verify / Learn / Compound / Evolve Skills         │
 └──────────────────────────────────────────────────────────────┘
 ```
 
