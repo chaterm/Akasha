@@ -1,0 +1,32 @@
+.ProseMirror .is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--mantine-color-placeholder);
+  pointer-events: none;
+  height: 0;
+
+  @media print {
+    display: none;
+  }
+}
+
+.ProseMirror .is-empty::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--mantine-color-placeholder);
+  pointer-events: none;
+  height: 0;
+
+  @media print {
+    display: none;
+  }
+}
+
+.ProseMirror table .is-editor-empty:first-child::before,
+.ProseMirror table .is-empty::before {
+  display: none;
+
+  @media print {
+    display: none;
+  }
+}
