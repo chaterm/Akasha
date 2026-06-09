@@ -7,6 +7,7 @@ const envPath = path.resolve(process.cwd(), "..", "..");
 export default defineConfig(({ mode }) => {
   const {
     APP_URL,
+    BACKEND_URL,
     FILE_UPLOAD_SIZE_LIMIT,
     FILE_IMPORT_SIZE_LIMIT,
     DRAWIO_URL,
@@ -17,6 +18,8 @@ export default defineConfig(({ mode }) => {
     POSTHOG_HOST,
     POSTHOG_KEY,
   } = loadEnv(mode, envPath, "");
+
+  const proxyTarget = BACKEND_URL || APP_URL;
 
   return {
     define: {
@@ -55,18 +58,20 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
+      host: "127.0.0.1",
+      port: 3000,
       proxy: {
         "/api": {
-          target: APP_URL,
+          target: proxyTarget,
           changeOrigin: false,
         },
         "/socket.io": {
-          target: APP_URL,
+          target: proxyTarget,
           ws: true,
           rewriteWsOrigin: true,
         },
         "/collab": {
-          target: APP_URL,
+          target: proxyTarget,
           ws: true,
           rewriteWsOrigin: true,
         },

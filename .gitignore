@@ -5,7 +5,7 @@ data
 # compiled output
 /dist
 /node_modules
-
+.spec-workflow
 # Logs
 logs
 *.log
@@ -41,3 +41,6 @@ lerna-debug.log*
 .nx
 .nx/installation
 .nx/cache
+
+# Internal design docs (may contain env-specific credentials or internal system details)
+docs/plans/

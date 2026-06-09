@@ -40,6 +40,19 @@ export default function CreateSsoProvider() {
     }
   };
 
+  const handleCreateHOIDC = async () => {
+    try {
+      const newProvider = await createSsoProviderMutation.mutateAsync({
+        type: SSO_PROVIDER.HOIDC,
+        name: "HOIDC",
+      });
+      setProvider(newProvider);
+      open();
+    } catch (error) {
+      console.error("Failed to create HOIDC provider", error);
+    }
+  };
+
   const handleCreateLDAP = async () => {
     try {
       const newProvider = await createSsoProviderMutation.mutateAsync({
@@ -83,6 +96,12 @@ export default function CreateSsoProvider() {
               leftSection={<OpenIdIcon size={16} />}
             >
               OpenID (OIDC)
+            </Menu.Item>
+            <Menu.Item
+              onClick={handleCreateHOIDC}
+              leftSection={<OpenIdIcon size={16} />}
+            >
+              HOIDC
             </Menu.Item>
 
             <Menu.Item
