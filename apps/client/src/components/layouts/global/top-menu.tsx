@@ -25,6 +25,7 @@ import APP_ROUTE from "@/lib/app-route.ts";
 import useAuth from "@/features/auth/hooks/use-auth.ts";
 import { CustomAvatar } from "@/components/ui/custom-avatar.tsx";
 import { useTranslation } from "react-i18next";
+import useUserRole from "@/hooks/use-user-role.tsx";
 import { AvatarIconType } from "@/features/attachments/types/attachment.types.ts";
 
 export default function TopMenu() {
@@ -32,6 +33,7 @@ export default function TopMenu() {
   const [currentUser] = useAtom(currentUserAtom);
   const { logout } = useAuth();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
+  const { isAdmin, isOwner } = useUserRole();
 
   const user = currentUser?.user;
   const workspace = currentUser?.workspace;
@@ -62,26 +64,30 @@ export default function TopMenu() {
       <Menu.Dropdown>
         <Menu.Label>{t("Workspace")}</Menu.Label>
 
-        <Menu.Item
-          component={Link}
-          to={APP_ROUTE.SETTINGS.WORKSPACE.GENERAL}
-          leftSection={<IconSettings size={16} />}
-        >
-          {t("Workspace settings")}
-        </Menu.Item>
+        {isOwner && (
+          <Menu.Item
+            component={Link}
+            to={APP_ROUTE.SETTINGS.WORKSPACE.GENERAL}
+            leftSection={<IconSettings size={16} />}
+          >
+            {t("Workspace settings")}
+          </Menu.Item>
+        )}
 
-        <Menu.Item
-          component={Link}
-          to={APP_ROUTE.SETTINGS.WORKSPACE.MEMBERS}
-          leftSection={<IconUsers size={16} />}
-        >
-          {t("Manage members")}
-        </Menu.Item>
+        {isOwner && (
+          <Menu.Item
+            component={Link}
+            to={APP_ROUTE.SETTINGS.WORKSPACE.MEMBERS}
+            leftSection={<IconUsers size={16} />}
+          >
+            {t("Manage members")}
+          </Menu.Item>
+        )}
 
         <Menu.Divider />
 
         <Menu.Label>{t("Account")}</Menu.Label>
-        <Menu.Item component={Link} to={APP_ROUTE.SETTINGS.ACCOUNT.PROFILE}>
+        <Menu.Item component={Link} to={isOwner ? APP_ROUTE.SETTINGS.ACCOUNT.PROFILE : APP_ROUTE.SETTINGS.ACCOUNT.PREFERENCES}>
           <Group wrap={"nowrap"}>
             <CustomAvatar
               size={"sm"}
@@ -99,13 +105,16 @@ export default function TopMenu() {
             </div>
           </Group>
         </Menu.Item>
-        <Menu.Item
-          component={Link}
-          to={APP_ROUTE.SETTINGS.ACCOUNT.PROFILE}
-          leftSection={<IconUserCircle size={16} />}
-        >
-          {t("My profile")}
-        </Menu.Item>
+
+        {isOwner && (
+          <Menu.Item
+            component={Link}
+            to={APP_ROUTE.SETTINGS.ACCOUNT.PROFILE}
+            leftSection={<IconUserCircle size={16} />}
+          >
+            {t("My profile")}
+          </Menu.Item>
+        )}
 
         <Menu.Item
           component={Link}
