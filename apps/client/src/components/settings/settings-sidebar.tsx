@@ -62,7 +62,7 @@ const groupedData: DataGroup[] = [
   {
     heading: "Account",
     items: [
-      { label: "Profile", icon: IconUser, path: "/settings/account/profile" },
+      { label: "Profile", icon: IconUser, path: "/settings/account/profile", role: "owner" },
       {
         label: "Preferences",
         icon: IconBrush,

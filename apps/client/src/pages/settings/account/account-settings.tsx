@@ -1,3 +1,5 @@
+// HOIDC SSO 接入后，Profile 页面仅 Owner 可见（侧边栏已通过 role: "owner" 过滤）。
+// 普通用户不会在侧边栏看到 Profile 入口，不允许修改个人资料。
 import AccountNameForm from "@/features/user/components/account-name-form";
 import ChangeEmail from "@/features/user/components/change-email";
 import ChangePassword from "@/features/user/components/change-password";
