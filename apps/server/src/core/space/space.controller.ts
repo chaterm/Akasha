@@ -34,6 +34,8 @@ import {
 } from '../casl/interfaces/workspace-ability.type';
 import WorkspaceAbilityFactory from '../casl/abilities/workspace-ability.factory';
 import { CreateSpaceDto } from './dto/create-space.dto';
+import { SpaceRepo } from '@docmost/db/repos/space/space.repo';
+import { UserRole, SpaceRole } from '../../common/helpers/types/permission';
 
 @UseGuards(JwtAuthGuard)
 @Controller('spaces')
@@ -42,6 +44,7 @@ export class SpaceController {
     private readonly spaceService: SpaceService,
     private readonly spaceMemberService: SpaceMemberService,
     private readonly spaceMemberRepo: SpaceMemberRepo,
+    private readonly spaceRepo: SpaceRepo,
     private readonly spaceAbility: SpaceAbilityFactory,
     private readonly workspaceAbility: WorkspaceAbilityFactory,
   ) {}
@@ -52,39 +55,48 @@ export class SpaceController {
     @Body()
     pagination: PaginationOptions,
     @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
   ) {
-    const result = await this.spaceMemberService.getUserSpaces(
-      user.id,
-      pagination,
-    );
+    const isOwner = user.role === UserRole.OWNER;
+
+    const result = isOwner
+      ? await this.spaceService.getWorkspaceSpaces(workspace.id, pagination)
+      : await this.spaceMemberService.getUserSpaces(user.id, pagination);
 
     if (result.items.length > 0) {
-      const spaceIds = result.items.map((s) => s.id);
-      const roles = await this.spaceMemberRepo.getUserRolesForSpaces(
-        user.id,
-        spaceIds,
-      );
-
-      const roleMap = new Map<string, string[]>();
-      for (const row of roles) {
-        const existing = roleMap.get(row.spaceId) || [];
-        existing.push(row.role);
-        roleMap.set(row.spaceId, existing);
-      }
-
-      result.items = result.items.map((space) => {
-        const spaceRoles = roleMap.get(space.id);
-        const role = spaceRoles
-          ? findHighestUserSpaceRole(
-              spaceRoles.map((r) => ({ userId: user.id, role: r })),
-            )
-          : undefined;
-
-        return {
+      if (isOwner) {
+        result.items = result.items.map((space) => ({
           ...space,
-          membership: { userId: user.id, role },
-        };
-      });
+          membership: { userId: user.id, role: SpaceRole.ADMIN },
+        }));
+      } else {
+        const spaceIds = result.items.map((s) => s.id);
+        const roles = await this.spaceMemberRepo.getUserRolesForSpaces(
+          user.id,
+          spaceIds,
+        );
+
+        const roleMap = new Map<string, string[]>();
+        for (const row of roles) {
+          const existing = roleMap.get(row.spaceId) || [];
+          existing.push(row.role);
+          roleMap.set(row.spaceId, existing);
+        }
+
+        result.items = result.items.map((space) => {
+          const spaceRoles = roleMap.get(space.id);
+          const role = spaceRoles
+            ? findHighestUserSpaceRole(
+                spaceRoles.map((r) => ({ userId: user.id, role: r })),
+              )
+            : undefined;
+
+          return {
+            ...space,
+            membership: { userId: user.id, role },
+          };
+        });
+      }
     }
 
     return result;
@@ -114,9 +126,12 @@ export class SpaceController {
     const userSpaceRoles = await this.spaceMemberRepo.getUserSpaceRoles(
       user.id,
       space.id,
-    );
+    ) ?? [];
 
-    const userSpaceRole = findHighestUserSpaceRole(userSpaceRoles);
+    const userSpaceRole =
+      user.role === UserRole.OWNER && !userSpaceRoles.length
+        ? SpaceRole.ADMIN
+        : findHighestUserSpaceRole(userSpaceRoles);
 
     const membership = {
       userId: user.id,

@@ -62,7 +62,7 @@ const groupedData: DataGroup[] = [
   {
     heading: "Account",
     items: [
-      { label: "Profile", icon: IconUser, path: "/settings/account/profile" },
+      { label: "Profile", icon: IconUser, path: "/settings/account/profile", role: "owner" },
       {
         label: "Preferences",
         icon: IconBrush,
@@ -79,13 +79,13 @@ const groupedData: DataGroup[] = [
   {
     heading: "Workspace",
     items: [
-      { label: "General", icon: IconSettings, path: "/settings/workspace" },
-      { label: "Members", icon: IconUsers, path: "/settings/members" },
+      { label: "General", icon: IconSettings, path: "/settings/workspace", role: "owner" },
+      { label: "Members", icon: IconUsers, path: "/settings/members", role: "owner" },
       {
         label: "Billing",
         icon: IconCoin,
         path: "/settings/billing",
-        role: "admin",
+        role: "owner",
         env: "cloud",
       },
       {
@@ -93,29 +93,30 @@ const groupedData: DataGroup[] = [
         icon: IconLock,
         path: "/settings/security",
         feature: Feature.SECURITY_SETTINGS,
-        role: "admin",
+        role: "owner",
       },
-      { label: "Groups", icon: IconUsersGroup, path: "/settings/groups" },
-      { label: "Spaces", icon: IconSpaces, path: "/settings/spaces" },
-      { label: "Public sharing", icon: IconWorld, path: "/settings/sharing" },
+      { label: "Groups", icon: IconUsersGroup, path: "/settings/groups", role: "owner" },
+      { label: "Spaces", icon: IconSpaces, path: "/settings/spaces", role: "owner" },
+      { label: "Public sharing", icon: IconWorld, path: "/settings/sharing", role: "owner" },
       {
         label: "Verified pages",
         icon: IconShieldCheck,
         path: "/settings/verifications",
         feature: Feature.PAGE_VERIFICATION,
+        role: "owner",
       },
       {
         label: "API management",
         icon: IconKey,
         path: "/settings/api-keys",
         feature: Feature.API_KEYS,
-        role: "admin",
+        role: "owner",
       },
       {
         label: "AI settings",
         icon: IconSparkles,
         path: "/settings/ai",
-        role: "admin",
+        role: "owner",
       },
       {
         label: "Audit log",

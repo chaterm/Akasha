@@ -56,7 +56,7 @@ import {
   IAuditService,
 } from '../../integrations/audit/audit.service';
 import { getPageTitle } from '../../common/helpers';
-import { PageAccessLevel, PagePermissionRole } from '../../common/helpers/types/permission';
+import { PageAccessLevel, PagePermissionRole, UserRole } from '../../common/helpers/types/permission';
 import { InjectKysely } from 'nestjs-kysely';
 import { KyselyDB } from '@docmost/db/types/kysely.types';
 import { executeTx } from '@docmost/db/utils';
@@ -899,8 +899,8 @@ export class PageController {
       spaceId,
       pagination,
       dto.pageId,
-      user.id,
-      spaceCanEdit,
+      user.role === UserRole.OWNER ? undefined : user.id,
+      user.role === UserRole.OWNER ? true : spaceCanEdit,
     );
   }
 

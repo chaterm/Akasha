@@ -80,6 +80,9 @@ export class WorkspaceController {
     if (!features.includes(Feature.PAGE_PERMISSIONS)) {
       features.push(Feature.PAGE_PERMISSIONS);
     }
+    if (!features.includes(Feature.API_KEYS)) {
+      features.push(Feature.API_KEYS);
+    }
 
     return {
       cloud: this.environmentService.isCloud(),

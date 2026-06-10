@@ -64,8 +64,8 @@ export default function WorkspaceApiKeys() {
         />
       </Text>
 
-      <RestrictApiToAdmins />
-      <Divider my="lg" />
+      {/* <RestrictApiToAdmins />
+      <Divider my="lg" /> */}
 
       <Group justify="flex-end" mb="md">
         <Button onClick={() => setCreateModalOpened(true)}>

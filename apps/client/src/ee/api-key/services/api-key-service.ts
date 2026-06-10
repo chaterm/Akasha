@@ -9,7 +9,9 @@ import { IPagination, QueryParams } from "@/lib/types.ts";
 export async function getApiKeys(
   params?: QueryParams,
 ): Promise<IPagination<IApiKey>> {
-  const req = await api.post("/api-keys", { ...params });
+  const { adminView, ...rest } = params ?? {};
+  const endpoint = adminView ? "/api-keys/workspace" : "/api-keys";
+  const req = await api.post(endpoint, { ...rest });
   return req.data;
 }
 

@@ -11,7 +11,7 @@ import { PageRepo } from '@docmost/db/repos/page/page.repo';
 import { SpaceMemberRepo } from '@docmost/db/repos/space/space-member.repo';
 import { PagePermissionRepo } from '@docmost/db/repos/page/page-permission.repo';
 import { findHighestUserSpaceRole } from '@docmost/db/repos/space/utils';
-import { SpaceRole } from '../../common/helpers/types/permission';
+import { SpaceRole, UserRole } from '../../common/helpers/types/permission';
 import { isUserDisabled } from '../../common/helpers';
 import { getPageId } from '../collaboration.util';
 import { JwtCollabPayload, JwtType } from '../../core/auth/dto/jwt-payload';
@@ -57,6 +57,15 @@ export class AuthenticationExtension implements Extension {
     if (!page) {
       this.logger.debug(`Page not found: ${pageId}`);
       throw new NotFoundException('Page not found');
+    }
+
+    // Workspace owner bypasses all space and page-level access checks
+    if (user.role === UserRole.OWNER) {
+      if (page.deletedAt) {
+        data.connectionConfig.readOnly = true;
+      }
+      this.logger.debug(`Owner authenticated on page ${pageId}`);
+      return { user };
     }
 
     const userSpaceRoles = await this.spaceMemberRepo.getUserSpaceRoles(

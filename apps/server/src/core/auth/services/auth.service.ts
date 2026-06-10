@@ -40,6 +40,7 @@ import {
   IAuditService,
 } from '../../../integrations/audit/audit.service';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
+import { SpaceService } from '../../space/services/space.service';
 
 @Injectable()
 export class AuthService {
@@ -53,6 +54,7 @@ export class AuthService {
     private mailService: MailService,
     private domainService: DomainService,
     private environmentService: EnvironmentService,
+    private spaceService: SpaceService,
     @InjectKysely() private readonly db: KyselyDB,
     @Inject(AUDIT_SERVICE) private readonly auditService: IAuditService,
   ) {}
@@ -94,6 +96,7 @@ export class AuthService {
       metadata: { source: 'password' },
     });
 
+    await this.spaceService.ensurePersonalSpace(user, workspaceId);
     return this.sessionService.createSessionAndToken(user);
   }
 

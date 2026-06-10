@@ -16,6 +16,8 @@ import { InjectKysely } from 'nestjs-kysely';
 import { Feature } from '../../../common/features';
 import { SpaceMemberService } from './space-member.service';
 import { SpaceRole } from '../../../common/helpers/types/permission';
+import { SpaceMemberRepo } from '@docmost/db/repos/space/space-member.repo';
+import { nanoIdGen } from '../../../common/helpers';
 import { QueueJob, QueueName } from 'src/integrations/queue/constants';
 import { Queue } from 'bullmq';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -35,6 +37,7 @@ export class SpaceService {
   constructor(
     private spaceRepo: SpaceRepo,
     private spaceMemberService: SpaceMemberService,
+    private spaceMemberRepo: SpaceMemberRepo,
     private shareRepo: ShareRepo,
     private workspaceRepo: WorkspaceRepo,
     private licenseCheckService: LicenseCheckService,
@@ -278,6 +281,35 @@ export class SpaceService {
           description: space.description,
         },
       },
+    });
+  }
+
+  async ensurePersonalSpace(user: User, workspaceId: string): Promise<void> {
+    const spaceIds = await this.spaceMemberRepo.getUserSpaceIds(user.id);
+    if (spaceIds.length > 0) {
+      return;
+    }
+
+    const slug = nanoIdGen(8);
+    await executeTx(this.db, async (trx) => {
+      const space = await this.spaceRepo.insertSpace(
+        {
+          name: user.name ? `${user.name}(${user.email})` : user.email,
+          logo: user.avatarUrl ?? null,
+          creatorId: user.id,
+          workspaceId,
+          slug,
+        },
+        trx,
+      );
+
+      await this.spaceMemberService.addUserToSpace(
+        user.id,
+        space.id,
+        SpaceRole.ADMIN,
+        workspaceId,
+        trx,
+      );
     });
   }
 }

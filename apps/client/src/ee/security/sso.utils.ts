@@ -20,7 +20,7 @@ export function buildSsoLoginUrl(opts: {
   workspaceId?: string;
   redirect?: string;
 }): string {
-  const { providerId, type, workspaceId, redirect } = opts;
+  const { providerId, workspaceId, redirect, type } = opts;
   const domain = getAppUrl();
 
   const params = new URLSearchParams();

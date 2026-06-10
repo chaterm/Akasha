@@ -11,6 +11,7 @@ import {
   SpaceCaslSubject,
 } from "@/features/space/permissions/permissions.type.ts";
 import { useTranslation } from "react-i18next";
+import useUserRole from "@/hooks/use-user-role.tsx";
 
 interface SpaceSettingsModalProps {
   spaceId: string;
@@ -28,6 +29,7 @@ export default function SpaceSettingsModal({
 
   const spaceRules = space?.membership?.permissions;
   const spaceAbility = useSpaceAbility(spaceRules);
+  const { isOwner } = useUserRole();
 
   return (
     <>
@@ -75,10 +77,7 @@ export default function SpaceSettingsModal({
                     <div style={{ paddingBottom: "100px" }}>
                       <SpaceDetails
                         spaceId={space?.id}
-                        readOnly={spaceAbility.cannot(
-                          SpaceCaslAction.Manage,
-                          SpaceCaslSubject.Settings,
-                        )}
+                        readOnly={!isOwner}
                       />
                     </div>
                   </ScrollArea>

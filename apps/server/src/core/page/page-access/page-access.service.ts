@@ -7,6 +7,7 @@ import {
   SpaceCaslSubject,
 } from '../../casl/interfaces/space-ability.type';
 import { SpaceRepo } from '@docmost/db/repos/space/space.repo';
+import { UserRole } from '../../../common/helpers/types/permission';
 
 @Injectable()
 export class PageAccessService {
@@ -22,6 +23,11 @@ export class PageAccessService {
    * If no restrictions: space-level permission determines access.
    */
   async validateCanView(page: Page, user: User): Promise<void> {
+    // Workspace owner bypasses all page-level restrictions
+    if (user.role === UserRole.OWNER) {
+      return;
+    }
+
     // TODO: cache by pageId and userId.
     const ability = await this.spaceAbility.createForUser(user, page.spaceId);
 
@@ -47,6 +53,11 @@ export class PageAccessService {
     page: Page,
     user: User,
   ): Promise<{ canEdit: boolean; hasRestriction: boolean }> {
+    // Workspace owner has full edit access, bypassing page-level restrictions
+    if (user.role === UserRole.OWNER) {
+      return { canEdit: true, hasRestriction: false };
+    }
+
     const ability = await this.spaceAbility.createForUser(user, page.spaceId);
 
     if (ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page)) {
@@ -77,6 +88,11 @@ export class PageAccessService {
     page: Page,
     user: User,
   ): Promise<{ hasRestriction: boolean }> {
+    // Workspace owner bypasses all page-level restrictions
+    if (user.role === UserRole.OWNER) {
+      return { hasRestriction: false };
+    }
+
     const ability = await this.spaceAbility.createForUser(user, page.spaceId);
 
     // User must be at least a space member
@@ -107,6 +123,11 @@ export class PageAccessService {
     user: User,
     workspaceId: string,
   ): Promise<void> {
+    // Workspace owner can always comment
+    if (user.role === UserRole.OWNER) {
+      return;
+    }
+
     try {
       await this.validateCanEdit(page, user);
       return;

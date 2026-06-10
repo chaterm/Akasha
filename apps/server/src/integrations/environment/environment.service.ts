@@ -346,6 +346,10 @@ export class EnvironmentService {
     return disabled === 'true';
   }
 
+  getHoidcLoginPage(): string {
+    return this.configService.get<string>('HOIDC_LOGIN_PAGE', '');
+  }
+
   isIframeEmbedAllowed(): boolean {
     const allowed = this.configService
       .get<string>('IFRAME_EMBED_ALLOWED', 'false')
