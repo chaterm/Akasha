@@ -83,6 +83,12 @@ export class WorkspaceController {
     if (!features.includes(Feature.API_KEYS)) {
       features.push(Feature.API_KEYS);
     }
+    if (!features.includes(Feature.DOCX_IMPORT)) {
+      features.push(Feature.DOCX_IMPORT);
+    }
+    if (!features.includes(Feature.PDF_IMPORT)) {
+      features.push(Feature.PDF_IMPORT);
+    }
 
     return {
       cloud: this.environmentService.isCloud(),
