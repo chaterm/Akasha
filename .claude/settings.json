@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker-compose -f /Users/pengcheng_liao/Codes/Akasha/docker-compose.dev.yml ps)",
+      "Bash(pnpm client:dev)",
+      "Bash(npx nx *)",
+      "Bash(npx vite *)",
+      "Bash(curl -s http://localhost:3000/api/health)",
+      "Bash(curl -v http://localhost:3000/api/health)",
+      "Bash(curl -sv http://127.0.0.1:3000/api/health)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:3000/api/health)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:5173)",
+      "Bash(pnpm migration:latest)",
+      "Bash(git check-ignore *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git reset *)",
+      "Read(//Users/pengcheng_liao/.npm-global/lib/node_modules/@anthropic-ai/claude-code/bin/**)",
+      "Bash(/Users/pengcheng_liao/.npm-global/bin/claude --version)",
+      "Read(//Users/pengcheng_liao/.npm-global/lib/node_modules/@anthropic-ai/claude-code/**)",
+      "Read(//Users/pengcheng_liao/.npm-global/lib/node_modules/@anthropic-ai/**)",
+      "Bash(node -e \"console.log\\(process.platform, process.arch\\)\")",
+      "Bash(grep -A20 '\"optionalDependencies\"' __TRACKED_VAR__/package.json)",
+      "Bash(npm config *)",
+      "Bash(echo \"ignore-scripts: $\\(npm config get ignore-scripts 2>/dev/null\\)\")"
+    ]
+  }
+}
