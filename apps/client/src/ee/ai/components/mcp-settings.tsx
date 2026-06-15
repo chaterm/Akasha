@@ -8,7 +8,6 @@ import {
   ActionIcon,
   Tooltip,
   Stack,
-  Alert,
 } from "@mantine/core";
 import { useAtom } from "jotai";
 import { workspaceAtom } from "@/features/user/atoms/current-user-atom.ts";
@@ -16,19 +15,14 @@ import React, { useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { updateWorkspace } from "@/features/workspace/services/workspace-service.ts";
 import { notifications } from "@mantine/notifications";
-import { useHasFeature } from "@/ee/hooks/use-feature";
-import { Feature } from "@/ee/features";
-import { useUpgradeLabel } from "@/ee/hooks/use-upgrade-label";
 import { getAppUrl } from "@/lib/config.ts";
-import { IconCheck, IconCopy, IconInfoCircle } from "@tabler/icons-react";
+import { IconCheck, IconCopy } from "@tabler/icons-react";
 import { CopyButton } from "@/components/common/copy-button.tsx";
 
 export default function McpSettings() {
   const { t } = useTranslation();
   const [workspace, setWorkspace] = useAtom(workspaceAtom);
-  const [checked, setChecked] = useState(workspace?.settings?.ai?.mcp);
-  const hasAccess = useHasFeature(Feature.MCP);
-  const upgradeLabel = useUpgradeLabel();
+  const [checked, setChecked] = useState(Boolean(workspace?.settings?.ai?.mcp));
 
   const mcpUrl = `${getAppUrl()}/mcp`;
 
@@ -48,14 +42,6 @@ export default function McpSettings() {
 
   return (
     <Stack gap="lg">
-      {!hasAccess && (
-        <Alert icon={<IconInfoCircle />} title={upgradeLabel} color="blue">
-          {t(
-            "MCP is only available in the Docmost enterprise edition. Contact sales@docmost.com.",
-          )}
-        </Alert>
-      )}
-
       <Group justify="space-between" wrap="nowrap" gap="xl">
         <div>
           <Text size="md">{t("Model Context Protocol (MCP)")}</Text>
@@ -72,13 +58,7 @@ export default function McpSettings() {
           </Text>
         </div>
 
-        <Tooltip label={upgradeLabel} disabled={hasAccess} refProp="rootRef">
-          <Switch
-            defaultChecked={checked}
-            onChange={handleChange}
-            disabled={!hasAccess}
-          />
-        </Tooltip>
+        <Switch checked={checked} onChange={handleChange} />
       </Group>
 
       {checked && (

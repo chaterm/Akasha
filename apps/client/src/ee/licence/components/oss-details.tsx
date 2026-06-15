@@ -3,7 +3,6 @@ import { IconCheck } from "@tabler/icons-react";
 
 const enterpriseFeatures = [
   "AI Integration (Chat, Search & Assistant)",
-  "MCP Support",
   "SSO (SAML, OIDC, LDAP)",
   "SCIM Provisioning",
   "Multi-factor Authentication (2FA)",
