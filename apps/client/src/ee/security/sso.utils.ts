@@ -11,6 +11,9 @@ export function buildCallbackUrl(opts: {
   if (type === SSO_PROVIDER.GOOGLE) {
     return `${domain}/api/sso/${type}/callback`;
   }
+  if (type === SSO_PROVIDER.HOIDC) {
+    return `${domain}/api/sso/hoidc/callback`;
+  }
   return `${domain}/api/sso/${type}/${providerId}/callback`;
 }
 
@@ -30,6 +33,11 @@ export function buildSsoLoginUrl(opts: {
     if (workspaceId) params.set("workspaceId", workspaceId);
     return `${getServerAppUrl()}/api/sso/${type}/login?${params.toString()}`;
   }
+  if (type === SSO_PROVIDER.HOIDC) {
+    const query = params.toString();
+    const base = `${domain}/api/sso/hoidc/login`;
+    return query ? `${base}?${query}` : base;
+  }
   const query = params.toString();
   const base = `${domain}/api/sso/${type}/${providerId}/login`;
   return query ? `${base}?${query}` : base;
@@ -44,3 +52,4 @@ export function buildSamlEntityId(providerId: string): string {
   const domain = getAppUrl();
   return `${domain}/api/sso/${SSO_PROVIDER.SAML}/${providerId}/login`;
 }
+

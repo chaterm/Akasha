@@ -114,6 +114,25 @@ export class WorkspaceService {
 
     const { licenseKey, plan, ...rest } = workspace;
 
+    // If HOIDC is configured via .env and targets this workspace, inject a
+    // virtual provider entry so the login page shows the SSO button without
+    // requiring a DB record.
+    const hoidcWorkspaceId = this.environmentService.getHoidcWorkspaceId();
+    const hoidcSsoApi = this.environmentService.getHoidcSsoApi();
+    const hoidcPlatformId = this.environmentService.getHoidcPlatformId();
+    if (
+      hoidcWorkspaceId === workspaceId &&
+      hoidcSsoApi &&
+      hoidcPlatformId &&
+      !rest.authProviders.some((p) => p.type === 'hoidc')
+    ) {
+      rest.authProviders.push({
+        id: 'hoidc-env',
+        name: 'SSO Login',
+        type: 'hoidc',
+      });
+    }
+
     return rest;
   }
 

@@ -2,13 +2,12 @@ import {
   BadRequestException,
   Controller,
   Get,
-  Param,
   Query,
   Req,
   Res,
 } from '@nestjs/common';
 import { FastifyReply, FastifyRequest } from 'fastify';
-import { HoidcService } from './hoidc.service';
+import { HoidcService, HoidcProviderConfig } from './hoidc.service';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
 
 @Controller('sso/hoidc')
@@ -18,18 +17,36 @@ export class HoidcController {
     private readonly environmentService: EnvironmentService,
   ) {}
 
+  private getProviderConfig(): HoidcProviderConfig {
+    const ssoApi = this.environmentService.getHoidcSsoApi();
+    const platformId = this.environmentService.getHoidcPlatformId();
+    const workspaceId = this.environmentService.getHoidcWorkspaceId();
+
+    if (!ssoApi || !platformId || !workspaceId) {
+      throw new BadRequestException(
+        'HOIDC is not fully configured. Required: HOIDC_SSO_API, HOIDC_PLATFORM_ID, HOIDC_WORKSPACE_ID',
+      );
+    }
+
+    return {
+      ssoApi,
+      platformId,
+      workspaceId,
+      allowSignup: this.environmentService.isHoidcAllowSignup(),
+    };
+  }
+
   /**
-   * GET /api/sso/hoidc/:providerId/login
+   * GET /api/sso/hoidc/login
    * 302 跳转到 SSO 登录页
    */
-  @Get(':providerId/login')
+  @Get('login')
   async login(
-    @Param('providerId') providerId: string,
     @Query('redirect') redirect: string | undefined,
     @Req() req: FastifyRequest,
     @Res() res: FastifyReply,
   ) {
-    const provider = await this.hoidcService.getProvider(providerId);
+    const config = this.getProviderConfig();
 
     const loginPage = this.environmentService.getHoidcLoginPage();
     if (!loginPage) {
@@ -37,14 +54,14 @@ export class HoidcController {
     }
 
     const appUrl = this.environmentService.getAppUrl();
-    let callbackUrl = `${appUrl}/api/sso/hoidc/${providerId}/callback`;
+    let callbackUrl = `${appUrl}/api/sso/hoidc/callback`;
     if (redirect) {
       callbackUrl += `?redirect=${encodeURIComponent(redirect)}`;
     }
 
     const loginUrl = this.hoidcService.buildLoginUrl({
       loginPage,
-      platformId: provider.oidcClientId,
+      platformId: config.platformId,
       callbackUrl,
     });
 
@@ -52,28 +69,23 @@ export class HoidcController {
   }
 
   /**
-   * GET /api/sso/hoidc/:providerId/callback?token=xxx
+   * GET /api/sso/hoidc/callback?token=xxx
    * 接收 SSO 回调 token，换取用户信息，写 cookie，302 首页
    */
-  @Get(':providerId/callback')
+  @Get('callback')
   async callback(
-    @Param('providerId') providerId: string,
     @Query('token') token: string,
     @Query('redirect') redirect: string | undefined,
     @Req() req: FastifyRequest,
     @Res() res: FastifyReply,
   ) {
-    const provider = await this.hoidcService.getProvider(providerId);
+    const config = this.getProviderConfig();
 
-    const userInfo = await this.hoidcService.verifyToken(provider, token);
-
-    const workspaceId =
-      (req.raw as any)?.workspaceId ?? provider.workspaceId;
+    const userInfo = await this.hoidcService.verifyToken(config, token);
 
     const authToken = await this.hoidcService.loginUser({
-      provider,
+      config,
       info: userInfo,
-      workspaceId,
     });
 
     res.setCookie('authToken', authToken, {
