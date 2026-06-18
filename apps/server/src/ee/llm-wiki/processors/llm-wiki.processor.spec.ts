@@ -309,7 +309,7 @@ describe('LlmWikiProcessor', () => {
       {
         delay: 5000,
         jobId: expect.stringMatching(
-          /^knowledge-compile-space:workspace-1:space-1:/,
+          /^knowledge-compile-space__workspace-1__space-1__/,
         ),
       },
     );
@@ -323,7 +323,7 @@ describe('LlmWikiProcessor', () => {
       {
         delay: 5000,
         jobId: expect.stringMatching(
-          /^knowledge-compile-space:workspace-1:space-2:/,
+          /^knowledge-compile-space__workspace-1__space-2__/,
         ),
       },
     );

@@ -78,7 +78,9 @@ describe('AiKnowledgeChatService', () => {
       }),
     };
     const answerProvider = {
-      answer: jest.fn().mockResolvedValue('Kafka is used for async events.'),
+      answer: jest
+        .fn()
+        .mockResolvedValue('Kafka is used for async events. [[cite:page-1]]'),
     };
     const citationResolver = {
       resolveForCapsules: jest.fn(),
@@ -209,7 +211,8 @@ describe('AiKnowledgeChatService', () => {
     expect(citationResolver.resolveForCapsules).not.toHaveBeenCalled();
     expect(answerProvider.answer).toHaveBeenCalledWith({
       query: 'Chaterm 登记批准日期',
-      context: '# Chaterm\n登记批准日期：2026年06月05日',
+      context:
+        '# Chaterm\nCitation IDs: [[cite:page-1]]\n登记批准日期：2026年06月05日',
       chatContext: ['Previous turn'],
     });
   });
@@ -233,6 +236,115 @@ describe('AiKnowledgeChatService', () => {
       answer: 'grounded answer',
       citations: [],
     });
+  });
+
+  it('returns only citations explicitly used by the generated answer', async () => {
+    const contextPack = {
+      buildContextPack: jest.fn().mockReturnValue({
+        context: '# Chaterm\n登记批准日期：2026年06月05日',
+        citations: [
+          {
+            sourcePageId: 'page-used',
+            title: 'Chaterm 企业版登记信息',
+            url: '/p/page-used',
+          },
+          {
+            sourcePageId: 'page-retrieved-only',
+            title: 'Chaterm KMS 加密架构',
+            url: '/p/page-retrieved-only',
+          },
+        ],
+        primary: [
+          {
+            id: 'chunk-1',
+            kind: 'chunk',
+            title: 'Chaterm',
+            text: '登记批准日期：2026年06月05日',
+            citationSourcePageIds: ['page-used', 'page-retrieved-only'],
+            retrievalReasons: ['lexical'],
+            sourceWindows: [],
+          },
+        ],
+        warnings: [],
+        retrievalReasons: ['lexical'],
+        budget: {
+          maxContextLength: 12000,
+          usedContextLength: 28,
+          remainingContextLength: 11972,
+          includedItemCount: 1,
+          omittedItemCount: 0,
+          responseReserve: 0,
+          perItemMaxLength: 12000,
+        },
+        completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+      }),
+    };
+    const answerProvider = {
+      answer: jest
+        .fn()
+        .mockResolvedValue(
+          'Chaterm 的软件著作权生效时间是 2026 年 06 月 05 日。 [[cite:page-used]]',
+        ),
+    };
+    const service = createService({
+      retrieval: {
+        retrieve: jest.fn().mockResolvedValue({
+          mode: 'high_completeness',
+          chunks: [chunk('chunk-1', 'kp-1', '登记批准日期：2026年06月05日')],
+          capsules: [],
+          completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+          diagnostics: {},
+        }),
+      },
+      citationResolver: {
+        resolveForChunks: jest.fn().mockResolvedValue([
+          {
+            chunk: chunk('chunk-1', 'kp-1', '登记批准日期：2026年06月05日'),
+            pageTitle: 'Chaterm',
+            retrievalReasons: ['lexical'],
+            sourceWindows: [],
+            warnings: [],
+            citations: [
+              {
+                sourcePageId: 'page-used',
+                title: 'Chaterm 企业版登记信息',
+                url: '/p/page-used',
+              },
+              {
+                sourcePageId: 'page-retrieved-only',
+                title: 'Chaterm KMS 加密架构',
+                url: '/p/page-retrieved-only',
+              },
+            ],
+          },
+        ]),
+      },
+      contextPack,
+      answerProvider,
+    });
+
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: 'chaterm 的软著生效时间是',
+      spaceIds: ['space-1'],
+    });
+
+    expect(result.answer).toBe(
+      'Chaterm 的软件著作权生效时间是 2026 年 06 月 05 日。',
+    );
+    expect(result.citations).toEqual([
+      {
+        sourcePageId: 'page-used',
+        title: 'Chaterm 企业版登记信息',
+        url: '/p/page-used',
+      },
+    ]);
+    expect(answerProvider.answer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.stringContaining('[[cite:page-used]]'),
+      }),
+    );
   });
 
   it('enables chat when workspace ai.chat is enabled', () => {

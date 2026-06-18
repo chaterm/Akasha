@@ -65,7 +65,11 @@ export class KnowledgeQuarantineRepo {
       .where('workspaceId', '=', input.workspaceId)
       .orderBy('createdAt', 'desc')
       .limit(limit)
-      .execute();
+      .execute()
+      .catch((error) => {
+        if (isUndefinedTableError(error)) return [];
+        throw error;
+      });
 
     return rows.map((row) => ({
       id: row.id,
@@ -79,6 +83,15 @@ export class KnowledgeQuarantineRepo {
       createdAt: row.createdAt,
     }));
   }
+}
+
+function isUndefinedTableError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === '42P01'
+  );
 }
 
 function normalizeReasonCodes(value: unknown): string[] {

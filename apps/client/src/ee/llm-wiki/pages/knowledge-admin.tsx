@@ -11,6 +11,7 @@ import {
   Stack,
   Table,
   Text,
+  Tooltip,
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -19,6 +20,7 @@ import {
   IconAlertTriangle,
   IconArrowLeft,
   IconDatabaseSearch,
+  IconInfoCircle,
   IconRefresh,
 } from "@tabler/icons-react";
 import { Helmet } from "react-helmet-async";
@@ -281,7 +283,15 @@ export default function KnowledgeAdminPage() {
                       <Table.Th>{t("Compile")}</Table.Th>
                       <Table.Th>{t("Pages")}</Table.Th>
                       <Table.Th>{t("Compiled")}</Table.Th>
-                      <Table.Th>{t("Stale")}</Table.Th>
+                      <Table.Th>
+                        <HeaderWithTooltip
+                          label={t("Stale")}
+                          ariaLabel={t("Stale column help")}
+                          tooltip={t(
+                            "Shows the number of pages with stale knowledge. The time badge is the age of the oldest stale source.",
+                          )}
+                        />
+                      </Table.Th>
                       <Table.Th>{t("Missing chunks")}</Table.Th>
                       <Table.Th>{t("Missing embeddings")}</Table.Th>
                       <Table.Th>{t("Artifacts")}</Table.Th>
@@ -647,6 +657,27 @@ export default function KnowledgeAdminPage() {
         </Stack>
       </Container>
     </>
+  );
+}
+
+function HeaderWithTooltip({
+  label,
+  tooltip,
+  ariaLabel,
+}: {
+  label: string;
+  tooltip: string;
+  ariaLabel: string;
+}) {
+  return (
+    <Group gap={6} wrap="nowrap">
+      <span>{label}</span>
+      <Tooltip label={tooltip} multiline w={260} withArrow>
+        <span aria-label={ariaLabel} className={classes.helpIcon} tabIndex={0}>
+          <IconInfoCircle size={15} stroke={1.8} />
+        </span>
+      </Tooltip>
+    </Group>
   );
 }
 
