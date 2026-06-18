@@ -58,7 +58,7 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
     expect(generateText).toHaveBeenCalledWith({
       model: 'openai-model',
       system: expect.stringContaining(
-        'append the relevant citation marker to that sentence',
+        'You may answer general questions using your general capabilities.',
       ),
       prompt: [
         'Conversation context:',
@@ -71,6 +71,13 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
         'How do we use Kafka?',
       ].join('\n'),
     });
+    expect(generateText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        system: expect.stringContaining(
+          'When you use facts from the knowledge context, append the relevant citation marker to that sentence.',
+        ),
+      }),
+    );
   });
 
   it('uses OpenAI-compatible configuration when AI_DRIVER is openai-compatible', async () => {
@@ -120,17 +127,35 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
     expect(ollamaProvider).toHaveBeenCalledWith('llama3.2');
   });
 
-  it('does not call the model when driver or context is missing', async () => {
+  it('calls the model for general questions when knowledge context is empty', async () => {
+    const openaiProvider = jest.fn().mockReturnValue('openai-model');
+    (createOpenAI as jest.Mock).mockReturnValue(openaiProvider);
+
+    await expect(
+      createService({ aiDriver: 'openai' }).answer({
+        query: 'What weekday is today?',
+        context: '   ',
+      }),
+    ).resolves.toBe('grounded answer');
+
+    expect(generateText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'openai-model',
+        system: expect.stringContaining(
+          'For workspace-specific facts, use the provided knowledge context',
+        ),
+        prompt: expect.stringContaining(
+          'No workspace knowledge context was retrieved.',
+        ),
+      }),
+    );
+  });
+
+  it('does not call the model when driver is missing', async () => {
     await expect(
       createService({ aiDriver: undefined }).answer({
         query: 'Q',
         context: 'Context',
-      }),
-    ).resolves.toBe('');
-    await expect(
-      createService({ aiDriver: 'openai' }).answer({
-        query: 'Q',
-        context: '   ',
       }),
     ).resolves.toBe('');
 
