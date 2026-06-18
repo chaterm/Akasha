@@ -1,8 +1,12 @@
 .panel {
-  border: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+  border: 1px solid
+    light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
   border-radius: var(--mantine-radius-sm);
   padding: var(--mantine-spacing-lg);
-  background: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
+  background: light-dark(
+    var(--mantine-color-white),
+    var(--mantine-color-dark-7)
+  );
 }
 
 .pageLink {
@@ -24,4 +28,29 @@
 .emptyText {
   color: var(--mantine-color-dimmed);
   font-size: var(--mantine-font-size-sm);
+}
+
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--mantine-spacing-sm);
+}
+
+.metricItem {
+  padding: var(--mantine-spacing-sm) 0;
+  border-top: 1px solid
+    light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+}
+
+.metricLabel {
+  color: var(--mantine-color-dimmed);
+  font-size: var(--mantine-font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.metricValue {
+  margin-top: 2px;
+  font-size: var(--mantine-font-size-xl);
+  font-weight: 700;
 }

@@ -7,6 +7,7 @@ import { KnowledgeSourceAuthorizationService } from './knowledge-source-authoriz
 export type KnowledgeGraphResult = {
   nodes: KnowledgeGraphNode[];
   edges: KnowledgeGraphEdge[];
+  insights: KnowledgeGraphInsights;
 };
 
 export type KnowledgeGraphNode = {
@@ -15,6 +16,8 @@ export type KnowledgeGraphNode = {
   spaceId: string;
   sourcePageId?: string;
   degree: number;
+  artifactKind?: string;
+  communityId: string;
 };
 
 export type KnowledgeGraphEdge = {
@@ -23,6 +26,16 @@ export type KnowledgeGraphEdge = {
   to: string;
   type: 'link' | 'semantic';
   label: string;
+  weight: number;
+  reasons: KnowledgeGraphEdgeReason[];
+};
+
+export type KnowledgeGraphEdgeReason = 'direct-link' | 'semantic-edge';
+
+export type KnowledgeGraphInsights = {
+  isolatedNodeIds: string[];
+  bridgeNodeIds: string[];
+  communityCount: number;
 };
 
 const DEFAULT_GRAPH_NODE_LIMIT = 300;
@@ -81,7 +94,10 @@ export class KnowledgeGraphService {
       (source) => source.knowledgePageId,
     );
     const visiblePages = graph.pages.filter((page) =>
-      allSourcesReadable(pageSourcesByPageId.get(page.id) ?? [], readableSourceSet),
+      allSourcesReadable(
+        pageSourcesByPageId.get(page.id) ?? [],
+        readableSourceSet,
+      ),
     );
     const visiblePageIds = new Set(visiblePages.map((page) => page.id));
 
@@ -106,6 +122,8 @@ export class KnowledgeGraphService {
         to: link.toKnowledgePageId as string,
         type: 'link' as const,
         label: link.linkText || link.linkType,
+        weight: 3,
+        reasons: ['direct-link' as const],
       }));
 
     const graphEdgeSourcesByEdgeId = groupBy(
@@ -128,6 +146,8 @@ export class KnowledgeGraphService {
         to: edge.toKnowledgePageId,
         type: 'semantic' as const,
         label: edge.relation,
+        weight: 2,
+        reasons: ['semantic-edge' as const],
       }));
 
     const edges = [...linkEdges, ...semanticEdges];
@@ -136,22 +156,32 @@ export class KnowledgeGraphService {
       degreeByPageId.set(edge.from, (degreeByPageId.get(edge.from) ?? 0) + 1);
       degreeByPageId.set(edge.to, (degreeByPageId.get(edge.to) ?? 0) + 1);
     }
+    const communityByPageId = assignCommunities(visiblePages, edges);
 
     return {
       nodes: visiblePages.map((page) => ({
         id: page.id,
         title: page.title,
         spaceId: page.spaceId,
-        sourcePageId: singleSourcePageId(pageSourcesByPageId.get(page.id) ?? []),
+        sourcePageId: singleSourcePageId(
+          pageSourcesByPageId.get(page.id) ?? [],
+        ),
         degree: degreeByPageId.get(page.id) ?? 0,
+        artifactKind: page.pageType ?? undefined,
+        communityId: communityByPageId.get(page.id) ?? 'community-0',
       })),
       edges,
+      insights: buildInsights(visiblePages, degreeByPageId, communityByPageId),
     };
   }
 }
 
 function emptyGraph(): KnowledgeGraphResult {
-  return { nodes: [], edges: [] };
+  return {
+    nodes: [],
+    edges: [],
+    insights: { isolatedNodeIds: [], bridgeNodeIds: [], communityCount: 0 },
+  };
 }
 
 function clampLimit(limit?: number): number {
@@ -195,4 +225,59 @@ function groupBy<T>(
     grouped.set(key, group);
   }
   return grouped;
+}
+
+function assignCommunities<T extends { id: string }>(
+  pages: T[],
+  edges: Array<{ from: string; to: string }>,
+): Map<string, string> {
+  const neighborsByPageId = new Map<string, Set<string>>();
+  for (const page of pages) {
+    neighborsByPageId.set(page.id, new Set());
+  }
+  for (const edge of edges) {
+    neighborsByPageId.get(edge.from)?.add(edge.to);
+    neighborsByPageId.get(edge.to)?.add(edge.from);
+  }
+
+  const communityByPageId = new Map<string, string>();
+  let communityIndex = 0;
+
+  for (const page of pages) {
+    if (communityByPageId.has(page.id)) continue;
+
+    communityIndex += 1;
+    const communityId = `community-${communityIndex}`;
+    const stack = [page.id];
+
+    while (stack.length > 0) {
+      const pageId = stack.pop() as string;
+      if (communityByPageId.has(pageId)) continue;
+
+      communityByPageId.set(pageId, communityId);
+      for (const neighborId of neighborsByPageId.get(pageId) ?? []) {
+        if (!communityByPageId.has(neighborId)) {
+          stack.push(neighborId);
+        }
+      }
+    }
+  }
+
+  return communityByPageId;
+}
+
+function buildInsights<T extends { id: string }>(
+  pages: T[],
+  degreeByPageId: Map<string, number>,
+  communityByPageId: Map<string, string>,
+): KnowledgeGraphInsights {
+  return {
+    isolatedNodeIds: pages
+      .filter((page) => (degreeByPageId.get(page.id) ?? 0) === 0)
+      .map((page) => page.id),
+    bridgeNodeIds: pages
+      .filter((page) => (degreeByPageId.get(page.id) ?? 0) > 1)
+      .map((page) => page.id),
+    communityCount: new Set(communityByPageId.values()).size,
+  };
 }

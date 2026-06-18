@@ -1,5 +1,10 @@
 import { Inject, Logger, OnModuleDestroy } from '@nestjs/common';
-import { InjectQueue, OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
+import {
+  InjectQueue,
+  OnWorkerEvent,
+  Processor,
+  WorkerHost,
+} from '@nestjs/bullmq';
 import { Job, Queue } from 'bullmq';
 import { KnowledgeCapsuleRepo } from '@docmost/db/repos/llm-wiki/knowledge-capsule.repo';
 import { KnowledgeSourceRepo } from '@docmost/db/repos/llm-wiki/knowledge-source.repo';
@@ -19,6 +24,13 @@ import {
 } from '../../../integrations/queue/constants/queue.interface';
 import { KnowledgeAccessIndexerService } from '../services/knowledge-access-indexer.service';
 import { KnowledgeSourceExporterService } from '../services/knowledge-source-exporter.service';
+import {
+  buildKnowledgeCompileCoalesceKey,
+  buildKnowledgeCompileJobId,
+  KNOWLEDGE_COMPILE_DELAY_MS,
+  uniqueValues,
+} from '../services/knowledge-queue.utils';
+import { KnowledgeCompileJobResult } from '../types/knowledge-queue.types';
 
 @Processor(QueueName.AI_QUEUE)
 export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
@@ -38,10 +50,11 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
     super();
   }
 
-  async process(job: Job): Promise<void> {
+  async process(job: Job): Promise<KnowledgeCompileJobResult | void> {
     switch (job.name) {
       case QueueJob.KNOWLEDGE_COMPILE_SPACE: {
         const data = job.data as IKnowledgeCompileSpaceJob;
+        const startedAt = Date.now();
         const sources = await this.sourceExporter.exportSpaceSources({
           workspaceId: data.workspaceId,
           spaceId: data.spaceId,
@@ -54,7 +67,7 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
           sources,
         };
         const compileResult = await this.compiler.compileSpace(compileInput);
-        await this.importService.importCompileResult({
+        const importResult = await this.importService.importCompileResult({
           input: compileInput,
           artifacts: compileResult.artifacts,
         });
@@ -62,32 +75,55 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
           workspaceId: data.workspaceId,
           sourcePageIds: sources.map((source) => source.sourcePageId),
         });
-        break;
+        return {
+          type: 'compile-space',
+          status: 'succeeded',
+          workspaceId: data.workspaceId,
+          spaceId: data.spaceId,
+          compilerRunId: compileResult.compilerRunId,
+          sourceCount: sources.length,
+          importedArtifactCount: importResult.importedArtifactCount,
+          quarantinedArtifactCount: importResult.quarantinedArtifactCount,
+          durationMs: Math.max(0, Date.now() - startedAt),
+        };
       }
       case QueueJob.KNOWLEDGE_REINDEX_ACCESS: {
         const data = job.data as IKnowledgeReindexAccessJob;
         if (data.sourcePageIds?.length) {
           await this.accessIndexer.reindexSourcePages({
             workspaceId: data.workspaceId,
-            sourcePageIds: data.sourcePageIds,
+            sourcePageIds: uniqueValues(data.sourcePageIds),
           });
         } else if (data.spaceId) {
-          await this.accessIndexer.markScopeStale({
+          const sourcePageIds = await this.findSourcePageIdsForSpace({
             workspaceId: data.workspaceId,
             spaceId: data.spaceId,
+          });
+          await this.accessIndexer.reindexSourcePages({
+            workspaceId: data.workspaceId,
+            sourcePageIds,
           });
         }
         break;
       }
       case QueueJob.KNOWLEDGE_MARK_SOURCES_STALE: {
         const data = job.data as IKnowledgeMarkSourcesStaleJob;
+        const sourcePageIds = data.sourcePageIds?.length
+          ? uniqueValues(data.sourcePageIds)
+          : data.spaceId
+            ? await this.findSourcePageIdsForSpace({
+                workspaceId: data.workspaceId,
+                spaceId: data.spaceId,
+              })
+            : [];
+        if (sourcePageIds.length === 0) break;
         await this.sourceRepo.markSourcesStale({
           workspaceId: data.workspaceId,
-          sourcePageIds: data.sourcePageIds,
+          sourcePageIds,
         });
         await this.capsuleRepo.markCapsulesStaleBySourcePageIds({
           workspaceId: data.workspaceId,
-          sourcePageIds: data.sourcePageIds,
+          sourcePageIds,
         });
         break;
       }
@@ -129,13 +165,26 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
         {
           workspaceId: data.workspaceId,
           spaceId,
+          trigger: 'page_update',
         },
         {
-          delay: 5000,
-          jobId: `knowledge-compile-space:${data.workspaceId}:${spaceId}`,
+          delay: KNOWLEDGE_COMPILE_DELAY_MS,
+          jobId: buildKnowledgeCompileJobId({
+            workspaceId: data.workspaceId,
+            spaceId,
+            runKey: buildKnowledgeCompileCoalesceKey(),
+          }),
         },
       );
     }
+  }
+
+  private async findSourcePageIdsForSpace(input: {
+    workspaceId: string;
+    spaceId: string;
+  }): Promise<string[]> {
+    const sources = await this.sourceRepo.findSourcesBySpace(input);
+    return uniqueValues(sources.map((source) => source.sourcePageId));
   }
 
   @OnWorkerEvent('active')

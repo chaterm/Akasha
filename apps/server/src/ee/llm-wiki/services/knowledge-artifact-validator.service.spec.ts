@@ -28,7 +28,9 @@ describe('KnowledgeArtifactValidatorService', () => {
   it('accepts artifacts whose scope and synthesis lineage match the compile input', () => {
     const artifact = validArtifact();
 
-    expect(service.validateCompileResult({ input, artifacts: [artifact] })).toEqual({
+    expect(
+      service.validateCompileResult({ input, artifacts: [artifact] }),
+    ).toEqual({
       accepted: [artifact],
       quarantined: [],
     });
@@ -37,7 +39,10 @@ describe('KnowledgeArtifactValidatorService', () => {
   it('quarantines artifacts outside the compile scope', () => {
     const artifact = { ...validArtifact(), spaceId: 'space-2' };
 
-    const result = service.validateCompileResult({ input, artifacts: [artifact] });
+    const result = service.validateCompileResult({
+      input,
+      artifacts: [artifact],
+    });
 
     expect(result.accepted).toEqual([]);
     expect(result.quarantined).toMatchObject([
@@ -51,7 +56,10 @@ describe('KnowledgeArtifactValidatorService', () => {
   it('quarantines artifacts whose artifact id cannot be stored as a UUID', () => {
     const artifact = { ...validArtifact(), artifactId: 'not-a-uuid' };
 
-    const result = service.validateCompileResult({ input, artifacts: [artifact] });
+    const result = service.validateCompileResult({
+      input,
+      artifacts: [artifact],
+    });
 
     expect(result.accepted).toEqual([]);
     expect(result.quarantined[0].reasons).toEqual([
@@ -67,11 +75,31 @@ describe('KnowledgeArtifactValidatorService', () => {
       inputSourceRefs: [],
     };
 
-    const result = service.validateCompileResult({ input, artifacts: [artifact] });
+    const result = service.validateCompileResult({
+      input,
+      artifacts: [artifact],
+    });
 
     expect(result.accepted).toEqual([]);
     expect(result.quarantined[0].reasons).toEqual([
       'synthesis lineage is incomplete',
+    ]);
+  });
+
+  it('quarantines artifacts whose artifact kind is unsupported', () => {
+    const artifact = {
+      ...validArtifact(),
+      artifactKind: 'unsupported_kind',
+    } as unknown as CompiledKnowledgeArtifact;
+
+    const result = service.validateCompileResult({
+      input,
+      artifacts: [artifact],
+    });
+
+    expect(result.accepted).toEqual([]);
+    expect(result.quarantined[0].reasons).toEqual([
+      'artifact kind is not supported',
     ]);
   });
 
@@ -89,7 +117,10 @@ describe('KnowledgeArtifactValidatorService', () => {
       ],
     };
 
-    const result = service.validateCompileResult({ input, artifacts: [artifact] });
+    const result = service.validateCompileResult({
+      input,
+      artifacts: [artifact],
+    });
 
     expect(result.accepted).toEqual([]);
     expect(result.quarantined[0].reasons).toEqual([
@@ -112,7 +143,10 @@ describe('KnowledgeArtifactValidatorService', () => {
       ],
     };
 
-    const result = service.validateCompileResult({ input, artifacts: [artifact] });
+    const result = service.validateCompileResult({
+      input,
+      artifacts: [artifact],
+    });
 
     expect(result.accepted).toEqual([]);
     expect(result.quarantined[0].reasons).toEqual([
@@ -151,7 +185,10 @@ describe('KnowledgeArtifactValidatorService', () => {
       ],
     };
 
-    const result = service.validateCompileResult({ input, artifacts: [artifact] });
+    const result = service.validateCompileResult({
+      input,
+      artifacts: [artifact],
+    });
 
     expect(result.accepted).toEqual([]);
     expect(result.quarantined[0].reasons).toEqual([
@@ -162,6 +199,128 @@ describe('KnowledgeArtifactValidatorService', () => {
     ]);
   });
 
+  it('quarantines child artifacts that do not carry explicit lineage', () => {
+    const artifact = {
+      ...validArtifact(),
+      claims: [
+        {
+          text: 'Claim without lineage',
+        },
+      ],
+      chunks: [
+        {
+          text: 'Chunk without lineage',
+        },
+      ],
+      links: [
+        {
+          linkType: 'same_space_reference',
+          linkText: 'Link without lineage',
+        },
+      ],
+      graphEdges: [
+        {
+          toKnowledgePageId: '22222222-2222-4222-8222-222222222222',
+          relation: 'edge_without_lineage',
+        },
+      ],
+    };
+
+    const result = service.validateCompileResult({
+      input,
+      artifacts: [artifact],
+    });
+
+    expect(result.accepted).toEqual([]);
+    expect(result.quarantined[0].reasons).toEqual([
+      'claim lineage is incomplete',
+      'chunk lineage is incomplete',
+      'link lineage is incomplete',
+      'graph edge lineage is incomplete',
+    ]);
+  });
+
+  it('quarantines source refs with invalid source ranges', () => {
+    const artifact = {
+      ...validArtifact(),
+      chunks: [
+        {
+          text: 'Source text',
+          inputSourceRefs: [
+            {
+              ...sourceRef(),
+              sourceRange: { startOffset: 0, endOffset: 999 },
+              quoteHash: quoteHash('Source text'),
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = service.validateCompileResult({
+      input,
+      artifacts: [artifact],
+    });
+
+    expect(result.accepted).toEqual([]);
+    expect(result.quarantined[0].reasons).toEqual([
+      'chunk source range is invalid',
+    ]);
+  });
+
+  it('quarantines source refs whose quote hash does not match the selected range', () => {
+    const artifact = {
+      ...validArtifact(),
+      chunks: [
+        {
+          text: 'Source text',
+          inputSourceRefs: [
+            {
+              ...sourceRef(),
+              sourceRange: { startOffset: 0, endOffset: 6 },
+              quoteHash: quoteHash('wrong'),
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = service.validateCompileResult({
+      input,
+      artifacts: [artifact],
+    });
+
+    expect(result.accepted).toEqual([]);
+    expect(result.quarantined[0].reasons).toEqual([
+      'chunk quote hash does not match source range',
+    ]);
+  });
+
+  it('accepts exact source refs when range and quote hash match the source text', () => {
+    const artifact = {
+      ...validArtifact(),
+      chunks: [
+        {
+          text: 'Source',
+          inputSourceRefs: [
+            {
+              ...sourceRef(),
+              sourceRange: { startOffset: 0, endOffset: 6 },
+              quoteHash: quoteHash('Source'),
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(
+      service.validateCompileResult({ input, artifacts: [artifact] }),
+    ).toEqual({
+      accepted: [artifact],
+      quarantined: [],
+    });
+  });
+
   it('quarantines graph edges whose target compiled page id is not a UUID', () => {
     const artifact = {
       ...validArtifact(),
@@ -169,11 +328,15 @@ describe('KnowledgeArtifactValidatorService', () => {
         {
           toKnowledgePageId: 'not-a-uuid',
           relation: 'depends_on',
+          inputSourceRefs: [sourceRef()],
         },
       ],
     };
 
-    const result = service.validateCompileResult({ input, artifacts: [artifact] });
+    const result = service.validateCompileResult({
+      input,
+      artifacts: [artifact],
+    });
 
     expect(result.accepted).toEqual([]);
     expect(result.quarantined[0].reasons).toEqual([
@@ -189,11 +352,15 @@ describe('KnowledgeArtifactValidatorService', () => {
           linkType: 'cross_space_reference',
           targetSpaceId: 'space-2',
           isOpaque: false,
+          inputSourceRefs: [sourceRef()],
         },
       ],
     };
 
-    const result = service.validateCompileResult({ input, artifacts: [artifact] });
+    const result = service.validateCompileResult({
+      input,
+      artifacts: [artifact],
+    });
 
     expect(result.accepted).toEqual([]);
     expect(result.quarantined[0].reasons).toEqual([
@@ -235,4 +402,21 @@ function outsideSourceRef() {
     sourceVersion: 'v1',
     contentHash: 'hash-2',
   };
+}
+
+function sourceRef() {
+  return {
+    workspaceId: 'workspace-1',
+    spaceId: 'space-1',
+    sourcePageId: 'source-1',
+    sourceVersion: 'v1',
+    contentHash: 'hash-1',
+  };
+}
+
+function quoteHash(text: string): string {
+  const { createHash } = jest.requireActual(
+    'crypto',
+  ) as typeof import('crypto');
+  return `sha256:${createHash('sha256').update(text).digest('hex')}`;
 }

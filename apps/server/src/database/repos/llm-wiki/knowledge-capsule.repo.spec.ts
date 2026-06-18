@@ -30,8 +30,23 @@ class FakeKyselyQuery {
     return this;
   }
 
+  leftJoin(...args: unknown[]) {
+    this.calls.push({ method: 'leftJoin', args });
+    return this;
+  }
+
   where(...args: unknown[]) {
     this.calls.push({ method: 'where', args });
+    return this;
+  }
+
+  whereRef(...args: unknown[]) {
+    this.calls.push({ method: 'whereRef', args });
+    return this;
+  }
+
+  orderBy(...args: unknown[]) {
+    this.calls.push({ method: 'orderBy', args });
     return this;
   }
 
@@ -171,10 +186,14 @@ describe('KnowledgeCapsuleRepo', () => {
 
     const pageInsertIndexes = query.calls
       .map((call, index) => ({ call, index }))
-      .filter(({ call }) => call.method === 'insertInto' && call.args[0] === 'knowledgePages')
+      .filter(
+        ({ call }) =>
+          call.method === 'insertInto' && call.args[0] === 'knowledgePages',
+      )
       .map(({ index }) => index);
     const linkInsertIndex = query.calls.findIndex(
-      (call) => call.method === 'insertInto' && call.args[0] === 'knowledgeLinks',
+      (call) =>
+        call.method === 'insertInto' && call.args[0] === 'knowledgeLinks',
     );
 
     expect(pageInsertIndexes).toHaveLength(2);
@@ -526,19 +545,336 @@ describe('KnowledgeCapsuleRepo', () => {
     expect(query.calls).toEqual(
       expect.arrayContaining([
         { method: 'selectFrom', args: ['knowledgePageSources'] },
-        { method: 'where', args: ['knowledgePageSources.workspaceId', '=', 'workspace-1'] },
-        { method: 'where', args: ['knowledgePageSources.knowledgePageId', 'in', ['kp-1', 'kp-2']] },
+        {
+          method: 'where',
+          args: ['knowledgePageSources.workspaceId', '=', 'workspace-1'],
+        },
+        {
+          method: 'where',
+          args: [
+            'knowledgePageSources.knowledgePageId',
+            'in',
+            ['kp-1', 'kp-2'],
+          ],
+        },
         { method: 'selectFrom', args: ['knowledgeClaimSources'] },
-        { method: 'innerJoin', args: ['knowledgeClaims', 'knowledgeClaimSources.claimId', 'knowledgeClaims.id'] },
-        { method: 'where', args: ['knowledgeClaims.workspaceId', '=', 'workspace-1'] },
+        {
+          method: 'innerJoin',
+          args: [
+            'knowledgeClaims',
+            'knowledgeClaimSources.claimId',
+            'knowledgeClaims.id',
+          ],
+        },
+        {
+          method: 'where',
+          args: ['knowledgeClaims.workspaceId', '=', 'workspace-1'],
+        },
         { method: 'selectFrom', args: ['knowledgeChunkSources'] },
-        { method: 'innerJoin', args: ['knowledgeChunks', 'knowledgeChunkSources.chunkId', 'knowledgeChunks.id'] },
+        {
+          method: 'innerJoin',
+          args: [
+            'knowledgeChunks',
+            'knowledgeChunkSources.chunkId',
+            'knowledgeChunks.id',
+          ],
+        },
         { method: 'selectFrom', args: ['knowledgeLinkSources'] },
-        { method: 'innerJoin', args: ['knowledgeLinks', 'knowledgeLinkSources.linkId', 'knowledgeLinks.id'] },
+        {
+          method: 'innerJoin',
+          args: [
+            'knowledgeLinks',
+            'knowledgeLinkSources.linkId',
+            'knowledgeLinks.id',
+          ],
+        },
         { method: 'selectFrom', args: ['knowledgeGraphEdgeSources'] },
-        { method: 'innerJoin', args: ['knowledgeGraphEdges', 'knowledgeGraphEdgeSources.graphEdgeId', 'knowledgeGraphEdges.id'] },
+        {
+          method: 'innerJoin',
+          args: [
+            'knowledgeGraphEdges',
+            'knowledgeGraphEdgeSources.graphEdgeId',
+            'knowledgeGraphEdges.id',
+          ],
+        },
       ]),
     );
+  });
+
+  it('finds chunk dependency source page ids in one batch preserving requested chunk ids', async () => {
+    const query = new FakeKyselyQuery({
+      knowledgeChunkSources: [
+        { chunkId: 'chunk-1', sourcePageId: 'source-1' },
+        { chunkId: 'chunk-1', sourcePageId: 'source-2' },
+        { chunkId: 'chunk-2', sourcePageId: 'source-3' },
+      ],
+    });
+    const repo = createRepo(query);
+
+    await expect(
+      repo.findChunkSourcePageIdsByChunkIds({
+        workspaceId: 'workspace-1',
+        chunkIds: ['chunk-2', 'chunk-1', 'chunk-empty'],
+      }),
+    ).resolves.toEqual([
+      { chunkId: 'chunk-2', sourcePageIds: ['source-3'] },
+      { chunkId: 'chunk-1', sourcePageIds: ['source-1', 'source-2'] },
+      { chunkId: 'chunk-empty', sourcePageIds: [] },
+    ]);
+
+    expect(query.calls).toEqual([
+      { method: 'selectFrom', args: ['knowledgeChunkSources'] },
+      {
+        method: 'select',
+        args: [
+          [
+            'knowledgeChunkSources.chunkId',
+            'knowledgeChunkSources.sourcePageId',
+          ],
+        ],
+      },
+      {
+        method: 'where',
+        args: ['knowledgeChunkSources.workspaceId', '=', 'workspace-1'],
+      },
+      {
+        method: 'where',
+        args: [
+          'knowledgeChunkSources.chunkId',
+          'in',
+          ['chunk-2', 'chunk-1', 'chunk-empty'],
+        ],
+      },
+      { method: 'execute', args: [] },
+    ]);
+  });
+
+  it('finds chunk source refs with ranges and quote hashes in one batch', async () => {
+    const query = new FakeKyselyQuery({
+      knowledgeChunkSources: [
+        {
+          chunkId: 'chunk-1',
+          sourcePageId: 'source-1',
+          sourceVersion: 'v1',
+          contentHash: 'sha256:source-1',
+          sourceRange: { startOffset: 5, endOffset: 12 },
+          quoteHash: 'sha256:quote-1',
+        },
+        {
+          chunkId: 'chunk-1',
+          sourcePageId: 'source-2',
+          sourceVersion: 'v2',
+          contentHash: 'sha256:source-2',
+          sourceRange: null,
+          quoteHash: null,
+        },
+      ],
+    });
+    const repo = createRepo(query);
+
+    await expect(
+      repo.findChunkSourceRefsByChunkIds({
+        workspaceId: 'workspace-1',
+        chunkIds: ['chunk-2', 'chunk-1'],
+      }),
+    ).resolves.toEqual([
+      { chunkId: 'chunk-2', sources: [] },
+      {
+        chunkId: 'chunk-1',
+        sources: [
+          {
+            sourcePageId: 'source-1',
+            sourceVersion: 'v1',
+            contentHash: 'sha256:source-1',
+            sourceRange: { startOffset: 5, endOffset: 12 },
+            quoteHash: 'sha256:quote-1',
+          },
+          {
+            sourcePageId: 'source-2',
+            sourceVersion: 'v2',
+            contentHash: 'sha256:source-2',
+            sourceRange: null,
+            quoteHash: null,
+          },
+        ],
+      },
+    ]);
+
+    expect(query.calls).toEqual([
+      { method: 'selectFrom', args: ['knowledgeChunkSources'] },
+      {
+        method: 'select',
+        args: [
+          [
+            'knowledgeChunkSources.chunkId',
+            'knowledgeChunkSources.sourcePageId',
+            'knowledgeChunkSources.sourceVersion',
+            'knowledgeChunkSources.contentHash',
+            'knowledgeChunkSources.sourceRange',
+            'knowledgeChunkSources.quoteHash',
+          ],
+        ],
+      },
+      {
+        method: 'where',
+        args: ['knowledgeChunkSources.workspaceId', '=', 'workspace-1'],
+      },
+      {
+        method: 'where',
+        args: ['knowledgeChunkSources.chunkId', 'in', ['chunk-2', 'chunk-1']],
+      },
+      { method: 'execute', args: [] },
+    ]);
+  });
+
+  it('finds candidate dependency source page ids for sidecar evaluation', async () => {
+    const query = new FakeKyselyQuery({
+      knowledgeChunkSources: [
+        { sourcePageId: 'source-1' },
+        { sourcePageId: 'source-2' },
+        { sourcePageId: 'source-1' },
+      ],
+    });
+    const repo = createRepo(query);
+
+    await expect(
+      repo.findCandidateDependencySourcePageIds({
+        workspaceId: 'workspace-1',
+        spaceIds: ['space-1'],
+        query: 'AkashaQwenSmokeTest',
+        signals: ['semantic', 'lexical', 'exact-title'],
+        sourceCandidateLimit: 20,
+      }),
+    ).resolves.toEqual(['source-1', 'source-2']);
+
+    expect(query.calls).toEqual(
+      expect.arrayContaining([
+        { method: 'selectFrom', args: ['knowledgeChunkSources'] },
+        {
+          method: 'innerJoin',
+          args: [
+            'knowledgeChunks',
+            'knowledgeChunkSources.chunkId',
+            'knowledgeChunks.id',
+          ],
+        },
+        {
+          method: 'where',
+          args: ['knowledgeChunks.workspaceId', '=', 'workspace-1'],
+        },
+        {
+          method: 'where',
+          args: ['knowledgeChunks.spaceId', 'in', ['space-1']],
+        },
+        { method: 'limit', args: [20] },
+      ]),
+    );
+  });
+
+  it('returns only chunks whose full dependency set is sidecar eligible', async () => {
+    const query = new FakeKyselyQuery({
+      knowledgeChunks: [
+        {
+          id: 'chunk-visible',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          knowledgePageId: 'kp-visible',
+          text: 'Visible AkashaQwenSmokeTest',
+          embedding: [1, 0],
+        },
+        {
+          id: 'chunk-mixed',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          knowledgePageId: 'kp-mixed',
+          text: 'Mixed AkashaQwenSmokeTest',
+          embedding: [1, 0],
+        },
+        {
+          id: 'chunk-empty',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          knowledgePageId: 'kp-empty',
+          text: 'No lineage',
+          embedding: [1, 0],
+        },
+      ],
+      knowledgePages: [
+        { ...basePage('kp-visible'), title: 'Visible' },
+        { ...basePage('kp-mixed'), title: 'Mixed' },
+        { ...basePage('kp-empty'), title: 'Empty' },
+      ],
+      knowledgeChunkSources: [
+        { chunkId: 'chunk-visible', sourcePageId: 'source-visible' },
+        { chunkId: 'chunk-mixed', sourcePageId: 'source-visible' },
+        { chunkId: 'chunk-mixed', sourcePageId: 'source-hidden' },
+      ],
+    });
+    const repo = createRepo(query);
+
+    await expect(
+      repo.findSidecarEligibleChunks({
+        workspaceId: 'workspace-1',
+        spaceIds: ['space-1'],
+        query: 'AkashaQwenSmokeTest',
+        eligibleSourcePageIds: ['source-visible'],
+        signals: ['semantic', 'lexical', 'exact-title'],
+        limit: 10,
+      }),
+    ).resolves.toEqual([
+      {
+        chunk: expect.objectContaining({ id: 'chunk-visible' }),
+        page: expect.objectContaining({ id: 'kp-visible' }),
+        sourcePageIds: ['source-visible'],
+        signals: ['semantic', 'lexical'],
+        lexicalScore: expect.any(Number),
+      },
+    ]);
+  });
+
+  it('uses token overlap for lexical candidates instead of requiring the full query string', async () => {
+    const query = new FakeKyselyQuery({
+      knowledgeChunks: [
+        {
+          id: 'chunk-lexical',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          knowledgePageId: 'kp-lexical',
+          text: 'AkashaQwenSmokeTest lexical fallback',
+          embedding: null,
+        },
+      ],
+      knowledgePages: [
+        {
+          ...basePage('kp-lexical'),
+          title: 'AkashaQwenSmokeTest',
+          body: 'fallback body',
+        },
+      ],
+      knowledgeChunkSources: [
+        { chunkId: 'chunk-lexical', sourcePageId: 'source-lexical' },
+      ],
+    });
+    const repo = createRepo(query);
+
+    await expect(
+      repo.findSidecarEligibleChunks({
+        workspaceId: 'workspace-1',
+        spaceIds: ['space-1'],
+        query: 'AkashaQwenSmokeTest 是什么？',
+        eligibleSourcePageIds: ['source-lexical'],
+        signals: ['lexical', 'exact-title'],
+        limit: 10,
+      }),
+    ).resolves.toEqual([
+      {
+        chunk: expect.objectContaining({ id: 'chunk-lexical' }),
+        page: expect.objectContaining({ id: 'kp-lexical' }),
+        sourcePageIds: ['source-lexical'],
+        signals: ['lexical', 'exact-title'],
+        lexicalScore: expect.any(Number),
+      },
+    ]);
   });
 
   it('does not query stale updates when sourcePageIds is empty', async () => {

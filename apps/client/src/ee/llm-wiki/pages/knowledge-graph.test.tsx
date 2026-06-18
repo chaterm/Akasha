@@ -1,12 +1,21 @@
 import { MantineProvider } from "@mantine/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { HelmetProvider } from "react-helmet-async";
 import { BrowserRouter, MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import KnowledgeGraphPage from "./knowledge-graph";
 import { getKnowledgeGraph } from "../services/knowledge-service";
 import { useGetSpaceBySlugQuery } from "@/features/space/queries/space-query";
+
+const currentDir = dirname(fileURLToPath(import.meta.url));
+const graphCss = readFileSync(
+  resolve(currentDir, "../styles/knowledge-graph.module.css"),
+  "utf8",
+);
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -61,8 +70,15 @@ vi.mock("../services/knowledge-service", () => ({
         to: "kp-2",
         type: "semantic",
         label: "depends on",
+        weight: 2,
+        reasons: ["semantic-edge"],
       },
     ],
+    insights: {
+      isolatedNodeIds: [],
+      bridgeNodeIds: ["kp-1", "kp-2"],
+      communityCount: 1,
+    },
   }),
 }));
 
@@ -107,9 +123,9 @@ describe("KnowledgeGraphPage", () => {
     expect(await screen.findByText("Kafka")).toBeTruthy();
     expect(screen.getByText("Chaterm")).toBeTruthy();
     expect(screen.getByText("depends on")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Kafka" }).getAttribute("href")).toBe(
-      "/p/page-1",
-    );
+    expect(
+      screen.getByRole("link", { name: "Kafka" }).getAttribute("href"),
+    ).toBe("/p/page-1");
     await waitFor(() => {
       expect(getKnowledgeGraph).toHaveBeenCalledWith({
         spaceId: "space-1",
@@ -135,7 +151,10 @@ describe("KnowledgeGraphPage", () => {
           <MantineProvider>
             <MemoryRouter initialEntries={["/s/aim/graph"]}>
               <Routes>
-                <Route path="/s/:spaceSlug/graph" element={<KnowledgeGraphPage />} />
+                <Route
+                  path="/s/:spaceSlug/graph"
+                  element={<KnowledgeGraphPage />}
+                />
               </Routes>
             </MemoryRouter>
           </MantineProvider>
@@ -172,5 +191,74 @@ describe("KnowledgeGraphPage", () => {
 
     expect(viewport.getAttribute("transform")).not.toBe(initialTransform);
     expect(screen.getByRole("button", { name: "Fit graph" })).toBeTruthy();
+  });
+
+  it("keeps the graph page within the AppShell viewport", () => {
+    expect(graphCss).toMatch(
+      /\.pageContainer\s*{[^}]*height:\s*calc\(100dvh - var\(--app-shell-header-offset, 0px\) - var\(--app-shell-padding, 0px\) - var\(--app-shell-padding, 0px\)\);[^}]*}/s,
+    );
+    expect(graphCss).toMatch(
+      /\.pageContainer\s*{[^}]*padding-block:\s*var\(--mantine-spacing-md\);[^}]*}/s,
+    );
+    expect(graphCss).toMatch(
+      /\.pageStack\s*{[^}]*flex:\s*1 1 auto;[^}]*min-height:\s*0;[^}]*}/s,
+    );
+    expect(graphCss).toMatch(
+      /\.graphPanel\s*{[^}]*flex:\s*1 1 0;[^}]*min-height:\s*0;[^}]*}/s,
+    );
+    expect(graphCss).toMatch(
+      /\.graphSvg\s*{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*}/s,
+    );
+  });
+
+  it("renders graph filters, legend, and visible-only insight counts", async () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <HelmetProvider>
+          <MantineProvider>
+            <BrowserRouter>
+              <KnowledgeGraphPage />
+            </BrowserRouter>
+          </MantineProvider>
+        </HelmetProvider>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText("Kafka");
+
+    expect(screen.getByLabelText("Search")).toBeTruthy();
+    expect(screen.getByLabelText("Links")).toBeTruthy();
+    expect(screen.getByLabelText("Semantic")).toBeTruthy();
+    expect(screen.getByText("Communities: 1")).toBeTruthy();
+    expect(screen.getByText("Bridge: 2")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Search"), {
+      target: { value: "Kafka" },
+    });
+
+    expect(screen.getByText("Kafka")).toBeTruthy();
+  });
+
+  it("shows edge labels only when a related node is hovered", async () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <HelmetProvider>
+          <MantineProvider>
+            <BrowserRouter>
+              <KnowledgeGraphPage />
+            </BrowserRouter>
+          </MantineProvider>
+        </HelmetProvider>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText("Kafka");
+    const edgeLabel = screen.getByText("depends on");
+
+    expect(edgeLabel.getAttribute("data-visible")).toBe("false");
+
+    fireEvent.mouseEnter(screen.getByText("Kafka"));
+
+    expect(edgeLabel.getAttribute("data-visible")).toBe("true");
   });
 });

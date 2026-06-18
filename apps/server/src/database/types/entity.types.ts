@@ -41,6 +41,7 @@ import {
   KnowledgePages,
   KnowledgePageSources,
   KnowledgeQueryAudit,
+  KnowledgeQuarantinedArtifacts,
   KnowledgeSourceAccessPolicy as _KnowledgeSourceAccessPolicy,
   KnowledgeSourceAccessPrincipals as _KnowledgeSourceAccessPrincipals,
   KnowledgeSourceAccessRequirements as _KnowledgeSourceAccessRequirements,
@@ -142,6 +143,11 @@ export type InsertableKnowledgeSourceAccessPrincipal =
 export type KnowledgeQueryAuditEntry = Selectable<KnowledgeQueryAudit>;
 export type InsertableKnowledgeQueryAuditEntry =
   Insertable<KnowledgeQueryAudit>;
+
+export type KnowledgeQuarantinedArtifact =
+  Selectable<KnowledgeQuarantinedArtifacts>;
+export type InsertableKnowledgeQuarantinedArtifact =
+  Insertable<KnowledgeQuarantinedArtifacts>;
 
 // Workspace
 export type Workspace = Selectable<Workspaces>;

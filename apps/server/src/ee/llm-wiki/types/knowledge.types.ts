@@ -3,8 +3,15 @@ export interface KnowledgeScope {
   spaceId: string;
 }
 
+export interface KnowledgeSourceRange {
+  startOffset: number;
+  endOffset: number;
+}
+
 export interface KnowledgeSourceRef extends KnowledgeScope {
   sourcePageId: string;
   sourceVersion: string;
   contentHash: string;
+  sourceRange?: KnowledgeSourceRange;
+  quoteHash?: string;
 }

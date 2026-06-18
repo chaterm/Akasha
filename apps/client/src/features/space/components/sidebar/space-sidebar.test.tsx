@@ -122,7 +122,7 @@ describe("SpaceSidebar", () => {
     });
   });
 
-  it("shows the relationship graph entry in the space navigation", () => {
+  it("does not show the relationship graph entry in the space navigation", () => {
     render(
       <MantineProvider>
         <MemoryRouter initialEntries={["/s/aim"]}>
@@ -133,8 +133,9 @@ describe("SpaceSidebar", () => {
       </MantineProvider>,
     );
 
+    expect(screen.getByRole("link", { name: "Overview" })).toBeTruthy();
     expect(
-      screen.getByRole("link", { name: "Relationship graph" }).getAttribute("href"),
-    ).toBe("/s/aim/graph");
+      screen.queryByRole("link", { name: "Relationship graph" }),
+    ).toBeNull();
   });
 });

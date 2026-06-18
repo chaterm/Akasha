@@ -4,14 +4,58 @@ export interface KnowledgeCitation {
   url: string;
 }
 
+export interface KnowledgeSourceRange {
+  startOffset: number;
+  endOffset: number;
+}
+
+export interface KnowledgeSourceWindow extends KnowledgeCitation {
+  text: string;
+  sourceRange: KnowledgeSourceRange;
+  quoteHash: string;
+}
+
+export interface KnowledgeSnippet {
+  id: string;
+  title: string;
+  text: string;
+  retrievalReasons: string[];
+  sourceWindows: KnowledgeSourceWindow[];
+}
+
+export interface KnowledgeContextBudget {
+  maxContextLength: number;
+  usedContextLength: number;
+  remainingContextLength: number;
+  includedItemCount: number;
+  omittedItemCount: number;
+  responseReserve: number;
+  perItemMaxLength: number;
+}
+
 export interface KnowledgeQueryResult {
   answer: string;
   citations: KnowledgeCitation[];
+  snippets: KnowledgeSnippet[];
+  warnings: string[];
+  retrievalReasons: string[];
+  budget?: KnowledgeContextBudget;
   completenessNotice?: string;
 }
 
 export interface KnowledgeCompileResult {
   queuedSpaceCount: number;
+  jobIds: string[];
+}
+
+export type KnowledgeAdminSpaceAction =
+  | "retry_compile"
+  | "reindex_access"
+  | "mark_stale"
+  | "rebuild_embeddings";
+
+export interface KnowledgeAdminActionResult extends KnowledgeCompileResult {
+  action: KnowledgeAdminSpaceAction;
 }
 
 export interface KnowledgeDiagnosticsPage {
@@ -26,8 +70,13 @@ export interface KnowledgeDiagnosticsPage {
   textLength: number;
   knowledgeSourceCount: number;
   staleSourceCount: number;
+  oldestStaleSourceAt: string | null;
   knowledgePageSourceCount: number;
   knowledgeChunkCount: number;
+  missingEmbeddingChunkCount: number;
+  lastCompiledAt: string | null;
+  lastAccessPolicyIndexedAt: string | null;
+  staleAccessPolicyCount: number;
 }
 
 export interface KnowledgeDiagnosticsJob {
@@ -43,9 +92,81 @@ export interface KnowledgeDiagnosticsJob {
   failedReason?: string;
 }
 
+export interface KnowledgeCompileStatus {
+  spaceId: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  jobId: string;
+  lastRunId: string;
+  durationMs: number | null;
+  sourceCount: number;
+  importedArtifactCount: number;
+  quarantinedArtifactCount: number;
+  failureReason?: string;
+  updatedAt?: number;
+}
+
+export interface KnowledgeQuarantinedArtifact {
+  id: string;
+  workspaceId: string;
+  spaceId: string;
+  artifactId: string | null;
+  artifactKind: string | null;
+  compilerRunId: string | null;
+  compileTaskId: string | null;
+  reasonCodes: string[];
+  createdAt: string;
+}
+
 export interface KnowledgeDiagnosticsResult {
   pages: KnowledgeDiagnosticsPage[];
   jobs: KnowledgeDiagnosticsJob[];
+  compileStatuses: KnowledgeCompileStatus[];
+  retrieval?: KnowledgeRetrievalDiagnosticsSummary;
+  quarantines: KnowledgeQuarantinedArtifact[];
+  quality?: KnowledgeQualityReport;
+}
+
+export interface KnowledgeRetrievalDiagnosticsSummary {
+  sampleCount: number;
+  zeroHitRate: number;
+  embeddingFallbackRate: number;
+  averageAuthorizedCandidateCount: number;
+  averageFilteredCandidateCount: number;
+}
+
+export interface KnowledgeQualitySummary {
+  pageCount: number;
+  compiledPageCount: number;
+  stalePageCount: number;
+  missingSourcePageCount: number;
+  missingChunkPageCount: number;
+  missingEmbeddingPageCount: number;
+  healthScore: number;
+}
+
+export interface KnowledgeSpaceHealth {
+  spaceId: string;
+  spaceName: string;
+  pageCount: number;
+  compiledPageCount: number;
+  stalePageCount: number;
+  missingChunkPageCount: number;
+  missingEmbeddingPageCount: number;
+  oldestStaleSourceAgeHours: number | null;
+  healthScore: number;
+}
+
+export interface KnowledgeQualityIssue {
+  code: string;
+  severity: "high" | "medium" | "low";
+  message: string;
+  affectedPageCount: number;
+}
+
+export interface KnowledgeQualityReport {
+  summary: KnowledgeQualitySummary;
+  spaces: KnowledgeSpaceHealth[];
+  topIssues: KnowledgeQualityIssue[];
 }
 
 export interface KnowledgeGraphNode {
@@ -54,6 +175,8 @@ export interface KnowledgeGraphNode {
   spaceId: string;
   sourcePageId?: string;
   degree: number;
+  artifactKind?: string;
+  communityId?: string;
 }
 
 export interface KnowledgeGraphEdge {
@@ -62,9 +185,18 @@ export interface KnowledgeGraphEdge {
   to: string;
   type: "link" | "semantic";
   label: string;
+  weight: number;
+  reasons: string[];
+}
+
+export interface KnowledgeGraphInsights {
+  isolatedNodeIds: string[];
+  bridgeNodeIds: string[];
+  communityCount: number;
 }
 
 export interface KnowledgeGraphResult {
   nodes: KnowledgeGraphNode[];
   edges: KnowledgeGraphEdge[];
+  insights: KnowledgeGraphInsights;
 }

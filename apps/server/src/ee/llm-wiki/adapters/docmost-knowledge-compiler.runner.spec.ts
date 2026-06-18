@@ -51,6 +51,7 @@ describe('DocmostKnowledgeCompilerRunner', () => {
           contentMarkdown:
             '# 项目架构\n\nChaterm Flutter 使用分层架构。\n\nUI、service、data 模块按职责拆分。',
           sourcePageIds: ['page-1'],
+          artifactKind: 'source_summary',
           compilerVersion: 'docmost-internal@1',
           promptVersion: 'docmost-enterprise-kb-v1',
           compilerRunId: 'workspace-1:space-1:2026-06-16T00:00:00.000Z',
@@ -64,9 +65,25 @@ describe('DocmostKnowledgeCompilerRunner', () => {
               contentHash: 'hash-1',
             },
           ],
+          claims: [
+            {
+              text: '项目架构: Chaterm Flutter 使用分层架构。',
+              confidence: null,
+              inputSourceRefs: [
+                {
+                  workspaceId: 'workspace-1',
+                  spaceId: 'space-1',
+                  sourcePageId: 'page-1',
+                  sourceVersion: 'v1',
+                  contentHash: 'hash-1',
+                },
+              ],
+            },
+          ],
           chunks: [
             {
               text: 'Chaterm Flutter 使用分层架构。\n\nUI、service、data 模块按职责拆分。',
+              claimIndex: 0,
               inputSourceRefs: [
                 {
                   workspaceId: 'workspace-1',
@@ -82,6 +99,116 @@ describe('DocmostKnowledgeCompilerRunner', () => {
       ],
       diagnostics: { warnings: [], errors: [] },
     });
+  });
+
+  it('creates a typed overview artifact with union lineage for multi-source spaces', async () => {
+    const runner = new TestDocmostKnowledgeCompilerRunner(
+      () => new Date('2026-06-16T00:00:00.000Z'),
+    );
+
+    const result = await runner.compileSpace({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      compilerVersion: 'docmost-internal@1',
+      promptVersion: 'docmost-enterprise-kb-v1',
+      sources: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageId: 'page-1',
+          sourceVersion: 'v1',
+          contentHash: 'hash-1',
+          title: 'KMS 加密架构',
+          text: 'KMS 使用信封加密保护敏感字段。',
+          references: [],
+        },
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageId: 'page-2',
+          sourceVersion: 'v2',
+          contentHash: 'hash-2',
+          title: '密钥轮换策略',
+          text: '密钥按季度轮换并保留审计记录。',
+          references: [],
+        },
+      ],
+    });
+
+    const overview = result.artifacts.find(
+      (artifact) => artifact.artifactKind === 'overview',
+    );
+
+    expect(overview).toEqual(
+      expect.objectContaining({
+        artifactKind: 'overview',
+        title: 'Space knowledge overview',
+        sourcePageIds: ['page-1', 'page-2'],
+        compileTaskId: 'docmost-overview:space-1',
+        inputSourceRefs: [
+          {
+            workspaceId: 'workspace-1',
+            spaceId: 'space-1',
+            sourcePageId: 'page-1',
+            sourceVersion: 'v1',
+            contentHash: 'hash-1',
+          },
+          {
+            workspaceId: 'workspace-1',
+            spaceId: 'space-1',
+            sourcePageId: 'page-2',
+            sourceVersion: 'v2',
+            contentHash: 'hash-2',
+          },
+        ],
+        claims: [
+          {
+            text: 'This overview summarizes 2 source pages in the selected space.',
+            confidence: null,
+            inputSourceRefs: [
+              {
+                workspaceId: 'workspace-1',
+                spaceId: 'space-1',
+                sourcePageId: 'page-1',
+                sourceVersion: 'v1',
+                contentHash: 'hash-1',
+              },
+              {
+                workspaceId: 'workspace-1',
+                spaceId: 'space-1',
+                sourcePageId: 'page-2',
+                sourceVersion: 'v2',
+                contentHash: 'hash-2',
+              },
+            ],
+          },
+        ],
+        chunks: [
+          {
+            text:
+              'KMS 加密架构: KMS 使用信封加密保护敏感字段。\n\n' +
+              '密钥轮换策略: 密钥按季度轮换并保留审计记录。',
+            claimIndex: 0,
+            inputSourceRefs: [
+              {
+                workspaceId: 'workspace-1',
+                spaceId: 'space-1',
+                sourcePageId: 'page-1',
+                sourceVersion: 'v1',
+                contentHash: 'hash-1',
+              },
+              {
+                workspaceId: 'workspace-1',
+                spaceId: 'space-1',
+                sourcePageId: 'page-2',
+                sourceVersion: 'v2',
+                contentHash: 'hash-2',
+              },
+            ],
+          },
+        ],
+      }),
+    );
   });
 
   it('skips empty sources and reports diagnostics', async () => {

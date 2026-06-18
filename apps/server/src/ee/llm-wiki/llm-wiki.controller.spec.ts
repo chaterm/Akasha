@@ -10,6 +10,7 @@ import { KnowledgeImportService } from './services/knowledge-import.service';
 import { LlmWikiController } from './llm-wiki.controller';
 import { KnowledgeDiagnosticsService } from './services/knowledge-diagnostics.service';
 import { KnowledgeGraphService } from './services/knowledge-graph.service';
+import { KnowledgeQueryAuditRepo } from '@docmost/db/repos/llm-wiki/knowledge-query-audit.repo';
 
 describe('LlmWikiController', () => {
   it('rejects queries when workspace AI knowledge chat is disabled', async () => {
@@ -35,14 +36,35 @@ describe('LlmWikiController', () => {
       isEnabledForWorkspace: jest.fn().mockReturnValue(true),
       chat: jest.fn().mockResolvedValue({
         answer: 'Use Kafka for async events.',
-        citations: [{ sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1' }],
+        citations: [
+          { sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1' },
+        ],
         completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+        retrievalDiagnostics: {
+          mode: 'high_completeness',
+          queryEmbeddingAvailable: false,
+          candidateSourceCount: 4,
+          sidecarEligibleSourceCount: 2,
+          sidecarFallbackSourceCount: 0,
+          sidecarFilteredSourceCount: 2,
+          candidateChunkCount: 3,
+          rankedCandidateCount: 3,
+          authorizedChunkCount: 1,
+          filteredChunkCount: 2,
+        },
       }),
     };
     const auditService = {
       log: jest.fn(),
     };
-    const controller = createController({ chatService, auditService });
+    const queryAuditRepo = {
+      recordQuery: jest.fn().mockResolvedValue(undefined),
+    };
+    const controller = createController({
+      chatService,
+      auditService,
+      queryAuditRepo,
+    });
 
     await expect(
       controller.queryKnowledge(
@@ -74,6 +96,28 @@ describe('LlmWikiController', () => {
       },
     });
     expect(JSON.stringify(auditService.log.mock.calls)).not.toContain(
+      'How do we use Kafka?',
+    );
+    expect(queryAuditRepo.recordQuery).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      queryHash: expect.stringMatching(/^sha256:/),
+      retrievalMode: 'high_completeness',
+      authorizedCapsuleCount: 1,
+      metadata: {
+        spaceIds: ['space-1'],
+        queryEmbeddingAvailable: false,
+        candidateSourceCount: 4,
+        sidecarEligibleSourceCount: 2,
+        sidecarFallbackSourceCount: 0,
+        sidecarFilteredSourceCount: 2,
+        candidateChunkCount: 3,
+        rankedCandidateCount: 3,
+        authorizedChunkCount: 1,
+        filteredChunkCount: 2,
+      },
+    });
+    expect(JSON.stringify(queryAuditRepo.recordQuery.mock.calls)).not.toContain(
       'How do we use Kafka?',
     );
   });
@@ -269,16 +313,40 @@ describe('LlmWikiController', () => {
         adminUser(),
         workspace(),
       ),
-    ).resolves.toEqual({ queuedSpaceCount: 2 });
+    ).resolves.toEqual({
+      queuedSpaceCount: 2,
+      jobIds: [
+        expect.stringMatching(/^knowledge-compile-space:workspace-1:space-1:/),
+        expect.stringMatching(/^knowledge-compile-space:workspace-1:space-2:/),
+      ],
+    });
 
-    expect(aiQueue.add).toHaveBeenCalledWith(QueueJob.KNOWLEDGE_COMPILE_SPACE, {
-      workspaceId: 'workspace-1',
-      spaceId: 'space-1',
-    });
-    expect(aiQueue.add).toHaveBeenCalledWith(QueueJob.KNOWLEDGE_COMPILE_SPACE, {
-      workspaceId: 'workspace-1',
-      spaceId: 'space-2',
-    });
+    expect(aiQueue.add).toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_COMPILE_SPACE,
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        trigger: 'manual_compile',
+      },
+      expect.objectContaining({
+        jobId: expect.stringMatching(
+          /^knowledge-compile-space:workspace-1:space-1:/,
+        ),
+      }),
+    );
+    expect(aiQueue.add).toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_COMPILE_SPACE,
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-2',
+        trigger: 'manual_compile',
+      },
+      expect.objectContaining({
+        jobId: expect.stringMatching(
+          /^knowledge-compile-space:workspace-1:space-2:/,
+        ),
+      }),
+    );
     expect(auditService.log).toHaveBeenCalledWith({
       event: AuditEvent.KNOWLEDGE_COMPILE_QUEUED,
       resourceType: AuditResource.KNOWLEDGE,
@@ -290,11 +358,93 @@ describe('LlmWikiController', () => {
     });
   });
 
+  it('queues admin space actions with explicit operational job ids', async () => {
+    const aiQueue = {
+      add: jest.fn().mockResolvedValue(undefined),
+    };
+    const controller = createController({ aiQueue });
+
+    await expect(
+      controller.runAdminSpaceAction(
+        { action: 'reindex_access', spaceIds: ['space-1'] },
+        adminUser(),
+        workspace(),
+      ),
+    ).resolves.toEqual({
+      action: 'reindex_access',
+      queuedSpaceCount: 1,
+      jobIds: [
+        expect.stringMatching(/^knowledge-reindex-access:workspace-1:space-1:/),
+      ],
+    });
+
+    await controller.runAdminSpaceAction(
+      { action: 'mark_stale', spaceIds: ['space-1'] },
+      adminUser(),
+      workspace(),
+    );
+    await controller.runAdminSpaceAction(
+      { action: 'rebuild_embeddings', spaceIds: ['space-1'] },
+      adminUser(),
+      workspace(),
+    );
+
+    expect(aiQueue.add).toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_REINDEX_ACCESS,
+      { workspaceId: 'workspace-1', spaceId: 'space-1' },
+      expect.objectContaining({
+        jobId: expect.stringMatching(
+          /^knowledge-reindex-access:workspace-1:space-1:/,
+        ),
+      }),
+    );
+    expect(aiQueue.add).toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_MARK_SOURCES_STALE,
+      { workspaceId: 'workspace-1', spaceId: 'space-1' },
+      expect.objectContaining({
+        jobId: expect.stringMatching(
+          /^knowledge-mark-stale:workspace-1:space-1:/,
+        ),
+      }),
+    );
+    expect(aiQueue.add).toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_COMPILE_SPACE,
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        trigger: 'rebuild_embeddings',
+      },
+      expect.objectContaining({
+        jobId: expect.stringMatching(
+          /^knowledge-compile-space:workspace-1:space-1:/,
+        ),
+      }),
+    );
+  });
+
+  it('rejects admin space actions from workspace members', async () => {
+    const aiQueue = {
+      add: jest.fn(),
+    };
+    const controller = createController({ aiQueue });
+
+    await expect(
+      controller.runAdminSpaceAction(
+        { action: 'reindex_access', spaceIds: ['space-1'] },
+        user(),
+        workspace(),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(aiQueue.add).not.toHaveBeenCalled();
+  });
+
   it('returns knowledge diagnostics for admins', async () => {
     const diagnosticsService = {
       getWorkspaceDiagnostics: jest.fn().mockResolvedValue({
         pages: [{ pageId: 'page-1', title: 'Kafka', knowledgeChunkCount: 2 }],
         jobs: [{ id: 'job-1', name: QueueJob.KNOWLEDGE_COMPILE_SPACE }],
+        compileStatuses: [],
       }),
     };
     const controller = createController({ diagnosticsService });
@@ -308,6 +458,7 @@ describe('LlmWikiController', () => {
     ).resolves.toEqual({
       pages: [{ pageId: 'page-1', title: 'Kafka', knowledgeChunkCount: 2 }],
       jobs: [{ id: 'job-1', name: QueueJob.KNOWLEDGE_COMPILE_SPACE }],
+      compileStatuses: [],
     });
 
     expect(diagnosticsService.getWorkspaceDiagnostics).toHaveBeenCalledWith({
@@ -331,14 +482,17 @@ describe('LlmWikiController', () => {
   });
 });
 
-function createController(overrides: {
-  chatService?: Partial<AiKnowledgeChatService>;
-  auditService?: Partial<IAuditService>;
-  importService?: Partial<KnowledgeImportService>;
-  diagnosticsService?: Partial<KnowledgeDiagnosticsService>;
-  graphService?: Partial<KnowledgeGraphService>;
-  aiQueue?: { add: jest.Mock };
-} = {}) {
+function createController(
+  overrides: {
+    chatService?: Partial<AiKnowledgeChatService>;
+    auditService?: Partial<IAuditService>;
+    importService?: Partial<KnowledgeImportService>;
+    diagnosticsService?: Partial<KnowledgeDiagnosticsService>;
+    graphService?: Partial<KnowledgeGraphService>;
+    queryAuditRepo?: Partial<KnowledgeQueryAuditRepo>;
+    aiQueue?: { add: jest.Mock };
+  } = {},
+) {
   return new LlmWikiController(
     {
       isEnabledForWorkspace: jest.fn().mockReturnValue(true),
@@ -361,6 +515,10 @@ function createController(overrides: {
       getSpaceGraph: jest.fn(),
       ...overrides.graphService,
     } as unknown as KnowledgeGraphService,
+    {
+      recordQuery: jest.fn(),
+      ...overrides.queryAuditRepo,
+    } as unknown as KnowledgeQueryAuditRepo,
     {
       add: jest.fn(),
       ...overrides.aiQueue,

@@ -8,7 +8,9 @@ type QueryCall = {
 class FakeKyselyQuery {
   readonly calls: QueryCall[] = [];
 
-  constructor(private readonly result: unknown[] = []) {}
+  constructor(
+    private readonly results: unknown[] | Record<string, unknown[]> = [],
+  ) {}
 
   insertInto(...args: unknown[]) {
     this.calls.push({ method: 'insertInto', args });
@@ -32,6 +34,11 @@ class FakeKyselyQuery {
 
   selectFrom(...args: unknown[]) {
     this.calls.push({ method: 'selectFrom', args });
+    return this;
+  }
+
+  select(...args: unknown[]) {
+    this.calls.push({ method: 'select', args });
     return this;
   }
 
@@ -62,12 +69,25 @@ class FakeKyselyQuery {
 
   async execute() {
     this.calls.push({ method: 'execute', args: [] });
-    return this.result;
+    return this.resultForLastTable();
   }
 
   async executeTakeFirstOrThrow() {
     this.calls.push({ method: 'executeTakeFirstOrThrow', args: [] });
-    return this.result[0];
+    return this.resultForLastTable()[0];
+  }
+
+  private resultForLastTable(): unknown[] {
+    if (Array.isArray(this.results)) return this.results;
+
+    const lastTableCall = [...this.calls]
+      .reverse()
+      .find((call) =>
+        ['selectFrom', 'updateTable', 'insertInto', 'deleteFrom'].includes(
+          call.method,
+        ),
+      );
+    return this.results[String(lastTableCall?.args[0])] ?? [];
   }
 }
 
@@ -158,7 +178,10 @@ describe('KnowledgeAccessPolicyRepo', () => {
 
     expect(query.calls).toEqual([
       { method: 'updateTable', args: ['knowledgeSourceAccessPolicy'] },
-      { method: 'set', args: [expect.objectContaining({ staleAt: expect.any(Date) })] },
+      {
+        method: 'set',
+        args: [expect.objectContaining({ staleAt: expect.any(Date) })],
+      },
       { method: 'where', args: ['workspaceId', '=', 'workspace-1'] },
       { method: 'where', args: ['sourceSpaceId', '=', 'space-1'] },
       { method: 'execute', args: [] },
@@ -286,5 +309,164 @@ describe('KnowledgeAccessPolicyRepo', () => {
       },
       { method: 'execute', args: [] },
     ]);
+  });
+
+  it('evaluates sidecar source eligibility against supplied user and group principals', async () => {
+    const staleAt = new Date('2026-06-16T00:00:00.000Z');
+    const query = new FakeKyselyQuery({
+      knowledgeSourceAccessPolicy: [
+        {
+          sourcePageId: 'source-open',
+          sourceSpaceId: 'space-1',
+          policyHash: 'hash-open',
+          restrictedAncestorCount: 0,
+          staleAt: null,
+          updatedAt: new Date('2026-06-15T00:00:00.000Z'),
+        },
+        {
+          sourcePageId: 'source-group',
+          sourceSpaceId: 'space-1',
+          policyHash: 'hash-group',
+          restrictedAncestorCount: 2,
+          staleAt: null,
+          updatedAt: new Date('2026-06-15T00:00:00.000Z'),
+        },
+        {
+          sourcePageId: 'source-denied',
+          sourceSpaceId: 'space-1',
+          policyHash: 'hash-denied',
+          restrictedAncestorCount: 1,
+          staleAt: null,
+          updatedAt: new Date('2026-06-15T00:00:00.000Z'),
+        },
+        {
+          sourcePageId: 'source-empty',
+          sourceSpaceId: 'space-1',
+          policyHash: 'hash-empty',
+          restrictedAncestorCount: 1,
+          staleAt: null,
+          updatedAt: new Date('2026-06-15T00:00:00.000Z'),
+        },
+        {
+          sourcePageId: 'source-stale',
+          sourceSpaceId: 'space-1',
+          policyHash: 'hash-stale',
+          restrictedAncestorCount: 0,
+          staleAt,
+          updatedAt: new Date('2026-06-15T00:00:00.000Z'),
+        },
+      ],
+      knowledgeSourceAccessRequirements: [
+        {
+          sourcePageId: 'source-group',
+          requirementId: 'group-req-1',
+        },
+        {
+          sourcePageId: 'source-group',
+          requirementId: 'group-req-2',
+        },
+        {
+          sourcePageId: 'source-denied',
+          requirementId: 'denied-req',
+        },
+        {
+          sourcePageId: 'source-empty',
+          requirementId: 'empty-req',
+        },
+      ],
+      knowledgeSourceAccessPrincipals: [
+        {
+          sourcePageId: 'source-group',
+          requirementId: 'group-req-1',
+          principalType: 'user',
+          principalId: 'user-1',
+        },
+        {
+          sourcePageId: 'source-group',
+          requirementId: 'group-req-2',
+          principalType: 'group',
+          principalId: 'group-1',
+        },
+        {
+          sourcePageId: 'source-denied',
+          requirementId: 'denied-req',
+          principalType: 'user',
+          principalId: 'user-2',
+        },
+      ],
+    });
+    const repo = createRepo(query);
+
+    await expect(
+      repo.evaluateSourceEligibilityForPrincipals({
+        workspaceId: 'workspace-1',
+        sourcePageIds: [
+          'source-open',
+          'source-group',
+          'source-denied',
+          'source-empty',
+          'source-stale',
+          'source-missing',
+        ],
+        principals: [
+          { principalType: 'user', principalId: 'user-1' },
+          { principalType: 'group', principalId: 'group-1' },
+        ],
+      }),
+    ).resolves.toEqual([
+      {
+        sourcePageId: 'source-open',
+        sourceSpaceId: 'space-1',
+        status: 'eligible',
+        policyHash: 'hash-open',
+        staleAt: null,
+        updatedAt: new Date('2026-06-15T00:00:00.000Z'),
+      },
+      {
+        sourcePageId: 'source-group',
+        sourceSpaceId: 'space-1',
+        status: 'eligible',
+        policyHash: 'hash-group',
+        staleAt: null,
+        updatedAt: new Date('2026-06-15T00:00:00.000Z'),
+      },
+      {
+        sourcePageId: 'source-denied',
+        sourceSpaceId: 'space-1',
+        status: 'denied_by_restricted_ancestor',
+        policyHash: 'hash-denied',
+        staleAt: null,
+        updatedAt: new Date('2026-06-15T00:00:00.000Z'),
+      },
+      {
+        sourcePageId: 'source-empty',
+        sourceSpaceId: 'space-1',
+        status: 'empty_restricted_ancestor',
+        policyHash: 'hash-empty',
+        staleAt: null,
+        updatedAt: new Date('2026-06-15T00:00:00.000Z'),
+      },
+      {
+        sourcePageId: 'source-stale',
+        sourceSpaceId: 'space-1',
+        status: 'stale_policy',
+        policyHash: 'hash-stale',
+        staleAt,
+        updatedAt: new Date('2026-06-15T00:00:00.000Z'),
+      },
+      {
+        sourcePageId: 'source-missing',
+        sourceSpaceId: null,
+        status: 'missing_policy',
+      },
+    ]);
+
+    expect(query.calls).toEqual(
+      expect.arrayContaining([
+        { method: 'selectFrom', args: ['knowledgeSourceAccessPolicy'] },
+        { method: 'selectFrom', args: ['knowledgeSourceAccessRequirements'] },
+        { method: 'selectFrom', args: ['knowledgeSourceAccessPrincipals'] },
+      ]),
+    );
   });
 });

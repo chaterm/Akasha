@@ -397,6 +397,18 @@ export interface KnowledgeQueryAudit {
   workspaceId: string;
 }
 
+export interface KnowledgeQuarantinedArtifacts {
+  artifactId: string | null;
+  artifactKind: string | null;
+  compileTaskId: string | null;
+  compilerRunId: string | null;
+  createdAt: Generated<Timestamp>;
+  id: Generated<string>;
+  reasonCodes: Json;
+  spaceId: string;
+  workspaceId: string;
+}
+
 export interface KnowledgeSourceAccessPolicy {
   policyHash: string;
   policyVersion: Generated<number>;
@@ -817,6 +829,7 @@ export interface DB {
   knowledgePages: KnowledgePages;
   knowledgePageSources: KnowledgePageSources;
   knowledgeQueryAudit: KnowledgeQueryAudit;
+  knowledgeQuarantinedArtifacts: KnowledgeQuarantinedArtifacts;
   knowledgeSourceAccessPolicy: KnowledgeSourceAccessPolicy;
   knowledgeSourceAccessPrincipals: KnowledgeSourceAccessPrincipals;
   knowledgeSourceAccessRequirements: KnowledgeSourceAccessRequirements;

@@ -117,6 +117,11 @@ export interface IApprovalRejectedNotificationJob {
 export interface IKnowledgeCompileSpaceJob {
   workspaceId: string;
   spaceId: string;
+  trigger?:
+    | 'manual_compile'
+    | 'retry_compile'
+    | 'rebuild_embeddings'
+    | 'page_update';
 }
 
 export interface IKnowledgeReindexAccessJob {
@@ -127,5 +132,6 @@ export interface IKnowledgeReindexAccessJob {
 
 export interface IKnowledgeMarkSourcesStaleJob {
   workspaceId: string;
-  sourcePageIds: string[];
+  sourcePageIds?: string[];
+  spaceId?: string;
 }

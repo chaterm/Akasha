@@ -1,15 +1,25 @@
-import { PointerEvent, WheelEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  PointerEvent,
+  WheelEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActionIcon,
   Alert,
   Badge,
   Button,
+  Checkbox,
   Container,
   Group,
   Loader,
   Select,
   Stack,
   Text,
+  TextInput,
   Title,
   Tooltip,
 } from "@mantine/core";
@@ -21,6 +31,7 @@ import {
   IconArrowLeft,
   IconGitFork,
   IconRefresh,
+  IconSearch,
   IconZoomIn,
   IconZoomOut,
 } from "@tabler/icons-react";
@@ -35,6 +46,7 @@ import { getKnowledgeGraph } from "../services/knowledge-service";
 import type {
   KnowledgeGraphEdge,
   KnowledgeGraphNode,
+  KnowledgeGraphResult,
 } from "../types/knowledge.types";
 import classes from "../styles/knowledge-graph.module.css";
 
@@ -45,6 +57,15 @@ const MIN_ZOOM = 0.35;
 const MAX_ZOOM = 3.2;
 const ZOOM_STEP = 1.2;
 const ENABLE_GRAPH_ANIMATION = import.meta.env.MODE !== "test";
+const EMPTY_GRAPH: KnowledgeGraphResult = {
+  nodes: [],
+  edges: [],
+  insights: {
+    isolatedNodeIds: [],
+    bridgeNodeIds: [],
+    communityCount: 0,
+  },
+};
 
 type GraphTransform = {
   x: number;
@@ -77,10 +98,13 @@ export default function KnowledgeGraphPage() {
   const { t } = useTranslation();
   const { spaceSlug } = useParams();
   const [spaceId, setSpaceId] = useState<string | null>(null);
-  const {
-    data: routeSpace,
-    isLoading: routeSpaceLoading,
-  } = useGetSpaceBySlugQuery(spaceSlug ?? "");
+  const [search, setSearch] = useState("");
+  const [edgeTypes, setEdgeTypes] = useState<KnowledgeGraphEdge["type"][]>([
+    "link",
+    "semantic",
+  ]);
+  const { data: routeSpace, isLoading: routeSpaceLoading } =
+    useGetSpaceBySlugQuery(spaceSlug ?? "");
   const { data: spacesData, isLoading: spacesLoading } = useGetSpacesQuery({
     limit: 100,
   });
@@ -114,33 +138,44 @@ export default function KnowledgeGraphPage() {
     enabled: Boolean(spaceId),
   });
 
-  const graph = graphQuery.data ?? { nodes: [], edges: [] };
+  const graph = graphQuery.data ?? EMPTY_GRAPH;
+  const visibleGraph = useMemo(
+    () => filterGraph(graph, search, edgeTypes),
+    [edgeTypes, graph, search],
+  );
   const initialLayout = useMemo(
-    () => buildInitialGraphLayout(graph.nodes, graph.edges),
-    [graph.nodes, graph.edges],
+    () => buildInitialGraphLayout(visibleGraph.nodes, visibleGraph.edges),
+    [visibleGraph.nodes, visibleGraph.edges],
   );
   const svgRef = useRef<SVGSVGElement | null>(null);
   const animationRef = useRef<number | null>(null);
   const simulationTickRef = useRef(0);
   const [positions, setPositions] = useState<Map<string, SimulatedNode>>(() =>
-    initializeSimulation(graph.nodes, initialLayout),
+    initializeSimulation(visibleGraph.nodes, initialLayout),
   );
   const [transform, setTransform] = useState<GraphTransform>(() =>
-    fitGraphTransform(graph.nodes, initialLayout),
+    fitGraphTransform(visibleGraph.nodes, initialLayout),
   );
   const [dragState, setDragState] = useState<DragState | null>(null);
-  const [nodeDragState, setNodeDragState] = useState<NodeDragState | null>(null);
+  const [nodeDragState, setNodeDragState] = useState<NodeDragState | null>(
+    null,
+  );
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [activeEdgeId, setActiveEdgeId] = useState<string | null>(null);
 
   const fitGraph = useCallback(() => {
-    setTransform(fitGraphTransform(graph.nodes, positions));
-  }, [graph.nodes, positions]);
+    setTransform(fitGraphTransform(visibleGraph.nodes, positions));
+  }, [positions, visibleGraph.nodes]);
 
   useEffect(() => {
-    const nextPositions = initializeSimulation(graph.nodes, initialLayout);
+    const nextPositions = initializeSimulation(
+      visibleGraph.nodes,
+      initialLayout,
+    );
     setPositions(nextPositions);
-    setTransform(fitGraphTransform(graph.nodes, initialLayout));
+    setTransform(fitGraphTransform(visibleGraph.nodes, initialLayout));
     simulationTickRef.current = 0;
-  }, [graph.nodes, initialLayout]);
+  }, [initialLayout, visibleGraph.nodes]);
 
   useEffect(() => {
     if (!ENABLE_GRAPH_ANIMATION) return;
@@ -159,7 +194,7 @@ export default function KnowledgeGraphPage() {
       setPositions((current) =>
         simulateGraphStep({
           current,
-          edges: graph.edges,
+          edges: visibleGraph.edges,
           width: GRAPH_WIDTH,
           height: GRAPH_HEIGHT,
         }),
@@ -182,7 +217,7 @@ export default function KnowledgeGraphPage() {
         animationRef.current = null;
       }
     };
-  }, [graph.edges, nodeDragState, positions.size]);
+  }, [nodeDragState, positions.size, visibleGraph.edges]);
 
   const zoomAt = useCallback((factor: number, center = graphCenter()) => {
     setTransform((current) => {
@@ -287,15 +322,15 @@ export default function KnowledgeGraphPage() {
         </title>
       </Helmet>
 
-      <Container fluid pt="xl" pb="xl" className={classes.pageContainer}>
-        <Stack gap="lg">
+      <Container fluid className={classes.pageContainer}>
+        <Stack gap="lg" className={classes.pageStack}>
           <Group justify="space-between" align="center">
             <Group gap="sm">
               <IconGitFork size={24} stroke={1.8} />
               <Title order={1} size="h3">
                 {t("Relationship graph")}
               </Title>
-              <Badge variant="light">{graph.nodes.length}</Badge>
+              <Badge variant="light">{visibleGraph.nodes.length}</Badge>
             </Group>
             <Group gap="sm">
               <Button
@@ -328,9 +363,61 @@ export default function KnowledgeGraphPage() {
               disabled={isSpaceRoute || spacesLoading || routeSpaceLoading}
               className={classes.spaceSelect}
             />
+            <TextInput
+              value={search}
+              onChange={(event) => setSearch(event.currentTarget.value)}
+              label={t("Search")}
+              leftSection={<IconSearch size={16} />}
+              className={classes.searchInput}
+            />
+            <Checkbox
+              checked={edgeTypes.includes("link")}
+              onChange={(event) =>
+                setEdgeTypes((current) =>
+                  event.currentTarget.checked
+                    ? uniqueEdgeTypes([...current, "link"])
+                    : current.filter((type) => type !== "link"),
+                )
+              }
+              label={t("Links")}
+            />
+            <Checkbox
+              checked={edgeTypes.includes("semantic")}
+              onChange={(event) =>
+                setEdgeTypes((current) =>
+                  event.currentTarget.checked
+                    ? uniqueEdgeTypes([...current, "semantic"])
+                    : current.filter((type) => type !== "semantic"),
+                )
+              }
+              label={t("Semantic")}
+            />
             {(spacesLoading || routeSpaceLoading || graphQuery.isLoading) && (
               <Loader size="sm" />
             )}
+          </Group>
+
+          <Group gap="xs">
+            <Badge variant="light">
+              {t("Links")}:{" "}
+              {visibleGraph.edges.filter((edge) => edge.type === "link").length}
+            </Badge>
+            <Badge variant="light" color="green">
+              {t("Semantic")}:{" "}
+              {
+                visibleGraph.edges.filter((edge) => edge.type === "semantic")
+                  .length
+              }
+            </Badge>
+            <Badge variant="light" color="gray">
+              {t("Communities")}: {graph.insights.communityCount}
+            </Badge>
+            <Badge variant="light" color="yellow">
+              {t("Isolated")}: {graph.insights.isolatedNodeIds.length}
+            </Badge>
+            <Badge variant="light" color="blue">
+              {t("Bridge")}: {graph.insights.bridgeNodeIds.length}
+            </Badge>
           </Group>
 
           {graphQuery.isError && (
@@ -340,7 +427,7 @@ export default function KnowledgeGraphPage() {
           )}
 
           <section className={classes.graphPanel}>
-            {graph.nodes.length === 0 && !graphQuery.isLoading ? (
+            {visibleGraph.nodes.length === 0 && !graphQuery.isLoading ? (
               <div className={classes.emptyState}>
                 <IconGitFork size={36} stroke={1.4} />
                 <Text fw={600}>{t("No relationship graph yet")}</Text>
@@ -397,7 +484,10 @@ export default function KnowledgeGraphPage() {
                       refY="4"
                       orient="auto"
                     >
-                      <path d="M0,0 L8,4 L0,8 Z" className={classes.arrowHead} />
+                      <path
+                        d="M0,0 L8,4 L0,8 Z"
+                        className={classes.arrowHead}
+                      />
                     </marker>
                   </defs>
 
@@ -405,29 +495,35 @@ export default function KnowledgeGraphPage() {
                     data-testid="knowledge-graph-viewport"
                     transform={`translate(${transform.x} ${transform.y}) scale(${transform.scale})`}
                   >
-                    {graph.edges.map((edge) => {
+                    {visibleGraph.edges.map((edge) => {
                       const from = positions.get(edge.from);
                       const to = positions.get(edge.to);
                       if (!from || !to) return null;
+                      const isActive =
+                        activeEdgeId === edge.id ||
+                        activeNodeId === edge.from ||
+                        activeNodeId === edge.to;
 
                       return (
-                        <g key={edge.id}>
+                        <g
+                          key={edge.id}
+                          className={classes.edgeGroup}
+                          onMouseEnter={() => setActiveEdgeId(edge.id)}
+                          onMouseLeave={() => setActiveEdgeId(null)}
+                        >
                           <line
                             x1={from.x}
                             y1={from.y}
                             x2={to.x}
                             y2={to.y}
-                            className={
-                              edge.type === "semantic"
-                                ? classes.semanticEdge
-                                : classes.linkEdge
-                            }
+                            className={`${edge.type === "semantic" ? classes.semanticEdge : classes.linkEdge} ${isActive ? classes.edgeActive : classes.edgeInactive}`}
                             markerEnd="url(#knowledge-graph-arrow)"
                           />
                           <text
                             x={(from.x + to.x) / 2}
                             y={(from.y + to.y) / 2 - 8}
-                            className={classes.edgeLabel}
+                            className={`${classes.edgeLabel} ${isActive ? classes.edgeLabelVisible : ""}`}
+                            data-visible={isActive ? "true" : "false"}
                           >
                             {edge.label}
                           </text>
@@ -435,7 +531,7 @@ export default function KnowledgeGraphPage() {
                       );
                     })}
 
-                    {graph.nodes.map((node) => {
+                    {visibleGraph.nodes.map((node) => {
                       const point = positions.get(node.id);
                       if (!point) return null;
                       const radius = nodeRadius(node);
@@ -447,6 +543,8 @@ export default function KnowledgeGraphPage() {
                           onPointerDown={(event) =>
                             handleNodePointerDown(event, node.id)
                           }
+                          onMouseEnter={() => setActiveNodeId(node.id)}
+                          onMouseLeave={() => setActiveNodeId(null)}
                         >
                           <circle
                             cx={point.x}
@@ -517,6 +615,58 @@ function fitGraphTransform(
     x: GRAPH_WIDTH / 2 - ((minX + maxX) / 2) * scale,
     y: GRAPH_HEIGHT / 2 - ((minY + maxY) / 2) * scale,
   };
+}
+
+function filterGraph(
+  graph: KnowledgeGraphResult,
+  search: string,
+  edgeTypes: KnowledgeGraphEdge["type"][],
+): KnowledgeGraphResult {
+  const query = search.trim().toLowerCase();
+  const edgeTypeSet = new Set(edgeTypes);
+  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const matchingNodeIds = new Set(
+    graph.nodes
+      .filter((node) => !query || node.title.toLowerCase().includes(query))
+      .map((node) => node.id),
+  );
+  const matchingEdges = graph.edges.filter((edge) => {
+    if (!edgeTypeSet.has(edge.type)) return false;
+    if (!query) return true;
+
+    const from = nodesById.get(edge.from);
+    const to = nodesById.get(edge.to);
+    return (
+      edge.label.toLowerCase().includes(query) ||
+      Boolean(from?.title.toLowerCase().includes(query)) ||
+      Boolean(to?.title.toLowerCase().includes(query))
+    );
+  });
+  const visibleNodeIds = new Set(
+    query
+      ? [
+          ...matchingNodeIds,
+          ...matchingEdges.flatMap((edge) => [edge.from, edge.to]),
+        ]
+      : graph.nodes.map((node) => node.id),
+  );
+  const nodes = graph.nodes.filter((node) => visibleNodeIds.has(node.id));
+  const nodeSet = new Set(nodes.map((node) => node.id));
+  const edges = matchingEdges.filter(
+    (edge) => nodeSet.has(edge.from) && nodeSet.has(edge.to),
+  );
+
+  return {
+    nodes,
+    edges,
+    insights: graph.insights,
+  };
+}
+
+function uniqueEdgeTypes(
+  edgeTypes: KnowledgeGraphEdge["type"][],
+): KnowledgeGraphEdge["type"][] {
+  return [...new Set(edgeTypes)];
 }
 
 function clientPointToGraphPoint(

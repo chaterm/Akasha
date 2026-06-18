@@ -1,26 +1,46 @@
 import { Injectable } from '@nestjs/common';
-import { KnowledgeCapsuleRepo } from '@docmost/db/repos/llm-wiki/knowledge-capsule.repo';
+import { GroupUserRepo } from '@docmost/db/repos/group/group-user.repo';
+import { KnowledgeAccessPolicyRepo } from '@docmost/db/repos/llm-wiki/knowledge-access-policy.repo';
+import {
+  KnowledgeCapsuleRepo,
+  KnowledgeRetrievalSignal,
+} from '@docmost/db/repos/llm-wiki/knowledge-capsule.repo';
 import { KnowledgeChunk, KnowledgePage } from '@docmost/db/types/entity.types';
 import { UserRepo } from '@docmost/db/repos/user/user.repo';
 import { SpaceAuthorizationService } from '../../../core/space/services/space-authorization.service';
+import { ConfiguredKnowledgeEmbeddingProvider } from './knowledge-embedding-provider.service';
 import {
-  ConfiguredKnowledgeEmbeddingProvider,
-} from './knowledge-embedding-provider.service';
-import { KnowledgeRetrievalRankerService } from './knowledge-retrieval-ranker.service';
+  KnowledgeRetrievalRankReason,
+  KnowledgeRetrievalRankerService,
+} from './knowledge-retrieval-ranker.service';
 import { KnowledgeSourceAuthorizationService } from './knowledge-source-authorization.service';
 
 export const KNOWLEDGE_COMPLETENESS_NOTICE =
   'Some knowledge may be unavailable because access is permission-scoped.';
 
 export type KnowledgeRetrievalResult = {
-  mode: 'high_completeness';
+  mode: 'high_completeness' | 'high_completeness_fallback';
   chunks: Array<{
     chunk: KnowledgeChunk;
     page: KnowledgePage;
     sourcePageIds: string[];
+    rankReasons: KnowledgeRetrievalRankReason[];
   }>;
   capsules: KnowledgePage[];
   completenessNotice: typeof KNOWLEDGE_COMPLETENESS_NOTICE;
+  diagnostics: KnowledgeRetrievalDiagnostics;
+};
+
+export type KnowledgeRetrievalDiagnostics = {
+  queryEmbeddingAvailable: boolean;
+  candidateSourceCount: number;
+  sidecarEligibleSourceCount: number;
+  sidecarFallbackSourceCount: number;
+  sidecarFilteredSourceCount: number;
+  candidateChunkCount: number;
+  rankedCandidateCount: number;
+  authorizedChunkCount: number;
+  filteredChunkCount: number;
 };
 
 @Injectable()
@@ -29,6 +49,8 @@ export class KnowledgeRetrievalService {
     private readonly userRepo: UserRepo,
     private readonly spaceAuthorization: SpaceAuthorizationService,
     private readonly capsuleRepo: KnowledgeCapsuleRepo,
+    private readonly accessPolicyRepo: KnowledgeAccessPolicyRepo,
+    private readonly groupUserRepo: GroupUserRepo,
     private readonly sourceAuthorization: KnowledgeSourceAuthorizationService,
     private readonly embeddingProvider: ConfiguredKnowledgeEmbeddingProvider,
     private readonly ranker: KnowledgeRetrievalRankerService,
@@ -57,76 +79,187 @@ export class KnowledgeRetrievalService {
     }
 
     const queryEmbedding = await this.embeddingProvider.embedQuery(input.query);
-    if (!queryEmbedding) {
-      return emptyResult();
+    const queryEmbeddingAvailable = Boolean(queryEmbedding);
+    const signals = retrievalSignals(queryEmbedding);
+    const sourceCandidateLimit = candidateLimit * 10;
+    const candidateSourcePageIds =
+      await this.capsuleRepo.findCandidateDependencySourcePageIds({
+        workspaceId: input.workspaceId,
+        spaceIds: readableSpaceIds,
+        query: input.query,
+        signals,
+        sourceCandidateLimit,
+      });
+    if (candidateSourcePageIds.length === 0) {
+      return emptyResult({
+        queryEmbeddingAvailable,
+        candidateSourceCount: 0,
+      });
     }
 
-    const chunkCandidates = await this.capsuleRepo.findEmbeddedChunkCandidates({
+    const groupIds = await this.groupUserRepo.getUserGroupIds(input.userId);
+    const sidecarEligibility =
+      await this.accessPolicyRepo.evaluateSourceEligibilityForPrincipals({
+        workspaceId: input.workspaceId,
+        sourcePageIds: candidateSourcePageIds,
+        principals: [
+          { principalType: 'user', principalId: input.userId },
+          ...groupIds.map((groupId) => ({
+            principalType: 'group' as const,
+            principalId: groupId,
+          })),
+        ],
+      });
+    const eligibleSourcePageIds = sidecarEligibility
+      .filter((source) => source.status === 'eligible')
+      .map((source) => source.sourcePageId);
+    const fallbackSourcePageIds = sidecarEligibility
+      .filter(
+        (source) =>
+          source.status === 'missing_policy' ||
+          source.status === 'stale_policy',
+      )
+      .map((source) => source.sourcePageId);
+    const retrievalSourcePageIds =
+      eligibleSourcePageIds.length > 0
+        ? eligibleSourcePageIds
+        : fallbackSourcePageIds;
+    const mode =
+      eligibleSourcePageIds.length > 0
+        ? 'high_completeness'
+        : 'high_completeness_fallback';
+    if (retrievalSourcePageIds.length === 0) {
+      return emptyResult({
+        queryEmbeddingAvailable,
+        candidateSourceCount: candidateSourcePageIds.length,
+        sidecarEligibleSourceCount: eligibleSourcePageIds.length,
+        sidecarFallbackSourceCount: fallbackSourcePageIds.length,
+        sidecarFilteredSourceCount:
+          candidateSourcePageIds.length -
+          eligibleSourcePageIds.length -
+          fallbackSourcePageIds.length,
+      });
+    }
+
+    const chunkCandidates = await this.capsuleRepo.findSidecarEligibleChunks({
       workspaceId: input.workspaceId,
       spaceIds: readableSpaceIds,
-      limit: candidateLimit * 10,
-    });
-    const rankedChunks = this.ranker.rankChunks({
       query: input.query,
-      queryEmbedding,
-      chunks: chunkCandidates,
+      eligibleSourcePageIds: retrievalSourcePageIds,
+      signals,
+      limit: sourceCandidateLimit,
+    });
+    const rankedCandidates = this.ranker.rankHybridCandidates({
+      query: input.query,
+      queryEmbedding: queryEmbedding ?? undefined,
+      candidates: chunkCandidates,
       limit: candidateLimit,
     });
-    const rankedPageIds = unique(
-      rankedChunks.map((chunk) => chunk.knowledgePageId),
-    );
-    const pages = await this.capsuleRepo.findPagesByIds({
+    if (rankedCandidates.length === 0) {
+      return emptyResult({
+        queryEmbeddingAvailable,
+        candidateSourceCount: candidateSourcePageIds.length,
+        sidecarEligibleSourceCount: eligibleSourcePageIds.length,
+        sidecarFallbackSourceCount: fallbackSourcePageIds.length,
+        sidecarFilteredSourceCount:
+          candidateSourcePageIds.length -
+          eligibleSourcePageIds.length -
+          fallbackSourcePageIds.length,
+        candidateChunkCount: chunkCandidates.length,
+        rankedCandidateCount: 0,
+      });
+    }
+
+    const sourceRows = await this.capsuleRepo.findChunkSourcePageIdsByChunkIds({
       workspaceId: input.workspaceId,
-      knowledgePageIds: rankedPageIds,
+      chunkIds: rankedCandidates.map((candidate) => candidate.chunk.id),
     });
-    const pagesById = new Map(pages.map((page) => [page.id, page]));
+    const sourcesByChunkId = new Map(
+      sourceRows.map((row) => [row.chunkId, row.sourcePageIds]),
+    );
+    const allSourcePageIds = unique(
+      sourceRows.flatMap((row) => row.sourcePageIds),
+    );
+    const readableSourcePageIds =
+      await this.sourceAuthorization.filterReadableSources({
+        workspaceId: input.workspaceId,
+        userId: input.userId,
+        sourcePageIds: allSourcePageIds,
+      });
+    const readableSourceSet = new Set(readableSourcePageIds);
 
     const authorizedChunks: KnowledgeRetrievalResult['chunks'] = [];
-    for (const chunk of rankedChunks) {
-      const page = pagesById.get(chunk.knowledgePageId);
-      if (!page) continue;
-
-      const sourcePageIds = await this.capsuleRepo.findChunkSourcePageIds({
-        workspaceId: input.workspaceId,
-        chunkId: chunk.id,
-      });
-      const readableSourcePageIds =
-        await this.sourceAuthorization.filterReadableSources({
-          workspaceId: input.workspaceId,
-          userId: input.userId,
-          sourcePageIds,
-        });
-
+    for (const candidate of rankedCandidates) {
+      const sourcePageIds =
+        sourcesByChunkId.get(candidate.chunk.id) ?? candidate.sourcePageIds;
       if (
         sourcePageIds.length > 0 &&
-        readableSourcePageIds.length === sourcePageIds.length
+        sourcePageIds.every((sourcePageId) =>
+          readableSourceSet.has(sourcePageId),
+        )
       ) {
         authorizedChunks.push({
-          chunk,
-          page,
+          chunk: candidate.chunk,
+          page: candidate.page,
           sourcePageIds,
+          rankReasons: candidate.rankReasons,
         });
       }
     }
 
     return {
-      mode: 'high_completeness',
+      mode,
       chunks: authorizedChunks,
       capsules: [],
       completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+      diagnostics: {
+        queryEmbeddingAvailable,
+        candidateSourceCount: candidateSourcePageIds.length,
+        sidecarEligibleSourceCount: eligibleSourcePageIds.length,
+        sidecarFallbackSourceCount: fallbackSourcePageIds.length,
+        sidecarFilteredSourceCount:
+          candidateSourcePageIds.length -
+          eligibleSourcePageIds.length -
+          fallbackSourcePageIds.length,
+        candidateChunkCount: chunkCandidates.length,
+        rankedCandidateCount: rankedCandidates.length,
+        authorizedChunkCount: authorizedChunks.length,
+        filteredChunkCount: rankedCandidates.length - authorizedChunks.length,
+      },
     };
   }
 }
 
-function emptyResult(): KnowledgeRetrievalResult {
+function emptyResult(
+  diagnostics?: Partial<KnowledgeRetrievalDiagnostics>,
+): KnowledgeRetrievalResult {
   return {
     mode: 'high_completeness',
     chunks: [],
     capsules: [],
     completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+    diagnostics: {
+      queryEmbeddingAvailable: false,
+      candidateSourceCount: 0,
+      sidecarEligibleSourceCount: 0,
+      sidecarFallbackSourceCount: 0,
+      sidecarFilteredSourceCount: 0,
+      candidateChunkCount: 0,
+      rankedCandidateCount: 0,
+      authorizedChunkCount: 0,
+      filteredChunkCount: 0,
+      ...diagnostics,
+    },
   };
 }
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function retrievalSignals(
+  queryEmbedding: number[] | null,
+): KnowledgeRetrievalSignal[] {
+  if (!queryEmbedding) return ['lexical', 'exact-title'];
+  return ['semantic', 'lexical', 'exact-title'];
 }

@@ -110,6 +110,7 @@ export class PageRepo {
     opts?: {
       trx?: KyselyTransaction;
       workspaceId?: string;
+      includeTextContent?: boolean;
     },
   ): Promise<Page[]> {
     if (pageIds.length === 0) return [];
@@ -118,6 +119,7 @@ export class PageRepo {
     let query = db
       .selectFrom('pages')
       .select(this.baseFields)
+      .$if(opts?.includeTextContent, (qb) => qb.select('textContent'))
       .where('id', 'in', pageIds);
 
     if (opts?.workspaceId) {

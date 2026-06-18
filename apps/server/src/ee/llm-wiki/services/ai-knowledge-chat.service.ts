@@ -6,8 +6,14 @@ import {
   KnowledgeAnswerProviderInput,
 } from './knowledge-answer-provider.service';
 import { KnowledgeCitationResolverService } from './knowledge-citation-resolver.service';
-import { KnowledgeContextPackService } from './knowledge-context-pack.service';
-import { KnowledgeRetrievalService } from './knowledge-retrieval.service';
+import {
+  KnowledgeContextPackService,
+  KnowledgeSourceWindow,
+} from './knowledge-context-pack.service';
+import {
+  KnowledgeRetrievalDiagnostics,
+  KnowledgeRetrievalService,
+} from './knowledge-retrieval.service';
 
 export { KnowledgeAnswerProvider, KnowledgeAnswerProviderInput };
 
@@ -22,10 +28,35 @@ type AiKnowledgeChatInput = {
 
 type AiKnowledgeChatResult = {
   answer: string;
-  citations: ReturnType<KnowledgeContextPackService['buildContextPack']>['citations'];
+  citations: ReturnType<
+    KnowledgeContextPackService['buildContextPack']
+  >['citations'];
+  snippets: Array<{
+    id: string;
+    title: string;
+    text: string;
+    retrievalReasons: string[];
+    sourceWindows: KnowledgeSourceWindow[];
+  }>;
+  warnings: ReturnType<
+    KnowledgeContextPackService['buildContextPack']
+  >['warnings'];
+  retrievalReasons: ReturnType<
+    KnowledgeContextPackService['buildContextPack']
+  >['retrievalReasons'];
+  budget: ReturnType<KnowledgeContextPackService['buildContextPack']>['budget'];
   completenessNotice: ReturnType<
     KnowledgeContextPackService['buildContextPack']
   >['completenessNotice'];
+  retrievalDiagnostics: KnowledgeRetrievalDiagnostics & {
+    mode: ReturnType<KnowledgeRetrievalService['retrieve']> extends Promise<
+      infer Result
+    >
+      ? Result extends { mode: infer Mode }
+        ? Mode
+        : never
+      : never;
+  };
 };
 
 @Injectable()
@@ -76,7 +107,21 @@ export class AiKnowledgeChatService {
     return {
       answer,
       citations: pack.citations,
+      snippets: pack.primary.map((entry) => ({
+        id: entry.id,
+        title: entry.title,
+        text: entry.text,
+        retrievalReasons: entry.retrievalReasons,
+        sourceWindows: entry.sourceWindows,
+      })),
+      warnings: pack.warnings,
+      retrievalReasons: pack.retrievalReasons,
+      budget: pack.budget,
       completenessNotice: pack.completenessNotice,
+      retrievalDiagnostics: {
+        mode: retrieval.mode,
+        ...retrieval.diagnostics,
+      },
     };
   }
 

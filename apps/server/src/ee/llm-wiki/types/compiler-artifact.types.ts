@@ -19,8 +19,16 @@ export interface CompileDiagnostics {
   errors: CompileDiagnostic[];
 }
 
+export type CompiledKnowledgeArtifactKind =
+  | 'source_summary'
+  | 'concept'
+  | 'entity'
+  | 'comparison'
+  | 'overview';
+
 export interface CompiledKnowledgeArtifact extends KnowledgeScope {
   artifactId: string;
+  artifactKind?: CompiledKnowledgeArtifactKind;
   title: string;
   contentMarkdown: string;
   sourcePageIds: string[];

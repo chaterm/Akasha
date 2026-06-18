@@ -1,5 +1,15 @@
 .pageContainer {
   max-width: none;
+  height: calc(100dvh - var(--app-shell-header-offset, 0px) - var(--app-shell-padding, 0px) - var(--app-shell-padding, 0px));
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-block: var(--mantine-spacing-md);
+}
+
+.pageStack {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .spaceSelect {
@@ -8,7 +18,9 @@
 
 .graphPanel {
   position: relative;
-  min-height: 680px;
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
   overflow: hidden;
   border: 1px solid var(--mantine-color-default-border);
   border-radius: 8px;
@@ -23,18 +35,16 @@
   padding: 4px;
   border: 1px solid var(--mantine-color-default-border);
   border-radius: 8px;
-  background: light-dark(
-    rgba(255, 255, 255, 0.86),
-    rgba(32, 32, 32, 0.86)
-  );
+  background: light-dark(rgba(255, 255, 255, 0.86), rgba(32, 32, 32, 0.86));
   backdrop-filter: blur(8px);
 }
 
 .graphSvg {
   display: block;
+  flex: 1 1 auto;
   width: 100%;
-  height: min(72vh, 760px);
-  min-height: 620px;
+  height: 100%;
+  min-height: 0;
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -52,10 +62,17 @@
   cursor: grabbing;
 }
 
+.edgeGroup {
+  cursor: default;
+}
+
 .nodeCircle {
   fill: light-dark(var(--mantine-color-blue-6), #4f9dcc);
   stroke: light-dark(var(--mantine-color-gray-0), #202020);
   stroke-width: 2;
+  transition:
+    filter 120ms ease,
+    stroke-width 120ms ease;
 }
 
 .nodeLabel {
@@ -73,12 +90,30 @@
   stroke: light-dark(var(--mantine-color-gray-5), var(--mantine-color-gray-6));
   stroke-width: 1.4;
   opacity: 0.8;
+  transition:
+    opacity 120ms ease,
+    stroke-width 120ms ease;
 }
 
 .semanticEdge {
-  stroke: light-dark(var(--mantine-color-green-6), var(--mantine-color-green-5));
+  stroke: light-dark(
+    var(--mantine-color-green-6),
+    var(--mantine-color-green-5)
+  );
   stroke-width: 1.7;
   opacity: 0.9;
+  transition:
+    opacity 120ms ease,
+    stroke-width 120ms ease;
+}
+
+.edgeInactive {
+  opacity: 0.42;
+}
+
+.edgeActive {
+  opacity: 1;
+  stroke-width: 2.6;
 }
 
 .edgeLabel {
@@ -89,6 +124,13 @@
   stroke: light-dark(var(--mantine-color-gray-0), #202020);
   stroke-width: 4px;
   stroke-linejoin: round;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.edgeLabelVisible {
+  opacity: 1;
 }
 
 .arrowHead {
@@ -96,7 +138,8 @@
 }
 
 .emptyState {
-  min-height: 680px;
+  flex: 1 1 auto;
+  min-height: 0;
   display: grid;
   place-content: center;
   gap: var(--mantine-spacing-xs);

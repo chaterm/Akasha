@@ -1,5 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { KnowledgeChunk } from '@docmost/db/types/entity.types';
+import {
+  KnowledgeChunkCandidate,
+  KnowledgeRetrievalSignal,
+} from '@docmost/db/repos/llm-wiki/knowledge-capsule.repo';
 
 type RankableChunk = {
   chunk: KnowledgeChunk;
@@ -10,6 +14,17 @@ type RankableChunk = {
 type RankedChunk = {
   chunk: KnowledgeChunk;
   score: number;
+};
+
+export type KnowledgeRetrievalRankReason =
+  | 'semantic'
+  | 'lexical'
+  | 'exact-title'
+  | 'sidecar-prefiltered';
+
+export type KnowledgeRankedChunkCandidate = KnowledgeChunkCandidate & {
+  score: number;
+  rankReasons: KnowledgeRetrievalRankReason[];
 };
 
 const BASE_SCORE_WEIGHT = 0.5;
@@ -47,6 +62,124 @@ export class KnowledgeRetrievalRankerService {
 
     return pageIds;
   }
+
+  rankHybridCandidates(input: {
+    query: string;
+    queryEmbedding?: number[];
+    candidates: KnowledgeChunkCandidate[];
+    limit: number;
+    rrfK?: number;
+  }): KnowledgeRankedChunkCandidate[] {
+    const rrfK = input.rrfK ?? 60;
+    const scores = new Map<string, number>();
+    const candidatesByChunkId = new Map(
+      input.candidates.map((candidate) => [candidate.chunk.id, candidate]),
+    );
+
+    for (const rankedCandidates of [
+      rankSemanticCandidates(input),
+      rankLexicalCandidates(input),
+      rankExactTitleCandidates(input),
+    ]) {
+      rankedCandidates.forEach((candidate, index) => {
+        scores.set(
+          candidate.chunk.id,
+          (scores.get(candidate.chunk.id) ?? 0) + 1 / (rrfK + index + 1),
+        );
+      });
+    }
+
+    return [...scores.entries()]
+      .map(([chunkId, score]) => ({
+        ...candidatesByChunkId.get(chunkId)!,
+        score,
+        rankReasons: rankReasons(candidatesByChunkId.get(chunkId)!.signals),
+      }))
+      .sort((left, right) => {
+        if (right.score !== left.score) return right.score - left.score;
+        return signalPriority(right.signals) - signalPriority(left.signals);
+      })
+      .slice(0, input.limit);
+  }
+}
+
+function rankSemanticCandidates(input: {
+  query: string;
+  queryEmbedding?: number[];
+  candidates: KnowledgeChunkCandidate[];
+}): KnowledgeChunkCandidate[] {
+  if (!input.queryEmbedding) return [];
+
+  const rankable = input.candidates.flatMap((candidate) => {
+    if (!candidate.signals.includes('semantic')) return [];
+
+    const vector = parseEmbeddingVector(candidate.chunk.embedding);
+    if (!vector || vector.length !== input.queryEmbedding!.length) return [];
+
+    return [
+      {
+        candidate,
+        vector,
+        baseScore: cosineSimilarity(input.queryEmbedding!, vector),
+      },
+    ];
+  });
+  const bm25Ranked = rerankWithBm25(
+    input.query,
+    rankable.map((item) => ({
+      chunk: item.candidate.chunk,
+      vector: item.vector,
+      baseScore: item.baseScore,
+    })),
+  );
+  const candidatesByChunkId = new Map(
+    rankable.map((item) => [item.candidate.chunk.id, item.candidate]),
+  );
+
+  return bm25Ranked.flatMap((ranked) => {
+    const candidate = candidatesByChunkId.get(ranked.chunk.id);
+    return candidate ? [candidate] : [];
+  });
+}
+
+function rankLexicalCandidates(input: {
+  query: string;
+  candidates: KnowledgeChunkCandidate[];
+}): KnowledgeChunkCandidate[] {
+  return input.candidates
+    .filter((candidate) => candidate.signals.includes('lexical'))
+    .sort((left, right) => {
+      const scoreDiff = (right.lexicalScore ?? 0) - (left.lexicalScore ?? 0);
+      if (scoreDiff !== 0) return scoreDiff;
+      return left.chunk.id.localeCompare(right.chunk.id);
+    });
+}
+
+function rankExactTitleCandidates(input: {
+  query: string;
+  candidates: KnowledgeChunkCandidate[];
+}): KnowledgeChunkCandidate[] {
+  return input.candidates
+    .filter((candidate) => candidate.signals.includes('exact-title'))
+    .sort((left, right) => left.page.title.localeCompare(right.page.title));
+}
+
+function rankReasons(
+  signals: KnowledgeRetrievalSignal[],
+): KnowledgeRankedChunkCandidate['rankReasons'] {
+  const reasons: KnowledgeRankedChunkCandidate['rankReasons'] = [];
+  for (const signal of ['exact-title', 'semantic', 'lexical'] as const) {
+    if (signals.includes(signal)) reasons.push(signal);
+  }
+  reasons.push('sidecar-prefiltered');
+  return reasons;
+}
+
+function signalPriority(signals: KnowledgeRetrievalSignal[]): number {
+  if (signals.includes('exact-title')) return 3;
+  if (signals.includes('semantic')) return 2;
+  if (signals.includes('lexical')) return 1;
+  return 0;
 }
 
 function rankAllChunks(input: {
@@ -66,13 +199,14 @@ function rankAllChunks(input: {
     ];
   });
 
-  return rerankWithBm25(input.query, candidates)
-    .map((item) => item.chunk);
+  return rerankWithBm25(input.query, candidates).map((item) => item.chunk);
 }
 
 function parseEmbeddingVector(value: unknown): number[] | undefined {
   if (!Array.isArray(value)) return undefined;
-  if (!value.every((item) => typeof item === 'number' && Number.isFinite(item))) {
+  if (
+    !value.every((item) => typeof item === 'number' && Number.isFinite(item))
+  ) {
     return undefined;
   }
   return value;
@@ -95,7 +229,10 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dot / (Math.sqrt(magA) * Math.sqrt(magB));
 }
 
-function rerankWithBm25(query: string, candidates: RankableChunk[]): RankedChunk[] {
+function rerankWithBm25(
+  query: string,
+  candidates: RankableChunk[],
+): RankedChunk[] {
   if (candidates.length === 0) return [];
   const queryTerms = tokenize(query);
 

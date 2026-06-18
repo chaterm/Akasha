@@ -52,6 +52,14 @@ export class DocmostKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
         }),
       );
     }
+    const overview = buildOverviewArtifact({
+      input,
+      compilerRunId,
+      sourceTargets,
+    });
+    if (overview) {
+      artifacts.push(overview);
+    }
 
     return {
       workspaceId: input.workspaceId,
@@ -77,8 +85,10 @@ export class DocmostKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
     termDocumentCounts: Map<string, number>;
   }): CompiledKnowledgeArtifact {
     const sourceRef = toSourceRef(input.source);
+    const sourceClaim = buildSourceSummaryClaim(input.source);
     const chunks = splitIntoChunks(input.source.text).map((text) => ({
       text,
+      claimIndex: 0,
       inputSourceRefs: [sourceRef],
     }));
     const links = buildSameSpaceLinks({
@@ -104,6 +114,7 @@ export class DocmostKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
       workspaceId: input.input.workspaceId,
       spaceId: input.input.spaceId,
       title: input.source.title || 'Untitled',
+      artifactKind: 'source_summary',
       contentMarkdown: `# ${input.source.title || 'Untitled'}\n\n${input.source.text}`,
       sourcePageIds: [input.source.sourcePageId],
       compilerVersion: input.input.compilerVersion,
@@ -111,11 +122,73 @@ export class DocmostKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
       compilerRunId: input.compilerRunId,
       compileTaskId: `docmost-page:${input.source.sourcePageId}`,
       inputSourceRefs: [sourceRef],
+      claims: [
+        {
+          text: sourceClaim,
+          confidence: null,
+          inputSourceRefs: [sourceRef],
+        },
+      ],
       chunks,
       links: links.length > 0 ? links : undefined,
       graphEdges: graphEdges.length > 0 ? graphEdges : undefined,
     };
   }
+}
+
+function buildOverviewArtifact(input: {
+  input: CompileSpaceInput;
+  compilerRunId: string;
+  sourceTargets: SourceTarget[];
+}): CompiledKnowledgeArtifact | undefined {
+  if (input.sourceTargets.length < 2) return undefined;
+
+  const inputSourceRefs = input.sourceTargets.map((target) => target.sourceRef);
+  const overviewText = input.sourceTargets
+    .map(
+      (target) =>
+        `${target.source.title || 'Untitled'}: ${firstLine(target.source.text)}`,
+    )
+    .join('\n\n');
+
+  return {
+    artifactId: stableUuid(
+      [
+        input.input.workspaceId,
+        input.input.spaceId,
+        'overview',
+        ...inputSourceRefs.map(
+          (source) =>
+            `${source.sourcePageId}:${source.sourceVersion}:${source.contentHash}`,
+        ),
+      ].join(':'),
+    ),
+    workspaceId: input.input.workspaceId,
+    spaceId: input.input.spaceId,
+    title: 'Space knowledge overview',
+    artifactKind: 'overview',
+    contentMarkdown: `# Space knowledge overview\n\n${overviewText}`,
+    sourcePageIds: inputSourceRefs.map((source) => source.sourcePageId),
+    compilerVersion: input.input.compilerVersion,
+    promptVersion: input.input.promptVersion,
+    compilerRunId: input.compilerRunId,
+    compileTaskId: `docmost-overview:${input.input.spaceId}`,
+    inputSourceRefs,
+    claims: [
+      {
+        text: `This overview summarizes ${input.sourceTargets.length} source pages in the selected space.`,
+        confidence: null,
+        inputSourceRefs,
+      },
+    ],
+    chunks: [
+      {
+        text: overviewText,
+        claimIndex: 0,
+        inputSourceRefs,
+      },
+    ],
+  };
 }
 
 type SourceTarget = {
@@ -200,7 +273,9 @@ function buildSemanticGraphEdges(input: {
   return graphEdges;
 }
 
-function countTermDocuments(sourceTargets: SourceTarget[]): Map<string, number> {
+function countTermDocuments(
+  sourceTargets: SourceTarget[],
+): Map<string, number> {
   const counts = new Map<string, number>();
   for (const target of sourceTargets) {
     for (const term of target.terms) {
@@ -260,9 +335,7 @@ function artifactIdForSource(
 }
 
 function normalizeForMatch(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, '');
+  return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 }
 
 const LATIN_STOP_WORDS = new Set([
@@ -301,6 +374,14 @@ const CJK_STOP_TERMS = new Set([
 
 function normalizeText(text: string): string {
   return text.replace(/\r\n/g, '\n').trim();
+}
+
+function buildSourceSummaryClaim(source: KnowledgeSourceSnapshot): string {
+  return `${source.title || 'Untitled'}: ${firstLine(source.text)}`;
+}
+
+function firstLine(text: string): string {
+  return text.split(/\n+/)[0]?.trim() ?? '';
 }
 
 function splitIntoChunks(text: string): string[] {

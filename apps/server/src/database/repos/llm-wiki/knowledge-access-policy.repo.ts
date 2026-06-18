@@ -6,7 +6,9 @@ import {
   InsertableKnowledgeSourceAccessPrincipal,
   InsertableKnowledgeSourceAccessRequirement,
   InsertableKnowledgeSourceAccessPolicy,
+  KnowledgeSourceAccessPrincipal,
   KnowledgeSourceAccessPolicy,
+  KnowledgeSourceAccessRequirement,
 } from '@docmost/db/types/entity.types';
 
 type UpsertPolicyInput = Pick<
@@ -29,6 +31,27 @@ type ReplacePolicySnapshotInput = UpsertPolicyInput & {
       role: string;
     }>;
   }>;
+};
+
+export type KnowledgeAccessPrincipalInput = {
+  principalType: 'user' | 'group';
+  principalId: string;
+};
+
+export type KnowledgeSidecarEligibilityStatus =
+  | 'eligible'
+  | 'missing_policy'
+  | 'stale_policy'
+  | 'denied_by_restricted_ancestor'
+  | 'empty_restricted_ancestor';
+
+export type KnowledgeSidecarSourceEligibility = {
+  sourcePageId: string;
+  sourceSpaceId: string | null;
+  status: KnowledgeSidecarEligibilityStatus;
+  policyHash?: string | null;
+  staleAt?: Date | null;
+  updatedAt?: Date | null;
 };
 
 @Injectable()
@@ -67,6 +90,48 @@ export class KnowledgeAccessPolicyRepo {
       .where('workspaceId', '=', input.workspaceId)
       .where('sourcePageId', 'in', input.sourcePageIds)
       .execute();
+  }
+
+  async evaluateSourceEligibilityForPrincipals(
+    input: {
+      workspaceId: string;
+      sourcePageIds: string[];
+      principals: KnowledgeAccessPrincipalInput[];
+    },
+    trx?: KyselyTransaction,
+  ): Promise<KnowledgeSidecarSourceEligibility[]> {
+    if (input.sourcePageIds.length === 0) return [];
+
+    const db = dbOrTx(this.db, trx);
+    const [policies, requirements, principals] = await Promise.all([
+      this.findPoliciesForSources(
+        {
+          workspaceId: input.workspaceId,
+          sourcePageIds: input.sourcePageIds,
+        },
+        trx,
+      ),
+      db
+        .selectFrom('knowledgeSourceAccessRequirements')
+        .selectAll()
+        .where('workspaceId', '=', input.workspaceId)
+        .where('sourcePageId', 'in', input.sourcePageIds)
+        .execute(),
+      db
+        .selectFrom('knowledgeSourceAccessPrincipals')
+        .selectAll()
+        .where('workspaceId', '=', input.workspaceId)
+        .where('sourcePageId', 'in', input.sourcePageIds)
+        .execute(),
+    ]);
+
+    return evaluateEligibility({
+      sourcePageIds: input.sourcePageIds,
+      policies,
+      requirements,
+      principals,
+      requestedPrincipals: input.principals,
+    });
   }
 
   async markScopeStale(
@@ -147,4 +212,100 @@ export class KnowledgeAccessPolicyRepo {
 
     return policy;
   }
+}
+
+function evaluateEligibility(input: {
+  sourcePageIds: string[];
+  policies: KnowledgeSourceAccessPolicy[];
+  requirements: KnowledgeSourceAccessRequirement[];
+  principals: KnowledgeSourceAccessPrincipal[];
+  requestedPrincipals: KnowledgeAccessPrincipalInput[];
+}): KnowledgeSidecarSourceEligibility[] {
+  const policiesBySource = new Map(
+    input.policies.map((policy) => [policy.sourcePageId, policy]),
+  );
+  const requirementsBySource = groupBy(
+    input.requirements,
+    (requirement) => requirement.sourcePageId,
+  );
+  const principalsByRequirement = groupBy(
+    input.principals,
+    (principal) => `${principal.sourcePageId}:${principal.requirementId}`,
+  );
+  const requestedPrincipalKeys = new Set(
+    input.requestedPrincipals.map(
+      (principal) => `${principal.principalType}:${principal.principalId}`,
+    ),
+  );
+
+  return input.sourcePageIds.map((sourcePageId) => {
+    const policy = policiesBySource.get(sourcePageId);
+    if (!policy) {
+      return {
+        sourcePageId,
+        sourceSpaceId: null,
+        status: 'missing_policy',
+      };
+    }
+
+    const base = {
+      sourcePageId,
+      sourceSpaceId: policy.sourceSpaceId,
+      policyHash: policy.policyHash,
+      staleAt: policy.staleAt,
+      updatedAt: policy.updatedAt,
+    };
+
+    if (policy.staleAt) {
+      return { ...base, status: 'stale_policy' as const };
+    }
+
+    if (policy.restrictedAncestorCount === 0) {
+      return { ...base, status: 'eligible' as const };
+    }
+
+    const requirements = requirementsBySource.get(sourcePageId) ?? [];
+    if (requirements.length === 0) {
+      return { ...base, status: 'empty_restricted_ancestor' as const };
+    }
+
+    for (const requirement of requirements) {
+      const allowedPrincipals =
+        principalsByRequirement.get(
+          `${sourcePageId}:${requirement.requirementId}`,
+        ) ?? [];
+
+      if (allowedPrincipals.length === 0) {
+        return { ...base, status: 'empty_restricted_ancestor' as const };
+      }
+
+      const hasMatchingPrincipal = allowedPrincipals.some((principal) =>
+        requestedPrincipalKeys.has(
+          `${principal.principalType}:${principal.principalId}`,
+        ),
+      );
+      if (!hasMatchingPrincipal) {
+        return {
+          ...base,
+          status: 'denied_by_restricted_ancestor' as const,
+        };
+      }
+    }
+
+    return { ...base, status: 'eligible' as const };
+  });
+}
+
+function groupBy<T>(
+  values: T[],
+  keyOf: (value: T) => string,
+): Map<string, T[]> {
+  const grouped = new Map<string, T[]>();
+  for (const value of values) {
+    const key = keyOf(value);
+    const group = grouped.get(key) ?? [];
+    group.push(value);
+    grouped.set(key, group);
+  }
+  return grouped;
 }

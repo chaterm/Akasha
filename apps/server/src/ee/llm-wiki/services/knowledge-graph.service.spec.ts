@@ -28,9 +28,7 @@ describe('KnowledgeGraphService', () => {
           linkSource('link-1', 'source-2'),
           linkSource('link-hidden', 'source-hidden'),
         ],
-        graphEdges: [
-          graphEdge('edge-1', 'kp-2', 'kp-1', 'depends on'),
-        ],
+        graphEdges: [graphEdge('edge-1', 'kp-2', 'kp-1', 'depends on')],
         graphEdgeSources: [
           graphEdgeSource('edge-1', 'source-1'),
           graphEdgeSource('edge-1', 'source-2'),
@@ -58,6 +56,8 @@ describe('KnowledgeGraphService', () => {
           spaceId: 'space-1',
           sourcePageId: 'source-1',
           degree: 2,
+          artifactKind: 'source_summary',
+          communityId: 'community-1',
         },
         {
           id: 'kp-2',
@@ -65,6 +65,8 @@ describe('KnowledgeGraphService', () => {
           spaceId: 'space-1',
           sourcePageId: 'source-2',
           degree: 2,
+          artifactKind: 'source_summary',
+          communityId: 'community-1',
         },
       ],
       edges: [
@@ -74,6 +76,8 @@ describe('KnowledgeGraphService', () => {
           to: 'kp-2',
           type: 'link',
           label: 'references',
+          weight: 3,
+          reasons: ['direct-link'],
         },
         {
           id: 'edge-1',
@@ -81,8 +85,15 @@ describe('KnowledgeGraphService', () => {
           to: 'kp-1',
           type: 'semantic',
           label: 'depends on',
+          weight: 2,
+          reasons: ['semantic-edge'],
         },
       ],
+      insights: {
+        isolatedNodeIds: [],
+        bridgeNodeIds: ['kp-1', 'kp-2'],
+        communityCount: 1,
+      },
     });
 
     expect(capsuleRepo.findGraphCandidatesForSpace).toHaveBeenCalledWith({
@@ -114,18 +125,28 @@ describe('KnowledgeGraphService', () => {
         userId: 'user-1',
         spaceId: 'space-1',
       }),
-    ).resolves.toEqual({ nodes: [], edges: [] });
+    ).resolves.toEqual({
+      nodes: [],
+      edges: [],
+      insights: {
+        isolatedNodeIds: [],
+        bridgeNodeIds: [],
+        communityCount: 0,
+      },
+    });
 
     expect(capsuleRepo.findGraphCandidatesForSpace).not.toHaveBeenCalled();
   });
 });
 
-function createService(overrides: {
-  userRepo?: Partial<UserRepo>;
-  capsuleRepo?: Record<string, unknown>;
-  sourceAuthorization?: Partial<KnowledgeSourceAuthorizationService>;
-  spaceAuthorization?: Partial<SpaceAuthorizationService>;
-} = {}) {
+function createService(
+  overrides: {
+    userRepo?: Partial<UserRepo>;
+    capsuleRepo?: Record<string, unknown>;
+    sourceAuthorization?: Partial<KnowledgeSourceAuthorizationService>;
+    spaceAuthorization?: Partial<SpaceAuthorizationService>;
+  } = {},
+) {
   const userRepo = {
     findById: jest.fn().mockResolvedValue({
       id: 'user-1',
@@ -170,7 +191,7 @@ function page(id: string, title: string) {
     compileScope: 'space',
     title,
     slug: id,
-    pageType: null,
+    pageType: 'source_summary',
     body: '',
     summary: null,
     compiledAt: new Date('2026-06-16T00:00:00.000Z'),

@@ -19,16 +19,61 @@ describe('AiKnowledgeChatService', () => {
             chunk: chunk('chunk-1', 'kp-1', '登记批准日期：2026年06月05日'),
             page: capsule('kp-1', 'Chaterm'),
             sourcePageIds: ['page-1'],
+            rankReasons: ['exact-title', 'lexical', 'sidecar-prefiltered'],
           },
         ],
         capsules: [],
         completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+        diagnostics: {
+          queryEmbeddingAvailable: true,
+          candidateSourceCount: 2,
+          sidecarEligibleSourceCount: 2,
+          sidecarFallbackSourceCount: 0,
+          sidecarFilteredSourceCount: 0,
+          candidateChunkCount: 1,
+          rankedCandidateCount: 1,
+          authorizedChunkCount: 1,
+          filteredChunkCount: 0,
+        },
       }),
     };
     const contextPack = {
       buildContextPack: jest.fn().mockReturnValue({
         context: '# Chaterm\n登记批准日期：2026年06月05日',
-        citations: [{ sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1' }],
+        citations: [
+          { sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1' },
+        ],
+        primary: [
+          {
+            id: 'chunk-1',
+            kind: 'chunk',
+            title: 'Chaterm',
+            text: '登记批准日期：2026年06月05日',
+            citationSourcePageIds: ['page-1'],
+            retrievalReasons: ['exact-title', 'lexical', 'sidecar-prefiltered'],
+            sourceWindows: [
+              {
+                sourcePageId: 'page-1',
+                title: 'Kafka',
+                url: '/p/page-1',
+                text: '登记批准日期：2026年06月05日',
+                sourceRange: { startOffset: 0, endOffset: 18 },
+                quoteHash: 'sha256:quote',
+              },
+            ],
+          },
+        ],
+        warnings: ['Some retrieved knowledge may be stale.'],
+        retrievalReasons: ['exact-title', 'lexical', 'sidecar-prefiltered'],
+        budget: {
+          maxContextLength: 12000,
+          usedContextLength: 28,
+          remainingContextLength: 11972,
+          includedItemCount: 1,
+          omittedItemCount: 0,
+          responseReserve: 0,
+          perItemMaxLength: 12000,
+        },
         completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
       }),
     };
@@ -41,6 +86,18 @@ describe('AiKnowledgeChatService', () => {
         {
           chunk: chunk('chunk-1', 'kp-1', '登记批准日期：2026年06月05日'),
           pageTitle: 'Chaterm',
+          retrievalReasons: ['exact-title', 'lexical', 'sidecar-prefiltered'],
+          sourceWindows: [
+            {
+              sourcePageId: 'page-1',
+              title: 'Kafka',
+              url: '/p/page-1',
+              text: '登记批准日期：2026年06月05日',
+              sourceRange: { startOffset: 0, endOffset: 18 },
+              quoteHash: 'sha256:quote',
+            },
+          ],
+          warnings: ['Some retrieved knowledge may be stale.'],
           citations: [
             { sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1' },
           ],
@@ -65,7 +122,48 @@ describe('AiKnowledgeChatService', () => {
     ).resolves.toEqual({
       answer: 'Kafka is used for async events.',
       citations: [{ sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1' }],
+      snippets: [
+        {
+          id: 'chunk-1',
+          title: 'Chaterm',
+          text: '登记批准日期：2026年06月05日',
+          retrievalReasons: ['exact-title', 'lexical', 'sidecar-prefiltered'],
+          sourceWindows: [
+            {
+              sourcePageId: 'page-1',
+              title: 'Kafka',
+              url: '/p/page-1',
+              text: '登记批准日期：2026年06月05日',
+              sourceRange: { startOffset: 0, endOffset: 18 },
+              quoteHash: 'sha256:quote',
+            },
+          ],
+        },
+      ],
+      warnings: ['Some retrieved knowledge may be stale.'],
+      retrievalReasons: ['exact-title', 'lexical', 'sidecar-prefiltered'],
+      budget: {
+        maxContextLength: 12000,
+        usedContextLength: 28,
+        remainingContextLength: 11972,
+        includedItemCount: 1,
+        omittedItemCount: 0,
+        responseReserve: 0,
+        perItemMaxLength: 12000,
+      },
       completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+      retrievalDiagnostics: {
+        mode: 'high_completeness',
+        queryEmbeddingAvailable: true,
+        candidateSourceCount: 2,
+        sidecarEligibleSourceCount: 2,
+        sidecarFallbackSourceCount: 0,
+        sidecarFilteredSourceCount: 0,
+        candidateChunkCount: 1,
+        rankedCandidateCount: 1,
+        authorizedChunkCount: 1,
+        filteredChunkCount: 0,
+      },
     });
 
     expect(retrieval.retrieve).toHaveBeenCalledWith({
@@ -79,6 +177,18 @@ describe('AiKnowledgeChatService', () => {
         {
           chunk: chunk('chunk-1', 'kp-1', '登记批准日期：2026年06月05日'),
           pageTitle: 'Chaterm',
+          retrievalReasons: ['exact-title', 'lexical', 'sidecar-prefiltered'],
+          sourceWindows: [
+            {
+              sourcePageId: 'page-1',
+              title: 'Kafka',
+              url: '/p/page-1',
+              text: '登记批准日期：2026年06月05日',
+              sourceRange: { startOffset: 0, endOffset: 18 },
+              quoteHash: 'sha256:quote',
+            },
+          ],
+          warnings: ['Some retrieved knowledge may be stale.'],
           citations: [
             { sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1' },
           ],
@@ -92,6 +202,7 @@ describe('AiKnowledgeChatService', () => {
           chunk: chunk('chunk-1', 'kp-1', '登记批准日期：2026年06月05日'),
           page: capsule('kp-1', 'Chaterm'),
           sourcePageIds: ['page-1'],
+          rankReasons: ['exact-title', 'lexical', 'sidecar-prefiltered'],
         },
       ],
     });
@@ -105,7 +216,9 @@ describe('AiKnowledgeChatService', () => {
 
   it('allows knowledge chat when the workspace switch is enabled without requiring an AI license feature', async () => {
     const service = createService({
-      answerProvider: { answer: jest.fn().mockResolvedValue('grounded answer') },
+      answerProvider: {
+        answer: jest.fn().mockResolvedValue('grounded answer'),
+      },
     });
 
     await expect(
@@ -125,17 +238,23 @@ describe('AiKnowledgeChatService', () => {
   it('enables chat when workspace ai.chat is enabled', () => {
     const service = createService();
 
-    expect(service.isEnabledForWorkspace(workspace({ aiChat: true }))).toBe(true);
-    expect(service.isEnabledForWorkspace(workspace({ aiChat: false }))).toBe(false);
+    expect(service.isEnabledForWorkspace(workspace({ aiChat: true }))).toBe(
+      true,
+    );
+    expect(service.isEnabledForWorkspace(workspace({ aiChat: false }))).toBe(
+      false,
+    );
   });
 });
 
-function createService(overrides: {
-  retrieval?: Partial<KnowledgeRetrievalService>;
-  contextPack?: Partial<KnowledgeContextPackService>;
-  citationResolver?: Partial<KnowledgeCitationResolverService>;
-  answerProvider?: Partial<KnowledgeAnswerProvider>;
-} = {}) {
+function createService(
+  overrides: {
+    retrieval?: Partial<KnowledgeRetrievalService>;
+    contextPack?: Partial<KnowledgeContextPackService>;
+    citationResolver?: Partial<KnowledgeCitationResolverService>;
+    answerProvider?: Partial<KnowledgeAnswerProvider>;
+  } = {},
+) {
   return new AiKnowledgeChatService(
     {
       retrieve: jest.fn().mockResolvedValue({
@@ -150,6 +269,18 @@ function createService(overrides: {
       buildContextPack: jest.fn().mockReturnValue({
         context: '',
         citations: [],
+        primary: [],
+        warnings: [],
+        retrievalReasons: [],
+        budget: {
+          maxContextLength: 12000,
+          usedContextLength: 0,
+          remainingContextLength: 12000,
+          includedItemCount: 0,
+          omittedItemCount: 0,
+          responseReserve: 0,
+          perItemMaxLength: 12000,
+        },
         completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
       }),
       ...overrides.contextPack,

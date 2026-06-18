@@ -40,8 +40,8 @@ describe('LlmWikiProcessor', () => {
     };
     const importer = {
       importCompileResult: jest.fn().mockResolvedValue({
-        importedArtifactCount: 0,
-        quarantinedArtifactCount: 0,
+        importedArtifactCount: 2,
+        quarantinedArtifactCount: 1,
       }),
     };
     const accessIndexer = createAccessIndexer();
@@ -56,7 +56,7 @@ describe('LlmWikiProcessor', () => {
       createAiQueue(),
     );
 
-    await processor.process({
+    const result = await processor.process({
       name: QueueJob.KNOWLEDGE_COMPILE_SPACE,
       data: { workspaceId: 'workspace-1', spaceId: 'space-1' },
     } as Job);
@@ -90,6 +90,17 @@ describe('LlmWikiProcessor', () => {
     expect(accessIndexer.reindexSourcePages).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       sourcePageIds: ['page-1'],
+    });
+    expect(result).toEqual({
+      type: 'compile-space',
+      status: 'succeeded',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      compilerRunId: 'run-1',
+      sourceCount: 1,
+      importedArtifactCount: 2,
+      quarantinedArtifactCount: 1,
+      durationMs: expect.any(Number),
     });
   });
 
@@ -141,14 +152,22 @@ describe('LlmWikiProcessor', () => {
     expect(accessIndexer.markScopeStale).not.toHaveBeenCalled();
   });
 
-  it('marks source access scope stale when exact source page ids are unavailable', async () => {
+  it('reindexes all known source access when a space id is provided', async () => {
     const accessIndexer = createAccessIndexer();
+    const sourceRepo = createSourceRepo();
+    jest
+      .mocked(sourceRepo.findSourcesBySpace)
+      .mockResolvedValue([
+        { sourcePageId: 'page-1' },
+        { sourcePageId: 'page-2' },
+        { sourcePageId: 'page-1' },
+      ] as never);
     const processor = new LlmWikiProcessor(
       createExporter(),
       createCompiler(),
       createImporter(),
       accessIndexer,
-      createSourceRepo(),
+      sourceRepo,
       createCapsuleRepo(),
       createPageRepo(),
       createAiQueue(),
@@ -159,11 +178,15 @@ describe('LlmWikiProcessor', () => {
       data: { workspaceId: 'workspace-1', spaceId: 'space-1' },
     } as Job);
 
-    expect(accessIndexer.markScopeStale).toHaveBeenCalledWith({
+    expect(sourceRepo.findSourcesBySpace).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
     });
-    expect(accessIndexer.reindexSourcePages).not.toHaveBeenCalled();
+    expect(accessIndexer.reindexSourcePages).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-1', 'page-2'],
+    });
+    expect(accessIndexer.markScopeStale).not.toHaveBeenCalled();
   });
 
   it('marks sources and dependent capsules stale for source invalidation jobs', async () => {
@@ -192,6 +215,46 @@ describe('LlmWikiProcessor', () => {
     expect(capsuleRepo.markCapsulesStaleBySourcePageIds).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       sourcePageIds: ['page-1'],
+    });
+  });
+
+  it('marks all known sources in a space stale for admin space invalidation jobs', async () => {
+    const sourceRepo = createSourceRepo();
+    const capsuleRepo = createCapsuleRepo();
+    jest
+      .mocked(sourceRepo.findSourcesBySpace)
+      .mockResolvedValue([
+        { sourcePageId: 'page-1' },
+        { sourcePageId: 'page-2' },
+        { sourcePageId: 'page-1' },
+      ] as never);
+    const processor = new LlmWikiProcessor(
+      createExporter(),
+      createCompiler(),
+      createImporter(),
+      createAccessIndexer(),
+      sourceRepo,
+      capsuleRepo,
+      createPageRepo(),
+      createAiQueue(),
+    );
+
+    await processor.process({
+      name: QueueJob.KNOWLEDGE_MARK_SOURCES_STALE,
+      data: { workspaceId: 'workspace-1', spaceId: 'space-1' },
+    } as Job);
+
+    expect(sourceRepo.findSourcesBySpace).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+    });
+    expect(sourceRepo.markSourcesStale).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-1', 'page-2'],
+    });
+    expect(capsuleRepo.markCapsulesStaleBySourcePageIds).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-1', 'page-2'],
     });
   });
 
@@ -238,18 +301,30 @@ describe('LlmWikiProcessor', () => {
     });
     expect(aiQueue.add).toHaveBeenCalledWith(
       QueueJob.KNOWLEDGE_COMPILE_SPACE,
-      { workspaceId: 'workspace-1', spaceId: 'space-1' },
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        trigger: 'page_update',
+      },
       {
         delay: 5000,
-        jobId: 'knowledge-compile-space:workspace-1:space-1',
+        jobId: expect.stringMatching(
+          /^knowledge-compile-space:workspace-1:space-1:/,
+        ),
       },
     );
     expect(aiQueue.add).toHaveBeenCalledWith(
       QueueJob.KNOWLEDGE_COMPILE_SPACE,
-      { workspaceId: 'workspace-1', spaceId: 'space-2' },
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-2',
+        trigger: 'page_update',
+      },
       {
         delay: 5000,
-        jobId: 'knowledge-compile-space:workspace-1:space-2',
+        jobId: expect.stringMatching(
+          /^knowledge-compile-space:workspace-1:space-2:/,
+        ),
       },
     );
   });
@@ -295,6 +370,7 @@ function createAccessIndexer(): KnowledgeAccessIndexerService {
 function createSourceRepo(): KnowledgeSourceRepo {
   return {
     markSourcesStale: jest.fn().mockResolvedValue(undefined),
+    findSourcesBySpace: jest.fn().mockResolvedValue([]),
   } as unknown as KnowledgeSourceRepo;
 }
 

@@ -12,7 +12,6 @@ import {
   IconEye,
   IconEyeOff,
   IconFileExport,
-  IconGitFork,
   IconHome,
   IconPlus,
   IconSearch,
@@ -142,27 +141,6 @@ export function SpaceSidebar() {
                   stroke={2}
                 />
                 <span>{t("Search")}</span>
-              </div>
-            </UnstyledButton>
-
-            <UnstyledButton
-              component={Link}
-              to={`/s/${spaceSlug}/graph`}
-              className={clsx(
-                classes.menu,
-                location.pathname.toLowerCase() ===
-                  `/s/${spaceSlug}/graph`.toLowerCase()
-                  ? classes.activeButton
-                  : "",
-              )}
-            >
-              <div className={classes.menuItemInner}>
-                <IconGitFork
-                  size={18}
-                  className={classes.menuItemIcon}
-                  stroke={2}
-                />
-                <span>{t("Relationship graph")}</span>
               </div>
             </UnstyledButton>
 

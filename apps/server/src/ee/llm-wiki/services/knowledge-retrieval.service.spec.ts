@@ -1,4 +1,6 @@
 import { KnowledgeCapsuleRepo } from '@docmost/db/repos/llm-wiki/knowledge-capsule.repo';
+import { KnowledgeAccessPolicyRepo } from '@docmost/db/repos/llm-wiki/knowledge-access-policy.repo';
+import { GroupUserRepo } from '@docmost/db/repos/group/group-user.repo';
 import { UserRepo } from '@docmost/db/repos/user/user.repo';
 import { UserRole } from '../../../common/helpers/types/permission';
 import { SpaceAuthorizationService } from '../../../core/space/services/space-authorization.service';
@@ -11,33 +13,69 @@ import { KnowledgeSourceAuthorizationService } from './knowledge-source-authoriz
 import { KnowledgeRetrievalService } from './knowledge-retrieval.service';
 
 describe('KnowledgeRetrievalService', () => {
-  it('retrieves candidates from compiled chunk embeddings before final source authorization', async () => {
+  it('uses sidecar eligibility before ranking and runs one batched final authorization pass', async () => {
     const capsuleRepo = {
-      findEmbeddedChunkCandidates: jest.fn().mockResolvedValue([
-        chunk('chunk-1', 'kp-1', [0.2, 0.8], 'Kafka deployment notes'),
-        chunk('chunk-2', 'kp-2', [0.95, 0.05], 'AkashaQwenSmokeTest retrieval'),
+      findCandidateDependencySourcePageIds: jest
+        .fn()
+        .mockResolvedValue(['source-visible', 'source-hidden', 'source-group']),
+      findSidecarEligibleChunks: jest
+        .fn()
+        .mockResolvedValue([
+          chunkCandidate(
+            'chunk-visible',
+            'kp-visible',
+            ['source-visible'],
+            ['semantic'],
+            [0.95, 0.05],
+            'AkashaQwenSmokeTest retrieval',
+          ),
+          chunkCandidate(
+            'chunk-group',
+            'kp-group',
+            ['source-group'],
+            ['lexical'],
+            [0.8, 0.2],
+            'AkashaQwenSmokeTest group notes',
+          ),
+        ]),
+      findChunkSourcePageIdsByChunkIds: jest.fn().mockResolvedValue([
+        { chunkId: 'chunk-visible', sourcePageIds: ['source-visible'] },
+        { chunkId: 'chunk-group', sourcePageIds: ['source-group'] },
       ]),
-      findPagesByIds: jest
-        .fn()
-        .mockResolvedValue([candidate('kp-2', 'space-1'), candidate('kp-1', 'space-1')]),
-      findChunkSourcePageIds: jest
-        .fn()
-        .mockResolvedValueOnce(['source-3'])
-        .mockResolvedValueOnce(['source-1', 'source-2']),
+    };
+    const accessPolicyRepo = {
+      evaluateSourceEligibilityForPrincipals: jest.fn().mockResolvedValue([
+        {
+          sourcePageId: 'source-visible',
+          sourceSpaceId: 'space-1',
+          status: 'eligible',
+        },
+        {
+          sourcePageId: 'source-hidden',
+          sourceSpaceId: 'space-1',
+          status: 'denied_by_restricted_ancestor',
+        },
+        {
+          sourcePageId: 'source-group',
+          sourceSpaceId: 'space-1',
+          status: 'eligible',
+        },
+      ]),
     };
     const sourceAuthorization = {
-      filterReadableSources: jest
-        .fn()
-        .mockResolvedValueOnce(['source-3'])
-        .mockResolvedValueOnce(['source-1']),
+      filterReadableSources: jest.fn().mockResolvedValue(['source-visible']),
     };
     const embeddingProvider = {
       embedQuery: jest.fn().mockResolvedValue([1, 0]),
     };
     const service = createService({
       capsuleRepo,
+      accessPolicyRepo,
       sourceAuthorization,
       embeddingProvider,
+      groupUserRepo: {
+        getUserGroupIds: jest.fn().mockResolvedValue(['group-1']),
+      },
     });
 
     await expect(
@@ -52,47 +90,84 @@ describe('KnowledgeRetrievalService', () => {
       chunks: [
         {
           chunk: chunk(
-            'chunk-2',
-            'kp-2',
+            'chunk-visible',
+            'kp-visible',
             [0.95, 0.05],
             'AkashaQwenSmokeTest retrieval',
           ),
-          page: candidate('kp-2', 'space-1'),
-          sourcePageIds: ['source-3'],
+          page: candidate('kp-visible', 'space-1'),
+          sourcePageIds: ['source-visible'],
+          rankReasons: ['semantic', 'sidecar-prefiltered'],
         },
       ],
       capsules: [],
       completenessNotice:
         'Some knowledge may be unavailable because access is permission-scoped.',
+      diagnostics: {
+        queryEmbeddingAvailable: true,
+        candidateSourceCount: 3,
+        sidecarEligibleSourceCount: 2,
+        sidecarFallbackSourceCount: 0,
+        sidecarFilteredSourceCount: 1,
+        candidateChunkCount: 2,
+        rankedCandidateCount: 2,
+        authorizedChunkCount: 1,
+        filteredChunkCount: 1,
+      },
     });
 
     expect(embeddingProvider.embedQuery).toHaveBeenCalledWith(
       'AkashaQwenSmokeTest 是什么？',
     );
-    expect(capsuleRepo.findEmbeddedChunkCandidates).toHaveBeenCalledWith({
+    expect(
+      capsuleRepo.findCandidateDependencySourcePageIds,
+    ).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       spaceIds: ['space-1'],
+      query: 'AkashaQwenSmokeTest 是什么？',
+      signals: ['semantic', 'lexical', 'exact-title'],
+      sourceCandidateLimit: 200,
+    });
+    expect(
+      accessPolicyRepo.evaluateSourceEligibilityForPrincipals,
+    ).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['source-visible', 'source-hidden', 'source-group'],
+      principals: [
+        { principalType: 'user', principalId: 'user-1' },
+        { principalType: 'group', principalId: 'group-1' },
+      ],
+    });
+    expect(capsuleRepo.findSidecarEligibleChunks).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-1'],
+      query: 'AkashaQwenSmokeTest 是什么？',
+      eligibleSourcePageIds: ['source-visible', 'source-group'],
+      signals: ['semantic', 'lexical', 'exact-title'],
       limit: 200,
     });
-    expect(capsuleRepo.findPagesByIds).toHaveBeenCalledWith({
+    expect(capsuleRepo.findChunkSourcePageIdsByChunkIds).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
-      knowledgePageIds: ['kp-2', 'kp-1'],
+      chunkIds: ['chunk-visible', 'chunk-group'],
     });
     expect(sourceAuthorization.filterReadableSources).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       userId: 'user-1',
-      sourcePageIds: ['source-3'],
+      sourcePageIds: ['source-visible', 'source-group'],
     });
+    expect(sourceAuthorization.filterReadableSources).toHaveBeenCalledTimes(1);
   });
 
   it('does not query candidates when the user has no readable spaces', async () => {
     const capsuleRepo = {
-      findEmbeddedChunkCandidates: jest.fn(),
-      findDependencySourcePageIds: jest.fn(),
+      findCandidateDependencySourcePageIds: jest.fn(),
+      findSidecarEligibleChunks: jest.fn(),
     };
     const service = createService({
       capsuleRepo,
-      spaceAuthorization: { filterReadableSpaceIds: jest.fn().mockResolvedValue([]) },
+      spaceAuthorization: {
+        filterReadableSpaceIds: jest.fn().mockResolvedValue([]),
+      },
     });
 
     await expect(
@@ -108,29 +183,65 @@ describe('KnowledgeRetrievalService', () => {
       capsules: [],
       completenessNotice:
         'Some knowledge may be unavailable because access is permission-scoped.',
+      diagnostics: {
+        queryEmbeddingAvailable: false,
+        candidateSourceCount: 0,
+        sidecarEligibleSourceCount: 0,
+        sidecarFallbackSourceCount: 0,
+        sidecarFilteredSourceCount: 0,
+        candidateChunkCount: 0,
+        rankedCandidateCount: 0,
+        authorizedChunkCount: 0,
+        filteredChunkCount: 0,
+      },
     });
 
-    expect(capsuleRepo.findEmbeddedChunkCandidates).not.toHaveBeenCalled();
+    expect(
+      capsuleRepo.findCandidateDependencySourcePageIds,
+    ).not.toHaveBeenCalled();
   });
 
-  it('caps candidate count and dependency checks', async () => {
-    const candidateRows = Array.from({ length: 50 }, (_, index) =>
-      candidate(`kp-${index}`, 'space-1'),
-    );
+  it('caps sidecar source discovery independently from final answer count', async () => {
     const capsuleRepo = {
-      findEmbeddedChunkCandidates: jest
+      findCandidateDependencySourcePageIds: jest
+        .fn()
+        .mockResolvedValue(['source-1']),
+      findSidecarEligibleChunks: jest
         .fn()
         .mockResolvedValue(
-          candidateRows.map((row, index) =>
-            chunk(`chunk-${index}`, row.id, [1, 0], `Chunk ${index}`),
+          Array.from({ length: 10 }, (_, index) =>
+            chunkCandidate(
+              `chunk-${index}`,
+              `kp-${index}`,
+              ['source-1'],
+              ['semantic'],
+              [1, 0],
+              `Chunk ${index}`,
+            ),
           ),
         ),
-      findPagesByIds: jest.fn().mockResolvedValue(candidateRows),
-      findDependencySourcePageIds: jest.fn().mockResolvedValue(['source-1']),
-      findChunkSourcePageIds: jest.fn().mockResolvedValue(['source-1']),
+      findChunkSourcePageIdsByChunkIds: jest
+        .fn()
+        .mockImplementation(({ chunkIds }) =>
+          Promise.resolve(
+            chunkIds.map((chunkId: string) => ({
+              chunkId,
+              sourcePageIds: ['source-1'],
+            })),
+          ),
+        ),
     };
     const service = createService({
       capsuleRepo,
+      accessPolicyRepo: {
+        evaluateSourceEligibilityForPrincipals: jest.fn().mockResolvedValue([
+          {
+            sourcePageId: 'source-1',
+            sourceSpaceId: 'space-1',
+            status: 'eligible',
+          },
+        ]),
+      },
       embeddingProvider: { embedQuery: jest.fn().mockResolvedValue([1, 0]) },
     });
 
@@ -142,22 +253,58 @@ describe('KnowledgeRetrievalService', () => {
       candidateLimit: 5,
     });
 
-    expect(capsuleRepo.findEmbeddedChunkCandidates).toHaveBeenCalledWith(
+    expect(
+      capsuleRepo.findCandidateDependencySourcePageIds,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceCandidateLimit: 50 }),
+    );
+    expect(capsuleRepo.findSidecarEligibleChunks).toHaveBeenCalledWith(
       expect.objectContaining({ limit: 50 }),
     );
-    expect(capsuleRepo.findChunkSourcePageIds).toHaveBeenCalledTimes(5);
+    expect(capsuleRepo.findChunkSourcePageIdsByChunkIds).toHaveBeenCalledTimes(
+      1,
+    );
     expect(result.chunks).toHaveLength(5);
   });
 
-  it('does not fall back to lexical page search when query embedding is unavailable', async () => {
+  it('falls back to lexical retrieval when query embedding is unavailable', async () => {
     const capsuleRepo = {
-      findEmbeddedChunkCandidates: jest.fn(),
-      findPageCandidates: jest.fn(),
-      findDependencySourcePageIds: jest.fn(),
+      findCandidateDependencySourcePageIds: jest
+        .fn()
+        .mockResolvedValue(['source-lexical']),
+      findSidecarEligibleChunks: jest
+        .fn()
+        .mockResolvedValue([
+          chunkCandidate(
+            'chunk-lexical',
+            'kp-lexical',
+            ['source-lexical'],
+            ['lexical'],
+            null,
+            'AkashaQwenSmokeTest lexical fallback',
+          ),
+        ]),
+      findChunkSourcePageIdsByChunkIds: jest
+        .fn()
+        .mockResolvedValue([
+          { chunkId: 'chunk-lexical', sourcePageIds: ['source-lexical'] },
+        ]),
     };
     const service = createService({
       capsuleRepo,
+      accessPolicyRepo: {
+        evaluateSourceEligibilityForPrincipals: jest.fn().mockResolvedValue([
+          {
+            sourcePageId: 'source-lexical',
+            sourceSpaceId: 'space-1',
+            status: 'eligible',
+          },
+        ]),
+      },
       embeddingProvider: { embedQuery: jest.fn().mockResolvedValue(null) },
+      sourceAuthorization: {
+        filterReadableSources: jest.fn().mockResolvedValue(['source-lexical']),
+      },
     });
 
     await expect(
@@ -169,24 +316,143 @@ describe('KnowledgeRetrievalService', () => {
       }),
     ).resolves.toEqual({
       mode: 'high_completeness',
-      chunks: [],
+      chunks: [
+        {
+          chunk: chunk(
+            'chunk-lexical',
+            'kp-lexical',
+            null,
+            'AkashaQwenSmokeTest lexical fallback',
+          ),
+          page: candidate('kp-lexical', 'space-1'),
+          sourcePageIds: ['source-lexical'],
+          rankReasons: ['lexical', 'sidecar-prefiltered'],
+        },
+      ],
       capsules: [],
       completenessNotice:
         'Some knowledge may be unavailable because access is permission-scoped.',
+      diagnostics: {
+        queryEmbeddingAvailable: false,
+        candidateSourceCount: 1,
+        sidecarEligibleSourceCount: 1,
+        sidecarFallbackSourceCount: 0,
+        sidecarFilteredSourceCount: 0,
+        candidateChunkCount: 1,
+        rankedCandidateCount: 1,
+        authorizedChunkCount: 1,
+        filteredChunkCount: 0,
+      },
     });
 
-    expect(capsuleRepo.findEmbeddedChunkCandidates).not.toHaveBeenCalled();
-    expect(capsuleRepo.findPageCandidates).not.toHaveBeenCalled();
+    expect(capsuleRepo.findSidecarEligibleChunks).toHaveBeenCalledWith(
+      expect.objectContaining({
+        signals: ['lexical', 'exact-title'],
+      }),
+    );
+  });
+
+  it('uses a named high-completeness fallback when sidecar policies are missing or stale', async () => {
+    const capsuleRepo = {
+      findCandidateDependencySourcePageIds: jest
+        .fn()
+        .mockResolvedValue(['source-missing', 'source-stale']),
+      findSidecarEligibleChunks: jest
+        .fn()
+        .mockResolvedValue([
+          chunkCandidate(
+            'chunk-fallback',
+            'kp-fallback',
+            ['source-missing'],
+            ['semantic'],
+            [1, 0],
+            'Fallback candidate',
+          ),
+        ]),
+      findChunkSourcePageIdsByChunkIds: jest
+        .fn()
+        .mockResolvedValue([
+          { chunkId: 'chunk-fallback', sourcePageIds: ['source-missing'] },
+        ]),
+    };
+    const service = createService({
+      capsuleRepo,
+      accessPolicyRepo: {
+        evaluateSourceEligibilityForPrincipals: jest.fn().mockResolvedValue([
+          {
+            sourcePageId: 'source-missing',
+            sourceSpaceId: null,
+            status: 'missing_policy',
+          },
+          {
+            sourcePageId: 'source-stale',
+            sourceSpaceId: 'space-1',
+            status: 'stale_policy',
+          },
+        ]),
+      },
+      sourceAuthorization: {
+        filterReadableSources: jest.fn().mockResolvedValue(['source-missing']),
+      },
+    });
+
+    await expect(
+      service.retrieve({
+        workspaceId: 'workspace-1',
+        userId: 'user-1',
+        query: 'fallback',
+        spaceIds: ['space-1'],
+      }),
+    ).resolves.toEqual({
+      mode: 'high_completeness_fallback',
+      chunks: [
+        {
+          chunk: chunk(
+            'chunk-fallback',
+            'kp-fallback',
+            [1, 0],
+            'Fallback candidate',
+          ),
+          page: candidate('kp-fallback', 'space-1'),
+          sourcePageIds: ['source-missing'],
+          rankReasons: ['semantic', 'sidecar-prefiltered'],
+        },
+      ],
+      capsules: [],
+      completenessNotice:
+        'Some knowledge may be unavailable because access is permission-scoped.',
+      diagnostics: {
+        queryEmbeddingAvailable: true,
+        candidateSourceCount: 2,
+        sidecarEligibleSourceCount: 0,
+        sidecarFallbackSourceCount: 2,
+        sidecarFilteredSourceCount: 0,
+        candidateChunkCount: 1,
+        rankedCandidateCount: 1,
+        authorizedChunkCount: 1,
+        filteredChunkCount: 0,
+      },
+    });
+
+    expect(capsuleRepo.findSidecarEligibleChunks).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eligibleSourcePageIds: ['source-missing', 'source-stale'],
+      }),
+    );
   });
 });
 
-function createService(overrides: {
-  userRepo?: Partial<UserRepo>;
-  spaceAuthorization?: Partial<SpaceAuthorizationService>;
-  capsuleRepo?: Partial<KnowledgeCapsuleRepo>;
-  sourceAuthorization?: Partial<KnowledgeSourceAuthorizationService>;
-  embeddingProvider?: Partial<KnowledgeEmbeddingProvider>;
-} = {}) {
+function createService(
+  overrides: {
+    userRepo?: Partial<UserRepo>;
+    spaceAuthorization?: Partial<SpaceAuthorizationService>;
+    capsuleRepo?: Partial<KnowledgeCapsuleRepo>;
+    accessPolicyRepo?: Partial<KnowledgeAccessPolicyRepo>;
+    groupUserRepo?: Partial<GroupUserRepo>;
+    sourceAuthorization?: Partial<KnowledgeSourceAuthorizationService>;
+    embeddingProvider?: Partial<KnowledgeEmbeddingProvider>;
+  } = {},
+) {
   const userRepo = {
     findById: jest.fn().mockResolvedValue({
       id: 'user-1',
@@ -200,11 +466,18 @@ function createService(overrides: {
     ...overrides.spaceAuthorization,
   };
   const capsuleRepo = {
-    findEmbeddedChunkCandidates: jest.fn().mockResolvedValue([]),
-    findPagesByIds: jest.fn().mockResolvedValue([]),
-    findDependencySourcePageIds: jest.fn().mockResolvedValue([]),
-    findChunkSourcePageIds: jest.fn().mockResolvedValue(['source-1']),
+    findCandidateDependencySourcePageIds: jest.fn().mockResolvedValue([]),
+    findSidecarEligibleChunks: jest.fn().mockResolvedValue([]),
+    findChunkSourcePageIdsByChunkIds: jest.fn().mockResolvedValue([]),
     ...overrides.capsuleRepo,
+  };
+  const accessPolicyRepo = {
+    evaluateSourceEligibilityForPrincipals: jest.fn().mockResolvedValue([]),
+    ...overrides.accessPolicyRepo,
+  };
+  const groupUserRepo = {
+    getUserGroupIds: jest.fn().mockResolvedValue([]),
+    ...overrides.groupUserRepo,
   };
   const sourceAuthorization = {
     filterReadableSources: jest.fn().mockResolvedValue(['source-1']),
@@ -219,6 +492,8 @@ function createService(overrides: {
     userRepo as unknown as UserRepo,
     spaceAuthorization as unknown as SpaceAuthorizationService,
     capsuleRepo as unknown as KnowledgeCapsuleRepo,
+    accessPolicyRepo as unknown as KnowledgeAccessPolicyRepo,
+    groupUserRepo as unknown as GroupUserRepo,
     sourceAuthorization as unknown as KnowledgeSourceAuthorizationService,
     embeddingProvider as unknown as ConfiguredKnowledgeEmbeddingProvider,
     new KnowledgeRetrievalRankerService(),
@@ -249,7 +524,7 @@ function candidate(id: string, spaceId: string) {
 function chunk(
   id: string,
   knowledgePageId: string,
-  embedding: number[],
+  embedding: number[] | null,
   text: string,
 ) {
   return {
@@ -265,5 +540,22 @@ function chunk(
     compileTaskId: 'task-1',
     staleAt: null,
     createdAt: new Date('2026-06-16T00:00:00.000Z'),
+  };
+}
+
+function chunkCandidate(
+  chunkId: string,
+  knowledgePageId: string,
+  sourcePageIds: string[],
+  signals: Array<'semantic' | 'lexical' | 'exact-title'>,
+  embedding: number[] | null,
+  text: string,
+) {
+  return {
+    chunk: chunk(chunkId, knowledgePageId, embedding, text),
+    page: candidate(knowledgePageId, 'space-1'),
+    sourcePageIds,
+    signals,
+    lexicalScore: signals.includes('lexical') ? 1 : null,
   };
 }
