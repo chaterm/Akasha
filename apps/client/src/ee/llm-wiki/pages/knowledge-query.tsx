@@ -77,7 +77,6 @@ export default function KnowledgeQueryPage() {
     },
   });
   const citations = result?.citations ?? [];
-  const snippets = result?.snippets ?? [];
   const warnings = result?.warnings ?? [];
 
   const canSubmit = query.trim().length > 0 && spaceIds.length > 0;
@@ -198,73 +197,6 @@ export default function KnowledgeQueryPage() {
                 </Alert>
               ))}
 
-              <section className={classes.snippetSection}>
-                <Group justify="space-between" mb="xs">
-                  <Text className={classes.sectionLabel}>{t("Snippets")}</Text>
-                  <Badge variant="light">{snippets.length}</Badge>
-                </Group>
-                {snippets.length === 0 ? (
-                  <Text size="sm" c="dimmed">
-                    {t("No snippets")}
-                  </Text>
-                ) : (
-                  <Stack gap="md">
-                    {snippets.map((snippet) => (
-                      <div key={snippet.id} className={classes.snippetItem}>
-                        <Group
-                          justify="space-between"
-                          align="flex-start"
-                          gap="sm"
-                        >
-                          <Text className={classes.snippetTitle}>
-                            {snippet.title}
-                          </Text>
-                          {snippet.retrievalReasons.length > 0 && (
-                            <Group gap={4} justify="flex-end">
-                              {snippet.retrievalReasons.map((reason) => (
-                                <Badge
-                                  key={reason}
-                                  size="sm"
-                                  variant="light"
-                                  color={reasonColor(reason)}
-                                >
-                                  {reasonLabel(reason)}
-                                </Badge>
-                              ))}
-                            </Group>
-                          )}
-                        </Group>
-                        <Text className={classes.snippetText} component="div">
-                          {snippet.text}
-                        </Text>
-                        {snippet.sourceWindows.length > 0 && (
-                          <Stack gap="xs" className={classes.sourceWindowList}>
-                            {snippet.sourceWindows.map((sourceWindow) => (
-                              <div
-                                key={`${sourceWindow.sourcePageId}-${sourceWindow.sourceRange.startOffset}`}
-                              >
-                                <Anchor
-                                  href={sourceWindow.url}
-                                  className={classes.citationLink}
-                                >
-                                  {sourceWindow.title}
-                                </Anchor>
-                                <Text
-                                  className={classes.sourceWindowText}
-                                  component="div"
-                                >
-                                  {sourceWindow.text}
-                                </Text>
-                              </div>
-                            ))}
-                          </Stack>
-                        )}
-                      </div>
-                    ))}
-                  </Stack>
-                )}
-              </section>
-
               <section className={classes.citationSection}>
                 <Group justify="space-between" mb="xs">
                   <Text className={classes.sectionLabel}>{t("Citations")}</Text>
@@ -294,34 +226,4 @@ export default function KnowledgeQueryPage() {
       </Container>
     </>
   );
-}
-
-function reasonLabel(reason: string): string {
-  switch (reason) {
-    case "semantic":
-      return "Semantic";
-    case "lexical":
-      return "Keyword";
-    case "exact-title":
-      return "Title";
-    case "sidecar-prefiltered":
-      return "Authorized";
-    default:
-      return reason;
-  }
-}
-
-function reasonColor(reason: string): string {
-  switch (reason) {
-    case "semantic":
-      return "blue";
-    case "lexical":
-      return "green";
-    case "exact-title":
-      return "violet";
-    case "sidecar-prefiltered":
-      return "gray";
-    default:
-      return "dark";
-  }
 }

@@ -36,6 +36,9 @@ export class ConfiguredKnowledgeAnswerProvider implements KnowledgeAnswerProvide
       system: [
         'Use only the provided knowledge context to answer.',
         'If the context is insufficient, say that the available knowledge does not contain enough information.',
+        'Each context section may list citation IDs in the form [[cite:sourcePageId]].',
+        'When you use information from a section, append the relevant citation marker to that sentence.',
+        'Do not invent citation IDs or cite context that you did not use.',
         'Do not mention hidden, denied, filtered, or unavailable documents.',
       ].join(' '),
       prompt: buildPrompt(input),

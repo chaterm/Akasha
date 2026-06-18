@@ -161,6 +161,7 @@ describe("KnowledgeAdminPage", () => {
     expect(screen.getByText("Quarantined: 2")).toBeTruthy();
     expect(screen.getByText("artifact_source_range_invalid")).toBeTruthy();
     expect(screen.getByText("artifact-1")).toBeTruthy();
+    expect(screen.getByLabelText("Stale column help")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Retry compile" }));
 

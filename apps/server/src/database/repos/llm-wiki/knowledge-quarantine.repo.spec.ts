@@ -8,7 +8,10 @@ type QueryCall = {
 class FakeKyselyQuery {
   readonly calls: QueryCall[] = [];
 
-  constructor(private readonly result: unknown[] = []) {}
+  constructor(
+    private readonly result: unknown[] = [],
+    private readonly error?: unknown,
+  ) {}
 
   insertInto(...args: unknown[]) {
     this.calls.push({ method: 'insertInto', args });
@@ -52,6 +55,7 @@ class FakeKyselyQuery {
 
   async execute() {
     this.calls.push({ method: 'execute', args: [] });
+    if (this.error) throw this.error;
     return this.result;
   }
 }
@@ -163,5 +167,14 @@ describe('KnowledgeQuarantineRepo', () => {
       { method: 'limit', args: [20] },
       { method: 'execute', args: [] },
     ]);
+  });
+
+  it('returns an empty diagnostic list when the quarantine table has not been migrated', async () => {
+    const query = new FakeKyselyQuery([], { code: '42P01' });
+    const repo = new KnowledgeQuarantineRepo(query as never);
+
+    await expect(
+      repo.findRecentByWorkspace({ workspaceId: 'workspace-1', limit: 20 }),
+    ).resolves.toEqual([]);
   });
 });

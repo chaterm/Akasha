@@ -57,7 +57,9 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
     expect(openaiProvider).toHaveBeenCalledWith('gpt-4.1-mini');
     expect(generateText).toHaveBeenCalledWith({
       model: 'openai-model',
-      system: expect.stringContaining('Use only the provided knowledge context'),
+      system: expect.stringContaining(
+        'append the relevant citation marker to that sentence',
+      ),
       prompt: [
         'Conversation context:',
         'Earlier turn',

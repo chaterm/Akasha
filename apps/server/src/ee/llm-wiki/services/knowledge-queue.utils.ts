@@ -61,5 +61,5 @@ function buildKnowledgeJobId(input: {
   now?: number;
 }): string {
   const suffix = input.runKey ?? buildKnowledgeRunKey('run', input.now);
-  return `${input.prefix}:${input.workspaceId}:${input.spaceId}:${suffix}`;
+  return [input.prefix, input.workspaceId, input.spaceId, suffix].join('__');
 }

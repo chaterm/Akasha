@@ -10,6 +10,7 @@ import {
   KnowledgeContextPackService,
   KnowledgeSourceWindow,
 } from './knowledge-context-pack.service';
+import type { KnowledgeCitation } from './knowledge-context-pack.service';
 import {
   KnowledgeRetrievalDiagnostics,
   KnowledgeRetrievalService,
@@ -98,15 +99,16 @@ export class AiKnowledgeChatService {
       chunks: chunkCitations,
       capsules: capsuleCitations,
     });
-    const answer = await this.answerProvider.answer({
+    const rawAnswer = await this.answerProvider.answer({
       query: input.query,
-      context: pack.context,
+      context: buildAnswerContext(pack),
       chatContext: input.chatContext,
     });
+    const citedSourceIds = extractCitedSourceIds(rawAnswer);
 
     return {
-      answer,
-      citations: pack.citations,
+      answer: stripCitationMarkers(rawAnswer),
+      citations: filterCitationsByUsedSourceIds(pack.citations, citedSourceIds),
       snippets: pack.primary.map((entry) => ({
         id: entry.id,
         title: entry.title,
@@ -146,4 +148,63 @@ function getWorkspaceAiChatEnabled(workspace: Workspace): boolean {
   }
 
   return (aiSettings as Record<string, unknown>).chat === true;
+}
+
+type KnowledgeContextPack = ReturnType<
+  KnowledgeContextPackService['buildContextPack']
+>;
+
+const CITATION_MARKER_PATTERN = /\[\[cite:([^\]\s]+)\]\]/g;
+
+function buildAnswerContext(pack: KnowledgeContextPack): string {
+  if (pack.primary.length === 0) {
+    return pack.context;
+  }
+
+  return pack.primary
+    .map((entry) =>
+      [
+        `# ${entry.title}`,
+        `Citation IDs: ${formatCitationIds(entry.citationSourcePageIds)}`,
+        entry.text,
+      ].join('\n'),
+    )
+    .join('\n\n');
+}
+
+function formatCitationIds(sourcePageIds: string[]): string {
+  if (sourcePageIds.length === 0) {
+    return 'none';
+  }
+
+  return sourcePageIds
+    .map((sourcePageId) => `[[cite:${sourcePageId}]]`)
+    .join(' ');
+}
+
+function extractCitedSourceIds(answer: string): Set<string> {
+  return new Set(
+    [...answer.matchAll(CITATION_MARKER_PATTERN)].map((match) => match[1]),
+  );
+}
+
+function stripCitationMarkers(answer: string): string {
+  return answer
+    .replace(CITATION_MARKER_PATTERN, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .trim();
+}
+
+function filterCitationsByUsedSourceIds(
+  citations: KnowledgeCitation[],
+  citedSourceIds: Set<string>,
+): KnowledgeCitation[] {
+  if (citedSourceIds.size === 0) {
+    return [];
+  }
+
+  return citations.filter((citation) =>
+    citedSourceIds.has(citation.sourcePageId),
+  );
 }

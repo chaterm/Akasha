@@ -316,8 +316,12 @@ describe('LlmWikiController', () => {
     ).resolves.toEqual({
       queuedSpaceCount: 2,
       jobIds: [
-        expect.stringMatching(/^knowledge-compile-space:workspace-1:space-1:/),
-        expect.stringMatching(/^knowledge-compile-space:workspace-1:space-2:/),
+        expect.stringMatching(
+          /^knowledge-compile-space__workspace-1__space-1__/,
+        ),
+        expect.stringMatching(
+          /^knowledge-compile-space__workspace-1__space-2__/,
+        ),
       ],
     });
 
@@ -330,7 +334,7 @@ describe('LlmWikiController', () => {
       },
       expect.objectContaining({
         jobId: expect.stringMatching(
-          /^knowledge-compile-space:workspace-1:space-1:/,
+          /^knowledge-compile-space__workspace-1__space-1__/,
         ),
       }),
     );
@@ -343,7 +347,7 @@ describe('LlmWikiController', () => {
       },
       expect.objectContaining({
         jobId: expect.stringMatching(
-          /^knowledge-compile-space:workspace-1:space-2:/,
+          /^knowledge-compile-space__workspace-1__space-2__/,
         ),
       }),
     );
@@ -374,7 +378,9 @@ describe('LlmWikiController', () => {
       action: 'reindex_access',
       queuedSpaceCount: 1,
       jobIds: [
-        expect.stringMatching(/^knowledge-reindex-access:workspace-1:space-1:/),
+        expect.stringMatching(
+          /^knowledge-reindex-access__workspace-1__space-1__/,
+        ),
       ],
     });
 
@@ -394,7 +400,7 @@ describe('LlmWikiController', () => {
       { workspaceId: 'workspace-1', spaceId: 'space-1' },
       expect.objectContaining({
         jobId: expect.stringMatching(
-          /^knowledge-reindex-access:workspace-1:space-1:/,
+          /^knowledge-reindex-access__workspace-1__space-1__/,
         ),
       }),
     );
@@ -403,7 +409,7 @@ describe('LlmWikiController', () => {
       { workspaceId: 'workspace-1', spaceId: 'space-1' },
       expect.objectContaining({
         jobId: expect.stringMatching(
-          /^knowledge-mark-stale:workspace-1:space-1:/,
+          /^knowledge-mark-stale__workspace-1__space-1__/,
         ),
       }),
     );
@@ -416,7 +422,7 @@ describe('LlmWikiController', () => {
       },
       expect.objectContaining({
         jobId: expect.stringMatching(
-          /^knowledge-compile-space:workspace-1:space-1:/,
+          /^knowledge-compile-space__workspace-1__space-1__/,
         ),
       }),
     );
