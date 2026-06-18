@@ -65,6 +65,10 @@ export default defineConfig(({ mode }) => {
           target: proxyTarget,
           changeOrigin: false,
         },
+        "/mcp": {
+          target: proxyTarget,
+          changeOrigin: false,
+        },
         "/socket.io": {
           target: proxyTarget,
           ws: true,
