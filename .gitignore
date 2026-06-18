@@ -44,3 +44,6 @@ lerna-debug.log*
 
 # Internal design docs (may contain env-specific credentials or internal system details)
 docs/plans/
+
+# CodeGraph (local index, per-machine)
+.codegraph/

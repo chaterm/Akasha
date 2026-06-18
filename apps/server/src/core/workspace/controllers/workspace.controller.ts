@@ -83,6 +83,9 @@ export class WorkspaceController {
     if (!features.includes(Feature.API_KEYS)) {
       features.push(Feature.API_KEYS);
     }
+    if (!features.includes(Feature.MCP)) {
+      features.push(Feature.MCP);
+    }
     if (!features.includes(Feature.DOCX_IMPORT)) {
       features.push(Feature.DOCX_IMPORT);
     }
