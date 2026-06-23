@@ -9,6 +9,7 @@ import {
   IconUserPlus,
   IconTemplate,
   IconDatabaseSearch,
+  IconChecklist,
 } from "@tabler/icons-react";
 import { Link, useLocation } from "react-router-dom";
 import classes from "./global-sidebar.module.css";
@@ -40,6 +41,7 @@ export default function GlobalSidebar() {
   const mainNavItems = [
     { label: "Home", icon: IconHome, path: "/home" },
     { label: "Knowledge", icon: IconDatabaseSearch, path: "/knowledge" },
+    { label: "Review", icon: IconChecklist, path: "/review" },
     { label: "Favorites", icon: IconStar, path: "/favorites" },
     { label: "Spaces", icon: IconLayoutGrid, path: "/spaces" },
     {

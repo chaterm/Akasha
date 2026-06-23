@@ -79,6 +79,15 @@ export const auditEventLabels: Record<string, string> = {
 
   "license.activated": "Activated license",
   "license.removed": "Removed license",
+
+  "knowledge.query": "Queried knowledge",
+  "knowledge.import": "Imported knowledge",
+  "knowledge.compile_queued": "Queued knowledge compile",
+  "knowledge.review_discovered": "Discovered knowledge review items",
+  "knowledge.review_negotiated": "Negotiated knowledge review item",
+  "knowledge.review_planned": "Planned knowledge review application",
+  "knowledge.review_applied": "Applied knowledge review application",
+  "knowledge.review_reverted": "Reverted knowledge review application",
 };
 
 export function getEventLabel(event: string): string {
@@ -131,9 +140,7 @@ export const eventFilterOptions: EventGroup[] = [
   },
   {
     group: "Comment",
-    items: [
-      { value: "comment.deleted", label: "Deleted comment" },
-    ],
+    items: [{ value: "comment.deleted", label: "Deleted comment" }],
   },
   {
     group: "Page",
@@ -147,9 +154,18 @@ export const eventFilterOptions: EventGroup[] = [
       { value: "page.restriction_removed", label: "Removed page restriction" },
       { value: "page.permission_added", label: "Added page permission" },
       { value: "page.permission_removed", label: "Removed page permission" },
-      { value: "page.verification_created", label: "Created page verification" },
-      { value: "page.verification_updated", label: "Updated page verification" },
-      { value: "page.verification_removed", label: "Removed page verification" },
+      {
+        value: "page.verification_created",
+        label: "Created page verification",
+      },
+      {
+        value: "page.verification_updated",
+        label: "Updated page verification",
+      },
+      {
+        value: "page.verification_removed",
+        label: "Removed page verification",
+      },
       { value: "page.verified", label: "Verified page" },
       { value: "page.approval_requested", label: "Requested page approval" },
       { value: "page.approval_rejected", label: "Rejected page approval" },
@@ -191,6 +207,34 @@ export const eventFilterOptions: EventGroup[] = [
     items: [
       { value: "license.activated", label: "Activated license" },
       { value: "license.removed", label: "Removed license" },
+    ],
+  },
+  {
+    group: "Knowledge",
+    items: [
+      { value: "knowledge.query", label: "Queried knowledge" },
+      { value: "knowledge.import", label: "Imported knowledge" },
+      { value: "knowledge.compile_queued", label: "Queued knowledge compile" },
+      {
+        value: "knowledge.review_discovered",
+        label: "Discovered knowledge review items",
+      },
+      {
+        value: "knowledge.review_negotiated",
+        label: "Negotiated knowledge review item",
+      },
+      {
+        value: "knowledge.review_planned",
+        label: "Planned knowledge review application",
+      },
+      {
+        value: "knowledge.review_applied",
+        label: "Applied knowledge review application",
+      },
+      {
+        value: "knowledge.review_reverted",
+        label: "Reverted knowledge review application",
+      },
     ],
   },
 ];

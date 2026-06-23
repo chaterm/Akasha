@@ -14,6 +14,7 @@ import {
   InsertableKnowledgeGraphEdge,
   InsertableKnowledgeGraphEdgeSource,
   KnowledgeChunk,
+  KnowledgeClaim,
   KnowledgeGraphEdge,
   KnowledgeGraphEdgeSource,
   KnowledgeLink,
@@ -426,6 +427,28 @@ export class KnowledgeCapsuleRepo {
     return input.knowledgePageIds
       .map((id) => rowById.get(id))
       .filter((row): row is KnowledgePage => Boolean(row));
+  }
+
+  /**
+   * 读取一批 knowledge page 的 claims(供 LLM Wiki review 阶段做论断级审查)。
+   * 只读、不改任何编译产物;按 (knowledgePageId, position) 升序,保证每页 claims
+   * 顺序与编译时一致。过滤 staleAt 与现有读取方法保持一致(只返回有效产物)。
+   */
+  async findClaimsByPageIds(
+    input: { workspaceId: string; knowledgePageIds: string[] },
+    trx?: KyselyTransaction,
+  ): Promise<KnowledgeClaim[]> {
+    if (input.knowledgePageIds.length === 0) return [];
+
+    return dbOrTx(this.db, trx)
+      .selectFrom('knowledgeClaims')
+      .selectAll()
+      .where('workspaceId', '=', input.workspaceId)
+      .where('knowledgePageId', 'in', input.knowledgePageIds)
+      .where('staleAt', 'is', null)
+      .orderBy('knowledgePageId')
+      .orderBy('position')
+      .execute();
   }
 
   async findGraphCandidatesForSpace(

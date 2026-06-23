@@ -128,11 +128,13 @@ export class AiKnowledgeChatService {
   }
 
   isEnabledForWorkspace(workspace: Workspace): boolean {
-    return getWorkspaceAiChatEnabled(workspace);
+    return isKnowledgeAiEnabledForWorkspace(workspace);
   }
 }
 
-function getWorkspaceAiChatEnabled(workspace: Workspace): boolean {
+export function isKnowledgeAiEnabledForWorkspace(
+  workspace: Workspace,
+): boolean {
   const settings = workspace.settings;
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
     return false;

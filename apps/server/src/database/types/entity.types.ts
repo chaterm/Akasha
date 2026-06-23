@@ -41,6 +41,8 @@ import {
   KnowledgePages,
   KnowledgePageSources,
   KnowledgeQueryAudit,
+  KnowledgeReviewApplications,
+  KnowledgeReviewSnapshots,
   KnowledgeQuarantinedArtifacts,
   KnowledgeSourceAccessPolicy as _KnowledgeSourceAccessPolicy,
   KnowledgeSourceAccessPrincipals as _KnowledgeSourceAccessPrincipals,
@@ -67,10 +69,7 @@ export type UpdatableAiChat = Updateable<Omit<AiChats, 'id'>>;
 // full-text search. It is omitted from the public type so it never leaks
 // into HTTP responses or the chat history fed to the language model.
 export type AiChatMessage = Omit<Selectable<AiChatMessages>, 'tsv'>;
-export type InsertableAiChatMessage = Omit<
-  Insertable<AiChatMessages>,
-  'tsv'
->;
+export type InsertableAiChatMessage = Omit<Insertable<AiChatMessages>, 'tsv'>;
 
 // LLM Wiki Knowledge Base
 export type KnowledgeSource = Selectable<KnowledgeSources>;
@@ -78,8 +77,7 @@ export type InsertableKnowledgeSource = Insertable<KnowledgeSources>;
 export type UpdatableKnowledgeSource = Updateable<Omit<KnowledgeSources, 'id'>>;
 
 export type KnowledgeSourceChunk = Selectable<KnowledgeSourceChunks>;
-export type InsertableKnowledgeSourceChunk =
-  Insertable<KnowledgeSourceChunks>;
+export type InsertableKnowledgeSourceChunk = Insertable<KnowledgeSourceChunks>;
 export type UpdatableKnowledgeSourceChunk = Updateable<
   Omit<KnowledgeSourceChunks, 'id'>
 >;
@@ -118,8 +116,7 @@ export type UpdatableKnowledgeGraphEdge = Updateable<
   Omit<KnowledgeGraphEdges, 'id'>
 >;
 
-export type KnowledgeGraphEdgeSource =
-  Selectable<KnowledgeGraphEdgeSources>;
+export type KnowledgeGraphEdgeSource = Selectable<KnowledgeGraphEdgeSources>;
 export type InsertableKnowledgeGraphEdgeSource =
   Insertable<KnowledgeGraphEdgeSources>;
 
@@ -143,6 +140,21 @@ export type InsertableKnowledgeSourceAccessPrincipal =
 export type KnowledgeQueryAuditEntry = Selectable<KnowledgeQueryAudit>;
 export type InsertableKnowledgeQueryAuditEntry =
   Insertable<KnowledgeQueryAudit>;
+
+export type KnowledgeReviewSnapshot = Selectable<KnowledgeReviewSnapshots>;
+export type InsertableKnowledgeReviewSnapshot =
+  Insertable<KnowledgeReviewSnapshots>;
+export type UpdatableKnowledgeReviewSnapshot = Updateable<
+  Omit<KnowledgeReviewSnapshots, 'id'>
+>;
+
+export type KnowledgeReviewApplication =
+  Selectable<KnowledgeReviewApplications>;
+export type InsertableKnowledgeReviewApplication =
+  Insertable<KnowledgeReviewApplications>;
+export type UpdatableKnowledgeReviewApplication = Updateable<
+  Omit<KnowledgeReviewApplications, 'id'>
+>;
 
 export type KnowledgeQuarantinedArtifact =
   Selectable<KnowledgeQuarantinedArtifacts>;
@@ -246,11 +258,14 @@ export type UpdatableFavorite = Updateable<Omit<Favorites, 'id'>>;
 // Page Transclusion
 export type PageTransclusion = Selectable<PageTransclusions>;
 export type InsertablePageTransclusion = Insertable<PageTransclusions>;
-export type UpdatablePageTransclusion = Updateable<Omit<PageTransclusions, 'id'>>;
+export type UpdatablePageTransclusion = Updateable<
+  Omit<PageTransclusions, 'id'>
+>;
 
 // Page Transclusion Reference
 export type PageTransclusionReference = Selectable<PageTransclusionReferences>;
-export type InsertablePageTransclusionReference = Insertable<PageTransclusionReferences>;
+export type InsertablePageTransclusionReference =
+  Insertable<PageTransclusionReferences>;
 export type UpdatablePageTransclusionReference = Updateable<
   Omit<PageTransclusionReferences, 'id'>
 >;
@@ -312,7 +327,9 @@ export type UpdatablePagePermission = Updateable<Omit<_PagePermissions, 'id'>>;
 // Page Verification
 export type PageVerification = Selectable<_PageVerifications>;
 export type InsertablePageVerification = Insertable<_PageVerifications>;
-export type UpdatablePageVerification = Updateable<Omit<_PageVerifications, 'id'>>;
+export type UpdatablePageVerification = Updateable<
+  Omit<_PageVerifications, 'id'>
+>;
 
 // Page Verifier
 export type PageVerifier = Selectable<_PageVerifiers>;

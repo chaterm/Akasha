@@ -15,13 +15,14 @@ export class KnowledgeSourceExporterService {
 
     return pages.map((page) => {
       const text = page.textContent ?? '';
+      const title = page.title ?? '';
       return {
         workspaceId: page.workspaceId,
         spaceId: page.spaceId,
         sourcePageId: page.id,
         sourceVersion: page.updatedAt.toISOString(),
-        contentHash: `sha256:${hashSource(page.title, text)}`,
-        title: page.title,
+        contentHash: `sha256:${hashSource(title, text)}`,
+        title,
         text,
         references: [],
       };

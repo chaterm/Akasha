@@ -47,6 +47,7 @@ import AiChat from "@/ee/ai-chat/pages/ai-chat.tsx";
 import KnowledgeAdminPage from "@/ee/llm-wiki/pages/knowledge-admin";
 import KnowledgeGraphPage from "@/ee/llm-wiki/pages/knowledge-graph";
 import KnowledgeQueryPage from "@/ee/llm-wiki/pages/knowledge-query";
+import ReviewPage from "@/ee/llm-wiki/pages/review";
 import VerifyEmail from "@/ee/pages/verify-email.tsx";
 import LabelPage from "@/pages/label/label-page";
 
@@ -97,6 +98,7 @@ export default function App() {
           <Route path={"/knowledge"} element={<KnowledgeQueryPage />} />
           <Route path={"/knowledge/graph"} element={<KnowledgeGraphPage />} />
           <Route path={"/knowledge/admin"} element={<KnowledgeAdminPage />} />
+          <Route path={"/review"} element={<ReviewPage />} />
           <Route path={"/spaces"} element={<SpacesPage />} />
           <Route path={"/favorites"} element={<FavoritesPage />} />
           <Route path={"/labels/:labelName"} element={<LabelPage />} />
