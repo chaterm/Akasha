@@ -43,6 +43,7 @@ describe('ReviewController', () => {
         items: [],
         docs: [],
         resolvedReviews: [],
+        applications: [],
         discoveredAt: '2026-06-22T03:00:00.000Z',
         updatedAt: '2026-06-22T03:00:00.000Z',
       }),
@@ -56,6 +57,7 @@ describe('ReviewController', () => {
       items: [],
       docs: [],
       resolvedReviews: [],
+      applications: [],
       discoveredAt: '2026-06-22T03:00:00.000Z',
       updatedAt: '2026-06-22T03:00:00.000Z',
     });
@@ -95,6 +97,7 @@ describe('ReviewController', () => {
           items: [item],
           docs: [{ id: 'kp-1', title: 'Launch plan', sourcePageId: 'page-1' }],
           resolvedReviews: [],
+          applications: [],
           discoveredAt: '2026-06-22T03:00:00.000Z',
           updatedAt: '2026-06-22T03:00:00.000Z',
         }),
@@ -113,6 +116,7 @@ describe('ReviewController', () => {
       items: [item],
       docs: [{ id: 'kp-1', title: 'Launch plan', sourcePageId: 'page-1' }],
       resolvedReviews: [],
+      applications: [],
       discoveredAt: '2026-06-22T03:00:00.000Z',
       updatedAt: '2026-06-22T03:00:00.000Z',
     });
@@ -200,6 +204,100 @@ describe('ReviewController', () => {
       },
     });
   });
+
+  it('keeps negotiation read-only and plans application separately', async () => {
+    const item: ReviewItem = {
+      id: 'rev-3',
+      type: 'suggestion',
+      title: 'Add rollback section',
+      detail: 'The launch page lacks rollback criteria.',
+      recommendation: 'Add a rollback section.',
+      relatedDocIds: ['kp-1'],
+      searchQueries: ['rollback criteria'],
+      targetDocId: 'kp-1',
+    };
+    const draft = {
+      title: 'Rollback criteria',
+      body: '## Rollback criteria\n\nRollback when error budget burns fast.',
+      approach: 'section' as const,
+      targetDocId: 'kp-1',
+      notes: 'Adds an operational checklist.',
+    };
+    const application = applicationFixture({
+      reviewItemId: item.id,
+      operation: 'insert_under_heading',
+      targetPageId: 'page-1',
+    });
+    const reviewService = {
+      runDeepSearch: jest.fn().mockResolvedValue([]),
+      negotiateDraft: jest.fn().mockResolvedValue(draft),
+    };
+    const applyService = {
+      planDraft: jest.fn().mockResolvedValue(application),
+      applyApplication: jest.fn(),
+    };
+    const snapshotService = {
+      loadSnapshot: jest.fn().mockResolvedValue({
+        version: '2',
+        items: [item],
+        docs: [{ id: 'kp-1', title: 'Launch plan', sourcePageId: 'page-1' }],
+        resolvedReviews: [
+          {
+            item,
+            feedback: '采纳',
+            skipped: false,
+            deepSearched: false,
+            searchResults: [],
+            draft,
+            applied: null,
+          },
+        ],
+        applications: [],
+        discoveredAt: '2026-06-22T03:00:00.000Z',
+        updatedAt: '2026-06-22T03:00:00.000Z',
+      }),
+      saveResolvedReview: jest.fn().mockResolvedValue(undefined),
+    };
+    const controller = createController({
+      reviewService,
+      applyService,
+      snapshotService,
+      capsuleRepo: capsuleRepoWithPages(),
+    });
+
+    await expect(
+      controller.negotiate(
+        { spaceId: 'space-1', item, feedback: '采纳' },
+        adminUser(),
+        workspace(),
+      ),
+    ).resolves.toMatchObject({
+      item,
+      draft,
+      applied: null,
+    });
+    expect(applyService.planDraft).not.toHaveBeenCalled();
+    expect(applyService.applyApplication).not.toHaveBeenCalled();
+
+    await expect(
+      controller.plan(
+        item.id,
+        { spaceId: 'space-1' },
+        adminUser(),
+        workspace(),
+      ),
+    ).resolves.toEqual(application);
+
+    expect(applyService.planDraft).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      user: expect.objectContaining({ id: 'user-1' }),
+      item,
+      draft,
+      docs: [{ id: 'kp-1', title: 'Launch plan', sourcePageId: 'page-1' }],
+      searchResults: [],
+    });
+  });
 });
 
 function createController(
@@ -240,6 +338,7 @@ function createController(
       items: [],
       docs: [],
       resolvedReviews: [],
+      applications: [],
       discoveredAt: '2026-06-22T03:00:00.000Z',
       updatedAt: '2026-06-22T03:00:00.000Z',
     }),
@@ -247,12 +346,13 @@ function createController(
     ...overrides.snapshotService,
   } as unknown as ReviewSnapshotService;
   const applyService = {
-    applyDraft: jest.fn().mockResolvedValue({
-      pageId: 'page-1',
-      pageTitle: 'Launch plan',
-      pageSlugId: 'page-1',
-      spaceSlug: 'space-1',
-      action: 'updated',
+    planDraft: jest.fn().mockResolvedValue(applicationFixture()),
+    applyApplication: jest.fn().mockResolvedValue(applicationFixture()),
+    revertApplication: jest.fn().mockResolvedValue(applicationFixture()),
+    getDiff: jest.fn().mockResolvedValue({
+      application: applicationFixture(),
+      beforeContent: 'before',
+      afterContent: 'after',
     }),
     ...overrides.applyService,
   } as unknown as ReviewApplyService;
@@ -307,4 +407,33 @@ function adminUser(): User {
     id: 'user-1',
     role: UserRole.ADMIN,
   } as User;
+}
+
+function applicationFixture(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'app-1',
+    workspaceId: 'workspace-1',
+    spaceId: 'space-1',
+    reviewItemId: 'rev-1',
+    status: 'draft',
+    operation: 'create_page',
+    targetPageId: null,
+    targetPageTitle: 'Draft page',
+    targetHeadingPath: [],
+    basePageVersion: null,
+    baseContentHash: null,
+    beforeContent: null,
+    afterContent: '# Draft page',
+    afterContentHash: 'sha256:after',
+    patch: null,
+    createdPageId: null,
+    appliedAt: null,
+    revertedAt: null,
+    appliedBy: 'user-1',
+    rationale: 'rationale',
+    sourceRefs: [],
+    createdAt: '2026-06-22T03:00:00.000Z',
+    updatedAt: '2026-06-22T03:00:00.000Z',
+    ...overrides,
+  };
 }

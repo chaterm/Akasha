@@ -37,6 +37,7 @@ describe("review-service", () => {
               { id: "kp-1", title: "Launch plan", sourcePageId: "page-1" },
             ],
             resolvedReviews: [],
+            applications: [],
             discoveredAt: "2026-06-22T03:00:00.000Z",
             updatedAt: "2026-06-22T03:10:00.000Z",
           },
@@ -51,6 +52,7 @@ describe("review-service", () => {
       items: [],
       docs: [{ id: "kp-1", title: "Launch plan", sourcePageId: "page-1" }],
       resolvedReviews: [],
+      applications: [],
       discoveredAt: "2026-06-22T03:00:00.000Z",
       updatedAt: "2026-06-22T03:10:00.000Z",
     });
@@ -67,6 +69,7 @@ describe("review-service", () => {
             items: [],
             docs: [],
             resolvedReviews: [],
+            applications: [],
             discoveredAt: "2026-06-22T03:00:00.000Z",
             updatedAt: "2026-06-22T03:00:00.000Z",
           },
@@ -83,6 +86,7 @@ describe("review-service", () => {
       items: [],
       docs: [],
       resolvedReviews: [],
+      applications: [],
       discoveredAt: "2026-06-22T03:00:00.000Z",
       updatedAt: "2026-06-22T03:00:00.000Z",
     });

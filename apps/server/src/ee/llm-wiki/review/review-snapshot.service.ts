@@ -1,8 +1,12 @@
 import { Injectable } from '@nestjs/common';
+import { KnowledgeReviewApplicationRepo } from '@docmost/db/repos/llm-wiki/knowledge-review-application.repo';
 import { KnowledgeReviewSnapshotRepo } from '@docmost/db/repos/llm-wiki/knowledge-review-snapshot.repo';
+import { KnowledgeReviewApplication as KnowledgeReviewApplicationRow } from '@docmost/db/types/entity.types';
 import { ReviewDocMeta } from './knowledge-artifact-wiki-source';
 import {
+  reviewApplicationSchema,
   reviewSnapshotSchema,
+  ReviewApplication,
   ReviewItem,
   ReviewSnapshot,
   StoredResolvedReview,
@@ -16,6 +20,7 @@ import {
 export class ReviewSnapshotService {
   constructor(
     private readonly reviewSnapshotRepo: KnowledgeReviewSnapshotRepo,
+    private readonly reviewApplicationRepo: KnowledgeReviewApplicationRepo,
   ) {}
 
   async loadSnapshot(input: {
@@ -23,7 +28,9 @@ export class ReviewSnapshotService {
     spaceId: string;
   }): Promise<ReviewSnapshot | null> {
     const row = await this.reviewSnapshotRepo.findBySpace(input);
-    return row ? this.toSnapshot(row) : null;
+    if (!row) return null;
+    const applications = await this.reviewApplicationRepo.findBySpace(input);
+    return this.toSnapshot(row, applications);
   }
 
   async replaceDiscoveredSnapshot(input: {
@@ -42,7 +49,11 @@ export class ReviewSnapshotService {
       discoveredAt: new Date(),
     });
 
-    return this.toSnapshot(row);
+    const applications = await this.reviewApplicationRepo.findBySpace({
+      workspaceId: input.workspaceId,
+      spaceId: input.spaceId,
+    });
+    return this.toSnapshot(row, applications);
   }
 
   async saveResolvedReview(input: {
@@ -69,22 +80,30 @@ export class ReviewSnapshotService {
       discoveredAt: current ? new Date(current.discoveredAt) : new Date(),
     });
 
-    return this.toSnapshot(row);
+    const applications = await this.reviewApplicationRepo.findBySpace({
+      workspaceId: input.workspaceId,
+      spaceId: input.spaceId,
+    });
+    return this.toSnapshot(row, applications);
   }
 
-  private toSnapshot(row: {
-    version: string;
-    items: unknown;
-    docs: unknown;
-    resolvedReviews: unknown;
-    discoveredAt: Date;
-    updatedAt: Date;
-  }): ReviewSnapshot {
+  private toSnapshot(
+    row: {
+      version: string;
+      items: unknown;
+      docs: unknown;
+      resolvedReviews: unknown;
+      discoveredAt: Date;
+      updatedAt: Date;
+    },
+    applications: KnowledgeReviewApplicationRow[] = [],
+  ): ReviewSnapshot {
     const snapshot = reviewSnapshotSchema.parse({
       version: row.version,
       items: row.items,
       docs: row.docs,
       resolvedReviews: row.resolvedReviews,
+      applications: applications.map(toReviewApplication),
       discoveredAt: row.discoveredAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     });
@@ -99,6 +118,18 @@ export class ReviewSnapshotService {
       ),
     };
   }
+}
+
+function toReviewApplication(
+  row: KnowledgeReviewApplicationRow,
+): ReviewApplication {
+  return reviewApplicationSchema.parse({
+    ...row,
+    appliedAt: row.appliedAt?.toISOString() ?? null,
+    revertedAt: row.revertedAt?.toISOString() ?? null,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  });
 }
 
 function upsertResolvedReview(

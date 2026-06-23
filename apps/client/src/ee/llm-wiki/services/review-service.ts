@@ -1,4 +1,6 @@
 import type {
+  ReviewApplication,
+  ReviewApplicationDiff,
   ResolvedReview,
   ReviewDocMeta,
   ReviewItem,
@@ -59,6 +61,82 @@ export async function negotiateReview(params: {
   return unwrapApiData(await response.json()) as ResolvedReview;
 }
 
+export async function planReviewApplication(params: {
+  spaceId: string;
+  itemId: string;
+}): Promise<ReviewApplication> {
+  const response = await fetch(`/api/llm-wiki/review/${params.itemId}/plan`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ spaceId: params.spaceId }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  return unwrapApiData(await response.json()) as ReviewApplication;
+}
+
+export async function applyReviewApplication(params: {
+  applicationId: string;
+}): Promise<ReviewApplication> {
+  const response = await fetch(
+    `/api/llm-wiki/review/applications/${params.applicationId}/apply`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({}),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  return unwrapApiData(await response.json()) as ReviewApplication;
+}
+
+export async function revertReviewApplication(params: {
+  applicationId: string;
+}): Promise<ReviewApplication> {
+  const response = await fetch(
+    `/api/llm-wiki/review/applications/${params.applicationId}/revert`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({}),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  return unwrapApiData(await response.json()) as ReviewApplication;
+}
+
+export async function getReviewApplicationDiff(params: {
+  applicationId: string;
+}): Promise<ReviewApplicationDiff> {
+  const response = await fetch(
+    `/api/llm-wiki/review/applications/${params.applicationId}/diff`,
+    {
+      method: "GET",
+      credentials: "include",
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  return unwrapApiData(await response.json()) as ReviewApplicationDiff;
+}
+
 function normalizeReviewSnapshot(value: unknown): ReviewSnapshot | null {
   if (value === null) return null;
   const record = isRecord(value) ? value : {};
@@ -66,6 +144,9 @@ function normalizeReviewSnapshot(value: unknown): ReviewSnapshot | null {
   const docs = Array.isArray(record.docs) ? record.docs : [];
   const resolvedReviews = Array.isArray(record.resolvedReviews)
     ? record.resolvedReviews
+    : [];
+  const applications = Array.isArray(record.applications)
+    ? record.applications
     : [];
   return {
     version: "2",
@@ -84,6 +165,9 @@ function normalizeReviewSnapshot(value: unknown): ReviewSnapshot | null {
     resolvedReviews: resolvedReviews.filter(
       isRecord,
     ) as unknown as ResolvedReview[],
+    applications: applications.filter(
+      isRecord,
+    ) as unknown as ReviewApplication[],
     discoveredAt:
       typeof record.discoveredAt === "string" ? record.discoveredAt : "",
     updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : "",

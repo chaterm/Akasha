@@ -1,10 +1,14 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   ForbiddenException,
+  Get,
   HttpCode,
   HttpStatus,
   Inject,
+  NotFoundException,
+  Param,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -28,6 +32,7 @@ import { reviewItemSchema } from './review.schema';
 import { DiscoverReviewDto } from './dto/discover-review.dto';
 import { LoadReviewDto } from './dto/load-review.dto';
 import { NegotiateReviewDto } from './dto/negotiate-review.dto';
+import { PlanReviewDto } from './dto/plan-review.dto';
 import { ReviewApplyService } from './review-apply.service';
 import { ReviewSnapshotService } from './review-snapshot.service';
 
@@ -130,24 +135,12 @@ export class ReviewController {
       ? await this.reviewService.runDeepSearch(new MockSearchProvider(), item)
       : [];
 
-    const currentSnapshot = await this.snapshotService.loadSnapshot({
-      workspaceId: workspace.id,
-      spaceId: dto.spaceId,
-    });
     const draft = await this.reviewService.negotiateDraft(
       docSource,
       item,
       feedback,
       searchResults,
     );
-    const applied = await this.applyService.applyDraft({
-      workspaceId: workspace.id,
-      spaceId: dto.spaceId,
-      user,
-      item,
-      draft,
-      docs: currentSnapshot?.docs ?? (await docSource.getDocMeta()),
-    });
 
     const resolved: ResolvedReview = {
       item,
@@ -156,7 +149,7 @@ export class ReviewController {
       deepSearched,
       searchResults,
       draft,
-      applied,
+      applied: null,
     };
     await this.snapshotService.saveResolvedReview({
       workspaceId: workspace.id,
@@ -165,6 +158,140 @@ export class ReviewController {
     });
     this.auditNegotiation(dto.spaceId, resolved);
     return resolved;
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post(':itemId/plan')
+  async plan(
+    @Param('itemId') itemId: string,
+    @Body() dto: PlanReviewDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertAiEnabled(workspace);
+    this.assertAdmin(user);
+
+    const snapshot = await this.snapshotService.loadSnapshot({
+      workspaceId: workspace.id,
+      spaceId: dto.spaceId,
+    });
+    if (!snapshot) {
+      throw new NotFoundException('Review snapshot not found');
+    }
+
+    const resolved = snapshot.resolvedReviews.find(
+      (entry) => entry.item.id === itemId,
+    );
+    if (!resolved || !resolved.draft) {
+      throw new BadRequestException('Generate a review draft before planning');
+    }
+
+    const application = await this.applyService.planDraft({
+      workspaceId: workspace.id,
+      spaceId: dto.spaceId,
+      user,
+      item: resolved.item,
+      draft: resolved.draft,
+      docs: snapshot.docs,
+      searchResults: resolved.searchResults,
+    });
+
+    this.auditService.log({
+      event: AuditEvent.KNOWLEDGE_REVIEW_PLANNED,
+      resourceType: AuditResource.KNOWLEDGE,
+      resourceId: application.id,
+      spaceId: dto.spaceId,
+      metadata: {
+        reviewItemId: application.reviewItemId,
+        operation: application.operation,
+        targetPageId: application.targetPageId,
+        targetHeadingPath: application.targetHeadingPath,
+        sourceRefCount: application.sourceRefs.length,
+      },
+    });
+
+    return application;
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('applications/:id/apply')
+  async apply(
+    @Param('id') applicationId: string,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertAiEnabled(workspace);
+    this.assertAdmin(user);
+
+    const application = await this.applyService.applyApplication({
+      workspaceId: workspace.id,
+      user,
+      applicationId,
+    });
+
+    this.auditService.log({
+      event: AuditEvent.KNOWLEDGE_REVIEW_APPLIED,
+      resourceType: AuditResource.KNOWLEDGE,
+      resourceId: application.id,
+      spaceId: application.spaceId,
+      metadata: {
+        reviewItemId: application.reviewItemId,
+        operation: application.operation,
+        targetPageId: application.targetPageId,
+        createdPageId: application.createdPageId,
+        targetHeadingPath: application.targetHeadingPath,
+      },
+    });
+
+    return application;
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('applications/:id/revert')
+  async revert(
+    @Param('id') applicationId: string,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertAiEnabled(workspace);
+    this.assertAdmin(user);
+
+    const application = await this.applyService.revertApplication({
+      workspaceId: workspace.id,
+      user,
+      applicationId,
+    });
+
+    this.auditService.log({
+      event: AuditEvent.KNOWLEDGE_REVIEW_REVERTED,
+      resourceType: AuditResource.KNOWLEDGE,
+      resourceId: application.id,
+      spaceId: application.spaceId,
+      metadata: {
+        reviewItemId: application.reviewItemId,
+        operation: application.operation,
+        targetPageId: application.targetPageId,
+        createdPageId: application.createdPageId,
+      },
+    });
+
+    return application;
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Get('applications/:id/diff')
+  async diff(
+    @Param('id') applicationId: string,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertAiEnabled(workspace);
+    this.assertAdmin(user);
+
+    return this.applyService.getDiff({
+      workspaceId: workspace.id,
+      applicationId,
+    });
   }
 
   private buildSource(
@@ -207,9 +334,9 @@ export class ReviewController {
         draftApproach: resolved.draft?.approach ?? null,
         hasDraft: Boolean(resolved.draft),
         targetDocId: resolved.draft?.targetDocId ?? null,
-        applied: Boolean(resolved.applied),
-        appliedAction: resolved.applied?.action ?? null,
-        appliedPageId: resolved.applied?.pageId ?? null,
+        applied: false,
+        appliedAction: null,
+        appliedPageId: null,
       },
     });
   }

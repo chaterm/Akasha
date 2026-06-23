@@ -414,6 +414,32 @@ export interface KnowledgeReviewSnapshots {
   workspaceId: string;
 }
 
+export interface KnowledgeReviewApplications {
+  afterContent: string;
+  afterContentHash: string;
+  appliedAt: Timestamp | null;
+  appliedBy: string;
+  baseContentHash: string | null;
+  basePageVersion: string | null;
+  beforeContent: string | null;
+  createdAt: Generated<Timestamp>;
+  createdPageId: string | null;
+  id: Generated<string>;
+  operation: string;
+  patch: Json | null;
+  rationale: string;
+  revertedAt: Timestamp | null;
+  reviewItemId: string;
+  sourceRefs: Json;
+  spaceId: string;
+  status: string;
+  targetHeadingPath: Json;
+  targetPageId: string | null;
+  targetPageTitle: string | null;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
 export interface KnowledgeQuarantinedArtifacts {
   artifactId: string | null;
   artifactKind: string | null;
@@ -846,6 +872,7 @@ export interface DB {
   knowledgePages: KnowledgePages;
   knowledgePageSources: KnowledgePageSources;
   knowledgeQueryAudit: KnowledgeQueryAudit;
+  knowledgeReviewApplications: KnowledgeReviewApplications;
   knowledgeReviewSnapshots: KnowledgeReviewSnapshots;
   knowledgeQuarantinedArtifacts: KnowledgeQuarantinedArtifacts;
   knowledgeSourceAccessPolicy: KnowledgeSourceAccessPolicy;

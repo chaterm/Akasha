@@ -41,6 +41,7 @@ import {
   KnowledgePages,
   KnowledgePageSources,
   KnowledgeQueryAudit,
+  KnowledgeReviewApplications,
   KnowledgeReviewSnapshots,
   KnowledgeQuarantinedArtifacts,
   KnowledgeSourceAccessPolicy as _KnowledgeSourceAccessPolicy,
@@ -145,6 +146,14 @@ export type InsertableKnowledgeReviewSnapshot =
   Insertable<KnowledgeReviewSnapshots>;
 export type UpdatableKnowledgeReviewSnapshot = Updateable<
   Omit<KnowledgeReviewSnapshots, 'id'>
+>;
+
+export type KnowledgeReviewApplication =
+  Selectable<KnowledgeReviewApplications>;
+export type InsertableKnowledgeReviewApplication =
+  Insertable<KnowledgeReviewApplications>;
+export type UpdatableKnowledgeReviewApplication = Updateable<
+  Omit<KnowledgeReviewApplications, 'id'>
 >;
 
 export type KnowledgeQuarantinedArtifact =

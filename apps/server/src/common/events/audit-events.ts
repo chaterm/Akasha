@@ -102,6 +102,9 @@ export const AuditEvent = {
   KNOWLEDGE_COMPILE_QUEUED: 'knowledge.compile_queued',
   KNOWLEDGE_REVIEW_DISCOVERED: 'knowledge.review_discovered',
   KNOWLEDGE_REVIEW_NEGOTIATED: 'knowledge.review_negotiated',
+  KNOWLEDGE_REVIEW_PLANNED: 'knowledge.review_planned',
+  KNOWLEDGE_REVIEW_APPLIED: 'knowledge.review_applied',
+  KNOWLEDGE_REVIEW_REVERTED: 'knowledge.review_reverted',
 
   // Attachment
   ATTACHMENT_UPLOADED: 'attachment.uploaded',
