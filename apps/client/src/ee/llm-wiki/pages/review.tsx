@@ -35,7 +35,7 @@ import {
 } from "../services/review-service";
 import type {
   DraftApplyOperation,
-  DraftApproach,
+  NegotiationTurn,
   ReviewApplication,
   ReviewApplicationDiff,
   ResolvedReview,
@@ -69,6 +69,7 @@ type ItemState = {
   application?: ReviewApplication;
   diff?: ReviewApplicationDiff;
   freeText: string;
+  followUpText: string;
 };
 
 const ARTIFACT_LIMIT = 200;
@@ -145,19 +146,30 @@ export default function ReviewPage() {
   const patchState = (id: string, patch: Partial<ItemState>) => {
     setStates((prev) => ({
       ...prev,
-      [id]: { freeText: "", ...prev[id], ...patch },
+      [id]: { freeText: "", followUpText: "", ...prev[id], ...patch },
     }));
   };
 
-  const resolveItem = async (item: ReviewItem, feedback: string) => {
+  const resolveItem = async (
+    item: ReviewItem,
+    feedback: string,
+    priorTurns?: NegotiationTurn[],
+  ) => {
     if (!spaceId) return;
     patchState(item.id, { busy: "draft" });
     try {
-      const resolved = await negotiateReview({ spaceId, item, feedback });
+      const resolved = await negotiateReview({
+        spaceId,
+        item,
+        feedback,
+        priorTurns,
+      });
       patchState(item.id, {
         busy: undefined,
         resolved,
         application: undefined,
+        diff: undefined,
+        followUpText: "",
       });
       queryClient.setQueryData(
         ["review-snapshot", spaceId],
@@ -399,12 +411,24 @@ export default function ReviewPage() {
                 docMap={docMap}
                 state={states[item.id]}
                 onFreeTextChange={(v) => patchState(item.id, { freeText: v })}
+                onFollowUpChange={(v) =>
+                  patchState(item.id, { followUpText: v })
+                }
                 onDeepSearch={() => resolveItem(item, FEEDBACK_DEEPSEARCH)}
                 onAccept={() => resolveItem(item, FEEDBACK_ACCEPT)}
                 onSkip={() => resolveItem(item, FEEDBACK_SKIP)}
                 onSubmitFreeText={() =>
                   resolveItem(item, states[item.id]?.freeText?.trim() || "")
                 }
+                onSubmitFollowUp={() => {
+                  const resolved = states[item.id]?.resolved;
+                  if (!resolved) return;
+                  resolveItem(
+                    item,
+                    states[item.id]?.followUpText?.trim() || "",
+                    resolved.turns,
+                  );
+                }}
                 onPlan={() => planItem(item)}
                 onPreviewDiff={() => previewApplication(item)}
                 onApply={() => applyApplication(item)}
@@ -452,6 +476,7 @@ function buildStatesFromResolvedReviews(
         resolved.item.id,
         {
           freeText: "",
+          followUpText: "",
           resolved,
           application,
           diff: application
@@ -512,6 +537,14 @@ function isItemHandled(state?: ItemState): boolean {
     state.application?.status === "applied" ||
     state.application?.status === "reverted"
   );
+}
+
+function previewText(value: string, maxLength: number): string {
+  const normalized = value.trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength).trimEnd()}...`;
 }
 
 function DocLink({
@@ -587,10 +620,12 @@ function ReviewItemCard({
   docMap,
   state,
   onFreeTextChange,
+  onFollowUpChange,
   onDeepSearch,
   onAccept,
   onSkip,
   onSubmitFreeText,
+  onSubmitFollowUp,
   onPlan,
   onPreviewDiff,
   onApply,
@@ -601,10 +636,12 @@ function ReviewItemCard({
   docMap: Record<string, ReviewDocMeta>;
   state?: ItemState;
   onFreeTextChange: (value: string) => void;
+  onFollowUpChange: (value: string) => void;
   onDeepSearch: () => void;
   onAccept: () => void;
   onSkip: () => void;
   onSubmitFreeText: () => void;
+  onSubmitFollowUp: () => void;
   onPlan: () => void;
   onPreviewDiff: () => void;
   onApply: () => void;
@@ -714,6 +751,9 @@ function ReviewItemCard({
             onPreviewDiff={onPreviewDiff}
             onApply={onApply}
             onRevert={onRevert}
+            followUpText={state?.followUpText ?? ""}
+            onFollowUpChange={onFollowUpChange}
+            onSubmitFollowUp={onSubmitFollowUp}
           />
         ) : (
           <>
@@ -808,6 +848,9 @@ function ResolvedBlock({
   onPreviewDiff,
   onApply,
   onRevert,
+  followUpText,
+  onFollowUpChange,
+  onSubmitFollowUp,
 }: {
   resolved: ResolvedReview;
   application?: ReviewApplication;
@@ -817,6 +860,9 @@ function ResolvedBlock({
   onPreviewDiff: () => void;
   onApply: () => void;
   onRevert: () => void;
+  followUpText: string;
+  onFollowUpChange: (value: string) => void;
+  onSubmitFollowUp: () => void;
 }) {
   const { t } = useTranslation();
 
@@ -829,10 +875,12 @@ function ResolvedBlock({
   }
 
   const draft = resolved.draft;
-  const applyOperation =
-    draft.applyOperation ?? fallbackDraftApplyOperation(draft.approach);
-  const isRenameOnly = applyOperation === "rename-page";
+  const applyOperations = getDraftApplyOperations(draft.applyOperation);
+  const isRenameOnly =
+    applyOperations.length === 1 && applyOperations[0] === "rename-page";
   const showDraftBody = !diff;
+  const canContinue =
+    application?.status !== "applied" && application?.status !== "reverted";
   return (
     <Paper bg="var(--mantine-color-gray-0)" radius="sm" p="sm" mt="xs">
       <Stack gap="xs">
@@ -841,6 +889,7 @@ function ResolvedBlock({
           application={application}
           docMap={docMap}
         />
+        <NegotiationHistory turns={resolved.turns ?? []} />
         {resolved.deepSearched && (
           <Text size="xs" c="dimmed">
             {t("DeepSearch")} · {resolved.searchResults.length}
@@ -874,6 +923,29 @@ function ResolvedBlock({
             )}
           </>
         )}
+        {canContinue && (
+          <Group gap="xs" align="flex-end">
+            <TextInput
+              placeholder={t("Continue revising this draft ...")}
+              value={followUpText}
+              onChange={(event) => onFollowUpChange(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && followUpText.trim()) {
+                  onSubmitFollowUp();
+                }
+              }}
+              style={{ flex: 1 }}
+            />
+            <Button
+              size="sm"
+              variant="subtle"
+              onClick={onSubmitFollowUp}
+              disabled={!followUpText.trim()}
+            >
+              {t("Submit revision")}
+            </Button>
+          </Group>
+        )}
         <ApplicationBlock
           application={application}
           diff={diff}
@@ -885,6 +957,43 @@ function ResolvedBlock({
         />
       </Stack>
     </Paper>
+  );
+}
+
+function NegotiationHistory({ turns }: { turns: NegotiationTurn[] }) {
+  const { t } = useTranslation();
+  const turn = turns[turns.length - 1];
+  if (!turn) return null;
+
+  return (
+    <Stack gap={6}>
+      <Text size="xs" fw={600} c="dimmed">
+        {t("Current negotiation")}
+      </Text>
+      <Paper withBorder radius="sm" p="xs">
+        <Stack gap={4}>
+          <Group gap={6}>
+            <Badge size="xs" color="teal" variant="light">
+              {t("Current")}
+            </Badge>
+            {turn.deepSearched && (
+              <Badge size="xs" color="blue" variant="light">
+                {t("DeepSearch")}
+              </Badge>
+            )}
+          </Group>
+          <Text size="xs">
+            {t("Feedback")}: {turn.feedback}
+          </Text>
+          <Text size="xs" fw={600}>
+            {turn.draft.title}
+          </Text>
+          <Text size="xs" c="dimmed" style={{ whiteSpace: "pre-wrap" }}>
+            {previewText(turn.draft.body || t("(empty)"), 220)}
+          </Text>
+        </Stack>
+      </Paper>
+    </Stack>
   );
 }
 
@@ -1030,7 +1139,7 @@ function ExecutionSummary({
           {t(APPLICATION_STATUS_LABEL[application.status])}
         </Badge>
         <Text size="sm" fw={600}>
-          {t(OPERATION_LABEL[application.operation])}
+          {formatApplicationOperationLabel(application, t)}
         </Text>
         <Text size="sm" c="dimmed">
           ·
@@ -1040,8 +1149,7 @@ function ExecutionSummary({
     );
   }
 
-  const applyOperation =
-    draft.applyOperation ?? fallbackDraftApplyOperation(draft.approach);
+  const applyOperations = getDraftApplyOperations(draft.applyOperation);
 
   return (
     <Group gap={6} align="center">
@@ -1052,7 +1160,7 @@ function ExecutionSummary({
         ·
       </Text>
       <Text size="sm">
-        {t("Expected write")}: {t(DRAFT_OPERATION_LABEL[applyOperation])}
+        {t("Expected write")}: {formatDraftOperationLabel(applyOperations, t)}
       </Text>
       <Text size="sm" c="dimmed">
         ·
@@ -1126,6 +1234,21 @@ function DiffPreview({ diff }: { diff: ReviewApplicationDiff }) {
     diff.beforeContent ?? "",
     diff.afterContent,
   );
+  const titleChange = getApplicationTitleChange(diff.application);
+  const beforeTitleLine = titleChange
+    ? makeDiffTitleLine(
+        "before",
+        "removed",
+        `${t("Title")}: ${titleChange.beforeTitle}`,
+      )
+    : undefined;
+  const afterTitleLine = titleChange
+    ? makeDiffTitleLine(
+        "after",
+        "added",
+        `${t("Title")}: ${titleChange.afterTitle}`,
+      )
+    : undefined;
 
   return (
     <Stack gap={4}>
@@ -1133,8 +1256,16 @@ function DiffPreview({ diff }: { diff: ReviewApplicationDiff }) {
         {t("Only the changed section is shown.")}
       </Text>
       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-        <DiffPane title={t("Before")} lines={preview.before} />
-        <DiffPane title={t("After")} lines={preview.after} />
+        <DiffPane
+          title={t("Before")}
+          lines={preview.before}
+          titleLine={beforeTitleLine}
+        />
+        <DiffPane
+          title={t("After")}
+          lines={preview.after}
+          titleLine={afterTitleLine}
+        />
       </SimpleGrid>
     </Stack>
   );
@@ -1143,12 +1274,15 @@ function DiffPreview({ diff }: { diff: ReviewApplicationDiff }) {
 function DiffPane({
   title,
   lines,
+  titleLine,
 }: {
   title: string;
   lines: HighlightedDiffLine[];
+  titleLine?: HighlightedDiffLine;
 }) {
-  const renderedLines =
-    lines.length > 0
+  const renderedLines = [
+    ...(titleLine ? [titleLine] : []),
+    ...(lines.length > 0
       ? lines
       : [
           {
@@ -1157,7 +1291,8 @@ function DiffPane({
             content: "(empty)",
             lineNumber: null,
           },
-        ];
+        ]),
+  ];
 
   return (
     <Stack gap={4}>
@@ -1219,6 +1354,52 @@ function DiffPane({
       </Paper>
     </Stack>
   );
+}
+
+function getApplicationTitleChange(
+  application: ReviewApplication,
+): { beforeTitle: string; afterTitle: string } | null {
+  if (!isRecord(application.patch)) return null;
+  const proposedPageTitle =
+    typeof application.patch.proposedPageTitle === "string"
+      ? application.patch.proposedPageTitle.trim()
+      : "";
+  if (!proposedPageTitle) return null;
+
+  const originalPageTitle =
+    typeof application.patch.originalPageTitle === "string"
+      ? application.patch.originalPageTitle.trim()
+      : (application.targetPageTitle ?? "").trim();
+
+  if (
+    originalPageTitle &&
+    normalizeTitleForComparison(originalPageTitle) ===
+      normalizeTitleForComparison(proposedPageTitle)
+  ) {
+    return null;
+  }
+
+  return {
+    beforeTitle: originalPageTitle || "(untitled)",
+    afterTitle: proposedPageTitle,
+  };
+}
+
+function makeDiffTitleLine(
+  side: "before" | "after",
+  kind: "added" | "removed",
+  content: string,
+): HighlightedDiffLine {
+  return {
+    id: `${side}-title-${kind}`,
+    kind,
+    content,
+    lineNumber: null,
+  };
+}
+
+function normalizeTitleForComparison(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 type HighlightedDiffLineKind = "context" | "added" | "removed" | "omitted";
@@ -1530,19 +1711,54 @@ function diffLineTextColor(kind: HighlightedDiffLineKind): string {
   return "inherit";
 }
 
-function fallbackDraftApplyOperation(
-  approach: DraftApproach,
-): DraftApplyOperation {
-  switch (approach) {
-    case "new-page":
-    case "clarify":
-      return "create-page";
-    case "section":
-      return "append-section";
-    case "rewrite":
-    case "merge":
-      return "replace-page";
+function formatApplicationOperationLabel(
+  application: ReviewApplication,
+  t: (key: string) => string,
+): string {
+  const applyOperations = getApplicationApplyOperations(application);
+  if (applyOperations.length > 0) {
+    return formatDraftOperationLabel(applyOperations, t);
   }
+  return t(OPERATION_LABEL[application.operation]);
+}
+
+function getApplicationApplyOperations(
+  application: ReviewApplication,
+): DraftApplyOperation[] {
+  if (!isRecord(application.patch)) return [];
+  return getDraftApplyOperations(
+    application.patch.applyOperations ?? application.patch.applyOperation,
+  );
+}
+
+function formatDraftOperationLabel(
+  operations: DraftApplyOperation[],
+  t: (key: string) => string,
+): string {
+  if (operations.length === 0) {
+    return t("Unknown operation");
+  }
+  return operations
+    .map((operation) => t(DRAFT_OPERATION_LABEL[operation]))
+    .join(" + ");
+}
+
+function getDraftApplyOperations(value: unknown): DraftApplyOperation[] {
+  const values = Array.isArray(value) ? value : value ? [value] : [];
+  return [...new Set(values.filter(isDraftApplyOperation))];
+}
+
+function isDraftApplyOperation(value: unknown): value is DraftApplyOperation {
+  return (
+    value === "create-page" ||
+    value === "append-section" ||
+    value === "replace-page" ||
+    value === "rename-page"
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 const DRAFT_OPERATION_LABEL: Record<DraftApplyOperation, string> = {

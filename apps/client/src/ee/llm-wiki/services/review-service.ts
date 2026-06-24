@@ -1,4 +1,5 @@
 import type {
+  NegotiationTurn,
   ReviewApplication,
   ReviewApplicationDiff,
   ResolvedReview,
@@ -46,6 +47,7 @@ export async function negotiateReview(params: {
   spaceId: string;
   item: ReviewItem;
   feedback: string;
+  priorTurns?: NegotiationTurn[];
 }): Promise<ResolvedReview> {
   const response = await fetch("/api/llm-wiki/review/negotiate", {
     method: "POST",
@@ -58,7 +60,9 @@ export async function negotiateReview(params: {
     throw new Error(await readErrorMessage(response));
   }
 
-  return unwrapApiData(await response.json()) as ResolvedReview;
+  return normalizeResolvedReview(
+    unwrapApiData(await response.json()) as ResolvedReview,
+  );
 }
 
 export async function planReviewApplication(params: {
@@ -162,15 +166,44 @@ function normalizeReviewSnapshot(value: unknown): ReviewSnapshot | null {
         }),
       )
       .filter((doc) => Boolean(doc.id)),
-    resolvedReviews: resolvedReviews.filter(
-      isRecord,
-    ) as unknown as ResolvedReview[],
+    resolvedReviews: resolvedReviews
+      .filter(isRecord)
+      .map((resolved) =>
+        normalizeResolvedReview(resolved as unknown as ResolvedReview),
+      ),
     applications: applications.filter(
       isRecord,
     ) as unknown as ReviewApplication[],
     discoveredAt:
       typeof record.discoveredAt === "string" ? record.discoveredAt : "",
     updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : "",
+  };
+}
+
+function normalizeResolvedReview(resolved: ResolvedReview): ResolvedReview {
+  const turns = Array.isArray(resolved.turns)
+    ? resolved.turns
+    : resolved.draft
+      ? [
+          {
+            feedback: resolved.feedback,
+            draft: resolved.draft,
+            deepSearched: resolved.deepSearched,
+            searchResults: resolved.searchResults ?? [],
+          },
+        ]
+      : [];
+  const latestTurn = turns[turns.length - 1];
+  if (!latestTurn) {
+    return { ...resolved, turns };
+  }
+  return {
+    ...resolved,
+    turns,
+    feedback: latestTurn.feedback,
+    deepSearched: latestTurn.deepSearched,
+    searchResults: latestTurn.searchResults,
+    draft: latestTurn.draft,
   };
 }
 

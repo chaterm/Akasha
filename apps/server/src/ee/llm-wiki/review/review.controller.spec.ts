@@ -179,6 +179,7 @@ describe('ReviewController', () => {
       searchResults: [],
       draft: null,
       applied: null,
+      turns: [],
     });
 
     expect(reviewService.runDeepSearch).not.toHaveBeenCalled();
@@ -195,7 +196,8 @@ describe('ReviewController', () => {
         skipped: true,
         deepSearched: false,
         searchResultCount: 0,
-        draftApproach: null,
+        negotiationTurnCount: 0,
+        draftApplyOperation: null,
         hasDraft: false,
         targetDocId: null,
         applied: false,
@@ -219,7 +221,7 @@ describe('ReviewController', () => {
     const draft = {
       title: 'Rollback criteria',
       body: '## Rollback criteria\n\nRollback when error budget burns fast.',
-      approach: 'section' as const,
+      applyOperation: ['append-section'] as const,
       targetDocId: 'kp-1',
       notes: 'Adds an operational checklist.',
     };
@@ -275,7 +277,20 @@ describe('ReviewController', () => {
       item,
       draft,
       applied: null,
+      turns: [
+        expect.objectContaining({
+          feedback: '采纳',
+          draft,
+        }),
+      ],
     });
+    expect(reviewService.negotiateDraft).toHaveBeenCalledWith(
+      expect.anything(),
+      item,
+      '采纳',
+      [],
+      [],
+    );
     expect(applyService.planDraft).not.toHaveBeenCalled();
     expect(applyService.applyApplication).not.toHaveBeenCalled();
 
@@ -297,6 +312,80 @@ describe('ReviewController', () => {
       docs: [{ id: 'kp-1', title: 'Launch plan', sourcePageId: 'page-1' }],
       searchResults: [],
     });
+  });
+
+  it('continues negotiation with the full prior history', async () => {
+    const item: ReviewItem = {
+      id: 'rev-4',
+      type: 'suggestion',
+      title: 'Improve rollback section',
+      detail: 'The rollback section needs refinement.',
+      recommendation: 'Refine rollback wording.',
+      relatedDocIds: ['kp-1'],
+      searchQueries: ['rollback criteria'],
+      targetDocId: 'kp-1',
+    };
+    const firstDraft = {
+      title: 'Rollback criteria',
+      body: '## Rollback criteria\n\nRollback when error budget burns fast.',
+      applyOperation: ['append-section'] as const,
+      targetDocId: 'kp-1',
+      notes: '',
+    };
+    const secondDraft = {
+      title: 'Rollback criteria',
+      body: '## Rollback criteria\n\nRollback when user-visible errors rise.',
+      applyOperation: ['append-section'] as const,
+      targetDocId: 'kp-1',
+      notes: 'Kept the existing section and tightened the trigger.',
+    };
+    const priorTurn = {
+      feedback: '采纳',
+      draft: firstDraft,
+      deepSearched: false,
+      searchResults: [],
+    };
+    const reviewService = {
+      runDeepSearch: jest.fn().mockResolvedValue([]),
+      negotiateDraft: jest.fn().mockResolvedValue(secondDraft),
+    };
+    const controller = createController({
+      reviewService,
+      capsuleRepo: capsuleRepoWithPages(),
+    });
+
+    await expect(
+      controller.negotiate(
+        {
+          spaceId: 'space-1',
+          item,
+          feedback: '把触发条件改得更准确',
+          priorTurns: [priorTurn],
+        },
+        adminUser(),
+        workspace(),
+      ),
+    ).resolves.toMatchObject({
+      draft: secondDraft,
+      turns: [
+        expect.objectContaining({
+          feedback: '采纳',
+          draft: firstDraft,
+        }),
+        expect.objectContaining({
+          feedback: '把触发条件改得更准确',
+          draft: secondDraft,
+        }),
+      ],
+    });
+
+    expect(reviewService.negotiateDraft).toHaveBeenCalledWith(
+      expect.anything(),
+      item,
+      '把触发条件改得更准确',
+      [],
+      [priorTurn],
+    );
   });
 });
 

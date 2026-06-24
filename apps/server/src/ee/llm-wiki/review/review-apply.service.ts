@@ -27,6 +27,7 @@ import { SearchResult } from './search-provider';
 import { ReviewDocMeta } from './knowledge-artifact-wiki-source';
 import {
   DraftApplyOperation,
+  DraftApplyOperations,
   DraftContent,
   ReviewApplication,
   ReviewApplyOperation,
@@ -61,8 +62,8 @@ export class ReviewApplyService {
     docs: ReviewDocMeta[];
     searchResults?: SearchResult[];
   }): Promise<ReviewApplication> {
-    const applyOperation = resolveApplyOperation(input.draft);
-    const operation = toReviewApplyOperation(applyOperation);
+    const applyOperations = normalizeApplyOperations(input.draft, input.item);
+    const operation = toReviewApplyOperation(applyOperations);
 
     if (operation === 'create_page') {
       await this.validateCanCreatePage(input.user, input.spaceId);
@@ -82,9 +83,9 @@ export class ReviewApplyService {
         afterContent,
         afterContentHash: hashContent(afterContent),
         patch: buildPatch(input.item, input.draft, operation, {
-          applyOperation,
+          applyOperations,
           targetHeadingPath: [],
-          strategy: applyOperation,
+          strategy: strategyForDraftOperations(applyOperations),
         }),
         createdPageId: null,
         appliedAt: null,
@@ -116,11 +117,11 @@ export class ReviewApplyService {
     const planned = buildPlannedContent(
       beforeContent,
       input.draft,
-      applyOperation,
+      applyOperations,
     );
     const currentPageTitle = page.title ?? 'Untitled';
     const proposedPageTitle = plannedPageTitleChange(
-      applyOperation,
+      applyOperations,
       input.draft,
       currentPageTitle,
     );
@@ -141,7 +142,7 @@ export class ReviewApplyService {
       afterContentHash: hashContent(planned.afterContent),
       patch: buildPatch(input.item, input.draft, planned.operation, {
         ...planned,
-        applyOperation,
+        applyOperations,
         originalPageTitle: currentPageTitle,
         proposedPageTitle,
       }),
@@ -459,36 +460,100 @@ export class ReviewApplyService {
   }
 }
 
-function resolveApplyOperation(draft: DraftContent): DraftApplyOperation {
-  if (draft.applyOperation) {
-    return draft.applyOperation;
-  }
+/**
+ * 按 review type 校验并纠正 AI 给出的 applyOperation(代码兜底,不信任 AI 自律)。
+ * 原则:能由 type 唯一确定写动作的,直接代码定;只有 suggestion 真正需要 AI 的语义判断
+ * (append 补充 / replace 重写 / rename 改名),此时才信任 AI 的选择,但仍纠正非法组合。
+ *
+ * - missing-page  → 必为 create-page(缺页只能新建)。
+ * - contradiction → 有目标页则 replace-page(改写保留页);无目标页则 create-page(辨析新页)。
+ * - duplicate     → 必为 replace-page(合并写回主页)。
+ * - suggestion    → 信任 AI 在 append/replace/rename 三者间的选择;但若 AI 给了 create-page
+ *                   这种"对现有页却新建"的非法组合,纠正为 append-section(最小侵入的补充)。
+ */
+function normalizeApplyOperations(
+  draft: DraftContent,
+  item: ReviewItem,
+): DraftApplyOperations {
+  const requested = normalizeRequestedApplyOperations(draft.applyOperation);
+  const hasTarget = Boolean(draft.targetDocId ?? fallbackTargetDocId(item));
 
-  switch (draft.approach) {
-    case 'new-page':
-    case 'clarify':
-      return 'create-page';
-    case 'section':
-      return 'append-section';
-    case 'rewrite':
-    case 'merge':
-      return 'replace-page';
+  switch (item.type) {
+    case 'missing-page':
+      return ['create-page'];
+    case 'contradiction':
+      return hasTarget
+        ? normalizeExistingPageOperations(requested, 'replace-page', {
+            forceContentOperation: true,
+          })
+        : ['create-page'];
+    case 'duplicate':
+      return normalizeExistingPageOperations(requested, 'replace-page', {
+        forceContentOperation: true,
+      });
+    case 'suggestion':
+      // suggestion 无明确目标时按新页兜底;有目标时允许 append/replace/rename 的组合。
+      return hasTarget
+        ? normalizeExistingPageOperations(requested, 'append-section')
+        : ['create-page'];
   }
 }
 
 function toReviewApplyOperation(
-  operation: DraftApplyOperation,
+  operations: DraftApplyOperations,
 ): ReviewApplyOperation {
-  switch (operation) {
-    case 'create-page':
-      return 'create_page';
-    case 'append-section':
-      return 'append_section';
-    case 'replace-page':
-      return 'replace_page';
-    case 'rename-page':
-      return 'rename_page';
+  if (operations.includes('create-page')) return 'create_page';
+  if (operations.includes('replace-page')) return 'replace_page';
+  if (operations.includes('append-section')) return 'append_section';
+  return 'rename_page';
+}
+
+function normalizeRequestedApplyOperations(
+  value: DraftApplyOperation | DraftApplyOperation[],
+): DraftApplyOperation[] {
+  const values = Array.isArray(value) ? value : [value];
+  return [...new Set(values.filter(isDraftApplyOperation))];
+}
+
+function normalizeExistingPageOperations(
+  requested: DraftApplyOperation[],
+  fallbackContentOperation: Extract<
+    DraftApplyOperation,
+    'append-section' | 'replace-page'
+  >,
+  options: { forceContentOperation?: boolean } = {},
+): DraftApplyOperations {
+  const wantsRename = requested.includes('rename-page');
+  const requestedContentOperation = requested.includes('replace-page')
+    ? 'replace-page'
+    : requested.includes('append-section')
+      ? 'append-section'
+      : null;
+  const contentOperation = options.forceContentOperation
+    ? fallbackContentOperation
+    : (requestedContentOperation ??
+      (!wantsRename ? fallbackContentOperation : null));
+  const operations: DraftApplyOperation[] = [];
+
+  if (wantsRename) {
+    operations.push('rename-page');
   }
+  if (contentOperation) {
+    operations.push(contentOperation);
+  }
+
+  return operations.length > 0
+    ? (operations.slice(0, 2) as DraftApplyOperations)
+    : [fallbackContentOperation];
+}
+
+function isDraftApplyOperation(value: unknown): value is DraftApplyOperation {
+  return (
+    value === 'create-page' ||
+    value === 'append-section' ||
+    value === 'replace-page' ||
+    value === 'rename-page'
+  );
 }
 
 function resolveTargetSourcePageId(
@@ -521,37 +586,37 @@ function markdownFromPage(page: PageWithContent): string {
 function buildPlannedContent(
   beforeContent: string,
   draft: DraftContent,
-  applyOperation: DraftApplyOperation,
+  applyOperations: DraftApplyOperations,
 ): {
   operation: ReviewApplyOperation;
   targetHeadingPath: string[];
   afterContent: string;
   strategy: string;
 } {
-  if (applyOperation === 'append-section') {
+  if (applyOperations.includes('append-section')) {
     return {
       operation: 'append_section',
       targetHeadingPath: [],
       afterContent: appendSection(beforeContent, ensureSectionMarkdown(draft)),
-      strategy: 'append_section',
+      strategy: strategyForDraftOperations(applyOperations),
     };
   }
 
-  if (applyOperation === 'replace-page') {
+  if (applyOperations.includes('replace-page')) {
     return {
       operation: 'replace_page',
       targetHeadingPath: [],
       afterContent: normalizeMarkdown(draft.body),
-      strategy: 'replace_page',
+      strategy: strategyForDraftOperations(applyOperations),
     };
   }
 
-  if (applyOperation === 'rename-page') {
+  if (applyOperations.includes('rename-page')) {
     return {
       operation: 'rename_page',
       targetHeadingPath: [],
       afterContent: beforeContent,
-      strategy: 'rename_page',
+      strategy: strategyForDraftOperations(applyOperations),
     };
   }
 
@@ -559,8 +624,12 @@ function buildPlannedContent(
     operation: 'create_page',
     targetHeadingPath: [],
     afterContent: normalizeMarkdown(draft.body),
-    strategy: 'create_page',
+    strategy: strategyForDraftOperations(applyOperations),
   };
+}
+
+function strategyForDraftOperations(operations: DraftApplyOperations): string {
+  return operations.map((operation) => operation.replace(/-/g, '_')).join('+');
 }
 
 function insertSection(
@@ -724,17 +793,18 @@ function buildPatch(
   draft: DraftContent,
   operation: ReviewApplyOperation,
   planned?: {
-    applyOperation?: DraftApplyOperation;
+    applyOperations?: DraftApplyOperations;
     targetHeadingPath: string[];
     strategy: string;
     originalPageTitle?: string;
     proposedPageTitle?: string | null;
   },
 ): JsonObject {
+  const applyOperations = planned?.applyOperations ?? draft.applyOperation;
   return {
     reviewItemType: item.type,
-    draftApproach: draft.approach,
-    applyOperation: planned?.applyOperation ?? draft.applyOperation,
+    applyOperation: applyOperations,
+    applyOperations,
     draftTitle: draft.title,
     targetDocId: draft.targetDocId,
     targetHeadingPath: planned?.targetHeadingPath ?? [],
@@ -745,11 +815,11 @@ function buildPatch(
 }
 
 function plannedPageTitleChange(
-  applyOperation: DraftApplyOperation,
+  applyOperations: DraftApplyOperations,
   draft: DraftContent,
   currentPageTitle: string,
 ): string | null {
-  if (applyOperation !== 'replace-page' && applyOperation !== 'rename-page') {
+  if (!applyOperations.includes('rename-page')) {
     return null;
   }
   return nonEmptyTitleChange(draft.title, currentPageTitle);
@@ -814,6 +884,14 @@ function proposedPageTitleFor(
     return nonEmptyTitleChange(patch.proposedPageTitle, currentPageTitle);
   }
 
+  const applyOperations = patchApplyOperations(patch);
+  if (applyOperations) {
+    return applyOperations.includes('rename-page') &&
+      typeof patch.draftTitle === 'string'
+      ? nonEmptyTitleChange(patch.draftTitle, currentPageTitle)
+      : null;
+  }
+
   if (!isWholePageReplacement(application, patch)) {
     return null;
   }
@@ -835,6 +913,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function patchApplyOperations(
+  patch: Record<string, unknown>,
+): DraftApplyOperation[] | null {
+  const raw = patch.applyOperations ?? patch.applyOperation;
+  const values = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  const operations = [...new Set(values.filter(isDraftApplyOperation))];
+  return operations.length > 0 ? operations : null;
+}
+
 function isWholePageReplacement(
   application: ReviewApplication,
   patch: Record<string, unknown>,
@@ -844,9 +931,6 @@ function isWholePageReplacement(
     application.operation !== 'replace_page'
   ) {
     return false;
-  }
-  if (patch.applyOperation === 'replace-page') {
-    return true;
   }
   const targetHeadingPath = patch.targetHeadingPath;
   if (Array.isArray(targetHeadingPath) && targetHeadingPath.length > 0) {

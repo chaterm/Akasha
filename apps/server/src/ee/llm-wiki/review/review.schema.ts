@@ -70,15 +70,6 @@ export type ReviewDocMeta = z.infer<typeof reviewDocMetaSchema>;
 export const QUICK_ACTIONS = ['DeepSearch', '采纳', '暂时跳过'] as const;
 export type QuickAction = (typeof QUICK_ACTIONS)[number];
 
-export const draftApproachSchema = z.enum([
-  'new-page',
-  'section',
-  'rewrite',
-  'clarify',
-  'merge',
-]);
-export type DraftApproach = z.infer<typeof draftApproachSchema>;
-
 export const draftApplyOperationSchema = z.enum([
   'create-page',
   'append-section',
@@ -87,15 +78,57 @@ export const draftApplyOperationSchema = z.enum([
 ]);
 export type DraftApplyOperation = z.infer<typeof draftApplyOperationSchema>;
 
-export const draftContentSchema = z.object({
-  title: z.string(),
-  body: z.string(),
-  approach: draftApproachSchema,
-  applyOperation: draftApplyOperationSchema.optional(),
-  targetDocId: z.string().nullable().default(null),
-  notes: z.string().default(''),
-});
+// AI 在协商阶段给出的"写动作"意图。允许 1-2 个动作,例如 rename-page + replace-page。
+// 兼容旧 snapshot: 老数据里的单个字符串会被转换成数组。
+export const draftApplyOperationsSchema = z.preprocess(
+  (value) => (Array.isArray(value) ? value : value ? [value] : value),
+  z
+    .array(draftApplyOperationSchema)
+    .min(1)
+    .max(2)
+    .transform((operations) => [...new Set(operations)]),
+);
+export type DraftApplyOperations = z.infer<typeof draftApplyOperationsSchema>;
+
+export const draftContentSchema = z.preprocess(
+  (value) => {
+    if (!isRecord(value) || value.applyOperation) {
+      return value;
+    }
+    const applyOperation = legacyApproachToApplyOperations(value.approach);
+    return applyOperation ? { ...value, applyOperation } : value;
+  },
+  z.object({
+    title: z.string(),
+    body: z.string(),
+    // AI 给出的落地写动作。代码会按 review type 兜底纠正。
+    applyOperation: draftApplyOperationsSchema,
+    targetDocId: z.string().nullable().default(null),
+    notes: z.string().default(''),
+  }),
+);
 export type DraftContent = z.infer<typeof draftContentSchema>;
+
+function legacyApproachToApplyOperations(
+  approach: unknown,
+): DraftApplyOperation[] | null {
+  switch (approach) {
+    case 'new-page':
+    case 'clarify':
+      return ['create-page'];
+    case 'section':
+      return ['append-section'];
+    case 'rewrite':
+    case 'merge':
+      return ['replace-page'];
+    default:
+      return null;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 export const appliedReviewResultSchema = z.object({
   pageId: z.string(),
@@ -180,15 +213,67 @@ export const searchResultSchema = z.object({
 });
 export type ReviewSearchResult = z.infer<typeof searchResultSchema>;
 
-export const resolvedReviewSchema = z.object({
-  item: reviewItemSchema,
+export const negotiationTurnSchema = z.object({
   feedback: z.string(),
-  skipped: z.boolean(),
-  deepSearched: z.boolean(),
+  draft: draftContentSchema,
+  deepSearched: z.boolean().default(false),
   searchResults: z.array(searchResultSchema).default([]),
-  draft: draftContentSchema.nullable().default(null),
-  applied: appliedReviewResultSchema.nullable().default(null),
 });
+export type NegotiationTurn = z.infer<typeof negotiationTurnSchema>;
+
+export const resolvedReviewSchema = z.preprocess(
+  (value) => {
+    if (!isRecord(value)) {
+      return value;
+    }
+    if (Array.isArray(value.turns)) {
+      return value;
+    }
+    if (!value.draft) {
+      return { ...value, turns: [] };
+    }
+    return {
+      ...value,
+      turns: [
+        {
+          feedback: typeof value.feedback === 'string' ? value.feedback : '',
+          draft: value.draft,
+          deepSearched:
+            typeof value.deepSearched === 'boolean'
+              ? value.deepSearched
+              : false,
+          searchResults: Array.isArray(value.searchResults)
+            ? value.searchResults
+            : [],
+        },
+      ],
+    };
+  },
+  z
+    .object({
+      item: reviewItemSchema,
+      feedback: z.string(),
+      skipped: z.boolean(),
+      deepSearched: z.boolean(),
+      searchResults: z.array(searchResultSchema).default([]),
+      draft: draftContentSchema.nullable().default(null),
+      applied: appliedReviewResultSchema.nullable().default(null),
+      turns: z.array(negotiationTurnSchema).default([]),
+    })
+    .transform((resolved) => {
+      const latestTurn = resolved.turns[resolved.turns.length - 1];
+      if (!latestTurn) {
+        return resolved;
+      }
+      return {
+        ...resolved,
+        feedback: latestTurn.feedback,
+        deepSearched: latestTurn.deepSearched,
+        searchResults: latestTurn.searchResults,
+        draft: latestTurn.draft,
+      };
+    }),
+);
 export type StoredResolvedReview = z.infer<typeof resolvedReviewSchema>;
 
 export const reviewSnapshotSchema = z.object({

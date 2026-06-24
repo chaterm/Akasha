@@ -54,24 +54,18 @@ export interface ReviewSnapshot {
   updatedAt: string;
 }
 
-export type DraftApproach =
-  | "new-page"
-  | "section"
-  | "rewrite"
-  | "clarify"
-  | "merge";
-
 export type DraftApplyOperation =
   | "create-page"
   | "append-section"
   | "replace-page"
   | "rename-page";
 
+export type DraftApplyOperations = DraftApplyOperation | DraftApplyOperation[];
+
 export interface DraftContent {
   title: string;
   body: string;
-  approach: DraftApproach;
-  applyOperation?: DraftApplyOperation;
+  applyOperation: DraftApplyOperations;
   targetDocId: string | null;
   notes: string;
 }
@@ -89,6 +83,13 @@ export interface SearchResult {
   title: string;
   url: string;
   snippet: string;
+}
+
+export interface NegotiationTurn {
+  feedback: string;
+  draft: DraftContent;
+  deepSearched: boolean;
+  searchResults: SearchResult[];
 }
 
 export type ReviewApplyOperation =
@@ -156,4 +157,5 @@ export interface ResolvedReview {
   searchResults: SearchResult[];
   draft: DraftContent | null;
   applied: AppliedReviewResult | null;
+  turns: NegotiationTurn[];
 }

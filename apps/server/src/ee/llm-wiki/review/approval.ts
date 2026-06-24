@@ -1,6 +1,11 @@
 import { SearchProvider, SearchResult } from './search-provider';
 import { ReviewService } from './review.service';
-import { AppliedReviewResult, DraftContent, ReviewItem } from './review.schema';
+import {
+  AppliedReviewResult,
+  DraftContent,
+  NegotiationTurn,
+  ReviewItem,
+} from './review.schema';
 import { WikiSource } from './wiki-source';
 
 export const SKIP_FEEDBACK = '暂时跳过';
@@ -25,6 +30,7 @@ export type ResolvedReview = {
   searchResults: SearchResult[];
   draft: DraftContent | null;
   applied: AppliedReviewResult | null;
+  turns: NegotiationTurn[];
 };
 
 export function isSkip(feedback: string): boolean {
@@ -57,6 +63,7 @@ export async function resolveReviews(
         searchResults: [],
         draft: null,
         applied: null,
+        turns: [],
       };
       resolved.push(r);
       hooks.onResolved?.(r);
@@ -76,6 +83,12 @@ export async function resolveReviews(
       feedback,
       searchResults,
     );
+    const turn: NegotiationTurn = {
+      feedback,
+      draft,
+      deepSearched,
+      searchResults,
+    };
     const r: ResolvedReview = {
       item,
       feedback,
@@ -84,6 +97,7 @@ export async function resolveReviews(
       searchResults,
       draft,
       applied: null,
+      turns: [turn],
     };
     resolved.push(r);
     hooks.onResolved?.(r);

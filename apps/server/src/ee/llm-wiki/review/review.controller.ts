@@ -28,7 +28,11 @@ import { ReviewService } from './review.service';
 import { KnowledgeArtifactWikiSource } from './knowledge-artifact-wiki-source';
 import { MockSearchProvider } from './search-provider';
 import { isDeepSearch, isSkip, ResolvedReview } from './approval';
-import { reviewItemSchema } from './review.schema';
+import {
+  NegotiationTurn,
+  negotiationTurnSchema,
+  reviewItemSchema,
+} from './review.schema';
 import { DiscoverReviewDto } from './dto/discover-review.dto';
 import { LoadReviewDto } from './dto/load-review.dto';
 import { NegotiateReviewDto } from './dto/negotiate-review.dto';
@@ -110,6 +114,17 @@ export class ReviewController {
     const item = reviewItemSchema.parse(dto.item);
     const feedback = (dto.feedback ?? '').trim();
     const docSource = this.buildSource(workspace.id, dto.spaceId);
+    const snapshot = await this.snapshotService.loadSnapshot({
+      workspaceId: workspace.id,
+      spaceId: dto.spaceId,
+    });
+    const storedResolved = snapshot?.resolvedReviews.find(
+      (entry) => entry.item.id === item.id,
+    );
+    const priorTurns =
+      (storedResolved?.turns?.length ?? 0) > 0
+        ? storedResolved.turns
+        : parseNegotiationTurns(dto.priorTurns);
 
     if (isSkip(feedback)) {
       const resolved: ResolvedReview = {
@@ -120,6 +135,7 @@ export class ReviewController {
         searchResults: [],
         draft: null,
         applied: null,
+        turns: [],
       };
       await this.snapshotService.saveResolvedReview({
         workspaceId: workspace.id,
@@ -140,8 +156,15 @@ export class ReviewController {
       item,
       feedback,
       searchResults,
+      priorTurns,
     );
 
+    const newTurn: NegotiationTurn = {
+      feedback,
+      draft,
+      deepSearched,
+      searchResults,
+    };
     const resolved: ResolvedReview = {
       item,
       feedback,
@@ -150,6 +173,7 @@ export class ReviewController {
       searchResults,
       draft,
       applied: null,
+      turns: [...priorTurns, newTurn],
     };
     await this.snapshotService.saveResolvedReview({
       workspaceId: workspace.id,
@@ -193,7 +217,7 @@ export class ReviewController {
       item: resolved.item,
       draft: resolved.draft,
       docs: snapshot.docs,
-      searchResults: resolved.searchResults,
+      searchResults: collectResolvedSearchResults(resolved),
     });
 
     this.auditService.log({
@@ -331,7 +355,8 @@ export class ReviewController {
         skipped: resolved.skipped,
         deepSearched: resolved.deepSearched,
         searchResultCount: resolved.searchResults.length,
-        draftApproach: resolved.draft?.approach ?? null,
+        negotiationTurnCount: resolved.turns.length,
+        draftApplyOperation: resolved.draft?.applyOperation ?? null,
         hasDraft: Boolean(resolved.draft),
         targetDocId: resolved.draft?.targetDocId ?? null,
         applied: false,
@@ -340,6 +365,31 @@ export class ReviewController {
       },
     });
   }
+}
+
+function parseNegotiationTurns(value: unknown): NegotiationTurn[] {
+  const parsed = negotiationTurnSchema.array().safeParse(value);
+  return parsed.success ? parsed.data : [];
+}
+
+function collectResolvedSearchResults(resolved: {
+  searchResults: ResolvedReview['searchResults'];
+  turns?: NegotiationTurn[];
+}): ResolvedReview['searchResults'] {
+  const seen = new Set<string>();
+  const turns = resolved.turns ?? [];
+  const results = [
+    ...turns.flatMap((turn) => turn.searchResults),
+    ...resolved.searchResults,
+  ];
+  return results.filter((result) => {
+    const key = `${result.url}\n${result.title}\n${result.snippet}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function countReviewItemTypes(
