@@ -1,12 +1,12 @@
 import { ForbiddenException } from '@nestjs/common';
-import { KnowledgeCapsuleRepo } from '@docmost/db/repos/llm-wiki/knowledge-capsule.repo';
+import { Queue } from 'bullmq';
 import { User, Workspace } from '@docmost/db/types/entity.types';
 import { AuditEvent, AuditResource } from '../../../common/events/audit-events';
 import { UserRole } from '../../../common/helpers/types/permission';
 import { IAuditService } from '../../../integrations/audit/audit.service';
-import { ReviewService } from './review.service';
+import { QueueJob } from '../../../integrations/queue/constants';
 import { ReviewController } from './review.controller';
-import { ReviewItem } from './review.schema';
+import { ReviewItem, ReviewJob } from './review.schema';
 import { ReviewSnapshotService } from './review-snapshot.service';
 import type { ReviewApplyService } from './review-apply.service';
 
@@ -16,13 +16,11 @@ jest.mock('./review-apply.service', () => ({
 
 describe('ReviewController', () => {
   it('rejects review discovery when workspace AI is disabled', async () => {
-    const reviewService = {
-      reviewWiki: jest.fn(),
-    };
+    const aiQueue = createAiQueue();
     const auditService = {
       log: jest.fn(),
     };
-    const controller = createController({ reviewService, auditService });
+    const controller = createController({ aiQueue, auditService });
 
     await expect(
       controller.discover(
@@ -32,7 +30,7 @@ describe('ReviewController', () => {
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
-    expect(reviewService.reviewWiki).not.toHaveBeenCalled();
+    expect(aiQueue.add).not.toHaveBeenCalled();
     expect(auditService.log).not.toHaveBeenCalled();
   });
 
@@ -43,6 +41,7 @@ describe('ReviewController', () => {
         items: [],
         docs: [],
         resolvedReviews: [],
+        jobs: [],
         applications: [],
         discoveredAt: '2026-06-22T03:00:00.000Z',
         updatedAt: '2026-06-22T03:00:00.000Z',
@@ -57,6 +56,7 @@ describe('ReviewController', () => {
       items: [],
       docs: [],
       resolvedReviews: [],
+      jobs: [],
       applications: [],
       discoveredAt: '2026-06-22T03:00:00.000Z',
       updatedAt: '2026-06-22T03:00:00.000Z',
@@ -68,41 +68,21 @@ describe('ReviewController', () => {
     });
   });
 
-  it('audits review discovery without storing review content', async () => {
-    const item: ReviewItem = {
-      id: 'rev-1',
-      type: 'suggestion',
-      title: 'Improve launch notes',
-      detail: 'Private launch detail should not be audited.',
-      recommendation: 'Add operational readiness context.',
-      relatedDocIds: ['kp-1'],
-      searchQueries: ['launch readiness'],
-      targetDocId: 'kp-1',
-    };
-    const reviewService = {
-      reviewWiki: jest.fn().mockResolvedValue({
-        version: '2',
-        items: [item],
-      }),
-    };
+  it('queues review discovery without storing or auditing review content', async () => {
+    const job = reviewJobFixture({
+      jobId: 'review-discover__workspace-1__space-1',
+      kind: 'discover',
+    });
+    const aiQueue = createAiQueue();
     const auditService = {
       log: jest.fn(),
     };
     const controller = createController({
-      reviewService,
+      aiQueue,
       auditService,
       snapshotService: {
-        replaceDiscoveredSnapshot: jest.fn().mockResolvedValue({
-          version: '2',
-          items: [item],
-          docs: [{ id: 'kp-1', title: 'Launch plan', sourcePageId: 'page-1' }],
-          resolvedReviews: [],
-          applications: [],
-          discoveredAt: '2026-06-22T03:00:00.000Z',
-          updatedAt: '2026-06-22T03:00:00.000Z',
-        }),
+        beginJob: jest.fn().mockResolvedValue({ job, isNew: true }),
       },
-      capsuleRepo: capsuleRepoWithPages(),
     });
 
     await expect(
@@ -112,30 +92,20 @@ describe('ReviewController', () => {
         workspace(),
       ),
     ).resolves.toEqual({
-      version: '2',
-      items: [item],
-      docs: [{ id: 'kp-1', title: 'Launch plan', sourcePageId: 'page-1' }],
-      resolvedReviews: [],
-      applications: [],
-      discoveredAt: '2026-06-22T03:00:00.000Z',
-      updatedAt: '2026-06-22T03:00:00.000Z',
+      job,
+      result: null,
     });
 
-    expect(auditService.log).toHaveBeenCalledWith({
-      event: AuditEvent.KNOWLEDGE_REVIEW_DISCOVERED,
-      resourceType: AuditResource.KNOWLEDGE,
-      resourceId: 'space-1',
-      spaceId: 'space-1',
-      metadata: {
+    expect(aiQueue.add).toHaveBeenCalledWith(
+      QueueJob.REVIEW_DISCOVER,
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
         limit: 20,
-        documentCount: 1,
-        reviewItemCount: 1,
-        reviewItemTypes: { suggestion: 1 },
       },
-    });
-    expect(JSON.stringify(auditService.log.mock.calls)).not.toContain(
-      'Private launch detail',
+      { jobId: 'review-discover__workspace-1__space-1' },
     );
+    expect(auditService.log).not.toHaveBeenCalled();
   });
 
   it('audits skipped negotiation without generating a draft', async () => {
@@ -149,20 +119,16 @@ describe('ReviewController', () => {
       searchQueries: ['rollout plan'],
       outline: ['Goal', 'Steps'],
     };
-    const reviewService = {
-      runDeepSearch: jest.fn(),
-      negotiateDraft: jest.fn(),
-    };
+    const aiQueue = createAiQueue();
     const auditService = {
       log: jest.fn(),
     };
     const controller = createController({
-      reviewService,
+      aiQueue,
       auditService,
       snapshotService: {
         saveResolvedReview: jest.fn().mockResolvedValue(undefined),
       },
-      capsuleRepo: capsuleRepoWithPages(),
     });
 
     await expect(
@@ -182,8 +148,7 @@ describe('ReviewController', () => {
       turns: [],
     });
 
-    expect(reviewService.runDeepSearch).not.toHaveBeenCalled();
-    expect(reviewService.negotiateDraft).not.toHaveBeenCalled();
+    expect(aiQueue.add).not.toHaveBeenCalled();
     expect(auditService.log).toHaveBeenCalledWith({
       event: AuditEvent.KNOWLEDGE_REVIEW_NEGOTIATED,
       resourceType: AuditResource.KNOWLEDGE,
@@ -230,10 +195,12 @@ describe('ReviewController', () => {
       operation: 'insert_under_heading',
       targetPageId: 'page-1',
     });
-    const reviewService = {
-      runDeepSearch: jest.fn().mockResolvedValue([]),
-      negotiateDraft: jest.fn().mockResolvedValue(draft),
-    };
+    const job = reviewJobFixture({
+      jobId: 'review-negotiate__workspace-1__space-1__rev-3',
+      kind: 'negotiate',
+      itemId: item.id,
+    });
+    const aiQueue = createAiQueue();
     const applyService = {
       planDraft: jest.fn().mockResolvedValue(application),
       applyApplication: jest.fn(),
@@ -252,19 +219,27 @@ describe('ReviewController', () => {
             searchResults: [],
             draft,
             applied: null,
+            turns: [
+              {
+                feedback: '采纳',
+                draft,
+                deepSearched: false,
+                searchResults: [],
+              },
+            ],
           },
         ],
+        jobs: [],
         applications: [],
         discoveredAt: '2026-06-22T03:00:00.000Z',
         updatedAt: '2026-06-22T03:00:00.000Z',
       }),
-      saveResolvedReview: jest.fn().mockResolvedValue(undefined),
+      beginJob: jest.fn().mockResolvedValue({ job, isNew: true }),
     };
     const controller = createController({
-      reviewService,
+      aiQueue,
       applyService,
       snapshotService,
-      capsuleRepo: capsuleRepoWithPages(),
     });
 
     await expect(
@@ -274,22 +249,18 @@ describe('ReviewController', () => {
         workspace(),
       ),
     ).resolves.toMatchObject({
-      item,
-      draft,
-      applied: null,
-      turns: [
-        expect.objectContaining({
-          feedback: '采纳',
-          draft,
-        }),
-      ],
+      job,
+      result: null,
     });
-    expect(reviewService.negotiateDraft).toHaveBeenCalledWith(
-      expect.anything(),
-      item,
-      '采纳',
-      [],
-      [],
+    expect(aiQueue.add).toHaveBeenCalledWith(
+      QueueJob.REVIEW_NEGOTIATE,
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        item,
+        feedback: '采纳',
+      },
+      { jobId: 'review-negotiate__workspace-1__space-1__rev-3' },
     );
     expect(applyService.planDraft).not.toHaveBeenCalled();
     expect(applyService.applyApplication).not.toHaveBeenCalled();
@@ -314,7 +285,7 @@ describe('ReviewController', () => {
     });
   });
 
-  it('continues negotiation with the full prior history', async () => {
+  it('queues follow-up negotiation without trusting client-supplied history', async () => {
     const item: ReviewItem = {
       id: 'rev-4',
       type: 'suggestion',
@@ -332,26 +303,44 @@ describe('ReviewController', () => {
       targetDocId: 'kp-1',
       notes: '',
     };
-    const secondDraft = {
-      title: 'Rollback criteria',
-      body: '## Rollback criteria\n\nRollback when user-visible errors rise.',
-      applyOperation: ['append-section'] as const,
-      targetDocId: 'kp-1',
-      notes: 'Kept the existing section and tightened the trigger.',
-    };
     const priorTurn = {
       feedback: '采纳',
       draft: firstDraft,
       deepSearched: false,
       searchResults: [],
     };
-    const reviewService = {
-      runDeepSearch: jest.fn().mockResolvedValue([]),
-      negotiateDraft: jest.fn().mockResolvedValue(secondDraft),
-    };
+    const job = reviewJobFixture({
+      jobId: 'review-negotiate__workspace-1__space-1__rev-4',
+      kind: 'negotiate',
+      itemId: item.id,
+    });
+    const aiQueue = createAiQueue();
     const controller = createController({
-      reviewService,
-      capsuleRepo: capsuleRepoWithPages(),
+      aiQueue,
+      snapshotService: {
+        loadSnapshot: jest.fn().mockResolvedValue({
+          version: '2',
+          items: [item],
+          docs: [],
+          resolvedReviews: [
+            {
+              item,
+              feedback: '采纳',
+              skipped: false,
+              deepSearched: false,
+              searchResults: [],
+              draft: firstDraft,
+              applied: null,
+              turns: [priorTurn],
+            },
+          ],
+          jobs: [],
+          applications: [],
+          discoveredAt: '2026-06-22T03:00:00.000Z',
+          updatedAt: '2026-06-22T03:10:00.000Z',
+        }),
+        beginJob: jest.fn().mockResolvedValue({ job, isNew: true }),
+      },
     });
 
     await expect(
@@ -366,60 +355,103 @@ describe('ReviewController', () => {
         workspace(),
       ),
     ).resolves.toMatchObject({
-      draft: secondDraft,
-      turns: [
-        expect.objectContaining({
-          feedback: '采纳',
-          draft: firstDraft,
-        }),
-        expect.objectContaining({
-          feedback: '把触发条件改得更准确',
-          draft: secondDraft,
-        }),
-      ],
+      job,
+      result: null,
     });
 
-    expect(reviewService.negotiateDraft).toHaveBeenCalledWith(
-      expect.anything(),
-      item,
-      '把触发条件改得更准确',
-      [],
-      [priorTurn],
+    expect(aiQueue.add).toHaveBeenCalledWith(
+      QueueJob.REVIEW_NEGOTIATE,
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        item,
+        feedback: '把触发条件改得更准确',
+      },
+      { jobId: 'review-negotiate__workspace-1__space-1__rev-4' },
+    );
+    expect(JSON.stringify(aiQueue.add.mock.calls)).not.toContain('priorTurns');
+  });
+
+  it('allows a re-reviewed item even when a previous application with the same item id was applied', async () => {
+    const item: ReviewItem = {
+      id: 'rev-1',
+      type: 'suggestion',
+      title: 'Refresh SLO guidance',
+      detail: 'The current review found new missing SLO detail.',
+      recommendation: 'Update the SLO page.',
+      relatedDocIds: ['kp-1'],
+      searchQueries: ['slo guidance'],
+      targetDocId: 'kp-1',
+    };
+    const job = reviewJobFixture({
+      jobId: 'review-negotiate__workspace-1__space-1__rev-1',
+      kind: 'negotiate',
+      itemId: item.id,
+    });
+    const aiQueue = createAiQueue();
+    const controller = createController({
+      aiQueue,
+      snapshotService: {
+        loadSnapshot: jest.fn().mockResolvedValue({
+          version: '2',
+          items: [item],
+          docs: [{ id: 'kp-1', title: 'SLO', sourcePageId: 'page-1' }],
+          resolvedReviews: [],
+          jobs: [],
+          applications: [
+            applicationFixture({
+              reviewItemId: item.id,
+              status: 'applied',
+              appliedAt: '2026-06-22T03:10:00.000Z',
+            }),
+          ],
+          discoveredAt: '2026-06-25T03:00:00.000Z',
+          updatedAt: '2026-06-25T03:00:00.000Z',
+        }),
+        beginJob: jest.fn().mockResolvedValue({ job, isNew: true }),
+      },
+    });
+
+    await expect(
+      controller.negotiate(
+        { spaceId: 'space-1', item, feedback: '采纳' },
+        adminUser(),
+        workspace(),
+      ),
+    ).resolves.toMatchObject({
+      job,
+      result: null,
+    });
+
+    expect(aiQueue.add).toHaveBeenCalledWith(
+      QueueJob.REVIEW_NEGOTIATE,
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        item,
+        feedback: '采纳',
+      },
+      { jobId: 'review-negotiate__workspace-1__space-1__rev-1' },
     );
   });
 });
 
 function createController(
   overrides: {
-    reviewService?: Partial<ReviewService>;
     applyService?: Partial<ReviewApplyService>;
     snapshotService?: Partial<ReviewSnapshotService>;
-    capsuleRepo?: Partial<KnowledgeCapsuleRepo>;
+    aiQueue?: Queue & { add: jest.Mock };
     auditService?: Partial<IAuditService>;
   } = {},
 ): ReviewController {
-  const reviewService = {
-    reviewWiki: jest.fn().mockResolvedValue({ version: '2', items: [] }),
-    runDeepSearch: jest.fn().mockResolvedValue([]),
-    negotiateDraft: jest.fn(),
-    ...overrides.reviewService,
-  } as unknown as ReviewService;
-  const capsuleRepo = {
-    findGraphCandidatesForSpace: jest.fn().mockResolvedValue({
-      pages: [],
-      pageSources: [],
-      links: [],
-      linkSources: [],
-      graphEdges: [],
-      graphEdgeSources: [],
-    }),
-    findClaimsByPageIds: jest.fn().mockResolvedValue([]),
-    ...overrides.capsuleRepo,
-  } as unknown as KnowledgeCapsuleRepo;
   const auditService = {
     log: jest.fn(),
     ...overrides.auditService,
   } as unknown as IAuditService;
+  const defaultDiscoverJob = reviewJobFixture({
+    jobId: 'review-discover__workspace-1__space-1',
+    kind: 'discover',
+  });
   const snapshotService = {
     loadSnapshot: jest.fn().mockResolvedValue(null),
     replaceDiscoveredSnapshot: jest.fn().mockResolvedValue({
@@ -427,11 +459,17 @@ function createController(
       items: [],
       docs: [],
       resolvedReviews: [],
+      jobs: [],
       applications: [],
       discoveredAt: '2026-06-22T03:00:00.000Z',
       updatedAt: '2026-06-22T03:00:00.000Z',
     }),
     saveResolvedReview: jest.fn().mockResolvedValue(undefined),
+    beginJob: jest
+      .fn()
+      .mockResolvedValue({ job: defaultDiscoverJob, isNew: true }),
+    markJobFailed: jest.fn().mockResolvedValue(undefined),
+    getJob: jest.fn().mockResolvedValue(null),
     ...overrides.snapshotService,
   } as unknown as ReviewSnapshotService;
   const applyService = {
@@ -445,43 +483,14 @@ function createController(
     }),
     ...overrides.applyService,
   } as unknown as ReviewApplyService;
+  const aiQueue = overrides.aiQueue ?? createAiQueue();
 
   return new ReviewController(
-    reviewService,
     applyService,
     snapshotService,
-    capsuleRepo,
+    aiQueue,
     auditService,
   );
-}
-
-function capsuleRepoWithPages(): Partial<KnowledgeCapsuleRepo> {
-  return {
-    findGraphCandidatesForSpace: jest.fn().mockResolvedValue({
-      pages: [
-        {
-          id: 'kp-1',
-          workspaceId: 'workspace-1',
-          spaceId: 'space-1',
-          title: 'Launch plan',
-          body: 'Private launch body should not be audited.',
-          pageType: 'source_summary',
-          staleAt: null,
-        },
-      ],
-      pageSources: [
-        {
-          knowledgePageId: 'kp-1',
-          sourcePageId: 'page-1',
-        },
-      ],
-      links: [],
-      linkSources: [],
-      graphEdges: [],
-      graphEdgeSources: [],
-    }),
-    findClaimsByPageIds: jest.fn().mockResolvedValue([]),
-  };
 }
 
 function workspace(settings: Record<string, unknown> = { ai: { chat: true } }) {
@@ -496,6 +505,26 @@ function adminUser(): User {
     id: 'user-1',
     role: UserRole.ADMIN,
   } as User;
+}
+
+function createAiQueue(): Queue & { add: jest.Mock } {
+  return {
+    add: jest.fn().mockResolvedValue(undefined),
+  } as unknown as Queue & { add: jest.Mock };
+}
+
+function reviewJobFixture(overrides: Partial<ReviewJob> = {}): ReviewJob {
+  return {
+    jobId: 'review-job-1',
+    kind: 'discover',
+    itemId: null,
+    status: 'pending',
+    error: null,
+    createdAt: '2026-06-25T00:00:00.000Z',
+    startedAt: null,
+    finishedAt: null,
+    ...overrides,
+  };
 }
 
 function applicationFixture(overrides: Record<string, unknown> = {}) {

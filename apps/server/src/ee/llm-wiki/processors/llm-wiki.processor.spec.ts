@@ -1,6 +1,7 @@
 import { Job } from 'bullmq';
 import { Queue } from 'bullmq';
 import { KnowledgeCapsuleRepo } from '@docmost/db/repos/llm-wiki/knowledge-capsule.repo';
+import { KnowledgeReviewApplicationRepo } from '@docmost/db/repos/llm-wiki/knowledge-review-application.repo';
 import { KnowledgeSourceRepo } from '@docmost/db/repos/llm-wiki/knowledge-source.repo';
 import { PageRepo } from '@docmost/db/repos/page/page.repo';
 import { QueueJob } from '../../../integrations/queue/constants';
@@ -8,6 +9,9 @@ import { KnowledgeCompilerAdapter } from '../adapters/knowledge-compiler.adapter
 import { KnowledgeAccessIndexerService } from '../services/knowledge-access-indexer.service';
 import { KnowledgeImportService } from '../services/knowledge-import.service';
 import { KnowledgeSourceExporterService } from '../services/knowledge-source-exporter.service';
+import { IAuditService } from '../../../integrations/audit/audit.service';
+import { ReviewService } from '../review/review.service';
+import { ReviewSnapshotService } from '../review/review-snapshot.service';
 import { LlmWikiProcessor } from './llm-wiki.processor';
 
 describe('LlmWikiProcessor', () => {
@@ -54,6 +58,10 @@ describe('LlmWikiProcessor', () => {
       createCapsuleRepo(),
       createPageRepo(),
       createAiQueue(),
+      createReviewService(),
+      createReviewSnapshotService(),
+      createAuditService(),
+      createReviewApplicationRepo(),
     );
 
     const result = await processor.process({
@@ -117,6 +125,10 @@ describe('LlmWikiProcessor', () => {
       createCapsuleRepo(),
       createPageRepo(),
       createAiQueue(),
+      createReviewService(),
+      createReviewSnapshotService(),
+      createAuditService(),
+      createReviewApplicationRepo(),
     );
 
     await processor.process({ name: QueueJob.PAGE_CREATED, data: {} } as Job);
@@ -135,6 +147,10 @@ describe('LlmWikiProcessor', () => {
       createCapsuleRepo(),
       createPageRepo(),
       createAiQueue(),
+      createReviewService(),
+      createReviewSnapshotService(),
+      createAuditService(),
+      createReviewApplicationRepo(),
     );
 
     await processor.process({
@@ -171,6 +187,10 @@ describe('LlmWikiProcessor', () => {
       createCapsuleRepo(),
       createPageRepo(),
       createAiQueue(),
+      createReviewService(),
+      createReviewSnapshotService(),
+      createAuditService(),
+      createReviewApplicationRepo(),
     );
 
     await processor.process({
@@ -201,6 +221,10 @@ describe('LlmWikiProcessor', () => {
       capsuleRepo,
       createPageRepo(),
       createAiQueue(),
+      createReviewService(),
+      createReviewSnapshotService(),
+      createAuditService(),
+      createReviewApplicationRepo(),
     );
 
     await processor.process({
@@ -237,6 +261,10 @@ describe('LlmWikiProcessor', () => {
       capsuleRepo,
       createPageRepo(),
       createAiQueue(),
+      createReviewService(),
+      createReviewSnapshotService(),
+      createAuditService(),
+      createReviewApplicationRepo(),
     );
 
     await processor.process({
@@ -258,6 +286,178 @@ describe('LlmWikiProcessor', () => {
     });
   });
 
+  it('runs review discover jobs and stores the discovered snapshot', async () => {
+    const item = {
+      id: 'rev-1',
+      type: 'suggestion',
+      title: 'Improve launch notes',
+      detail: 'Missing operational notes.',
+      recommendation: 'Add operational readiness context.',
+      relatedDocIds: ['kp-1'],
+      searchQueries: [],
+      targetDocId: 'kp-1',
+    };
+    const reviewService = createReviewService();
+    jest
+      .mocked(reviewService.reviewWiki)
+      .mockResolvedValue({ version: '2', items: [item] } as never);
+    const snapshotService = createReviewSnapshotService();
+    const auditService = createAuditService();
+    const capsuleRepo = createCapsuleRepoWithReviewPages();
+    const processor = new LlmWikiProcessor(
+      createExporter(),
+      createCompiler(),
+      createImporter(),
+      createAccessIndexer(),
+      createSourceRepo(),
+      capsuleRepo,
+      createPageRepo(),
+      createAiQueue(),
+      reviewService,
+      snapshotService,
+      auditService,
+      createReviewApplicationRepo(),
+    );
+
+    await processor.process({
+      id: 'review-discover__workspace-1__space-1',
+      name: QueueJob.REVIEW_DISCOVER,
+      data: { workspaceId: 'workspace-1', spaceId: 'space-1', limit: 20 },
+    } as Job);
+
+    expect(snapshotService.markJobRunning).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      jobId: 'review-discover__workspace-1__space-1',
+    });
+    expect(reviewService.reviewWiki).toHaveBeenCalled();
+    expect(snapshotService.replaceDiscoveredSnapshot).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      items: [item],
+      docs: [{ id: 'kp-1', title: 'Launch plan', sourcePageId: 'page-1' }],
+    });
+    expect(snapshotService.markJobDone).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      jobId: 'review-discover__workspace-1__space-1',
+    });
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'knowledge.review_discovered',
+        metadata: expect.objectContaining({
+          limit: 20,
+          documentCount: 1,
+          reviewItemCount: 1,
+        }),
+      }),
+    );
+  });
+
+  it('runs review negotiate jobs with authoritative prior history from the snapshot', async () => {
+    const item = {
+      id: 'rev-2',
+      type: 'suggestion',
+      title: 'Improve rollback section',
+      detail: 'Rollback section needs refinement.',
+      recommendation: 'Refine rollback wording.',
+      relatedDocIds: ['kp-1'],
+      searchQueries: [],
+      targetDocId: 'kp-1',
+    };
+    const priorDraft = {
+      title: 'Rollback criteria',
+      body: '## Rollback criteria\n\nRollback when error budget burns fast.',
+      applyOperation: ['append-section'] as ['append-section'],
+      targetDocId: 'kp-1',
+      notes: '',
+    };
+    const nextDraft = {
+      ...priorDraft,
+      body: '## Rollback criteria\n\nRollback when user-visible errors rise.',
+      notes: 'Tightened the trigger.',
+    };
+    const priorTurn = {
+      feedback: '采纳',
+      draft: priorDraft,
+      deepSearched: false,
+      searchResults: [],
+    };
+    const reviewService = createReviewService();
+    jest.mocked(reviewService.negotiateDraft).mockResolvedValue(nextDraft);
+    const snapshotService = createReviewSnapshotService();
+    jest.mocked(snapshotService.loadSnapshot).mockResolvedValue({
+      version: '2',
+      items: [item],
+      docs: [],
+      resolvedReviews: [
+        {
+          item,
+          feedback: '采纳',
+          skipped: false,
+          deepSearched: false,
+          searchResults: [],
+          draft: priorDraft,
+          applied: null,
+          turns: [priorTurn],
+        },
+      ],
+      jobs: [],
+      applications: [],
+      discoveredAt: '2026-06-22T03:00:00.000Z',
+      updatedAt: '2026-06-22T03:10:00.000Z',
+    } as never);
+    const processor = new LlmWikiProcessor(
+      createExporter(),
+      createCompiler(),
+      createImporter(),
+      createAccessIndexer(),
+      createSourceRepo(),
+      createCapsuleRepo(),
+      createPageRepo(),
+      createAiQueue(),
+      reviewService,
+      snapshotService,
+      createAuditService(),
+      createReviewApplicationRepo(),
+    );
+
+    await processor.process({
+      id: 'review-negotiate__workspace-1__space-1__rev-2',
+      name: QueueJob.REVIEW_NEGOTIATE,
+      data: {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        item,
+        feedback: '把触发条件改得更准确',
+      },
+    } as Job);
+
+    expect(reviewService.negotiateDraft).toHaveBeenCalledWith(
+      expect.anything(),
+      item,
+      '把触发条件改得更准确',
+      [],
+      [priorTurn],
+    );
+    expect(snapshotService.saveResolvedReview).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      resolved: expect.objectContaining({
+        item,
+        feedback: '把触发条件改得更准确',
+        draft: nextDraft,
+        turns: [
+          priorTurn,
+          expect.objectContaining({
+            feedback: '把触发条件改得更准确',
+            draft: nextDraft,
+          }),
+        ],
+      }),
+    });
+  });
+
   it('marks content-updated pages stale and enqueues delayed space compile jobs', async () => {
     const sourceRepo = createSourceRepo();
     const capsuleRepo = createCapsuleRepo();
@@ -276,6 +476,10 @@ describe('LlmWikiProcessor', () => {
       capsuleRepo,
       pageRepo,
       aiQueue,
+      createReviewService(),
+      createReviewSnapshotService(),
+      createAuditService(),
+      createReviewApplicationRepo(),
     );
 
     await processor.process({
@@ -380,6 +584,32 @@ function createCapsuleRepo(): KnowledgeCapsuleRepo {
   } as unknown as KnowledgeCapsuleRepo;
 }
 
+function createCapsuleRepoWithReviewPages(): KnowledgeCapsuleRepo {
+  return {
+    ...createCapsuleRepo(),
+    findGraphCandidatesForSpace: jest.fn().mockResolvedValue({
+      pages: [
+        {
+          id: 'kp-1',
+          title: 'Launch plan',
+          body: 'Launch body',
+          folderId: null,
+          pageType: 'source_summary',
+          tags: [],
+          status: 'reviewed',
+          confidence: 0.8,
+        },
+      ],
+      pageSources: [{ knowledgePageId: 'kp-1', sourcePageId: 'page-1' }],
+      links: [],
+      linkSources: [],
+      graphEdges: [],
+      graphEdgeSources: [],
+    }),
+    findClaimsByPageIds: jest.fn().mockResolvedValue([]),
+  } as unknown as KnowledgeCapsuleRepo;
+}
+
 function createPageRepo(): PageRepo {
   return {
     findSpaceIdsForPages: jest.fn().mockResolvedValue([]),
@@ -390,4 +620,48 @@ function createAiQueue(): Queue & { add: jest.Mock } {
   return {
     add: jest.fn().mockResolvedValue(undefined),
   } as unknown as Queue & { add: jest.Mock };
+}
+
+function createReviewService(): ReviewService {
+  return {
+    reviewWiki: jest.fn().mockResolvedValue({ version: '2', items: [] }),
+    runDeepSearch: jest.fn().mockResolvedValue([]),
+    negotiateDraft: jest.fn(),
+  } as unknown as ReviewService;
+}
+
+function createReviewSnapshotService(): ReviewSnapshotService {
+  return {
+    beginJob: jest.fn().mockResolvedValue({
+      job: {
+        jobId: 'job-1',
+        kind: 'discover',
+        itemId: null,
+        status: 'pending',
+        error: null,
+        createdAt: '2026-06-25T00:00:00.000Z',
+        startedAt: null,
+        finishedAt: null,
+      },
+      isNew: false,
+    }),
+    markJobRunning: jest.fn().mockResolvedValue(undefined),
+    markJobDone: jest.fn().mockResolvedValue(undefined),
+    markJobFailed: jest.fn().mockResolvedValue(undefined),
+    replaceDiscoveredSnapshot: jest.fn().mockResolvedValue(undefined),
+    loadSnapshot: jest.fn().mockResolvedValue(null),
+    saveResolvedReview: jest.fn().mockResolvedValue(undefined),
+  } as unknown as ReviewSnapshotService;
+}
+
+function createAuditService(): IAuditService {
+  return {
+    log: jest.fn(),
+  } as unknown as IAuditService;
+}
+
+function createReviewApplicationRepo(): KnowledgeReviewApplicationRepo {
+  return {
+    supersedeDraftsForReviewItem: jest.fn().mockResolvedValue(0),
+  } as unknown as KnowledgeReviewApplicationRepo;
 }

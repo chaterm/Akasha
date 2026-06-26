@@ -49,9 +49,30 @@ export interface ReviewSnapshot {
   items: ReviewItem[];
   docs: ReviewDocMeta[];
   resolvedReviews: ResolvedReview[];
+  jobs: ReviewJob[];
   applications: ReviewApplication[];
   discoveredAt: string;
   updatedAt: string;
+}
+
+export type ReviewJobStatus = "pending" | "running" | "done" | "failed";
+
+export type ReviewJobKind = "discover" | "negotiate";
+
+export interface ReviewJob {
+  jobId: string;
+  kind: ReviewJobKind;
+  itemId: string | null;
+  status: ReviewJobStatus;
+  error: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface ReviewJobResult {
+  job: ReviewJob;
+  result: unknown | null;
 }
 
 export type DraftApplyOperation =
@@ -107,7 +128,8 @@ export type ReviewApplicationStatus =
   | "applied"
   | "reverted"
   | "conflicted"
-  | "failed";
+  | "failed"
+  | "superseded";
 
 export interface ReviewSourceRef {
   type: "wiki" | "web" | "llm";

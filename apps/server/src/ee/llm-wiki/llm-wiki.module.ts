@@ -26,9 +26,10 @@ import { LlmWikiController } from './llm-wiki.controller';
 import { NoopAuditModule } from '../../integrations/audit/audit.module';
 import { LlmWikiFileCompilerAdapter } from './adapters/llm-wiki-file-compiler.adapter';
 import { DocmostKnowledgeCompilerRunner } from './adapters/docmost-knowledge-compiler.runner';
+import { ReviewModule } from './review/review.module';
 
 @Module({
-  imports: [NoopAuditModule],
+  imports: [NoopAuditModule, ReviewModule],
   controllers: [LlmWikiController],
   providers: [
     SpaceAuthorizationService,

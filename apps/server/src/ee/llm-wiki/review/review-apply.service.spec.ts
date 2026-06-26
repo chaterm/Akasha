@@ -153,6 +153,62 @@ describe('ReviewApplyService', () => {
     });
   });
 
+  it('allows replace-page drafts that preserve existing Markdown formatting', async () => {
+    const before = '## Scope\n\nKeep **important** context.';
+    const applicationRepo = {
+      insertApplication: jest.fn().mockImplementation((input) =>
+        Promise.resolve(
+          applicationRow({
+            ...input,
+            createdAt: new Date('2026-06-22T10:00:00.000Z'),
+            updatedAt: new Date('2026-06-22T10:00:00.000Z'),
+          }),
+        ),
+      ),
+    };
+    const page = pageRow({
+      title: 'Operations',
+      content: { markdown: before },
+    });
+    const service = new ReviewApplyService(
+      {} as any,
+      { findById: jest.fn().mockResolvedValue(page) } as any,
+      { validateCanEdit: jest.fn().mockResolvedValue(undefined) } as any,
+      {} as any,
+      applicationRepo as any,
+    );
+
+    await expect(
+      service.planDraft({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        user: { id: 'user-1' } as any,
+        item: {
+          id: 'rev-1',
+          type: 'suggestion',
+          title: 'Update scope',
+          detail: 'Needs a small correction.',
+          recommendation: 'Keep the existing structure and update scope.',
+          relatedDocIds: ['kp-1'],
+          searchQueries: [],
+          targetDocId: 'kp-1',
+        },
+        draft: {
+          title: 'Operations',
+          body: '## Scope\n\nKeep **important** context with a small correction.',
+          applyOperation: ['replace-page'],
+          targetDocId: 'kp-1',
+          notes: '',
+        },
+        docs: [{ id: 'kp-1', title: 'Operations', sourcePageId: 'page-1' }],
+      }),
+    ).resolves.toMatchObject({
+      operation: 'replace_page',
+      afterContent:
+        '## Scope\n\nKeep **important** context with a small correction.',
+    });
+  });
+
   it('applies rename-page by updating only the page title', async () => {
     const before = 'Existing content';
     const application = applicationRow({

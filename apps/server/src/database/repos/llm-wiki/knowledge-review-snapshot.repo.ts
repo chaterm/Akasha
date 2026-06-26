@@ -12,6 +12,7 @@ type UpsertKnowledgeReviewSnapshotInput = {
   items: unknown;
   docs: unknown;
   resolvedReviews: unknown;
+  jobs: unknown;
   discoveredAt: Date;
 };
 
@@ -44,6 +45,7 @@ export class KnowledgeReviewSnapshotRepo {
       items: input.items as JsonValue,
       docs: input.docs as JsonValue,
       resolvedReviews: input.resolvedReviews as JsonValue,
+      jobs: input.jobs as JsonValue,
       discoveredAt: input.discoveredAt,
       updatedAt: new Date(),
     };
@@ -57,6 +59,7 @@ export class KnowledgeReviewSnapshotRepo {
           items: input.items as JsonValue,
           docs: input.docs as JsonValue,
           resolvedReviews: input.resolvedReviews as JsonValue,
+          jobs: input.jobs as JsonValue,
           discoveredAt: input.discoveredAt,
           updatedAt: new Date(),
         }),

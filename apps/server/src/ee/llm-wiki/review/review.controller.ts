@@ -10,10 +10,12 @@ import {
   NotFoundException,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { User, Workspace } from '@docmost/db/types/entity.types';
-import { KnowledgeCapsuleRepo } from '@docmost/db/repos/llm-wiki/knowledge-capsule.repo';
 import { AuthUser } from '../../../common/decorators/auth-user.decorator';
 import { AuthWorkspace } from '../../../common/decorators/auth-workspace.decorator';
 import { AuditEvent, AuditResource } from '../../../common/events/audit-events';
@@ -23,14 +25,18 @@ import {
   AUDIT_SERVICE,
   IAuditService,
 } from '../../../integrations/audit/audit.service';
+import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import { isKnowledgeAiEnabledForWorkspace } from '../services/ai-knowledge-chat.service';
-import { ReviewService } from './review.service';
-import { KnowledgeArtifactWikiSource } from './knowledge-artifact-wiki-source';
-import { MockSearchProvider } from './search-provider';
+import {
+  buildReviewDiscoverJobId,
+  buildReviewNegotiateJobId,
+} from '../services/knowledge-queue.utils';
 import { isDeepSearch, isSkip, ResolvedReview } from './approval';
 import {
   NegotiationTurn,
-  negotiationTurnSchema,
+  ReviewJob,
+  ReviewJobResult,
+  ReviewSnapshot,
   reviewItemSchema,
 } from './review.schema';
 import { DiscoverReviewDto } from './dto/discover-review.dto';
@@ -44,10 +50,9 @@ import { ReviewSnapshotService } from './review-snapshot.service';
 @Controller('llm-wiki/review')
 export class ReviewController {
   constructor(
-    private readonly reviewService: ReviewService,
     private readonly applyService: ReviewApplyService,
     private readonly snapshotService: ReviewSnapshotService,
-    private readonly capsuleRepo: KnowledgeCapsuleRepo,
+    @InjectQueue(QueueName.AI_QUEUE) private readonly aiQueue: Queue,
     @Inject(AUDIT_SERVICE) private readonly auditService: IAuditService,
   ) {}
 
@@ -73,32 +78,28 @@ export class ReviewController {
     @Body() dto: DiscoverReviewDto,
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
-  ) {
+  ): Promise<ReviewJobResult> {
     this.assertAiEnabled(workspace);
     this.assertAdmin(user);
 
-    const source = this.buildSource(workspace.id, dto.spaceId, dto.limit);
-    const result = await this.reviewService.reviewWiki(source);
-    const docs = await source.getDocMeta();
-    const snapshot = await this.snapshotService.replaceDiscoveredSnapshot({
+    const jobId = buildReviewDiscoverJobId({
       workspaceId: workspace.id,
       spaceId: dto.spaceId,
-      items: result.items,
-      docs,
     });
-    this.auditService.log({
-      event: AuditEvent.KNOWLEDGE_REVIEW_DISCOVERED,
-      resourceType: AuditResource.KNOWLEDGE,
-      resourceId: dto.spaceId,
+    const { job, isNew } = await this.snapshotService.beginJob({
+      workspaceId: workspace.id,
       spaceId: dto.spaceId,
-      metadata: {
-        limit: dto.limit ?? null,
-        documentCount: docs.length,
-        reviewItemCount: result.items.length,
-        reviewItemTypes: countReviewItemTypes(result.items),
-      },
+      jobId,
+      kind: 'discover',
     });
-    return snapshot;
+    if (isNew) {
+      await this.enqueueReviewJob(job, QueueJob.REVIEW_DISCOVER, {
+        workspaceId: workspace.id,
+        spaceId: dto.spaceId,
+        limit: dto.limit,
+      });
+    }
+    return { job, result: null };
   }
 
   @HttpCode(HttpStatus.OK)
@@ -107,24 +108,17 @@ export class ReviewController {
     @Body() dto: NegotiateReviewDto,
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
-  ): Promise<ResolvedReview> {
+  ): Promise<ResolvedReview | ReviewJobResult> {
     this.assertAiEnabled(workspace);
     this.assertAdmin(user);
 
     const item = reviewItemSchema.parse(dto.item);
     const feedback = (dto.feedback ?? '').trim();
-    const docSource = this.buildSource(workspace.id, dto.spaceId);
     const snapshot = await this.snapshotService.loadSnapshot({
       workspaceId: workspace.id,
       spaceId: dto.spaceId,
     });
-    const storedResolved = snapshot?.resolvedReviews.find(
-      (entry) => entry.item.id === item.id,
-    );
-    const priorTurns =
-      (storedResolved?.turns?.length ?? 0) > 0
-        ? storedResolved.turns
-        : parseNegotiationTurns(dto.priorTurns);
+    assertCurrentReviewItemNotApplied(snapshot, item.id);
 
     if (isSkip(feedback)) {
       const resolved: ResolvedReview = {
@@ -146,42 +140,51 @@ export class ReviewController {
       return resolved;
     }
 
-    const deepSearched = isDeepSearch(feedback);
-    const searchResults = deepSearched
-      ? await this.reviewService.runDeepSearch(new MockSearchProvider(), item)
-      : [];
-
-    const draft = await this.reviewService.negotiateDraft(
-      docSource,
-      item,
-      feedback,
-      searchResults,
-      priorTurns,
-    );
-
-    const newTurn: NegotiationTurn = {
-      feedback,
-      draft,
-      deepSearched,
-      searchResults,
-    };
-    const resolved: ResolvedReview = {
-      item,
-      feedback,
-      skipped: false,
-      deepSearched,
-      searchResults,
-      draft,
-      applied: null,
-      turns: [...priorTurns, newTurn],
-    };
-    await this.snapshotService.saveResolvedReview({
+    const jobId = buildReviewNegotiateJobId({
       workspaceId: workspace.id,
       spaceId: dto.spaceId,
-      resolved,
+      itemId: item.id,
     });
-    this.auditNegotiation(dto.spaceId, resolved);
-    return resolved;
+    const { job, isNew } = await this.snapshotService.beginJob({
+      workspaceId: workspace.id,
+      spaceId: dto.spaceId,
+      jobId,
+      kind: 'negotiate',
+      itemId: item.id,
+    });
+    if (isNew) {
+      await this.enqueueReviewJob(job, QueueJob.REVIEW_NEGOTIATE, {
+        workspaceId: workspace.id,
+        spaceId: dto.spaceId,
+        item,
+        feedback,
+      });
+    }
+    return { job, result: null };
+  }
+
+  @Get('jobs/:jobId')
+  async getJob(
+    @Param('jobId') jobId: string,
+    @Query('spaceId') spaceId: string,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ): Promise<ReviewJobResult> {
+    this.assertAiEnabled(workspace);
+    this.assertAdmin(user);
+    if (!spaceId) {
+      throw new BadRequestException('spaceId is required');
+    }
+
+    const found = await this.snapshotService.getJob({
+      workspaceId: workspace.id,
+      spaceId,
+      jobId,
+    });
+    if (!found) {
+      throw new NotFoundException('Review job not found');
+    }
+    return buildReviewJobResult(found.snapshot, found.job);
   }
 
   @HttpCode(HttpStatus.OK)
@@ -318,16 +321,22 @@ export class ReviewController {
     });
   }
 
-  private buildSource(
-    workspaceId: string,
-    spaceId?: string,
-    limit?: number,
-  ): KnowledgeArtifactWikiSource {
-    return new KnowledgeArtifactWikiSource(this.capsuleRepo, {
-      workspaceId,
-      spaceId: spaceId as string,
-      limit,
-    });
+  private async enqueueReviewJob(
+    job: ReviewJob,
+    name: QueueJob.REVIEW_DISCOVER | QueueJob.REVIEW_NEGOTIATE,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      await this.aiQueue.add(name, data, { jobId: job.jobId });
+    } catch (error) {
+      await this.snapshotService.markJobFailed({
+        workspaceId: data.workspaceId as string,
+        spaceId: data.spaceId as string,
+        jobId: job.jobId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   }
 
   private assertAdmin(user: User): void {
@@ -367,9 +376,20 @@ export class ReviewController {
   }
 }
 
-function parseNegotiationTurns(value: unknown): NegotiationTurn[] {
-  const parsed = negotiationTurnSchema.array().safeParse(value);
-  return parsed.success ? parsed.data : [];
+function buildReviewJobResult(
+  snapshot: ReviewSnapshot,
+  job: ReviewJob,
+): ReviewJobResult {
+  if (job.status !== 'done') {
+    return { job, result: null };
+  }
+  if (job.kind === 'discover') {
+    return { job, result: snapshot };
+  }
+  const resolved = job.itemId
+    ? snapshot.resolvedReviews.find((entry) => entry.item.id === job.itemId)
+    : null;
+  return { job, result: resolved ?? null };
 }
 
 function collectResolvedSearchResults(resolved: {
@@ -392,13 +412,18 @@ function collectResolvedSearchResults(resolved: {
   });
 }
 
-function countReviewItemTypes(
-  items: Array<{ type: string }>,
-): Record<string, number> {
-  return items.reduce<Record<string, number>>((counts, item) => {
-    counts[item.type] = (counts[item.type] ?? 0) + 1;
-    return counts;
-  }, {});
+function assertCurrentReviewItemNotApplied(
+  snapshot: ReviewSnapshot | null,
+  itemId: string,
+): void {
+  const resolved = snapshot?.resolvedReviews.find(
+    (entry) => entry.item.id === itemId,
+  );
+  if (resolved?.applied) {
+    throw new BadRequestException(
+      'Review item has already been applied to the wiki',
+    );
+  }
 }
 
 function classifyFeedback(

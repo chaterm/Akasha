@@ -7,6 +7,8 @@ import {
   reviewApplicationSchema,
   reviewSnapshotSchema,
   ReviewApplication,
+  ReviewJob,
+  ReviewJobKind,
   ReviewItem,
   ReviewSnapshot,
   StoredResolvedReview,
@@ -39,6 +41,10 @@ export class ReviewSnapshotService {
     items: ReviewItem[];
     docs: ReviewDocMeta[];
   }): Promise<ReviewSnapshot> {
+    const current = await this.loadSnapshot({
+      workspaceId: input.workspaceId,
+      spaceId: input.spaceId,
+    });
     const row = await this.reviewSnapshotRepo.upsertSnapshot({
       workspaceId: input.workspaceId,
       spaceId: input.spaceId,
@@ -46,7 +52,8 @@ export class ReviewSnapshotService {
       items: input.items,
       docs: input.docs,
       resolvedReviews: [],
-      discoveredAt: new Date(),
+      jobs: current?.jobs ?? [],
+      discoveredAt: current ? new Date(current.discoveredAt) : new Date(),
     });
 
     const applications = await this.reviewApplicationRepo.findBySpace({
@@ -77,6 +84,7 @@ export class ReviewSnapshotService {
       items: current?.items ?? [input.resolved.item],
       docs: current?.docs ?? [],
       resolvedReviews,
+      jobs: current?.jobs ?? [],
       discoveredAt: current ? new Date(current.discoveredAt) : new Date(),
     });
 
@@ -87,12 +95,109 @@ export class ReviewSnapshotService {
     return this.toSnapshot(row, applications);
   }
 
+  async beginJob(input: {
+    workspaceId: string;
+    spaceId: string;
+    jobId: string;
+    kind: ReviewJobKind;
+    itemId?: string | null;
+  }): Promise<{ job: ReviewJob; isNew: boolean }> {
+    const current = await this.loadSnapshot({
+      workspaceId: input.workspaceId,
+      spaceId: input.spaceId,
+    });
+    const existing = current?.jobs.find(
+      (job) =>
+        job.jobId === input.jobId &&
+        (job.status === 'pending' || job.status === 'running'),
+    );
+    if (existing) {
+      return { job: existing, isNew: false };
+    }
+
+    const now = new Date().toISOString();
+    const job: ReviewJob = {
+      jobId: input.jobId,
+      kind: input.kind,
+      itemId: input.itemId ?? null,
+      status: 'pending',
+      error: null,
+      createdAt: now,
+      startedAt: null,
+      finishedAt: null,
+    };
+
+    await this.saveJobs(
+      input.workspaceId,
+      input.spaceId,
+      upsertJob(current?.jobs ?? [], job),
+      current,
+    );
+    return { job, isNew: true };
+  }
+
+  async markJobRunning(input: {
+    workspaceId: string;
+    spaceId: string;
+    jobId: string;
+  }): Promise<ReviewJob | null> {
+    return this.updateJob(input, (job) => ({
+      ...job,
+      status: 'running',
+      error: null,
+      startedAt: job.startedAt ?? new Date().toISOString(),
+      finishedAt: null,
+    }));
+  }
+
+  async markJobDone(input: {
+    workspaceId: string;
+    spaceId: string;
+    jobId: string;
+  }): Promise<ReviewJob | null> {
+    return this.updateJob(input, (job) => ({
+      ...job,
+      status: 'done',
+      error: null,
+      finishedAt: new Date().toISOString(),
+    }));
+  }
+
+  async markJobFailed(input: {
+    workspaceId: string;
+    spaceId: string;
+    jobId: string;
+    error: string;
+  }): Promise<ReviewJob | null> {
+    return this.updateJob(input, (job) => ({
+      ...job,
+      status: 'failed',
+      error: input.error,
+      finishedAt: new Date().toISOString(),
+    }));
+  }
+
+  async getJob(input: {
+    workspaceId: string;
+    spaceId: string;
+    jobId: string;
+  }): Promise<{ snapshot: ReviewSnapshot; job: ReviewJob } | null> {
+    const snapshot = await this.loadSnapshot({
+      workspaceId: input.workspaceId,
+      spaceId: input.spaceId,
+    });
+    if (!snapshot) return null;
+    const job = snapshot.jobs.find((entry) => entry.jobId === input.jobId);
+    return job ? { snapshot, job } : null;
+  }
+
   private toSnapshot(
     row: {
       version: string;
       items: unknown;
       docs: unknown;
       resolvedReviews: unknown;
+      jobs?: unknown;
       discoveredAt: Date;
       updatedAt: Date;
     },
@@ -103,6 +208,7 @@ export class ReviewSnapshotService {
       items: row.items,
       docs: row.docs,
       resolvedReviews: row.resolvedReviews,
+      jobs: 'jobs' in row ? row.jobs : [],
       applications: applications.map(toReviewApplication),
       discoveredAt: row.discoveredAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
@@ -117,6 +223,57 @@ export class ReviewSnapshotService {
         docIds,
       ),
     };
+  }
+
+  private async updateJob(
+    input: {
+      workspaceId: string;
+      spaceId: string;
+      jobId: string;
+    },
+    updater: (job: ReviewJob) => ReviewJob,
+  ): Promise<ReviewJob | null> {
+    const current = await this.loadSnapshot({
+      workspaceId: input.workspaceId,
+      spaceId: input.spaceId,
+    });
+    if (!current) return null;
+
+    let updatedJob: ReviewJob | null = null;
+    const jobs = current.jobs.map((job) => {
+      if (job.jobId !== input.jobId) return job;
+      const next = updater(job);
+      updatedJob = next;
+      return next;
+    });
+    if (!updatedJob) return null;
+
+    await this.saveJobs(input.workspaceId, input.spaceId, jobs, current);
+    return updatedJob;
+  }
+
+  private async saveJobs(
+    workspaceId: string,
+    spaceId: string,
+    jobs: ReviewJob[],
+    current?: ReviewSnapshot | null,
+  ): Promise<ReviewSnapshot> {
+    const row = await this.reviewSnapshotRepo.upsertSnapshot({
+      workspaceId,
+      spaceId,
+      version: current?.version ?? '2',
+      items: current?.items ?? [],
+      docs: current?.docs ?? [],
+      resolvedReviews: current?.resolvedReviews ?? [],
+      jobs,
+      discoveredAt: current ? new Date(current.discoveredAt) : new Date(),
+    });
+
+    const applications = await this.reviewApplicationRepo.findBySpace({
+      workspaceId,
+      spaceId,
+    });
+    return this.toSnapshot(row, applications);
   }
 }
 
@@ -137,5 +294,10 @@ function upsertResolvedReview(
   next: StoredResolvedReview,
 ): StoredResolvedReview[] {
   const remaining = current.filter((entry) => entry.item.id !== next.item.id);
+  return [...remaining, next];
+}
+
+function upsertJob(current: ReviewJob[], next: ReviewJob): ReviewJob[] {
+  const remaining = current.filter((entry) => entry.jobId !== next.jobId);
   return [...remaining, next];
 }

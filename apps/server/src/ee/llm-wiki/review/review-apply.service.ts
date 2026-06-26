@@ -53,6 +53,14 @@ export class ReviewApplyService {
     private readonly applicationRepo: KnowledgeReviewApplicationRepo,
   ) {}
 
+  async supersedeDraftApplications(input: {
+    workspaceId: string;
+    spaceId: string;
+    reviewItemId: string;
+  }): Promise<number> {
+    return this.applicationRepo.supersedeDraftsForReviewItem(input);
+  }
+
   async planDraft(input: {
     workspaceId: string;
     spaceId: string;

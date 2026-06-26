@@ -157,6 +157,7 @@ export const reviewApplicationStatusSchema = z.enum([
   'reverted',
   'conflicted',
   'failed',
+  'superseded',
 ]);
 export type ReviewApplicationStatus = z.infer<
   typeof reviewApplicationStatusSchema
@@ -276,11 +277,41 @@ export const resolvedReviewSchema = z.preprocess(
 );
 export type StoredResolvedReview = z.infer<typeof resolvedReviewSchema>;
 
+export const reviewJobStatusSchema = z.enum([
+  'pending',
+  'running',
+  'done',
+  'failed',
+]);
+export type ReviewJobStatus = z.infer<typeof reviewJobStatusSchema>;
+
+export const reviewJobKindSchema = z.enum(['discover', 'negotiate']);
+export type ReviewJobKind = z.infer<typeof reviewJobKindSchema>;
+
+export const reviewJobSchema = z.object({
+  jobId: z.string(),
+  kind: reviewJobKindSchema,
+  itemId: z.string().nullable().default(null),
+  status: reviewJobStatusSchema,
+  error: z.string().nullable().default(null),
+  createdAt: z.string(),
+  startedAt: z.string().nullable().default(null),
+  finishedAt: z.string().nullable().default(null),
+});
+export type ReviewJob = z.infer<typeof reviewJobSchema>;
+
+export const reviewJobResultSchema = z.object({
+  job: reviewJobSchema,
+  result: z.unknown().nullable().default(null),
+});
+export type ReviewJobResult = z.infer<typeof reviewJobResultSchema>;
+
 export const reviewSnapshotSchema = z.object({
   version: z.literal('2').default('2'),
   items: z.array(reviewItemSchema).default([]),
   docs: z.array(reviewDocMetaSchema).default([]),
   resolvedReviews: z.array(resolvedReviewSchema).default([]),
+  jobs: z.array(reviewJobSchema).default([]),
   applications: z.array(reviewApplicationSchema).default([]),
   discoveredAt: z.string(),
   updatedAt: z.string(),

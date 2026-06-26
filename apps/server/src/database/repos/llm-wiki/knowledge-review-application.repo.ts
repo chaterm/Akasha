@@ -108,4 +108,24 @@ export class KnowledgeReviewApplicationRepo {
       .returningAll()
       .executeTakeFirstOrThrow();
   }
+
+  async supersedeDraftsForReviewItem(input: {
+    workspaceId: string;
+    spaceId: string;
+    reviewItemId: string;
+  }): Promise<number> {
+    const result = await this.db
+      .updateTable('knowledgeReviewApplications')
+      .set({
+        status: 'superseded',
+        updatedAt: new Date(),
+      })
+      .where('workspaceId', '=', input.workspaceId)
+      .where('spaceId', '=', input.spaceId)
+      .where('reviewItemId', '=', input.reviewItemId)
+      .where('status', '=', 'draft')
+      .executeTakeFirst();
+
+    return Number(result.numUpdatedRows ?? 0);
+  }
 }

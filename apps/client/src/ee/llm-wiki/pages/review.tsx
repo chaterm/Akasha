@@ -31,11 +31,13 @@ import {
   loadReviewSnapshot,
   negotiateReview,
   planReviewApplication,
+  pollReviewJob,
   revertReviewApplication,
 } from "../services/review-service";
 import type {
   DraftApplyOperation,
   NegotiationTurn,
+  ReviewJob,
   ReviewApplication,
   ReviewApplicationDiff,
   ResolvedReview,
@@ -62,6 +64,7 @@ const TYPE_COLOR: Record<ReviewType, string> = {
 const FEEDBACK_DEEPSEARCH = "DeepSearch";
 const FEEDBACK_ACCEPT = "采纳";
 const FEEDBACK_SKIP = "暂时跳过";
+const REVIEW_SPACE_STORAGE_KEY = "llm-wiki.review.spaceId";
 
 type ItemState = {
   busy?: "draft" | "plan" | "diff" | "apply" | "revert";
@@ -75,7 +78,7 @@ type ItemState = {
 const ARTIFACT_LIMIT = 200;
 
 const BUSY_LABEL: Record<NonNullable<ItemState["busy"]>, string> = {
-  draft: "AI is generating the draft ...",
+  draft: "AI is generating the draft in the background ...",
   plan: "Generating application preview ...",
   diff: "Loading diff ...",
   apply: "Applying to wiki ...",
@@ -101,13 +104,24 @@ export default function ReviewPage() {
   const [states, setStates] = useState<Record<string, ItemState>>({});
 
   useEffect(() => {
-    if (spaceId || spaceOptions.length === 0) return;
-    const email = currentUser?.user?.email?.toLowerCase();
-    const personal = email
-      ? spaceOptions.find((opt) => opt.label.toLowerCase().includes(email))
-      : undefined;
-    setSpaceId(personal?.value ?? spaceOptions[0].value);
-  }, [spaceId, spaceOptions, currentUser]);
+    if (spaceId || spaces.length === 0) return;
+
+    const rememberedSpace = findRememberedReviewSpace(spaces);
+    if (rememberedSpace) {
+      setSpaceId(rememberedSpace.id);
+      return;
+    }
+
+    if (!currentUser?.user) return;
+
+    const personalSpace = findPersonalReviewSpace(spaces, currentUser.user);
+    setSpaceId((personalSpace ?? spaces[0]).id);
+  }, [spaceId, spaces, currentUser?.user]);
+
+  const handleSpaceChange = (value: string | null) => {
+    setSpaceId(value);
+    rememberReviewSpace(value);
+  };
 
   useEffect(() => {
     setItems(null);
@@ -120,6 +134,21 @@ export default function ReviewPage() {
     queryFn: () => loadReviewSnapshot({ spaceId: spaceId! }),
     enabled: !!spaceId,
   });
+  const activeReviewJobs = useMemo(
+    () => (snapshotQuery.data?.jobs ?? []).filter(isActiveReviewJob),
+    [snapshotQuery.data?.jobs],
+  );
+  const activeJobKey = useMemo(
+    () =>
+      activeReviewJobs
+        .map((job) => `${job.jobId}:${job.status}`)
+        .sort()
+        .join("|"),
+    [activeReviewJobs],
+  );
+  const isDiscoverJobRunning = activeReviewJobs.some(
+    (job) => job.kind === "discover",
+  );
 
   useEffect(() => {
     if (snapshotQuery.isSuccess && snapshotQuery.data) {
@@ -127,8 +156,58 @@ export default function ReviewPage() {
     }
   }, [snapshotQuery.data, snapshotQuery.isSuccess]);
 
+  useEffect(() => {
+    if (!spaceId || activeReviewJobs.length === 0) return;
+    let cancelled = false;
+
+    for (const job of activeReviewJobs) {
+      pollReviewJob({ spaceId, jobId: job.jobId })
+        .then(async (result) => {
+          if (cancelled) return;
+          if (result.job.status === "failed") {
+            notifications.show({
+              color: "red",
+              message: result.job.error || t("Review job failed"),
+            });
+          }
+          const snapshot = await loadReviewSnapshot({ spaceId });
+          if (cancelled || !snapshot) return;
+          queryClient.setQueryData(["review-snapshot", spaceId], snapshot);
+          applySnapshot(snapshot, setItems, setDocMap, setStates);
+          if (
+            result.job.kind === "discover" &&
+            result.job.status === "done" &&
+            snapshot.items.length === 0
+          ) {
+            notifications.show({ message: t("No review items found") });
+          }
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          notifications.show({
+            color: "red",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeJobKey, activeReviewJobs, queryClient, spaceId, t]);
+
   const discoverMutation = useMutation({
-    mutationFn: discoverReview,
+    mutationFn: (params: { spaceId: string; limit?: number }) =>
+      discoverReview({
+        ...params,
+        onJob: (job) => {
+          queryClient.setQueryData(
+            ["review-snapshot", params.spaceId],
+            (snapshot: ReviewSnapshot | null | undefined) =>
+              upsertJobSnapshot(snapshot, job),
+          );
+        },
+      }),
     onSuccess: (snapshot) => {
       if (spaceId) {
         queryClient.setQueryData(["review-snapshot", spaceId], snapshot);
@@ -163,6 +242,14 @@ export default function ReviewPage() {
         item,
         feedback,
         priorTurns,
+        onJob: (job) => {
+          patchState(item.id, { busy: "draft" });
+          queryClient.setQueryData(
+            ["review-snapshot", spaceId],
+            (snapshot: ReviewSnapshot | null | undefined) =>
+              upsertJobSnapshot(snapshot, job),
+          );
+        },
       });
       patchState(item.id, {
         busy: undefined,
@@ -322,6 +409,8 @@ export default function ReviewPage() {
   };
 
   const hasSnapshot = Boolean(snapshotQuery.data);
+  const isDiscoverReviewRunning =
+    discoverMutation.isPending || isDiscoverJobRunning;
   const orderedItems = useMemo(() => {
     if (!items) return [];
 
@@ -363,45 +452,44 @@ export default function ReviewPage() {
             placeholder={t("Select a space")}
             data={spaceOptions}
             value={spaceId}
-            onChange={setSpaceId}
+            onChange={handleSpaceChange}
             searchable
             disabled={
               spacesLoading ||
-              discoverMutation.isPending ||
+              isDiscoverReviewRunning ||
               snapshotQuery.isLoading
             }
             style={{ flex: 1 }}
           />
           <Button
             onClick={handleDiscover}
-            loading={discoverMutation.isPending}
+            loading={isDiscoverReviewRunning}
             disabled={!spaceId || snapshotQuery.isLoading}
           >
             {t(hasSnapshot ? "Re-review" : "Start review")}
           </Button>
         </Group>
 
-        {snapshotQuery.isLoading && !discoverMutation.isPending && (
+        {snapshotQuery.isLoading && !isDiscoverReviewRunning && (
           <Group justify="center" py="xl">
             <Loader size="sm" />
             <Text c="dimmed">{t("Loading saved review ...")}</Text>
           </Group>
         )}
 
-        {discoverMutation.isPending && (
-          <Group justify="center" py="xl">
-            <Loader size="sm" />
-            <Text c="dimmed">{t("AI is reviewing the wiki ...")}</Text>
-          </Group>
+        {isDiscoverReviewRunning && (
+          <Alert color="blue" variant="light" icon={<Loader size={16} />}>
+            <Text size="sm">{t(getDiscoverReviewJobMessage())}</Text>
+          </Alert>
         )}
 
-        {items?.length === 0 && !discoverMutation.isPending && (
+        {items?.length === 0 && !isDiscoverReviewRunning && (
           <Alert icon={<IconCheck size={18} />} color="green">
             {t("AI found nothing worth reviewing.")}
           </Alert>
         )}
 
-        {items && items.length > 0 && (
+        {items && items.length > 0 && !isDiscoverReviewRunning && (
           <Stack gap="md">
             {orderedItems.map(({ item, index }) => (
               <ReviewItemCard
@@ -454,6 +542,7 @@ function applySnapshot(
     buildStatesFromResolvedReviews(
       snapshot.resolvedReviews,
       snapshot.applications,
+      snapshot.jobs,
     ),
   );
 }
@@ -461,15 +550,27 @@ function applySnapshot(
 function buildStatesFromResolvedReviews(
   resolvedReviews: ResolvedReview[],
   applications: ReviewApplication[] = [],
+  jobs: ReviewJob[] = [],
 ): Record<string, ItemState> {
+  // 每个 reviewItem 取"最新"的 application。修复:不能简单按数组顺序取第一个,
+  // 否则同一 reviewItem 有历史 application(如先前撤回过)+ 新 draft 时,
+  // 旧的 reverted 排在前会被误当成"最新",前端显示成"已撤回"。
+  // 正确策略:同一 reviewItem 下,优先取 draft;否则按 createdAt 取最新。
+  const sortedApplications = [...applications]
+    .filter((application) => application.status !== "superseded")
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const latestApplications = new Map<string, ReviewApplication>();
-  for (const application of applications) {
-    if (!latestApplications.has(application.reviewItemId)) {
+  for (const application of sortedApplications) {
+    const existing = latestApplications.get(application.reviewItemId);
+    if (!existing) {
+      latestApplications.set(application.reviewItemId, application);
+    } else if (existing.status !== "draft" && application.status === "draft") {
+      // 已有非 draft(如 reverted),后面又遇到 draft —— draft 优先。
       latestApplications.set(application.reviewItemId, application);
     }
   }
 
-  return Object.fromEntries(
+  const states: Record<string, ItemState> = Object.fromEntries(
     resolvedReviews.map((resolved) => {
       const application = latestApplications.get(resolved.item.id);
       return [
@@ -490,6 +591,18 @@ function buildStatesFromResolvedReviews(
       ];
     }),
   );
+  for (const job of jobs) {
+    if (!isActiveReviewJob(job) || job.kind !== "negotiate" || !job.itemId) {
+      continue;
+    }
+    states[job.itemId] = {
+      freeText: "",
+      followUpText: "",
+      ...states[job.itemId],
+      busy: "draft",
+    };
+  }
+  return states;
 }
 
 function upsertResolvedSnapshot(
@@ -530,6 +643,29 @@ function upsertApplicationSnapshot(
   };
 }
 
+function upsertJobSnapshot(
+  snapshot: ReviewSnapshot | null | undefined,
+  job: ReviewJob,
+): ReviewSnapshot {
+  const now = new Date().toISOString();
+  const base: ReviewSnapshot = snapshot ?? {
+    version: "2",
+    items: [],
+    docs: [],
+    resolvedReviews: [],
+    jobs: [],
+    applications: [],
+    discoveredAt: now,
+    updatedAt: now,
+  };
+
+  return {
+    ...base,
+    jobs: [job, ...base.jobs.filter((entry) => entry.jobId !== job.jobId)],
+    updatedAt: now,
+  };
+}
+
 function isItemHandled(state?: ItemState): boolean {
   if (!state?.resolved) return false;
   if (state.resolved.skipped || state.resolved.applied) return true;
@@ -537,6 +673,77 @@ function isItemHandled(state?: ItemState): boolean {
     state.application?.status === "applied" ||
     state.application?.status === "reverted"
   );
+}
+
+function isActiveReviewJob(job: ReviewJob): boolean {
+  return job.status === "pending" || job.status === "running";
+}
+
+function getDiscoverReviewJobMessage(): string {
+  return "AI is reviewing the wiki in the background. This page will update automatically.";
+}
+
+function findRememberedReviewSpace<T extends { id: string }>(
+  spaces: T[],
+): T | undefined {
+  const rememberedSpaceId = readRememberedReviewSpaceId();
+  if (!rememberedSpaceId) return undefined;
+  return spaces.find((space) => space.id === rememberedSpaceId);
+}
+
+function findPersonalReviewSpace<
+  T extends { name: string; slug?: string | null },
+>(
+  spaces: T[],
+  user: { name?: string | null; email?: string | null },
+): T | undefined {
+  const userName = normalizeLookupValue(user.name);
+  const email = normalizeLookupValue(user.email);
+  const emailName = normalizeLookupValue(email.split("@")[0]);
+  const candidates = [userName, emailName, email].filter(Boolean);
+
+  return (
+    spaces.find((space) => {
+      const name = normalizeLookupValue(space.name);
+      const slug = normalizeLookupValue(space.slug);
+      return candidates.some((candidate) =>
+        [name, slug].some((value) => value === candidate),
+      );
+    }) ??
+    spaces.find((space) => {
+      const name = normalizeLookupValue(space.name);
+      const slug = normalizeLookupValue(space.slug);
+      return candidates.some((candidate) =>
+        [name, slug].some((value) => value.includes(candidate)),
+      );
+    })
+  );
+}
+
+function readRememberedReviewSpaceId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(REVIEW_SPACE_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberReviewSpace(spaceId: string | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (spaceId) {
+      window.localStorage.setItem(REVIEW_SPACE_STORAGE_KEY, spaceId);
+    } else {
+      window.localStorage.removeItem(REVIEW_SPACE_STORAGE_KEY);
+    }
+  } catch {
+    // Ignore private-mode or quota failures; the selector still works.
+  }
+}
+
+function normalizeLookupValue(value: string | null | undefined): string {
+  return (value ?? "").trim().toLowerCase();
 }
 
 function previewText(value: string, maxLength: number): string {
@@ -1785,6 +1992,7 @@ const APPLICATION_STATUS_LABEL: Record<ReviewApplication["status"], string> = {
   reverted: "Reverted",
   conflicted: "Conflicted",
   failed: "Failed",
+  superseded: "Superseded",
 };
 
 const APPLICATION_STATUS_COLOR: Record<ReviewApplication["status"], string> = {
@@ -1793,4 +2001,5 @@ const APPLICATION_STATUS_COLOR: Record<ReviewApplication["status"], string> = {
   reverted: "gray",
   conflicted: "yellow",
   failed: "red",
+  superseded: "gray",
 };

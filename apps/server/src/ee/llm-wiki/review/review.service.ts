@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { generateText, LanguageModel } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
@@ -19,6 +20,7 @@ export const REVIEW_SYSTEM_PROMPT = [
   'You are a meticulous knowledge-base reviewer for a personal/team wiki.',
   'The wiki pages already exist. Your job is NOT to rewrite pages now — only to',
   'surface high-value review items, each with a concrete RECOMMENDATION.',
+  'REMEMBER: You should focus on the truly important issues that materially affect the quality of the wiki, and avoid trivial or low-value items.',
   'Do not output chain-of-thought, hidden reasoning, or explanatory preamble.',
   '',
   'For every item provide:',
@@ -123,7 +125,7 @@ export const NEGOTIATION_SYSTEM_PROMPT = [
   '- rename-page combined with append-section or replace-page: draft.title is the new page title, and draft.body follows the content action rule.',
   '',
   'Preservation rules for existing pages:',
-  '- Preserve existing Markdown formatting unless the binding editing brief explicitly asks to change formatting. Do not casually change existing heading levels (#, ##, ###), bold/italic emphasis, lists, tables, code blocks, links, or blockquotes.',
+  '- This one is IMPORTANT: Preserve existing Markdown formatting unless user explicitly asks to change formatting. DO NOT casually change existing heading levels (#, ##, ###), bold/italic emphasis(*[content]*, **[content]**), lists, tables, code blocks, links, or blockquotes.',
   '- For append-section, match the surrounding page style for the new section rather than imposing a new Markdown style.',
   '- For replace-page, keep unaffected sections as close to their original Markdown as possible; only change formatting that is directly required by the requested edit.',
   '',
@@ -190,7 +192,17 @@ export class ReviewService {
 
     const parsedJson = extractJson(text);
     const result = reviewResultSchema.parse(parsedJson);
-    return normalizeReviewResultReferences(result, wiki);
+    // 强制重写 review item id —— LLM 给的是 rev-1/rev-2 这种顺序短名,跨多次
+    // discover 会复用,导致 application 表里不同轮的"rev-1"被混在一起,
+    // target_page 乱跳。代码侧用 randomUUID 给每条 review 独立、稳定的 id。
+    const withStableIds: ReviewResult = {
+      ...result,
+      items: result.items.map((item) => ({
+        ...item,
+        id: `review-${randomUUID()}`,
+      })),
+    };
+    return normalizeReviewResultReferences(withStableIds, wiki);
   }
 
   async runDeepSearch(
