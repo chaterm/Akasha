@@ -161,9 +161,12 @@ export class ConfluenceImportService {
             // 文件缺失：创建空占位页
           }
 
-          // 提取正文并清理，同时收集附件元数据
-          const { cleanedHtml, pageAttachments } =
-            this.extractAndClean(rawHtml);
+          // 提取正文并清理，同时收集附件元数据 + Confluence 权威标题
+          const {
+            cleanedHtml,
+            pageAttachments,
+            title: confluenceTitle,
+          } = this.extractAndClean(rawHtml);
 
           // 转换代码块
           const htmlWithCode = this.transformCodeBlocks(cleanedHtml);
@@ -204,7 +207,9 @@ export class ConfluenceImportService {
           const insertablePage: InsertablePage = {
             id: page.id,
             slugId: page.slugId,
-            title: title || page.title,
+            // 优先级:index.html 导航文本(page.title)→ #title-heading 权威标题(剥 space 前缀)
+            //         → 正文首个 H1(罕见)。前两者通常一致,但主路径下 page.title 已干净,优先。
+            title: page.title || confluenceTitle || title,
             content: prosemirrorJson,
             textContent: jsonToText(prosemirrorJson),
             ydoc: await this.importService.createYdoc(prosemirrorJson),
@@ -427,6 +432,12 @@ export class ConfluenceImportService {
   private extractAndClean(rawHtml: string): {
     cleanedHtml: string;
     pageAttachments: AttachmentInfo[];
+    // 从 Confluence 导出 HTML 的 #title-heading 容器里提取的权威页面标题。
+    // Confluence 导出时把页面标题专门放在 <h1 id="title-heading"> 里(常嵌一个
+    // <a href="...">真实标题</a>)。后续要把这个容器整个删除作为 UI 噪音处理,
+    // 但要在删之前先把标题文本抽出来传给上层 —— 否则 fallback 路径会用文件名
+    // (纯数字 page id)兜底,变成数字标题。
+    title?: string;
   } {
     if (!rawHtml) {
       return { cleanedHtml: '', pageAttachments: [] };
@@ -436,6 +447,14 @@ export class ConfluenceImportService {
 
     // 先从附件区提取元数据（greybox 在下面会被删除）
     const pageAttachments = this.extractAttachmentMetadata($);
+
+    // 在删除 #title-heading 前先抽出其中的标题文本(作为权威 title)。
+    // .text() 会自动剥离 <a>/<span> 等内层结构,直接得到纯文本。
+    // 经 stripConfluenceSpacePrefix 剥掉 space 名前缀(如 "AIM-运维-知识库 : ")。
+    // 空白返回 undefined,让上层走 page.title / extractTitleAndRemoveHeading 兜底。
+    const rawTitle = $('#title-heading').text().trim().replace(/\s+/g, ' ');
+    const title =
+      rawTitle.length > 0 ? stripConfluenceSpacePrefix(rawTitle) : undefined;
 
     // 移除 Confluence UI 噪音
     $('#breadcrumb-section').remove();
@@ -468,7 +487,7 @@ export class ConfluenceImportService {
       content = $('body').html() ?? '';
     }
 
-    return { cleanedHtml: content, pageAttachments };
+    return { cleanedHtml: content, pageAttachments, title };
   }
 
   private extractAttachmentMetadata($: CheerioAPI): AttachmentInfo[] {
@@ -593,7 +612,11 @@ export class ConfluenceImportService {
         const absPath = path.join(extractDir, filePath);
         const rawHtml = await fs.readFile(absPath, 'utf-8');
 
-        const { cleanedHtml, pageAttachments } = this.extractAndClean(rawHtml);
+        const {
+          cleanedHtml,
+          pageAttachments,
+          title: confluenceTitle,
+        } = this.extractAndClean(rawHtml);
         const htmlWithCode = this.transformCodeBlocks(cleanedHtml);
 
         // fallback 路径无层级映射，移除内部链接 href 避免被误转成 embed
@@ -631,7 +654,9 @@ export class ConfluenceImportService {
         const insertablePage: InsertablePage = {
           id: pageId,
           slugId: generateSlugId(),
-          title: title || titleFallback,
+          // 优先级:Confluence #title-heading(权威,剥 space 前缀)→ 正文首个 H1 → 文件名(纯数字 ID)兜底。
+          // 修复"文件名数字被当成标题"的 bug —— #title-heading 删除前已先抽出。
+          title: confluenceTitle || title || titleFallback,
           content: prosemirrorJson,
           textContent: jsonToText(prosemirrorJson),
           ydoc: await this.importService.createYdoc(prosemirrorJson),
@@ -655,4 +680,24 @@ export class ConfluenceImportService {
       });
     }
   }
+}
+
+/**
+ * 剥掉 Confluence #title-heading 文本里 space 名前缀。
+ *
+ * Confluence 导出时,#title-heading 的内容通常是 "<spaceName> : <pageName>"
+ * (如 "AIM-运维-知识库 : Amazon S3 清单分析")。展示时只要页面名更干净,
+ * 这跟 index.html 导航 <a> 的纯文本一致。
+ *
+ * 保守剥取策略:
+ *   - 仅当含 " : " 分隔符且后半段非空时才剥(避免误剥本身就含冒号的标题,
+ *     比如本意就是 "1: 介绍" 这种格式)。
+ *   - 只剥第一个 " : ",保留后续冒号(子层级标题里可能有更多冒号)。
+ *   - 取不到合理结果则返回原值,绝不返回空串覆盖掉权威 title。
+ */
+function stripConfluenceSpacePrefix(rawTitle: string): string {
+  const sepIndex = rawTitle.indexOf(' : ');
+  if (sepIndex === -1) return rawTitle;
+  const stripped = rawTitle.slice(sepIndex + 3).trim();
+  return stripped.length > 0 ? stripped : rawTitle;
 }
