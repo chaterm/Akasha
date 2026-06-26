@@ -31,11 +31,13 @@ import {
   loadReviewSnapshot,
   negotiateReview,
   planReviewApplication,
+  pollReviewJob,
   revertReviewApplication,
 } from "../services/review-service";
 import type {
   DraftApplyOperation,
-  DraftApproach,
+  NegotiationTurn,
+  ReviewJob,
   ReviewApplication,
   ReviewApplicationDiff,
   ResolvedReview,
@@ -62,6 +64,7 @@ const TYPE_COLOR: Record<ReviewType, string> = {
 const FEEDBACK_DEEPSEARCH = "DeepSearch";
 const FEEDBACK_ACCEPT = "采纳";
 const FEEDBACK_SKIP = "暂时跳过";
+const REVIEW_SPACE_STORAGE_KEY = "llm-wiki.review.spaceId";
 
 type ItemState = {
   busy?: "draft" | "plan" | "diff" | "apply" | "revert";
@@ -69,12 +72,13 @@ type ItemState = {
   application?: ReviewApplication;
   diff?: ReviewApplicationDiff;
   freeText: string;
+  followUpText: string;
 };
 
 const ARTIFACT_LIMIT = 200;
 
 const BUSY_LABEL: Record<NonNullable<ItemState["busy"]>, string> = {
-  draft: "AI is generating the draft ...",
+  draft: "AI is generating the draft in the background ...",
   plan: "Generating application preview ...",
   diff: "Loading diff ...",
   apply: "Applying to wiki ...",
@@ -100,13 +104,24 @@ export default function ReviewPage() {
   const [states, setStates] = useState<Record<string, ItemState>>({});
 
   useEffect(() => {
-    if (spaceId || spaceOptions.length === 0) return;
-    const email = currentUser?.user?.email?.toLowerCase();
-    const personal = email
-      ? spaceOptions.find((opt) => opt.label.toLowerCase().includes(email))
-      : undefined;
-    setSpaceId(personal?.value ?? spaceOptions[0].value);
-  }, [spaceId, spaceOptions, currentUser]);
+    if (spaceId || spaces.length === 0) return;
+
+    const rememberedSpace = findRememberedReviewSpace(spaces);
+    if (rememberedSpace) {
+      setSpaceId(rememberedSpace.id);
+      return;
+    }
+
+    if (!currentUser?.user) return;
+
+    const personalSpace = findPersonalReviewSpace(spaces, currentUser.user);
+    setSpaceId((personalSpace ?? spaces[0]).id);
+  }, [spaceId, spaces, currentUser?.user]);
+
+  const handleSpaceChange = (value: string | null) => {
+    setSpaceId(value);
+    rememberReviewSpace(value);
+  };
 
   useEffect(() => {
     setItems(null);
@@ -119,6 +134,21 @@ export default function ReviewPage() {
     queryFn: () => loadReviewSnapshot({ spaceId: spaceId! }),
     enabled: !!spaceId,
   });
+  const activeReviewJobs = useMemo(
+    () => (snapshotQuery.data?.jobs ?? []).filter(isActiveReviewJob),
+    [snapshotQuery.data?.jobs],
+  );
+  const activeJobKey = useMemo(
+    () =>
+      activeReviewJobs
+        .map((job) => `${job.jobId}:${job.status}`)
+        .sort()
+        .join("|"),
+    [activeReviewJobs],
+  );
+  const isDiscoverJobRunning = activeReviewJobs.some(
+    (job) => job.kind === "discover",
+  );
 
   useEffect(() => {
     if (snapshotQuery.isSuccess && snapshotQuery.data) {
@@ -126,8 +156,58 @@ export default function ReviewPage() {
     }
   }, [snapshotQuery.data, snapshotQuery.isSuccess]);
 
+  useEffect(() => {
+    if (!spaceId || activeReviewJobs.length === 0) return;
+    let cancelled = false;
+
+    for (const job of activeReviewJobs) {
+      pollReviewJob({ spaceId, jobId: job.jobId })
+        .then(async (result) => {
+          if (cancelled) return;
+          if (result.job.status === "failed") {
+            notifications.show({
+              color: "red",
+              message: result.job.error || t("Review job failed"),
+            });
+          }
+          const snapshot = await loadReviewSnapshot({ spaceId });
+          if (cancelled || !snapshot) return;
+          queryClient.setQueryData(["review-snapshot", spaceId], snapshot);
+          applySnapshot(snapshot, setItems, setDocMap, setStates);
+          if (
+            result.job.kind === "discover" &&
+            result.job.status === "done" &&
+            snapshot.items.length === 0
+          ) {
+            notifications.show({ message: t("No review items found") });
+          }
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          notifications.show({
+            color: "red",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeJobKey, activeReviewJobs, queryClient, spaceId, t]);
+
   const discoverMutation = useMutation({
-    mutationFn: discoverReview,
+    mutationFn: (params: { spaceId: string; limit?: number }) =>
+      discoverReview({
+        ...params,
+        onJob: (job) => {
+          queryClient.setQueryData(
+            ["review-snapshot", params.spaceId],
+            (snapshot: ReviewSnapshot | null | undefined) =>
+              upsertJobSnapshot(snapshot, job),
+          );
+        },
+      }),
     onSuccess: (snapshot) => {
       if (spaceId) {
         queryClient.setQueryData(["review-snapshot", spaceId], snapshot);
@@ -145,19 +225,38 @@ export default function ReviewPage() {
   const patchState = (id: string, patch: Partial<ItemState>) => {
     setStates((prev) => ({
       ...prev,
-      [id]: { freeText: "", ...prev[id], ...patch },
+      [id]: { freeText: "", followUpText: "", ...prev[id], ...patch },
     }));
   };
 
-  const resolveItem = async (item: ReviewItem, feedback: string) => {
+  const resolveItem = async (
+    item: ReviewItem,
+    feedback: string,
+    priorTurns?: NegotiationTurn[],
+  ) => {
     if (!spaceId) return;
     patchState(item.id, { busy: "draft" });
     try {
-      const resolved = await negotiateReview({ spaceId, item, feedback });
+      const resolved = await negotiateReview({
+        spaceId,
+        item,
+        feedback,
+        priorTurns,
+        onJob: (job) => {
+          patchState(item.id, { busy: "draft" });
+          queryClient.setQueryData(
+            ["review-snapshot", spaceId],
+            (snapshot: ReviewSnapshot | null | undefined) =>
+              upsertJobSnapshot(snapshot, job),
+          );
+        },
+      });
       patchState(item.id, {
         busy: undefined,
         resolved,
         application: undefined,
+        diff: undefined,
+        followUpText: "",
       });
       queryClient.setQueryData(
         ["review-snapshot", spaceId],
@@ -310,6 +409,8 @@ export default function ReviewPage() {
   };
 
   const hasSnapshot = Boolean(snapshotQuery.data);
+  const isDiscoverReviewRunning =
+    discoverMutation.isPending || isDiscoverJobRunning;
   const orderedItems = useMemo(() => {
     if (!items) return [];
 
@@ -351,45 +452,44 @@ export default function ReviewPage() {
             placeholder={t("Select a space")}
             data={spaceOptions}
             value={spaceId}
-            onChange={setSpaceId}
+            onChange={handleSpaceChange}
             searchable
             disabled={
               spacesLoading ||
-              discoverMutation.isPending ||
+              isDiscoverReviewRunning ||
               snapshotQuery.isLoading
             }
             style={{ flex: 1 }}
           />
           <Button
             onClick={handleDiscover}
-            loading={discoverMutation.isPending}
+            loading={isDiscoverReviewRunning}
             disabled={!spaceId || snapshotQuery.isLoading}
           >
             {t(hasSnapshot ? "Re-review" : "Start review")}
           </Button>
         </Group>
 
-        {snapshotQuery.isLoading && !discoverMutation.isPending && (
+        {snapshotQuery.isLoading && !isDiscoverReviewRunning && (
           <Group justify="center" py="xl">
             <Loader size="sm" />
             <Text c="dimmed">{t("Loading saved review ...")}</Text>
           </Group>
         )}
 
-        {discoverMutation.isPending && (
-          <Group justify="center" py="xl">
-            <Loader size="sm" />
-            <Text c="dimmed">{t("AI is reviewing the wiki ...")}</Text>
-          </Group>
+        {isDiscoverReviewRunning && (
+          <Alert color="blue" variant="light" icon={<Loader size={16} />}>
+            <Text size="sm">{t(getDiscoverReviewJobMessage())}</Text>
+          </Alert>
         )}
 
-        {items?.length === 0 && !discoverMutation.isPending && (
+        {items?.length === 0 && !isDiscoverReviewRunning && (
           <Alert icon={<IconCheck size={18} />} color="green">
             {t("AI found nothing worth reviewing.")}
           </Alert>
         )}
 
-        {items && items.length > 0 && (
+        {items && items.length > 0 && !isDiscoverReviewRunning && (
           <Stack gap="md">
             {orderedItems.map(({ item, index }) => (
               <ReviewItemCard
@@ -399,12 +499,24 @@ export default function ReviewPage() {
                 docMap={docMap}
                 state={states[item.id]}
                 onFreeTextChange={(v) => patchState(item.id, { freeText: v })}
+                onFollowUpChange={(v) =>
+                  patchState(item.id, { followUpText: v })
+                }
                 onDeepSearch={() => resolveItem(item, FEEDBACK_DEEPSEARCH)}
                 onAccept={() => resolveItem(item, FEEDBACK_ACCEPT)}
                 onSkip={() => resolveItem(item, FEEDBACK_SKIP)}
                 onSubmitFreeText={() =>
                   resolveItem(item, states[item.id]?.freeText?.trim() || "")
                 }
+                onSubmitFollowUp={() => {
+                  const resolved = states[item.id]?.resolved;
+                  if (!resolved) return;
+                  resolveItem(
+                    item,
+                    states[item.id]?.followUpText?.trim() || "",
+                    resolved.turns,
+                  );
+                }}
                 onPlan={() => planItem(item)}
                 onPreviewDiff={() => previewApplication(item)}
                 onApply={() => applyApplication(item)}
@@ -430,6 +542,7 @@ function applySnapshot(
     buildStatesFromResolvedReviews(
       snapshot.resolvedReviews,
       snapshot.applications,
+      snapshot.jobs,
     ),
   );
 }
@@ -437,21 +550,34 @@ function applySnapshot(
 function buildStatesFromResolvedReviews(
   resolvedReviews: ResolvedReview[],
   applications: ReviewApplication[] = [],
+  jobs: ReviewJob[] = [],
 ): Record<string, ItemState> {
+  // 每个 reviewItem 取"最新"的 application。修复:不能简单按数组顺序取第一个,
+  // 否则同一 reviewItem 有历史 application(如先前撤回过)+ 新 draft 时,
+  // 旧的 reverted 排在前会被误当成"最新",前端显示成"已撤回"。
+  // 正确策略:同一 reviewItem 下,优先取 draft;否则按 createdAt 取最新。
+  const sortedApplications = [...applications]
+    .filter((application) => application.status !== "superseded")
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const latestApplications = new Map<string, ReviewApplication>();
-  for (const application of applications) {
-    if (!latestApplications.has(application.reviewItemId)) {
+  for (const application of sortedApplications) {
+    const existing = latestApplications.get(application.reviewItemId);
+    if (!existing) {
+      latestApplications.set(application.reviewItemId, application);
+    } else if (existing.status !== "draft" && application.status === "draft") {
+      // 已有非 draft(如 reverted),后面又遇到 draft —— draft 优先。
       latestApplications.set(application.reviewItemId, application);
     }
   }
 
-  return Object.fromEntries(
+  const states: Record<string, ItemState> = Object.fromEntries(
     resolvedReviews.map((resolved) => {
       const application = latestApplications.get(resolved.item.id);
       return [
         resolved.item.id,
         {
           freeText: "",
+          followUpText: "",
           resolved,
           application,
           diff: application
@@ -465,6 +591,18 @@ function buildStatesFromResolvedReviews(
       ];
     }),
   );
+  for (const job of jobs) {
+    if (!isActiveReviewJob(job) || job.kind !== "negotiate" || !job.itemId) {
+      continue;
+    }
+    states[job.itemId] = {
+      freeText: "",
+      followUpText: "",
+      ...states[job.itemId],
+      busy: "draft",
+    };
+  }
+  return states;
 }
 
 function upsertResolvedSnapshot(
@@ -505,6 +643,29 @@ function upsertApplicationSnapshot(
   };
 }
 
+function upsertJobSnapshot(
+  snapshot: ReviewSnapshot | null | undefined,
+  job: ReviewJob,
+): ReviewSnapshot {
+  const now = new Date().toISOString();
+  const base: ReviewSnapshot = snapshot ?? {
+    version: "2",
+    items: [],
+    docs: [],
+    resolvedReviews: [],
+    jobs: [],
+    applications: [],
+    discoveredAt: now,
+    updatedAt: now,
+  };
+
+  return {
+    ...base,
+    jobs: [job, ...base.jobs.filter((entry) => entry.jobId !== job.jobId)],
+    updatedAt: now,
+  };
+}
+
 function isItemHandled(state?: ItemState): boolean {
   if (!state?.resolved) return false;
   if (state.resolved.skipped || state.resolved.applied) return true;
@@ -512,6 +673,85 @@ function isItemHandled(state?: ItemState): boolean {
     state.application?.status === "applied" ||
     state.application?.status === "reverted"
   );
+}
+
+function isActiveReviewJob(job: ReviewJob): boolean {
+  return job.status === "pending" || job.status === "running";
+}
+
+function getDiscoverReviewJobMessage(): string {
+  return "AI is reviewing the wiki in the background. This page will update automatically.";
+}
+
+function findRememberedReviewSpace<T extends { id: string }>(
+  spaces: T[],
+): T | undefined {
+  const rememberedSpaceId = readRememberedReviewSpaceId();
+  if (!rememberedSpaceId) return undefined;
+  return spaces.find((space) => space.id === rememberedSpaceId);
+}
+
+function findPersonalReviewSpace<
+  T extends { name: string; slug?: string | null },
+>(
+  spaces: T[],
+  user: { name?: string | null; email?: string | null },
+): T | undefined {
+  const userName = normalizeLookupValue(user.name);
+  const email = normalizeLookupValue(user.email);
+  const emailName = normalizeLookupValue(email.split("@")[0]);
+  const candidates = [userName, emailName, email].filter(Boolean);
+
+  return (
+    spaces.find((space) => {
+      const name = normalizeLookupValue(space.name);
+      const slug = normalizeLookupValue(space.slug);
+      return candidates.some((candidate) =>
+        [name, slug].some((value) => value === candidate),
+      );
+    }) ??
+    spaces.find((space) => {
+      const name = normalizeLookupValue(space.name);
+      const slug = normalizeLookupValue(space.slug);
+      return candidates.some((candidate) =>
+        [name, slug].some((value) => value.includes(candidate)),
+      );
+    })
+  );
+}
+
+function readRememberedReviewSpaceId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(REVIEW_SPACE_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberReviewSpace(spaceId: string | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (spaceId) {
+      window.localStorage.setItem(REVIEW_SPACE_STORAGE_KEY, spaceId);
+    } else {
+      window.localStorage.removeItem(REVIEW_SPACE_STORAGE_KEY);
+    }
+  } catch {
+    // Ignore private-mode or quota failures; the selector still works.
+  }
+}
+
+function normalizeLookupValue(value: string | null | undefined): string {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function previewText(value: string, maxLength: number): string {
+  const normalized = value.trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength).trimEnd()}...`;
 }
 
 function DocLink({
@@ -587,10 +827,12 @@ function ReviewItemCard({
   docMap,
   state,
   onFreeTextChange,
+  onFollowUpChange,
   onDeepSearch,
   onAccept,
   onSkip,
   onSubmitFreeText,
+  onSubmitFollowUp,
   onPlan,
   onPreviewDiff,
   onApply,
@@ -601,10 +843,12 @@ function ReviewItemCard({
   docMap: Record<string, ReviewDocMeta>;
   state?: ItemState;
   onFreeTextChange: (value: string) => void;
+  onFollowUpChange: (value: string) => void;
   onDeepSearch: () => void;
   onAccept: () => void;
   onSkip: () => void;
   onSubmitFreeText: () => void;
+  onSubmitFollowUp: () => void;
   onPlan: () => void;
   onPreviewDiff: () => void;
   onApply: () => void;
@@ -714,6 +958,9 @@ function ReviewItemCard({
             onPreviewDiff={onPreviewDiff}
             onApply={onApply}
             onRevert={onRevert}
+            followUpText={state?.followUpText ?? ""}
+            onFollowUpChange={onFollowUpChange}
+            onSubmitFollowUp={onSubmitFollowUp}
           />
         ) : (
           <>
@@ -808,6 +1055,9 @@ function ResolvedBlock({
   onPreviewDiff,
   onApply,
   onRevert,
+  followUpText,
+  onFollowUpChange,
+  onSubmitFollowUp,
 }: {
   resolved: ResolvedReview;
   application?: ReviewApplication;
@@ -817,6 +1067,9 @@ function ResolvedBlock({
   onPreviewDiff: () => void;
   onApply: () => void;
   onRevert: () => void;
+  followUpText: string;
+  onFollowUpChange: (value: string) => void;
+  onSubmitFollowUp: () => void;
 }) {
   const { t } = useTranslation();
 
@@ -829,10 +1082,12 @@ function ResolvedBlock({
   }
 
   const draft = resolved.draft;
-  const applyOperation =
-    draft.applyOperation ?? fallbackDraftApplyOperation(draft.approach);
-  const isRenameOnly = applyOperation === "rename-page";
+  const applyOperations = getDraftApplyOperations(draft.applyOperation);
+  const isRenameOnly =
+    applyOperations.length === 1 && applyOperations[0] === "rename-page";
   const showDraftBody = !diff;
+  const canContinue =
+    application?.status !== "applied" && application?.status !== "reverted";
   return (
     <Paper bg="var(--mantine-color-gray-0)" radius="sm" p="sm" mt="xs">
       <Stack gap="xs">
@@ -841,6 +1096,7 @@ function ResolvedBlock({
           application={application}
           docMap={docMap}
         />
+        <NegotiationHistory turns={resolved.turns ?? []} />
         {resolved.deepSearched && (
           <Text size="xs" c="dimmed">
             {t("DeepSearch")} · {resolved.searchResults.length}
@@ -874,6 +1130,29 @@ function ResolvedBlock({
             )}
           </>
         )}
+        {canContinue && (
+          <Group gap="xs" align="flex-end">
+            <TextInput
+              placeholder={t("Continue revising this draft ...")}
+              value={followUpText}
+              onChange={(event) => onFollowUpChange(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && followUpText.trim()) {
+                  onSubmitFollowUp();
+                }
+              }}
+              style={{ flex: 1 }}
+            />
+            <Button
+              size="sm"
+              variant="subtle"
+              onClick={onSubmitFollowUp}
+              disabled={!followUpText.trim()}
+            >
+              {t("Submit revision")}
+            </Button>
+          </Group>
+        )}
         <ApplicationBlock
           application={application}
           diff={diff}
@@ -885,6 +1164,43 @@ function ResolvedBlock({
         />
       </Stack>
     </Paper>
+  );
+}
+
+function NegotiationHistory({ turns }: { turns: NegotiationTurn[] }) {
+  const { t } = useTranslation();
+  const turn = turns[turns.length - 1];
+  if (!turn) return null;
+
+  return (
+    <Stack gap={6}>
+      <Text size="xs" fw={600} c="dimmed">
+        {t("Current negotiation")}
+      </Text>
+      <Paper withBorder radius="sm" p="xs">
+        <Stack gap={4}>
+          <Group gap={6}>
+            <Badge size="xs" color="teal" variant="light">
+              {t("Current")}
+            </Badge>
+            {turn.deepSearched && (
+              <Badge size="xs" color="blue" variant="light">
+                {t("DeepSearch")}
+              </Badge>
+            )}
+          </Group>
+          <Text size="xs">
+            {t("Feedback")}: {turn.feedback}
+          </Text>
+          <Text size="xs" fw={600}>
+            {turn.draft.title}
+          </Text>
+          <Text size="xs" c="dimmed" style={{ whiteSpace: "pre-wrap" }}>
+            {previewText(turn.draft.body || t("(empty)"), 220)}
+          </Text>
+        </Stack>
+      </Paper>
+    </Stack>
   );
 }
 
@@ -1030,7 +1346,7 @@ function ExecutionSummary({
           {t(APPLICATION_STATUS_LABEL[application.status])}
         </Badge>
         <Text size="sm" fw={600}>
-          {t(OPERATION_LABEL[application.operation])}
+          {formatApplicationOperationLabel(application, t)}
         </Text>
         <Text size="sm" c="dimmed">
           ·
@@ -1040,8 +1356,7 @@ function ExecutionSummary({
     );
   }
 
-  const applyOperation =
-    draft.applyOperation ?? fallbackDraftApplyOperation(draft.approach);
+  const applyOperations = getDraftApplyOperations(draft.applyOperation);
 
   return (
     <Group gap={6} align="center">
@@ -1052,7 +1367,7 @@ function ExecutionSummary({
         ·
       </Text>
       <Text size="sm">
-        {t("Expected write")}: {t(DRAFT_OPERATION_LABEL[applyOperation])}
+        {t("Expected write")}: {formatDraftOperationLabel(applyOperations, t)}
       </Text>
       <Text size="sm" c="dimmed">
         ·
@@ -1126,6 +1441,21 @@ function DiffPreview({ diff }: { diff: ReviewApplicationDiff }) {
     diff.beforeContent ?? "",
     diff.afterContent,
   );
+  const titleChange = getApplicationTitleChange(diff.application);
+  const beforeTitleLine = titleChange
+    ? makeDiffTitleLine(
+        "before",
+        "removed",
+        `${t("Title")}: ${titleChange.beforeTitle}`,
+      )
+    : undefined;
+  const afterTitleLine = titleChange
+    ? makeDiffTitleLine(
+        "after",
+        "added",
+        `${t("Title")}: ${titleChange.afterTitle}`,
+      )
+    : undefined;
 
   return (
     <Stack gap={4}>
@@ -1133,8 +1463,16 @@ function DiffPreview({ diff }: { diff: ReviewApplicationDiff }) {
         {t("Only the changed section is shown.")}
       </Text>
       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-        <DiffPane title={t("Before")} lines={preview.before} />
-        <DiffPane title={t("After")} lines={preview.after} />
+        <DiffPane
+          title={t("Before")}
+          lines={preview.before}
+          titleLine={beforeTitleLine}
+        />
+        <DiffPane
+          title={t("After")}
+          lines={preview.after}
+          titleLine={afterTitleLine}
+        />
       </SimpleGrid>
     </Stack>
   );
@@ -1143,12 +1481,15 @@ function DiffPreview({ diff }: { diff: ReviewApplicationDiff }) {
 function DiffPane({
   title,
   lines,
+  titleLine,
 }: {
   title: string;
   lines: HighlightedDiffLine[];
+  titleLine?: HighlightedDiffLine;
 }) {
-  const renderedLines =
-    lines.length > 0
+  const renderedLines = [
+    ...(titleLine ? [titleLine] : []),
+    ...(lines.length > 0
       ? lines
       : [
           {
@@ -1157,7 +1498,8 @@ function DiffPane({
             content: "(empty)",
             lineNumber: null,
           },
-        ];
+        ]),
+  ];
 
   return (
     <Stack gap={4}>
@@ -1219,6 +1561,52 @@ function DiffPane({
       </Paper>
     </Stack>
   );
+}
+
+function getApplicationTitleChange(
+  application: ReviewApplication,
+): { beforeTitle: string; afterTitle: string } | null {
+  if (!isRecord(application.patch)) return null;
+  const proposedPageTitle =
+    typeof application.patch.proposedPageTitle === "string"
+      ? application.patch.proposedPageTitle.trim()
+      : "";
+  if (!proposedPageTitle) return null;
+
+  const originalPageTitle =
+    typeof application.patch.originalPageTitle === "string"
+      ? application.patch.originalPageTitle.trim()
+      : (application.targetPageTitle ?? "").trim();
+
+  if (
+    originalPageTitle &&
+    normalizeTitleForComparison(originalPageTitle) ===
+      normalizeTitleForComparison(proposedPageTitle)
+  ) {
+    return null;
+  }
+
+  return {
+    beforeTitle: originalPageTitle || "(untitled)",
+    afterTitle: proposedPageTitle,
+  };
+}
+
+function makeDiffTitleLine(
+  side: "before" | "after",
+  kind: "added" | "removed",
+  content: string,
+): HighlightedDiffLine {
+  return {
+    id: `${side}-title-${kind}`,
+    kind,
+    content,
+    lineNumber: null,
+  };
+}
+
+function normalizeTitleForComparison(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 type HighlightedDiffLineKind = "context" | "added" | "removed" | "omitted";
@@ -1530,19 +1918,54 @@ function diffLineTextColor(kind: HighlightedDiffLineKind): string {
   return "inherit";
 }
 
-function fallbackDraftApplyOperation(
-  approach: DraftApproach,
-): DraftApplyOperation {
-  switch (approach) {
-    case "new-page":
-    case "clarify":
-      return "create-page";
-    case "section":
-      return "append-section";
-    case "rewrite":
-    case "merge":
-      return "replace-page";
+function formatApplicationOperationLabel(
+  application: ReviewApplication,
+  t: (key: string) => string,
+): string {
+  const applyOperations = getApplicationApplyOperations(application);
+  if (applyOperations.length > 0) {
+    return formatDraftOperationLabel(applyOperations, t);
   }
+  return t(OPERATION_LABEL[application.operation]);
+}
+
+function getApplicationApplyOperations(
+  application: ReviewApplication,
+): DraftApplyOperation[] {
+  if (!isRecord(application.patch)) return [];
+  return getDraftApplyOperations(
+    application.patch.applyOperations ?? application.patch.applyOperation,
+  );
+}
+
+function formatDraftOperationLabel(
+  operations: DraftApplyOperation[],
+  t: (key: string) => string,
+): string {
+  if (operations.length === 0) {
+    return t("Unknown operation");
+  }
+  return operations
+    .map((operation) => t(DRAFT_OPERATION_LABEL[operation]))
+    .join(" + ");
+}
+
+function getDraftApplyOperations(value: unknown): DraftApplyOperation[] {
+  const values = Array.isArray(value) ? value : value ? [value] : [];
+  return [...new Set(values.filter(isDraftApplyOperation))];
+}
+
+function isDraftApplyOperation(value: unknown): value is DraftApplyOperation {
+  return (
+    value === "create-page" ||
+    value === "append-section" ||
+    value === "replace-page" ||
+    value === "rename-page"
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 const DRAFT_OPERATION_LABEL: Record<DraftApplyOperation, string> = {
@@ -1569,6 +1992,7 @@ const APPLICATION_STATUS_LABEL: Record<ReviewApplication["status"], string> = {
   reverted: "Reverted",
   conflicted: "Conflicted",
   failed: "Failed",
+  superseded: "Superseded",
 };
 
 const APPLICATION_STATUS_COLOR: Record<ReviewApplication["status"], string> = {
@@ -1577,4 +2001,5 @@ const APPLICATION_STATUS_COLOR: Record<ReviewApplication["status"], string> = {
   reverted: "gray",
   conflicted: "yellow",
   failed: "red",
+  superseded: "gray",
 };

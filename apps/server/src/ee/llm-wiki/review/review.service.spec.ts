@@ -1,5 +1,9 @@
 import { normalizeReviewResultReferences } from './review.service';
-import type { ReviewResult } from './review.schema';
+import {
+  draftContentSchema,
+  resolvedReviewSchema,
+  type ReviewResult,
+} from './review.schema';
 import type { StructuredWiki } from './structured-wiki';
 
 describe('normalizeReviewResultReferences', () => {
@@ -50,5 +54,109 @@ describe('normalizeReviewResultReferences', () => {
         }),
       ],
     });
+  });
+});
+
+describe('draftContentSchema', () => {
+  it('maps legacy approach-only drafts to applyOperation arrays', () => {
+    expect(
+      draftContentSchema.parse({
+        title: 'Rollback criteria',
+        body: '## Rollback criteria\n\nRollback when needed.',
+        approach: 'section',
+        targetDocId: 'kp-1',
+        notes: '',
+      }),
+    ).toMatchObject({
+      applyOperation: ['append-section'],
+    });
+  });
+});
+
+describe('resolvedReviewSchema', () => {
+  it('hydrates legacy resolved reviews into a single negotiation turn', () => {
+    const parsed = resolvedReviewSchema.parse({
+      item: {
+        id: 'rev-1',
+        type: 'suggestion',
+        title: 'Add rollback section',
+        detail: 'Missing rollback details.',
+        recommendation: 'Add rollback details.',
+        relatedDocIds: ['kp-1'],
+        searchQueries: [],
+        targetDocId: 'kp-1',
+      },
+      feedback: '采纳',
+      skipped: false,
+      deepSearched: false,
+      searchResults: [],
+      draft: {
+        title: 'Rollback criteria',
+        body: '## Rollback criteria\n\nRollback when needed.',
+        applyOperation: ['append-section'],
+        targetDocId: 'kp-1',
+        notes: '',
+      },
+      applied: null,
+    });
+
+    expect(parsed.turns).toHaveLength(1);
+    expect(parsed.turns[0]).toMatchObject({
+      feedback: '采纳',
+      draft: { title: 'Rollback criteria' },
+    });
+  });
+
+  it('keeps full negotiation history while exposing the latest draft', () => {
+    const baseDraft = {
+      title: 'Rollback criteria',
+      body: '## Rollback criteria\n\nRollback when needed.',
+      applyOperation: ['append-section'],
+      targetDocId: 'kp-1',
+      notes: '',
+    };
+    const parsed = resolvedReviewSchema.parse({
+      item: {
+        id: 'rev-1',
+        type: 'suggestion',
+        title: 'Add rollback section',
+        detail: 'Missing rollback details.',
+        recommendation: 'Add rollback details.',
+        relatedDocIds: ['kp-1'],
+        searchQueries: [],
+        targetDocId: 'kp-1',
+      },
+      feedback: 'old feedback',
+      skipped: false,
+      deepSearched: false,
+      searchResults: [],
+      draft: baseDraft,
+      applied: null,
+      turns: [
+        {
+          feedback: 'old feedback',
+          draft: baseDraft,
+          deepSearched: false,
+          searchResults: [],
+        },
+        {
+          feedback: 'latest feedback',
+          draft: { ...baseDraft, title: 'Latest rollback criteria' },
+          deepSearched: false,
+          searchResults: [],
+        },
+      ],
+    });
+
+    expect(parsed.turns).toHaveLength(2);
+    expect(parsed.turns[0]).toMatchObject({
+      feedback: 'old feedback',
+      draft: { title: 'Rollback criteria' },
+    });
+    expect(parsed.turns[1]).toMatchObject({
+      feedback: 'latest feedback',
+      draft: { title: 'Latest rollback criteria' },
+    });
+    expect(parsed.draft).toMatchObject({ title: 'Latest rollback criteria' });
   });
 });

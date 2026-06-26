@@ -1,4 +1,10 @@
-import { IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsArray,
+  IsObject,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 export class NegotiateReviewDto {
   @IsString()
@@ -11,4 +17,8 @@ export class NegotiateReviewDto {
   @IsString()
   @MaxLength(4000)
   feedback?: string;
+
+  @IsOptional()
+  @IsArray()
+  priorTurns?: unknown[];
 }

@@ -407,6 +407,7 @@ export interface KnowledgeReviewSnapshots {
   docs: Json;
   id: Generated<string>;
   items: Json;
+  jobs: Json;
   resolvedReviews: Json;
   spaceId: string;
   updatedAt: Generated<Timestamp>;

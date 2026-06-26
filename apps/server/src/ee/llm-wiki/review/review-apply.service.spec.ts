@@ -64,8 +64,7 @@ describe('ReviewApplyService', () => {
         draft: {
           title: 'SLO details',
           body: 'Latency target and burn-rate alerts.',
-          approach: 'section',
-          applyOperation: 'append-section',
+          applyOperation: ['append-section'],
           targetDocId: 'kp-1',
           notes: '',
         },
@@ -77,7 +76,8 @@ describe('ReviewApplyService', () => {
       afterContent:
         'Existing content\n\n## SLO details\n\nLatency target and burn-rate alerts.',
       patch: expect.objectContaining({
-        applyOperation: 'append-section',
+        applyOperation: ['append-section'],
+        applyOperations: ['append-section'],
         proposedPageTitle: null,
       }),
     });
@@ -91,6 +91,124 @@ describe('ReviewApplyService', () => {
     );
   });
 
+  it('plans a combined rename and replace-page application', async () => {
+    const before = 'Existing content';
+    const applicationRepo = {
+      insertApplication: jest.fn().mockImplementation((input) =>
+        Promise.resolve(
+          applicationRow({
+            ...input,
+            createdAt: new Date('2026-06-22T10:00:00.000Z'),
+            updatedAt: new Date('2026-06-22T10:00:00.000Z'),
+          }),
+        ),
+      ),
+    };
+    const page = pageRow({
+      title: 'Old operations',
+      content: { markdown: before },
+    });
+    const service = new ReviewApplyService(
+      {} as any,
+      { findById: jest.fn().mockResolvedValue(page) } as any,
+      { validateCanEdit: jest.fn().mockResolvedValue(undefined) } as any,
+      {} as any,
+      applicationRepo as any,
+    );
+
+    await expect(
+      service.planDraft({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        user: { id: 'user-1' } as any,
+        item: {
+          id: 'rev-1',
+          type: 'suggestion',
+          title: 'Rename and restructure',
+          detail: 'The page needs a clearer name and a full rewrite.',
+          recommendation: 'Rename the page and rewrite the content.',
+          relatedDocIds: ['kp-1'],
+          searchQueries: [],
+          targetDocId: 'kp-1',
+        },
+        draft: {
+          title: 'Service Reliability Runbook',
+          body: 'Replacement body',
+          applyOperation: ['rename-page', 'replace-page'],
+          targetDocId: 'kp-1',
+          notes: '',
+        },
+        docs: [{ id: 'kp-1', title: 'Old operations', sourcePageId: 'page-1' }],
+      }),
+    ).resolves.toMatchObject({
+      operation: 'replace_page',
+      targetPageTitle: 'Old operations',
+      afterContent: 'Replacement body',
+      patch: expect.objectContaining({
+        applyOperation: ['rename-page', 'replace-page'],
+        applyOperations: ['rename-page', 'replace-page'],
+        originalPageTitle: 'Old operations',
+        proposedPageTitle: 'Service Reliability Runbook',
+      }),
+    });
+  });
+
+  it('allows replace-page drafts that preserve existing Markdown formatting', async () => {
+    const before = '## Scope\n\nKeep **important** context.';
+    const applicationRepo = {
+      insertApplication: jest.fn().mockImplementation((input) =>
+        Promise.resolve(
+          applicationRow({
+            ...input,
+            createdAt: new Date('2026-06-22T10:00:00.000Z'),
+            updatedAt: new Date('2026-06-22T10:00:00.000Z'),
+          }),
+        ),
+      ),
+    };
+    const page = pageRow({
+      title: 'Operations',
+      content: { markdown: before },
+    });
+    const service = new ReviewApplyService(
+      {} as any,
+      { findById: jest.fn().mockResolvedValue(page) } as any,
+      { validateCanEdit: jest.fn().mockResolvedValue(undefined) } as any,
+      {} as any,
+      applicationRepo as any,
+    );
+
+    await expect(
+      service.planDraft({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        user: { id: 'user-1' } as any,
+        item: {
+          id: 'rev-1',
+          type: 'suggestion',
+          title: 'Update scope',
+          detail: 'Needs a small correction.',
+          recommendation: 'Keep the existing structure and update scope.',
+          relatedDocIds: ['kp-1'],
+          searchQueries: [],
+          targetDocId: 'kp-1',
+        },
+        draft: {
+          title: 'Operations',
+          body: '## Scope\n\nKeep **important** context with a small correction.',
+          applyOperation: ['replace-page'],
+          targetDocId: 'kp-1',
+          notes: '',
+        },
+        docs: [{ id: 'kp-1', title: 'Operations', sourcePageId: 'page-1' }],
+      }),
+    ).resolves.toMatchObject({
+      operation: 'replace_page',
+      afterContent:
+        '## Scope\n\nKeep **important** context with a small correction.',
+    });
+  });
+
   it('applies rename-page by updating only the page title', async () => {
     const before = 'Existing content';
     const application = applicationRow({
@@ -100,7 +218,8 @@ describe('ReviewApplyService', () => {
       afterContent: before,
       afterContentHash: hashContent(before),
       patch: {
-        applyOperation: 'rename-page',
+        applyOperation: ['rename-page'],
+        applyOperations: ['rename-page'],
         originalPageTitle: 'Old title',
         proposedPageTitle: 'New title',
       },

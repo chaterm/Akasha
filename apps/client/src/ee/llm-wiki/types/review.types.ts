@@ -49,17 +49,31 @@ export interface ReviewSnapshot {
   items: ReviewItem[];
   docs: ReviewDocMeta[];
   resolvedReviews: ResolvedReview[];
+  jobs: ReviewJob[];
   applications: ReviewApplication[];
   discoveredAt: string;
   updatedAt: string;
 }
 
-export type DraftApproach =
-  | "new-page"
-  | "section"
-  | "rewrite"
-  | "clarify"
-  | "merge";
+export type ReviewJobStatus = "pending" | "running" | "done" | "failed";
+
+export type ReviewJobKind = "discover" | "negotiate";
+
+export interface ReviewJob {
+  jobId: string;
+  kind: ReviewJobKind;
+  itemId: string | null;
+  status: ReviewJobStatus;
+  error: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface ReviewJobResult {
+  job: ReviewJob;
+  result: unknown | null;
+}
 
 export type DraftApplyOperation =
   | "create-page"
@@ -67,11 +81,12 @@ export type DraftApplyOperation =
   | "replace-page"
   | "rename-page";
 
+export type DraftApplyOperations = DraftApplyOperation | DraftApplyOperation[];
+
 export interface DraftContent {
   title: string;
   body: string;
-  approach: DraftApproach;
-  applyOperation?: DraftApplyOperation;
+  applyOperation: DraftApplyOperations;
   targetDocId: string | null;
   notes: string;
 }
@@ -91,6 +106,13 @@ export interface SearchResult {
   snippet: string;
 }
 
+export interface NegotiationTurn {
+  feedback: string;
+  draft: DraftContent;
+  deepSearched: boolean;
+  searchResults: SearchResult[];
+}
+
 export type ReviewApplyOperation =
   | "create_page"
   | "insert_under_heading"
@@ -106,7 +128,8 @@ export type ReviewApplicationStatus =
   | "applied"
   | "reverted"
   | "conflicted"
-  | "failed";
+  | "failed"
+  | "superseded";
 
 export interface ReviewSourceRef {
   type: "wiki" | "web" | "llm";
@@ -156,4 +179,5 @@ export interface ResolvedReview {
   searchResults: SearchResult[];
   draft: DraftContent | null;
   applied: AppliedReviewResult | null;
+  turns: NegotiationTurn[];
 }
