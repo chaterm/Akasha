@@ -370,6 +370,18 @@ export class EnvironmentService {
     );
   }
 
+  getSsoUserListApiUrl(): string {
+    return this.configService.get<string>('SSO_USER_LIST_API_URL', '');
+  }
+
+  getSsoUserListPlatformId(): string {
+    return this.configService.get<string>('SSO_USER_LIST_PLATFORM_ID', '');
+  }
+
+  getSsoUserListSecret(): string {
+    return this.configService.get<string>('SSO_USER_LIST_SECRET', '');
+  }
+
   isIframeEmbedAllowed(): boolean {
     const allowed = this.configService
       .get<string>('IFRAME_EMBED_ALLOWED', 'false')

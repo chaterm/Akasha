@@ -6,6 +6,7 @@ import { ConfluenceImportModule } from './confluence-import/confluence-import.mo
 import { LlmWikiModule } from './llm-wiki/llm-wiki.module';
 import { ReviewModule } from './llm-wiki/review/review.module';
 import { AiChatModule } from './ai-chat/ai-chat.module';
+import { CronModule } from './cron/cron.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { AiChatModule } from './ai-chat/ai-chat.module';
     LlmWikiModule,
     ReviewModule,
     AiChatModule,
+    CronModule,
   ],
 })
 export class EeModule {}
