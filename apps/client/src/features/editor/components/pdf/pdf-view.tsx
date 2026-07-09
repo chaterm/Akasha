@@ -6,7 +6,7 @@ import { ResizableWrapper } from "../common/resizable-wrapper";
 import clsx from "clsx";
 import classes from "./pdf-view.module.css";
 import { useTranslation } from "react-i18next";
-import { isInternalFileUrl } from "@akasha/editor-ext";
+import { isInternalFileUrl } from "@docmost/editor-ext";
 import {
   IconFileTypePdf,
   IconPaperclip,

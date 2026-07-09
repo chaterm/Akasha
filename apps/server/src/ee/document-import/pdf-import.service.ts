@@ -1,12 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { processPdfWithImages } from '@akasha/pdf-inspector';
+import { processPdfWithImages } from '@docmost/pdf-inspector';
 import { v7 as uuid7 } from 'uuid';
 import { AttachmentRepo } from '@akasha/db/repos/attachment/attachment.repo';
 import { StorageService } from '../../integrations/storage/storage.service';
 import { AttachmentType } from '../../core/attachment/attachment.constants';
 import { getAttachmentFolderPath } from '../../core/attachment/attachment.utils';
 import * as path from 'path';
-import { markdownToHtml } from '@akasha/editor-ext';
+import { markdownToHtml } from '@docmost/editor-ext';
 
 @Injectable()
 export class PdfImportService {

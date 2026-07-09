@@ -61,7 +61,7 @@ import {
   TransclusionSource,
   TransclusionReference,
   TableView,
-} from "@akasha/editor-ext";
+} from "@docmost/editor-ext";
 import {
   randomElement,
   userColors,

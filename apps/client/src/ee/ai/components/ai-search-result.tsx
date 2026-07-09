@@ -4,7 +4,7 @@ import { IconSparkles, IconFileText } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 import { IAiSearchResponse } from "../services/ai-search-service.ts";
 import { buildPageUrl } from "@/features/page/page.utils.ts";
-import { markdownToHtml } from "@akasha/editor-ext";
+import { markdownToHtml } from "@docmost/editor-ext";
 import DOMPurify from "dompurify";
 import { useTranslation } from "react-i18next";
 

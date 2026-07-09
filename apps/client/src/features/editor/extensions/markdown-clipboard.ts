@@ -3,7 +3,7 @@ import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { DOMParser, DOMSerializer, Fragment, Slice } from "@tiptap/pm/model";
 import { find } from "linkifyjs";
-import { markdownToHtml, htmlToMarkdown } from "@akasha/editor-ext";
+import { markdownToHtml, htmlToMarkdown } from "@docmost/editor-ext";
 
 export const MarkdownClipboard = Extension.create({
   name: "markdownClipboard",

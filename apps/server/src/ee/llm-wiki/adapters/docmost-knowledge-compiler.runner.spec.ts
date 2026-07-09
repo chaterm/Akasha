@@ -1,4 +1,4 @@
-import { DocmostKnowledgeCompilerRunner } from './akasha-knowledge-compiler.runner';
+import { DocmostKnowledgeCompilerRunner } from './docmost-knowledge-compiler.runner';
 
 describe('DocmostKnowledgeCompilerRunner', () => {
   it('compiles source snapshots into lineage-preserving page capsules and chunks', async () => {

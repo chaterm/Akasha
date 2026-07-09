@@ -10,7 +10,7 @@ import {
   IconLoader2,
   IconPhoto,
 } from "@tabler/icons-react";
-import { markdownToHtml } from "@akasha/editor-ext";
+import { markdownToHtml } from "@docmost/editor-ext";
 import { CopyButton } from "@/components/common/copy-button";
 import type { AiChatMessage, AiChatToolCall } from "../types/ai-chat.types";
 import ChatToolGroup from "./chat-tool-group";

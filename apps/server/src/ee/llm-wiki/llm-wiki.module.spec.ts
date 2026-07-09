@@ -1,5 +1,5 @@
 import { MODULE_METADATA } from '@nestjs/common/constants';
-import { DocmostKnowledgeCompilerRunner } from './adapters/akasha-knowledge-compiler.runner';
+import { DocmostKnowledgeCompilerRunner } from './adapters/docmost-knowledge-compiler.runner';
 import { KNOWLEDGE_COMPILER_RUNNER } from './llm-wiki.constants';
 import { LlmWikiModule } from './llm-wiki.module';
 

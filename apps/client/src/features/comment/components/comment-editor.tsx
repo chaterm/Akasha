@@ -1,7 +1,7 @@
 import { EditorContent, ReactNodeViewRenderer, useEditor } from "@tiptap/react";
 import { Placeholder } from "@tiptap/extension-placeholder";
 import { StarterKit } from "@tiptap/starter-kit";
-import { Mention, LinkExtension } from "@akasha/editor-ext";
+import { Mention, LinkExtension } from "@docmost/editor-ext";
 import classes from "./comment.module.css";
 import { useFocusWithin } from "@mantine/hooks";
 import clsx from "clsx";

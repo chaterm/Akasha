@@ -22,7 +22,7 @@ import {
   getEmbedProviderById,
   getEmbedUrlAndProvider,
   sanitizeUrl,
-} from "@akasha/editor-ext";
+} from "@docmost/editor-ext";
 import { ResizableWrapper } from "../common/resizable-wrapper";
 import classes from "./embed-view.module.css";
 

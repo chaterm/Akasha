@@ -9,7 +9,7 @@ import { Menu, UnstyledButton } from "@mantine/core";
 import { IconChevronDown } from "@tabler/icons-react";
 import clsx from "clsx";
 import { useTranslation } from "react-i18next";
-import { isCellSelection } from "@akasha/editor-ext";
+import { isCellSelection } from "@docmost/editor-ext";
 import { CellChevronMenu } from "./menus/cell-chevron-menu";
 import classes from "./handle.module.css";
 

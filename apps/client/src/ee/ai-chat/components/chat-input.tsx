@@ -7,7 +7,7 @@ import { EditorContent, ReactNodeViewRenderer, useEditor } from "@tiptap/react";
 import { Placeholder } from "@tiptap/extension-placeholder";
 import { CharacterCount } from "@tiptap/extensions";
 import { StarterKit } from "@tiptap/starter-kit";
-import { Mention, LinkExtension } from "@akasha/editor-ext";
+import { Mention, LinkExtension } from "@docmost/editor-ext";
 import EmojiCommand from "@/features/editor/extensions/emoji-command";
 import mentionRenderItems from "@/features/editor/components/mention/mention-suggestion";
 import MentionView from "@/features/editor/components/mention/mention-view";

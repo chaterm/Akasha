@@ -28,7 +28,7 @@ import { usePageQuery } from "@/features/page/queries/page-query.ts";
 import { useSharePageQuery } from "@/features/share/queries/share-query.ts";
 import { buildSharedPageUrl } from "@/features/page/page.utils.ts";
 import { extractPageSlugId } from "@/lib";
-import { sanitizeUrl, copyToClipboard } from "@akasha/editor-ext";
+import { sanitizeUrl, copyToClipboard } from "@docmost/editor-ext";
 import { normalizeUrl } from "@/lib/utils";
 
 const parseInternalLink = (

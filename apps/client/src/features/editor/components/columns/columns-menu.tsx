@@ -19,8 +19,8 @@ import {
   IconCopy,
   IconTrash,
 } from "@tabler/icons-react";
-import { isEditorReady, isTextSelected } from "@akasha/editor-ext";
-import type { WidthMode, ColumnsLayout } from "@akasha/editor-ext";
+import { isEditorReady, isTextSelected } from "@docmost/editor-ext";
+import type { WidthMode, ColumnsLayout } from "@docmost/editor-ext";
 import { useTranslation } from "react-i18next";
 import classes from "../common/toolbar-menu.module.css";
 

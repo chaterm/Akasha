@@ -35,7 +35,7 @@ vi.mock("@tiptap/starter-kit", () => ({
   StarterKit: { configure: () => ({}) },
 }));
 
-vi.mock("@akasha/editor-ext", () => ({
+vi.mock("@docmost/editor-ext", () => ({
   LinkExtension: {},
   Mention: {
     configure: () => ({

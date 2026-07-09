@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { Title } from "@mantine/core";
 import { EditorProvider } from "@tiptap/react";
 import { mainExtensions } from "@/features/editor/extensions/extensions";
-import { UniqueID } from "@akasha/editor-ext";
+import { UniqueID } from "@docmost/editor-ext";
 import { ITemplate } from "@/ee/template/types/template.types";
 import TemplateMeta from "@/ee/template/components/template-meta";
 

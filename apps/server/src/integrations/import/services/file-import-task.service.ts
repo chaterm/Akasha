@@ -18,7 +18,7 @@ import { generateSlugId } from '../../../common/helpers';
 import { v7 } from 'uuid';
 import { generateJitteredKeyBetween } from 'fractional-indexing-jittered';
 import { FileTask, InsertablePage } from '@akasha/db/types/entity.types';
-import { markdownToHtml } from '@akasha/editor-ext';
+import { markdownToHtml } from '@docmost/editor-ext';
 import { getProsemirrorContent } from '../../../common/helpers/prosemirror/utils';
 import { formatImportHtml } from '../utils/import-formatter';
 import {

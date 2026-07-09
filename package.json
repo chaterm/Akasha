@@ -10,7 +10,7 @@
     "collab:dev": "pnpm --filter ./apps/server run collab:dev",
     "server:build": "nx run server:build",
     "client:build": "nx run client:build",
-    "editor-ext:build": "nx run @akasha/editor-ext:build",
+    "editor-ext:build": "nx run @docmost/editor-ext:build",
     "client:dev": "nx run client:dev",
     "server:dev": "nx run server:start:dev",
     "server:start": "nx run server:start:prod",
@@ -21,7 +21,7 @@
   "dependencies": {
     "@braintree/sanitize-url": "^7.1.2",
     "@casl/ability": "6.8.0",
-    "@akasha/editor-ext": "workspace:*",
+    "@docmost/editor-ext": "workspace:*",
     "@floating-ui/dom": "^1.7.3",
     "@hocuspocus/provider": "3.4.4",
     "@hocuspocus/server": "3.4.4",

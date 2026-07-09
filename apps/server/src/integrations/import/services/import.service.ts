@@ -17,7 +17,7 @@ import {
 import { generateJitteredKeyBetween } from 'fractional-indexing-jittered';
 import { TiptapTransformer } from '@hocuspocus/transformer';
 import * as Y from 'yjs';
-import { markdownToHtml } from '@akasha/editor-ext';
+import { markdownToHtml } from '@docmost/editor-ext';
 import {
   FileTaskStatus,
   FileTaskType,

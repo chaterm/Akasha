@@ -1,4 +1,4 @@
-import { handleAttachmentUpload } from "@akasha/editor-ext";
+import { handleAttachmentUpload } from "@docmost/editor-ext";
 import { uploadFile } from "@/features/page/services/page-service.ts";
 import { notifications } from "@mantine/notifications";
 import { getFileUploadSizeLimit } from "@/lib/config.ts";

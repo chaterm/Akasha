@@ -7,7 +7,7 @@ import {
   autoScrollForElements,
   autoScrollWindowForElements,
 } from "@atlaskit/pragmatic-drag-and-drop-auto-scroll/element";
-import { getTableHandlePluginSpec } from "@akasha/editor-ext";
+import { getTableHandlePluginSpec } from "@docmost/editor-ext";
 
 // Uses pragmatic-drag-and-drop instead of native HTML5 DnD because the native
 // dragstart→dragover→drop lifecycle was being silently cancelled
