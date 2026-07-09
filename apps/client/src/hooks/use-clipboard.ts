@@ -1,7 +1,7 @@
 // Source: https://github.com/mantinedev/mantine/blob/master/packages/@mantine/hooks/src/use-clipboard/use-clipboard.ts
 // polyfilled to support execCommand fallback
 import { useState } from "react";
-import { execCommandCopy } from "@akasha/editor-ext";
+import { execCommandCopy } from "@docmost/editor-ext";
 
 export type UseClipboardOptions = {
   timeout?: number;

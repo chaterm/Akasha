@@ -58,7 +58,7 @@ importers:
       '@casl/ability':
         specifier: 6.8.0
         version: 6.8.0
-      '@akasha/editor-ext':
+      '@docmost/editor-ext':
         specifier: workspace:*
         version: link:packages/editor-ext
       '@floating-ui/dom':
@@ -266,7 +266,7 @@ importers:
       '@casl/react':
         specifier: 5.0.1
         version: 5.0.1(@casl/ability@6.8.0)(react@18.3.1)
-      '@akasha/editor-ext':
+      '@docmost/editor-ext':
         specifier: workspace:*
         version: link:../../packages/editor-ext
       '@excalidraw/excalidraw':
@@ -507,7 +507,7 @@ importers:
       '@clickhouse/client':
         specifier: ^1.18.2
         version: 1.18.2
-      '@akasha/pdf-inspector':
+      '@docmost/pdf-inspector':
         specifier: 1.9.6
         version: 1.9.6
       '@fastify/cookie':
@@ -1900,7 +1900,7 @@ packages:
     resolution: {integrity: sha512-UJnjoFsmxfKUdNYdWgOB0mWUypuLvAfQPH1+pyvRJs6euowbFkFC6P13w1l8mJyi3vxYMxc9kld5jZEGRQs6bw==}
     engines: {node: '>=18'}
 
-  '@akasha/pdf-inspector@1.9.6':
+  '@docmost/pdf-inspector@1.9.6':
     resolution: {integrity: sha512-8k8N8Mwu9xbpRC1jLcz4sFv88ev2oBnW56a/2WLbrOBkfXzyZV2Tml5PikUwEWT4cUXfYfk2dGnJpWQYgCESCQ==}
 
   '@emnapi/core@1.8.1':
@@ -11923,7 +11923,7 @@ snapshots:
 
   '@csstools/css-tokenizer@3.0.3': {}
 
-  '@akasha/pdf-inspector@1.9.6': {}
+  '@docmost/pdf-inspector@1.9.6': {}
 
   '@emnapi/core@1.8.1':
     dependencies:

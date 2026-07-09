@@ -1,7 +1,7 @@
 import bytes from "bytes";
 import { castToBoolean } from "@/lib/utils.tsx";
 import { AvatarIconType } from "@/features/attachments/types/attachment.types.ts";
-import { sanitizeUrl } from "@akasha/editor-ext";
+import { sanitizeUrl } from "@docmost/editor-ext";
 
 declare global {
   interface Window {

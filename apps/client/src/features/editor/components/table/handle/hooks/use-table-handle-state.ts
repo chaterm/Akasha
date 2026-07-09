@@ -1,6 +1,6 @@
 import type { Editor } from "@tiptap/react";
 import { useEditorState } from "@tiptap/react";
-import { TableDndKey, TableHandleState } from "@akasha/editor-ext";
+import { TableDndKey, TableHandleState } from "@docmost/editor-ext";
 
 const FALLBACK: TableHandleState = {
   hoveringCell: null,

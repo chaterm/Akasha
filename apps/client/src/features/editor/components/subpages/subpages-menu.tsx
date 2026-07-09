@@ -6,7 +6,7 @@ import { ActionIcon, Tooltip } from "@mantine/core";
 import { IconTrash } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import { Editor } from "@tiptap/core";
-import { isEditorReady } from "@akasha/editor-ext";
+import { isEditorReady } from "@docmost/editor-ext";
 
 interface SubpagesMenuProps {
   editor: Editor;

@@ -37,7 +37,7 @@ import {
   getAttachmentIds,
   getProsemirrorContent,
 } from '../../common/helpers/prosemirror/utils';
-import { htmlToMarkdown } from '@akasha/editor-ext';
+import { htmlToMarkdown } from '@docmost/editor-ext';
 
 type AllowedAttachment = { id: string; fileName: string; filePath: string };
 

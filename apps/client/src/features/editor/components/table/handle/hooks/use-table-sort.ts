@@ -5,7 +5,7 @@ import {
   convertArrayOfRowsToTableNode,
   convertTableNodeToArrayOfRows,
   transpose,
-} from "@akasha/editor-ext";
+} from "@docmost/editor-ext";
 import {
   getCellSortText,
   isCellEmpty,

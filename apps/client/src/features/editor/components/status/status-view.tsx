@@ -5,7 +5,7 @@ import { useDebouncedCallback } from "@mantine/hooks";
 import { IconCheck } from "@tabler/icons-react";
 import clsx from "clsx";
 import classes from "./status.module.css";
-import type { StatusColor } from "@akasha/editor-ext";
+import type { StatusColor } from "@docmost/editor-ext";
 
 const STATUS_COLORS: { name: StatusColor; bg: string }[] = [
   { name: "gray", bg: "var(--mantine-color-gray-4)" },

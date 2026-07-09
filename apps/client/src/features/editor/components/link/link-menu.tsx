@@ -2,7 +2,7 @@ import { FC, useCallback, useEffect, useRef } from "react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import type { Editor } from "@tiptap/react";
 import { useAtom } from "jotai";
-import { isTextSelected } from "@akasha/editor-ext";
+import { isTextSelected } from "@docmost/editor-ext";
 import { showLinkMenuAtom } from "@/features/editor/atoms/editor-atoms";
 import { LinkEditorPanel } from "@/features/editor/components/link/link-editor-panel";
 import { normalizeUrl } from "@/lib/utils";

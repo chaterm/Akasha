@@ -47,7 +47,7 @@
       "Bash(grep -nA10 \"interface KnowledgePageSources\" apps/server/src/database/types/db.d.ts)",
       "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('public/locales/zh-CN/translation.json','utf8'\\)\\); console.log\\('zh-CN OK'\\)\")",
       "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('public/locales/en-US/translation.json','utf8'\\)\\); console.log\\('en-US OK'\\)\")",
-      "Bash(grep -nB2 -A8 \"overview\" apps/server/src/ee/llm-wiki/adapters/akasha-knowledge-compiler.runner.ts)",
+      "Bash(grep -nB2 -A8 \"overview\" apps/server/src/ee/llm-wiki/adapters/docmost-knowledge-compiler.runner.ts)",
       "Bash(curl -s -m 20 -o /tmp/probe_oai.txt -w 'HTTP %{http_code}\\\\n' -X POST __TRACKED_VAR__/chat/completions -H 'Content-Type: application/json' -H 'Authorization: Bearer __TRACKED_VAR__' -d '{\"model\":\"claude-sonnet-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"ping, reply ok\"}],\"max_tokens\":20}')",
       "Bash(curl -s -m 20 -o /tmp/probe_ant.txt -w 'HTTP %{http_code}\\\\n' -X POST __TRACKED_VAR__/messages -H 'Content-Type: application/json' -H 'x-api-key: __TRACKED_VAR__' -H 'anthropic-version: 2023-06-01' -d '{\"model\":\"claude-sonnet-4-5\",\"max_tokens\":20,\"messages\":[{\"role\":\"user\",\"content\":\"ping, reply ok\"}]}')",
       "Bash(curl -s -m 20 -o /tmp/models.txt -w 'HTTP %{http_code}\\\\n' -X GET __TRACKED_VAR__/models -H 'Authorization: Bearer __TRACKED_VAR__')",
