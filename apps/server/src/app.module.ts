@@ -27,6 +27,7 @@ import { LoggerModule } from './common/logger/logger.module';
 import { ClsModule } from 'nestjs-cls';
 import { NoopAuditModule } from './integrations/audit/audit.module';
 import { ThrottleModule } from './integrations/throttle/throttle.module';
+import { ScheduleModule } from '@nestjs/schedule';
 
 const enterpriseModules = [];
 try {
@@ -50,6 +51,7 @@ try {
     }),
     LoggerModule,
     NoopAuditModule,
+    ScheduleModule.forRoot(),
     CoreModule,
     DatabaseModule,
     EnvironmentModule,

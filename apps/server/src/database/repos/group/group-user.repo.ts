@@ -139,6 +139,16 @@ export class GroupUserRepo {
           workspaceId,
           trx,
         );
+        const groupUserExists = await this.getGroupUserById(
+          userId,
+          defaultGroup.id,
+          trx,
+        );
+
+        if (groupUserExists) {
+          return;
+        }
+
         await this.insertGroupUser(
           {
             userId,

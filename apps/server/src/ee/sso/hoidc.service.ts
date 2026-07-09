@@ -85,9 +85,21 @@ export class HoidcService {
     config: HoidcProviderConfig;
     info: { email: string; name: string | null; avatar: string | null };
   }): Promise<string> {
-    const { config, info } = opts;
-    const { workspaceId } = config;
+    const user = await this.provisionSsoUser({
+      ...opts,
+      updateProfile: true,
+    });
 
+    return this.sessionService.createSessionAndToken(user);
+  }
+
+  async provisionSsoUser(opts: {
+    config: HoidcProviderConfig;
+    info: { email: string; name: string | null; avatar: string | null };
+    updateProfile?: boolean;
+  }): Promise<User> {
+    const { config, info, updateProfile = false } = opts;
+    const { workspaceId } = config;
     let user: User = await this.userRepo.findByEmail(info.email, workspaceId);
 
     if (!user) {
@@ -147,10 +159,27 @@ export class HoidcService {
       await this.spaceService.ensurePersonalSpace(user, workspaceId);
       await this.groupUserRepo.addUserToDefaultGroup(user.id, workspaceId);
 
-      return this.sessionService.createSessionAndToken(user);
+      return user;
     }
 
+    if (updateProfile) {
+      const profileUpdate: { name?: string; avatarUrl?: string | null } = {};
+      if (info.name !== null && info.name !== user.name) {
+        profileUpdate.name = info.name;
+      }
+      if (info.avatar !== null && info.avatar !== user.avatarUrl) {
+        profileUpdate.avatarUrl = info.avatar;
+      }
+
+      if (Object.keys(profileUpdate).length > 0) {
+        await this.userRepo.updateUser(profileUpdate, user.id, workspaceId);
+        user = await this.userRepo.findByEmail(info.email, workspaceId);
+      }
+    }
+
+    await this.workspaceService.addUserToWorkspace(user.id, workspaceId);
+    await this.groupUserRepo.addUserToDefaultGroup(user.id, workspaceId);
     await this.spaceService.ensurePersonalSpace(user, workspaceId);
-    return this.sessionService.createSessionAndToken(user);
+    return user;
   }
 }

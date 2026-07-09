@@ -19,5 +19,6 @@ import { WorkspaceModule } from '../../core/workspace/workspace.module';
   imports: [UserModule, SpaceModule, WorkspaceModule],
   controllers: [HoidcController],
   providers: [HoidcService],
+  exports: [HoidcService],
 })
 export class SsoModule {}
