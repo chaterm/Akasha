@@ -11,6 +11,7 @@ import {
   IconCheck,
   IconChevronDown,
   IconDeviceDesktop,
+  IconHome,
   IconLogout,
   IconMoon,
   IconSettings,
@@ -27,16 +28,33 @@ import { CustomAvatar } from "@/components/ui/custom-avatar.tsx";
 import { useTranslation } from "react-i18next";
 import useUserRole from "@/hooks/use-user-role.tsx";
 import { AvatarIconType } from "@/features/attachments/types/attachment.types.ts";
+import { useGetSpacesQuery } from "@/features/space/queries/space-query.ts";
 
 export default function TopMenu() {
   const { t } = useTranslation();
   const [currentUser] = useAtom(currentUserAtom);
   const { logout } = useAuth();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
-  const { isAdmin, isOwner } = useUserRole();
+  const { isOwner } = useUserRole();
+  const { data: spaces } = useGetSpacesQuery({ limit: 100 });
 
   const user = currentUser?.user;
   const workspace = currentUser?.workspace;
+  const expectedPersonalSpaceNames = user
+    ? [user.name ? `${user.name}(${user.email})` : null, user.email].filter(
+        Boolean,
+      )
+    : [];
+  const personalSpace =
+    spaces?.items.find(
+      (space) =>
+        space.creatorId === user?.id &&
+        expectedPersonalSpaceNames.includes(space.name),
+    ) ??
+    spaces?.items.find(
+      (space) =>
+        space.creatorId === user?.id && space.membership?.role === "admin",
+    );
 
   if (!user || !workspace) {
     return <></>;
@@ -48,11 +66,10 @@ export default function TopMenu() {
         <UnstyledButton>
           <Group gap={7} wrap={"nowrap"}>
             <CustomAvatar
-              avatarUrl={workspace?.logo}
-              name={workspace?.name}
+              avatarUrl={user.avatarUrl}
+              name={user.name}
               variant="filled"
               size="sm"
-              type={AvatarIconType.WORKSPACE_ICON}
             />
             <Text fw={500} size="sm" lh={1} mr={3} lineClamp={1}>
               {workspace?.name}
@@ -63,6 +80,16 @@ export default function TopMenu() {
       </Menu.Target>
       <Menu.Dropdown>
         <Menu.Label>{t("Workspace")}</Menu.Label>
+
+        {personalSpace && (
+          <Menu.Item
+            component={Link}
+            to={`/s/${personalSpace.slug}`}
+            leftSection={<IconHome size={16} />}
+          >
+            {t("Personal space")}
+          </Menu.Item>
+        )}
 
         {isOwner && (
           <Menu.Item
