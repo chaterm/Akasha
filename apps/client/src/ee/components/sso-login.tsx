@@ -7,7 +7,7 @@ import { buildSsoLoginUrl } from "@/ee/security/sso.utils.ts";
 import { SSO_PROVIDER } from "@/ee/security/contants.ts";
 import { GoogleIcon } from "@/components/icons/google-icon.tsx";
 import { LdapLoginModal } from "@/ee/components/ldap-login-modal.tsx";
-import { getRedirectParam } from "@/lib/app-route.ts";
+import APP_ROUTE, { getRedirectParam } from "@/lib/app-route.ts";
 import useCurrentUser from "@/features/user/hooks/use-current-user.ts";
 
 const SSO_AUTO_ATTEMPT_KEY = "akasha:ssoAutoAttempt";
@@ -30,6 +30,12 @@ function markAutoAttempt(): void {
   } catch {
     /* sessionStorage unavailable (private mode, etc.) — best effort */
   }
+}
+
+function autoLoginDisabled(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  const auto = params.get("auto")?.replace(/^['"]|['"]$/g, "");
+  return auto === "akasha";
 }
 
 export default function SsoLogin() {
@@ -59,7 +65,6 @@ export default function SsoLogin() {
   // provider. The user has no other option, so skip the extra click.
   useEffect(() => {
     if (autoRedirectedRef.current) return;
-    if (!data?.enforceSso) return;
     if (!data.authProviders || data.authProviders.length !== 1) return;
     const onlyProvider = data.authProviders[0];
     if (onlyProvider.type === SSO_PROVIDER.LDAP) return;
@@ -71,6 +76,10 @@ export default function SsoLogin() {
     // Explicit logout: don't immediately bounce them back to the IdP.
     const params = new URLSearchParams(window.location.search);
     if (params.has("logout")) return;
+    if (autoLoginDisabled()) return;
+
+    const isLoginPage = window.location.pathname === APP_ROUTE.AUTH.LOGIN;
+    if (!data.enforceSso && !isLoginPage) return;
 
     // Circuit-breaker: if we already auto-redirected within the TTL, the
     // user came back (likely from an IdP failure). Show the page so they
@@ -83,7 +92,7 @@ export default function SsoLogin() {
       providerId: onlyProvider.id,
       type: onlyProvider.type,
       workspaceId: data.id,
-      redirect: getRedirectParam() ?? undefined,
+      redirect: getRedirectParam() ?? APP_ROUTE.HOME,
     });
   }, [data, currentUser]);
 
