@@ -17,8 +17,6 @@ import {
 import { useTranslation } from "react-i18next";
 import { useGetSpacesQuery } from "@/features/space/queries/space-query";
 import { SpaceFilterMenu } from "@/features/space/components/space-filter-menu";
-import { useHasFeature } from "@/ee/hooks/use-feature";
-import { Feature } from "@/ee/features";
 import classes from "./search-spotlight-filters.module.css";
 import { useAtom } from "jotai";
 import { workspaceAtom } from "@/features/user/atoms/current-user-atom.ts";
@@ -37,7 +35,6 @@ export function SearchSpotlightFilters({
   isAiMode = false,
 }: SearchSpotlightFiltersProps) {
   const { t } = useTranslation();
-  const hasAttachmentIndexing = useHasFeature(Feature.ATTACHMENT_INDEXING);
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(
     spaceId || null,
   );
@@ -63,7 +60,7 @@ export function SearchSpotlightFilters({
     {
       value: "attachment",
       label: t("Attachments"),
-      disabled: !hasAttachmentIndexing,
+      disabled: false,
     },
   ];
 
@@ -202,7 +199,9 @@ export function SearchSpotlightFilters({
                       </Text>
                     )}
                 </div>
-                {contentType === option.value && <IconCheck size={20} aria-hidden />}
+                {contentType === option.value && (
+                  <IconCheck size={20} aria-hidden />
+                )}
               </Group>
             </Menu.Item>
           ))}
