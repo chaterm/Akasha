@@ -214,6 +214,7 @@ export class PageService {
         title: updatePageDto.title,
         icon: updatePageDto.icon,
         lastUpdatedById: user.id,
+        sourceLastUpdatedByName: null,
         updatedAt: new Date(),
         contributorIds: contributorIds,
       },

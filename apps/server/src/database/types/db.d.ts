@@ -599,6 +599,8 @@ export interface Pages {
   parentPageId: string | null;
   position: string | null;
   slugId: string;
+  sourceCreatorName: string | null;
+  sourceLastUpdatedByName: string | null;
   spaceId: string;
   textContent: string | null;
   title: string | null;

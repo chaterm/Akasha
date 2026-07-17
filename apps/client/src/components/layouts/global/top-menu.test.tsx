@@ -7,8 +7,8 @@ import TopMenu from "./top-menu";
 const currentUser = {
   user: {
     id: "user-1",
-    name: "姚旭红",
-    email: "xuhong_yao@intsig.net",
+    name: "name001",
+    email: "xxxx@xxxxx.net",
     avatarUrl: "",
   },
   workspace: {
@@ -46,7 +46,7 @@ vi.mock("@/features/space/queries/space-query.ts", () => ({
       items: [
         {
           id: "space-1",
-          name: "姚旭红(xuhong_yao@intsig.net)",
+          name: "xxxxxxx(xxxxxx@xxxxx.net)",
           slug: "personal-space",
           creatorId: "user-1",
           membership: { userId: "user-1", role: "admin" },
