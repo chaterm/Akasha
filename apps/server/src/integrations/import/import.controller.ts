@@ -137,7 +137,7 @@ export class ImportController {
     let file = null;
     try {
       file = await req.file({
-        limits: { fileSize: maxFileSize, fields: 3, files: 1 },
+        limits: { fileSize: maxFileSize, fields: 5, files: 1 },
       });
     } catch (err: any) {
       this.logger.error(err.message);
@@ -160,6 +160,8 @@ export class ImportController {
 
     const spaceId = file.fields?.spaceId?.value;
     const source = file.fields?.source?.value;
+    const confluenceSpaceId = file.fields?.confluenceSpaceId?.value;
+    const confluenceSpaceKey = file.fields?.confluenceSpaceKey?.value;
 
     const validZipSources = ['generic', 'notion', 'confluence'];
     if (!validZipSources.includes(source)) {
@@ -171,6 +173,12 @@ export class ImportController {
     if (!spaceId) {
       throw new BadRequestException('spaceId is required');
     }
+
+    const importMetadata = buildConfluenceImportMetadata(
+      source,
+      confluenceSpaceId,
+      confluenceSpaceKey,
+    );
 
     const ability = await this.spaceAbility.createForUser(user, spaceId);
     if (ability.cannot(SpaceCaslAction.Edit, SpaceCaslSubject.Page)) {
@@ -195,6 +203,34 @@ export class ImportController {
       user.id,
       spaceId,
       workspace.id,
+      importMetadata,
     );
   }
+}
+
+export function buildConfluenceImportMetadata(
+  source: unknown,
+  rawSpaceId: unknown,
+  rawSpaceKey: unknown,
+) {
+  if (source !== 'confluence') return undefined;
+
+  const spaceId = String(rawSpaceId ?? '').trim();
+  const spaceKey = String(rawSpaceKey ?? '').trim();
+  if (!spaceId && !spaceKey) return undefined;
+  if (!spaceId || !spaceKey) {
+    throw new BadRequestException(
+      'Confluence space ID and Key must be provided together',
+    );
+  }
+  if (!/^[1-9]\d{0,19}$/.test(spaceId)) {
+    throw new BadRequestException('Invalid Confluence space ID');
+  }
+  if (spaceKey.length > 255 || /[\u0000-\u001f\u007f]/.test(spaceKey)) {
+    throw new BadRequestException('Invalid Confluence space Key');
+  }
+
+  return {
+    confluence: { spaceId, spaceKey },
+  };
 }

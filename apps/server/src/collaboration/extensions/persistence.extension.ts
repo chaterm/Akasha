@@ -152,6 +152,7 @@ export class PersistenceExtension implements Extension {
             textContent: textContent,
             ydoc: ydocState,
             lastUpdatedById: context.user.id,
+            sourceLastUpdatedByName: null,
             contributorIds: contributorIds,
           },
           pageId,

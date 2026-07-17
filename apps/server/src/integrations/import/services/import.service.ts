@@ -31,6 +31,7 @@ import { QueueJob, QueueName } from '../../queue/constants';
 import { ModuleRef } from '@nestjs/core';
 import { load } from 'cheerio';
 import { normalizeImportHtml } from '../utils/import-formatter';
+import { Json } from '@akasha/db/types/db';
 
 @Injectable()
 export class ImportService {
@@ -309,6 +310,7 @@ export class ImportService {
     userId: string,
     spaceId: string,
     workspaceId: string,
+    metadata: Json | null = null,
   ) {
     const file = await filePromise;
     const fileExtension = path.extname(file.filename).toLowerCase();
@@ -341,6 +343,7 @@ export class ImportService {
         creatorId: userId,
         spaceId: spaceId,
         workspaceId: workspaceId,
+        metadata,
       })
       .returningAll()
       .executeTakeFirst();

@@ -380,3 +380,6 @@ Organizations own their:
 * organizational intelligence
 
 Memory is not something you rent. You cannot rent a nervous system.
+
+
+CREATE EXTENSION IF NOT EXISTS vector;

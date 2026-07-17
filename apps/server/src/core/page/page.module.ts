@@ -9,6 +9,7 @@ import { CollaborationModule } from '../../collaboration/collaboration.module';
 import { WatcherModule } from '../watcher/watcher.module';
 import { TransclusionModule } from './transclusion/transclusion.module';
 import { LabelModule } from '../label/label.module';
+import { PageAuthorMigrationService } from './services/page-author-migration.service';
 
 @Module({
   controllers: [PageController],
@@ -17,6 +18,7 @@ import { LabelModule } from '../label/label.module';
     PageHistoryService,
     TrashCleanupService,
     BacklinkService,
+    PageAuthorMigrationService,
   ],
   exports: [PageService, PageHistoryService],
   imports: [

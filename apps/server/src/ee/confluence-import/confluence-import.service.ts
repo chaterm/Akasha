@@ -21,9 +21,15 @@ import {
 } from '../../integrations/import/utils/import.utils';
 import { formatImportHtml } from '../../integrations/import/utils/import-formatter';
 import { EventName } from '../../common/events/event.contants';
+import {
+  ConfluencePageMapping,
+  mergeConfluencePageMappings,
+  parseConfluencePageId,
+} from './confluence-page-mapping';
 
 interface ConfluencePageNode {
   id: string;
+  confluencePageId: string;
   slugId: string;
   title: string;
   filePath: string;       // 相对 extractDir 的路径，如 "7320321.html"
@@ -98,7 +104,7 @@ export class ConfluenceImportService {
   }): Promise<void> {
     const { fileTask } = opts;
 
-    // ZIP 解压后可能带一层目录前缀（如 "xuhong_yao@intsig.net/"），
+    // ZIP 解压后可能带一层目录前缀（如 "xxx@xxxxxx.net/"），
     // 探测并下钻到真正包含 index.html 的目录
     const extractDir = await this.resolveContentDir(opts.extractDir);
 
@@ -145,6 +151,7 @@ export class ConfluenceImportService {
 
     const validPageIds = new Set<string>();
     const allBacklinks: any[] = [];
+    const pageMappings: ConfluencePageMapping[] = [];
     let totalProcessed = 0;
 
     try {
@@ -223,6 +230,11 @@ export class ConfluenceImportService {
 
           await trx.insertInto('pages').values(insertablePage).execute();
           validPageIds.add(page.id);
+          pageMappings.push({
+            confluencePageId: page.confluencePageId,
+            akashaPageId: page.id,
+            title: insertablePage.title ?? '',
+          });
           totalProcessed++;
 
           if (totalProcessed % 50 === 0) {
@@ -244,6 +256,17 @@ export class ConfluenceImportService {
             );
           }
         }
+
+        await trx
+          .updateTable('fileTasks')
+          .set({
+            metadata: mergeConfluencePageMappings(
+              fileTask.metadata,
+              pageMappings,
+            ),
+          })
+          .where('id', '=', fileTask.id)
+          .execute();
       });
 
       if (validPageIds.size > 0) {
@@ -324,14 +347,15 @@ export class ConfluenceImportService {
           if (!$a.length) return;
 
           const href = $a.attr('href') ?? '';
-          const pageIdMatch = href.match(/(\d+)\.html$/);
-          if (!pageIdMatch) return;
+          const confluencePageId = parseConfluencePageId(href);
+          if (!confluencePageId) return;
 
           const title = $a.text().trim();
           const filePath = href; // "7320321.html"
 
           const node: ConfluencePageNode = {
             id: v7(),
+            confluencePageId,
             slugId: generateSlugId(),
             title,
             filePath,
@@ -603,6 +627,7 @@ export class ConfluenceImportService {
     const attachmentCandidates = await buildAttachmentCandidates(extractDir);
     const firstPos = await this.pageService.nextPagePosition(fileTask.spaceId);
     const validPageIds = new Set<string>();
+    const pageMappings: ConfluencePageMapping[] = [];
 
     await executeTx(this.db, async (trx) => {
       let prev: string | null = null;
@@ -670,7 +695,30 @@ export class ConfluenceImportService {
 
         await trx.insertInto('pages').values(insertablePage).execute();
         validPageIds.add(pageId);
+        const confluencePageId = parseConfluencePageId(filePath);
+        if (confluencePageId) {
+          pageMappings.push({
+            confluencePageId,
+            akashaPageId: pageId,
+            title: insertablePage.title ?? '',
+          });
+        } else {
+          this.logger.warn(
+            `Cannot map non-numeric Confluence HTML file: ${filePath}`,
+          );
+        }
       }
+
+      await trx
+        .updateTable('fileTasks')
+        .set({
+          metadata: mergeConfluencePageMappings(
+            fileTask.metadata,
+            pageMappings,
+          ),
+        })
+        .where('id', '=', fileTask.id)
+        .execute();
     });
 
     if (validPageIds.size > 0) {

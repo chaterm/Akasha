@@ -60,6 +60,9 @@ import { PageAccessLevel, PagePermissionRole, UserRole } from '../../common/help
 import { InjectKysely } from 'nestjs-kysely';
 import { KyselyDB } from '@akasha/db/types/kysely.types';
 import { executeTx } from '@akasha/db/utils';
+import { resolvePageAuthorDisplay } from './services/page-author-display';
+import { RestorePageAuthorsDto } from './dto/restore-page-authors.dto';
+import { PageAuthorMigrationService } from './services/page-author-migration.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('pages')
@@ -75,6 +78,7 @@ export class PageController {
     private readonly labelService: LabelService,
     @InjectKysely() private readonly db: KyselyDB,
     @Inject(AUDIT_SERVICE) private readonly auditService: IAuditService,
+    private readonly pageAuthorMigrationService: PageAuthorMigrationService,
   ) {}
 
   @HttpCode(HttpStatus.OK)
@@ -97,6 +101,7 @@ export class PageController {
       await this.pageAccessService.validateCanViewWithPermissions(page, user);
 
     const permissions = { canEdit, hasRestriction };
+    const displayPage = resolvePageAuthorDisplay(page);
 
     if (dto.format && dto.format !== 'json' && page.content) {
       const contentOutput =
@@ -104,13 +109,48 @@ export class PageController {
           ? jsonToMarkdown(page.content)
           : jsonToHtml(page.content);
       return {
-        ...page,
+        ...displayPage,
         content: contentOutput,
         permissions,
       };
     }
 
-    return { ...page, permissions };
+    return { ...displayPage, permissions };
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('migration/restore-authors')
+  async restoreAuthors(
+    @Body() dto: RestorePageAuthorsDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    const pageIds = [...new Set(dto.items.map((item) => item.pageId))];
+    const spaceIds = await this.pageRepo.findSpaceIdsForPages({
+      workspaceId: workspace.id,
+      pageIds,
+    });
+
+    for (const spaceId of spaceIds) {
+      try {
+        const ability = await this.spaceAbility.createForUser(user, spaceId);
+        if (
+          ability.cannot(
+            SpaceCaslAction.Manage,
+            SpaceCaslSubject.Settings,
+          )
+        ) {
+          throw new ForbiddenException();
+        }
+      } catch {
+        throw new ForbiddenException();
+      }
+    }
+
+    return this.pageAuthorMigrationService.restorePageAuthors(
+      dto.items,
+      workspace.id,
+    );
   }
 
   @HttpCode(HttpStatus.OK)
