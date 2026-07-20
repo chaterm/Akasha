@@ -177,7 +177,6 @@ export class HoidcService {
       }
     }
 
-    await this.workspaceService.addUserToWorkspace(user.id, workspaceId);
     await this.groupUserRepo.addUserToDefaultGroup(user.id, workspaceId);
     await this.spaceService.ensurePersonalSpace(user, workspaceId);
     return user;
