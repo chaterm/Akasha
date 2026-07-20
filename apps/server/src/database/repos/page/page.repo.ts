@@ -229,6 +229,41 @@ export class PageRepo {
       .execute();
   }
 
+  async findPagesByIdsForKnowledgeExport(input: {
+    workspaceId: string;
+    spaceId: string;
+    pageIds: string[];
+  }): Promise<
+    Array<{
+      id: string;
+      workspaceId: string;
+      spaceId: string;
+      title: string;
+      textContent: string | null;
+      content: unknown;
+      updatedAt: Date;
+    }>
+  > {
+    if (input.pageIds.length === 0) return [];
+
+    return this.db
+      .selectFrom('pages')
+      .select([
+        'id',
+        'workspaceId',
+        'spaceId',
+        'title',
+        'textContent',
+        'content',
+        'updatedAt',
+      ])
+      .where('workspaceId', '=', input.workspaceId)
+      .where('spaceId', '=', input.spaceId)
+      .where('id', 'in', input.pageIds)
+      .where('deletedAt', 'is', null)
+      .execute();
+  }
+
   async updatePage(
     updatablePage: UpdatablePage,
     pageId: string,

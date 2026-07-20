@@ -16,8 +16,36 @@ export class KnowledgeSourceExporterService {
     spaceId: string;
   }): Promise<KnowledgeSourceSnapshot[]> {
     const pages = await this.pageRepo.findPagesForKnowledgeExport(input);
-    const references = await this.backlinkRepo.findOutgoingPageReferences({
+    return this.toSnapshots(input.workspaceId, pages);
+  }
+
+  async exportPageSources(input: {
+    workspaceId: string;
+    spaceId: string;
+    sourcePageIds: string[];
+  }): Promise<KnowledgeSourceSnapshot[]> {
+    const pages = await this.pageRepo.findPagesByIdsForKnowledgeExport({
       workspaceId: input.workspaceId,
+      spaceId: input.spaceId,
+      pageIds: input.sourcePageIds,
+    });
+    return this.toSnapshots(input.workspaceId, pages);
+  }
+
+  private async toSnapshots(
+    workspaceId: string,
+    pages: Array<{
+      id: string;
+      workspaceId: string;
+      spaceId: string;
+      title: string;
+      textContent: string | null;
+      content: unknown;
+      updatedAt: Date;
+    }>,
+  ): Promise<KnowledgeSourceSnapshot[]> {
+    const references = await this.backlinkRepo.findOutgoingPageReferences({
+      workspaceId,
       sourcePageIds: pages.map((page) => page.id),
     });
     const referencesBySourcePageId = groupBy(

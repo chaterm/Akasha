@@ -20,6 +20,7 @@ import { KnowledgeCompilerAdapter } from '../adapters/knowledge-compiler.adapter
 import { KnowledgeImportService } from '../services/knowledge-import.service';
 import {
   IKnowledgeCompileSpaceJob,
+  IKnowledgeCompilePagesJob,
   IKnowledgeMarkSourcesStaleJob,
   IKnowledgeReindexAccessJob,
   IReviewDiscoverJob,
@@ -34,7 +35,7 @@ import { KnowledgeAccessIndexerService } from '../services/knowledge-access-inde
 import { KnowledgeSourceExporterService } from '../services/knowledge-source-exporter.service';
 import {
   buildKnowledgeCompileCoalesceKey,
-  buildKnowledgeCompileJobId,
+  buildKnowledgeCompilePageJobId,
   buildReviewDiscoverJobId,
   buildReviewNegotiateJobId,
   KNOWLEDGE_COMPILE_DELAY_MS,
@@ -119,6 +120,44 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
           durationMs: Math.max(0, Date.now() - startedAt),
         };
       }
+      case QueueJob.KNOWLEDGE_COMPILE_PAGES: {
+        const data = job.data as IKnowledgeCompilePagesJob;
+        const startedAt = Date.now();
+        const sourcePageIds = uniqueValues(data.sourcePageIds);
+        const sources = await this.sourceExporter.exportPageSources({
+          workspaceId: data.workspaceId,
+          spaceId: data.spaceId,
+          sourcePageIds,
+        });
+        const compileInput = {
+          workspaceId: data.workspaceId,
+          spaceId: data.spaceId,
+          compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+          promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+          compileMode: 'pages' as const,
+          sources,
+        };
+        const compileResult = await this.compiler.compileSpace(compileInput);
+        const importResult = await this.importService.importCompileResult({
+          input: compileInput,
+          artifacts: compileResult.artifacts,
+        });
+        await this.accessIndexer.reindexSourcePages({
+          workspaceId: data.workspaceId,
+          sourcePageIds: sources.map((source) => source.sourcePageId),
+        });
+        return {
+          type: 'compile-pages',
+          status: 'succeeded',
+          workspaceId: data.workspaceId,
+          spaceId: data.spaceId,
+          compilerRunId: compileResult.compilerRunId,
+          sourceCount: sources.length,
+          importedArtifactCount: importResult.importedArtifactCount,
+          quarantinedArtifactCount: importResult.quarantinedArtifactCount,
+          durationMs: Math.max(0, Date.now() - startedAt),
+        };
+      }
       case QueueJob.KNOWLEDGE_REINDEX_ACCESS: {
         const data = job.data as IKnowledgeReindexAccessJob;
         if (data.sourcePageIds?.length) {
@@ -153,10 +192,17 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
           workspaceId: data.workspaceId,
           sourcePageIds,
         });
-        await this.capsuleRepo.markCapsulesStaleBySourcePageIds({
-          workspaceId: data.workspaceId,
-          sourcePageIds,
-        });
+        if (data.mode === 'source_artifacts') {
+          await this.capsuleRepo.markSourceArtifactsStaleBySourcePageIds({
+            workspaceId: data.workspaceId,
+            sourcePageIds,
+          });
+        } else {
+          await this.capsuleRepo.markCapsulesStaleBySourcePageIds({
+            workspaceId: data.workspaceId,
+            sourcePageIds,
+          });
+        }
         break;
       }
       case QueueJob.REVIEW_DISCOVER: {
@@ -372,7 +418,7 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
       workspaceId: data.workspaceId,
       sourcePageIds: data.pageIds,
     });
-    await this.capsuleRepo.markCapsulesStaleBySourcePageIds({
+    await this.capsuleRepo.markSourceArtifactsStaleBySourcePageIds({
       workspaceId: data.workspaceId,
       sourcePageIds: data.pageIds,
     });
@@ -381,24 +427,27 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
       sourcePageIds: data.pageIds,
     });
 
-    const spaceIds = await this.pageRepo.findSpaceIdsForPages({
+    const pageRefs = await this.pageRepo.findExistingPageRefs({
       workspaceId: data.workspaceId,
       pageIds: data.pageIds,
     });
 
-    for (const spaceId of spaceIds) {
+    for (const page of pageRefs) {
+      if (page.deletedAt) continue;
       await this.aiQueue.add(
-        QueueJob.KNOWLEDGE_COMPILE_SPACE,
+        QueueJob.KNOWLEDGE_COMPILE_PAGES,
         {
           workspaceId: data.workspaceId,
-          spaceId,
+          spaceId: page.spaceId,
+          sourcePageIds: [page.id],
           trigger: 'page_update',
         },
         {
           delay: KNOWLEDGE_COMPILE_DELAY_MS,
-          jobId: buildKnowledgeCompileJobId({
+          jobId: buildKnowledgeCompilePageJobId({
             workspaceId: data.workspaceId,
-            spaceId,
+            spaceId: page.spaceId,
+            sourcePageId: page.id,
             runKey: buildKnowledgeCompileCoalesceKey(),
           }),
         },

@@ -17,6 +17,22 @@ export function buildKnowledgeCompileJobId(input: {
   });
 }
 
+export function buildKnowledgeCompilePageJobId(input: {
+  workspaceId: string;
+  spaceId: string;
+  sourcePageId: string;
+  runKey?: string;
+  now?: number;
+}): string {
+  return [
+    'knowledge-compile-pages',
+    input.workspaceId,
+    input.spaceId,
+    input.sourcePageId,
+    input.runKey ?? buildKnowledgeRunKey('run', input.now),
+  ].join('__');
+}
+
 export function buildKnowledgeAdminActionJobId(input: {
   action: KnowledgeAdminSpaceAction;
   workspaceId: string;

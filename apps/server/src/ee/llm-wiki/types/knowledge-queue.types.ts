@@ -5,7 +5,7 @@ export type KnowledgeCompileTrigger =
   | 'page_update';
 
 export type KnowledgeCompileJobResult = {
-  type: 'compile-space';
+  type: 'compile-space' | 'compile-pages';
   status: 'succeeded';
   workspaceId: string;
   spaceId: string;

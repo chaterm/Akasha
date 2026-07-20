@@ -65,6 +65,7 @@ export enum QueueJob {
   DELETE_PAGE_EMBEDDINGS = 'delete-page-embeddings',
 
   KNOWLEDGE_COMPILE_SPACE = 'knowledge-compile-space',
+  KNOWLEDGE_COMPILE_PAGES = 'knowledge-compile-pages',
   KNOWLEDGE_REINDEX_ACCESS = 'knowledge-reindex-access',
   KNOWLEDGE_MARK_SOURCES_STALE = 'knowledge-mark-sources-stale',
   REVIEW_DISCOVER = 'review-discover',

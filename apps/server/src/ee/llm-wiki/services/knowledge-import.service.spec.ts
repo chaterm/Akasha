@@ -481,6 +481,68 @@ describe('KnowledgeImportService', () => {
     expect(capsuleRepo.markCompileScopeStale).not.toHaveBeenCalled();
   });
 
+  it('replaces only affected source artifacts for page compilation', async () => {
+    const artifact = {
+      artifactId: 'artifact-1',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      title: 'Changed page',
+      contentMarkdown: '# Changed page',
+      sourcePageIds: ['source-1'],
+      artifactKind: 'source_summary' as const,
+      compilerVersion: 'compiler@1',
+      promptVersion: 'prompt@1',
+      inputSourceRefs: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageId: 'source-1',
+          sourceVersion: 'v2',
+          contentHash: 'hash-2',
+        },
+      ],
+      chunks: [],
+    };
+    const sourceRepo = {
+      upsertPageSource: jest.fn().mockResolvedValue({ id: 'source-row-1' }),
+    };
+    const capsuleRepo = {
+      markCompileScopeStale: jest.fn(),
+      markSourceArtifactsStaleBySourcePageIds: jest
+        .fn()
+        .mockResolvedValue(undefined),
+      upsertCompiledArtifacts: jest.fn().mockResolvedValue([]),
+    };
+    const validator = {
+      validateCompileResult: jest.fn().mockReturnValue({
+        accepted: [artifact],
+        quarantined: [],
+      }),
+    };
+    const service = new KnowledgeImportService(
+      sourceRepo as unknown as KnowledgeSourceRepo,
+      capsuleRepo as unknown as KnowledgeCapsuleRepo,
+      validator as unknown as KnowledgeArtifactValidatorService,
+      { embedQuery: jest.fn() } as never,
+      { recordQuarantinedArtifacts: jest.fn() } as never,
+      createTransactionDb() as never,
+    );
+
+    await service.importCompileResult({
+      input: { ...compileInput(), compileMode: 'pages' },
+      artifacts: [artifact],
+    });
+
+    expect(capsuleRepo.markCompileScopeStale).not.toHaveBeenCalled();
+    expect(
+      capsuleRepo.markSourceArtifactsStaleBySourcePageIds,
+    ).toHaveBeenCalledWith(
+      { workspaceId: 'workspace-1', sourcePageIds: ['source-1'] },
+      expect.anything(),
+    );
+    expect(capsuleRepo.upsertCompiledArtifacts).toHaveBeenCalled();
+  });
+
   it('records quarantined artifact reasons without persisting source content', async () => {
     const hiddenText = 'Private launch plan: revenue migration dates.';
     const quarantinedArtifact = {

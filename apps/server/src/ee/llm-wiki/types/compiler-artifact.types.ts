@@ -6,6 +6,7 @@ export interface CompileSpaceInput extends KnowledgeScope {
   sources: KnowledgeSourceSnapshot[];
   compilerVersion: string;
   promptVersion: string;
+  compileMode?: 'space' | 'pages';
 }
 
 export interface CompileDiagnostic {

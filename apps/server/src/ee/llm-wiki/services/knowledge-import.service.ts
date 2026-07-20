@@ -307,13 +307,23 @@ export class KnowledgeImportService {
     if (artifactInputs.length > 0 || quarantineInputs.length > 0) {
       await executeTx(this.db, async (trx) => {
         if (artifactInputs.length > 0) {
-          await this.capsuleRepo.markCompileScopeStale(
-            {
-              workspaceId: input.input.workspaceId,
-              spaceId: input.input.spaceId,
-            },
-            trx,
-          );
+          if (input.input.compileMode === 'pages') {
+            await this.capsuleRepo.markSourceArtifactsStaleBySourcePageIds(
+              {
+                workspaceId: input.input.workspaceId,
+                sourcePageIds: uniqueSourcePageIds(input.input),
+              },
+              trx,
+            );
+          } else {
+            await this.capsuleRepo.markCompileScopeStale(
+              {
+                workspaceId: input.input.workspaceId,
+                spaceId: input.input.spaceId,
+              },
+              trx,
+            );
+          }
         }
 
         if (quarantineInputs.length > 0) {
@@ -357,6 +367,10 @@ export class KnowledgeImportService {
       quarantinedArtifactCount: validation.quarantined.length,
     };
   }
+}
+
+function uniqueSourcePageIds(input: CompileSpaceInput): string[] {
+  return [...new Set(input.sources.map((source) => source.sourcePageId))];
 }
 
 function compilerEmbedding(

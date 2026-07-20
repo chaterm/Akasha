@@ -124,6 +124,13 @@ export interface IKnowledgeCompileSpaceJob {
     | 'page_update';
 }
 
+export interface IKnowledgeCompilePagesJob {
+  workspaceId: string;
+  spaceId: string;
+  sourcePageIds: string[];
+  trigger?: 'page_update' | 'page_created' | 'page_restored';
+}
+
 export interface IKnowledgeReindexAccessJob {
   workspaceId: string;
   spaceId?: string;
@@ -134,6 +141,7 @@ export interface IKnowledgeMarkSourcesStaleJob {
   workspaceId: string;
   sourcePageIds?: string[];
   spaceId?: string;
+  mode?: 'all_dependencies' | 'source_artifacts';
 }
 
 export interface IReviewDiscoverJob {

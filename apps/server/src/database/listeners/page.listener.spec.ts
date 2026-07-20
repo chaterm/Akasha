@@ -4,30 +4,40 @@ import { PageListener } from './page.listener';
 describe('PageListener knowledge jobs', () => {
   it('enqueues delayed knowledge compile jobs for page spaces on page creation', async () => {
     const { listener, aiQueue, pageRepo } = createListener();
-    pageRepo.findSpaceIdsForPages.mockResolvedValue(['space-1']);
+    pageRepo.findExistingPageRefs.mockResolvedValue([
+      pageRef('page-1', 'space-1'),
+    ]);
 
     await listener.handlePageCreated({
       workspaceId: 'workspace-1',
       pageIds: ['page-1'],
     });
 
-    expect(pageRepo.findSpaceIdsForPages).toHaveBeenCalledWith({
+    expect(pageRepo.findExistingPageRefs).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       pageIds: ['page-1'],
     });
     expect(aiQueue.add).toHaveBeenCalledWith(
-      QueueJob.KNOWLEDGE_COMPILE_SPACE,
-      { workspaceId: 'workspace-1', spaceId: 'space-1' },
+      QueueJob.KNOWLEDGE_COMPILE_PAGES,
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageIds: ['page-1'],
+      },
       {
         delay: 5000,
-        jobId: 'knowledge-compile-space:workspace-1:space-1',
+        jobId: expect.stringMatching(
+          /^knowledge-compile-pages__workspace-1__space-1__page-1__/,
+        ),
       },
     );
   });
 
   it('enqueues knowledge stale and access reindex jobs on page update', async () => {
     const { listener, aiQueue, pageRepo } = createListener();
-    pageRepo.findSpaceIdsForPages.mockResolvedValue(['space-1']);
+    pageRepo.findExistingPageRefs.mockResolvedValue([
+      pageRef('page-1', 'space-1'),
+    ]);
 
     await listener.handlePageUpdated({
       workspaceId: 'workspace-1',
@@ -36,18 +46,28 @@ describe('PageListener knowledge jobs', () => {
 
     expect(aiQueue.add).toHaveBeenCalledWith(
       QueueJob.KNOWLEDGE_MARK_SOURCES_STALE,
-      { workspaceId: 'workspace-1', sourcePageIds: ['page-1'] },
+      {
+        workspaceId: 'workspace-1',
+        sourcePageIds: ['page-1'],
+        mode: 'source_artifacts',
+      },
     );
     expect(aiQueue.add).toHaveBeenCalledWith(
       QueueJob.KNOWLEDGE_REINDEX_ACCESS,
       { workspaceId: 'workspace-1', sourcePageIds: ['page-1'] },
     );
     expect(aiQueue.add).toHaveBeenCalledWith(
-      QueueJob.KNOWLEDGE_COMPILE_SPACE,
-      { workspaceId: 'workspace-1', spaceId: 'space-1' },
+      QueueJob.KNOWLEDGE_COMPILE_PAGES,
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageIds: ['page-1'],
+      },
       {
         delay: 5000,
-        jobId: 'knowledge-compile-space:workspace-1:space-1',
+        jobId: expect.stringMatching(
+          /^knowledge-compile-pages__workspace-1__space-1__page-1__/,
+        ),
       },
     );
   });
@@ -65,16 +85,19 @@ describe('PageListener knowledge jobs', () => {
         QueueJob.KNOWLEDGE_MARK_SOURCES_STALE,
         { workspaceId: 'workspace-1', sourcePageIds: ['page-1'] },
       ],
-      [QueueJob.PAGE_DELETED, { pageIds: ['page-1'], workspaceId: 'workspace-1' }],
+      [
+        QueueJob.PAGE_DELETED,
+        { pageIds: ['page-1'], workspaceId: 'workspace-1' },
+      ],
     ]);
-    expect(pageRepo.findSpaceIdsForPages).not.toHaveBeenCalled();
+    expect(pageRepo.findExistingPageRefs).not.toHaveBeenCalled();
   });
 
   it('enqueues access reindex jobs when pages are created or restored', async () => {
     const { listener, aiQueue, pageRepo } = createListener();
-    pageRepo.findSpaceIdsForPages
-      .mockResolvedValueOnce(['space-1'])
-      .mockResolvedValueOnce(['space-2']);
+    pageRepo.findExistingPageRefs
+      .mockResolvedValueOnce([pageRef('page-1', 'space-1')])
+      .mockResolvedValueOnce([pageRef('page-2', 'space-2')]);
 
     await listener.handlePageCreated({
       workspaceId: 'workspace-1',
@@ -94,11 +117,17 @@ describe('PageListener knowledge jobs', () => {
       { workspaceId: 'workspace-1', sourcePageIds: ['page-2'] },
     );
     expect(aiQueue.add).toHaveBeenCalledWith(
-      QueueJob.KNOWLEDGE_COMPILE_SPACE,
-      { workspaceId: 'workspace-1', spaceId: 'space-2' },
+      QueueJob.KNOWLEDGE_COMPILE_PAGES,
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-2',
+        sourcePageIds: ['page-2'],
+      },
       {
         delay: 5000,
-        jobId: 'knowledge-compile-space:workspace-1:space-2',
+        jobId: expect.stringMatching(
+          /^knowledge-compile-pages__workspace-1__space-2__page-2__/,
+        ),
       },
     );
   });
@@ -116,6 +145,7 @@ function createListener() {
   };
   const pageRepo = {
     findSpaceIdsForPages: jest.fn().mockResolvedValue([]),
+    findExistingPageRefs: jest.fn().mockResolvedValue([]),
   };
 
   return {
@@ -128,5 +158,14 @@ function createListener() {
     searchQueue,
     aiQueue,
     pageRepo,
+  };
+}
+
+function pageRef(id: string, spaceId: string) {
+  return {
+    id,
+    workspaceId: 'workspace-1',
+    spaceId,
+    deletedAt: null,
   };
 }

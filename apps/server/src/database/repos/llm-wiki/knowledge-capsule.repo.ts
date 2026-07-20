@@ -1021,6 +1021,63 @@ export class KnowledgeCapsuleRepo {
     ]);
   }
 
+  async markSourceArtifactsStaleBySourcePageIds(
+    input: { workspaceId: string; sourcePageIds: string[] },
+    trx?: KyselyTransaction,
+  ): Promise<void> {
+    if (input.sourcePageIds.length === 0) return;
+
+    const db = dbOrTx(this.db, trx);
+    const pageRows = await db
+      .selectFrom('knowledgePages')
+      .innerJoin(
+        'knowledgePageSources',
+        'knowledgePageSources.knowledgePageId',
+        'knowledgePages.id',
+      )
+      .select('knowledgePages.id')
+      .distinct()
+      .where('knowledgePages.workspaceId', '=', input.workspaceId)
+      .where('knowledgePages.pageType', '=', 'source_summary')
+      .where('knowledgePageSources.sourcePageId', 'in', input.sourcePageIds)
+      .execute();
+    const knowledgePageIds = pageRows.map((row) => row.id);
+    if (knowledgePageIds.length === 0) return;
+
+    await Promise.all([
+      db
+        .updateTable('knowledgePages')
+        .set({ staleAt: new Date() })
+        .where('workspaceId', '=', input.workspaceId)
+        .where('id', 'in', knowledgePageIds)
+        .execute(),
+      db
+        .updateTable('knowledgeClaims')
+        .set({ staleAt: new Date() })
+        .where('workspaceId', '=', input.workspaceId)
+        .where('knowledgePageId', 'in', knowledgePageIds)
+        .execute(),
+      db
+        .updateTable('knowledgeChunks')
+        .set({ staleAt: new Date() })
+        .where('workspaceId', '=', input.workspaceId)
+        .where('knowledgePageId', 'in', knowledgePageIds)
+        .execute(),
+      db
+        .updateTable('knowledgeLinks')
+        .set({ staleAt: new Date() })
+        .where('workspaceId', '=', input.workspaceId)
+        .where('fromKnowledgePageId', 'in', knowledgePageIds)
+        .execute(),
+      db
+        .updateTable('knowledgeGraphEdges')
+        .set({ staleAt: new Date() })
+        .where('workspaceId', '=', input.workspaceId)
+        .where('fromKnowledgePageId', 'in', knowledgePageIds)
+        .execute(),
+    ]);
+  }
+
   private async markStale(
     table:
       | 'knowledgePages'

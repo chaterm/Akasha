@@ -91,4 +91,40 @@ describe('KnowledgeSourceExporterService', () => {
       }),
     ).resolves.toMatchObject([{ text: '' }]);
   });
+
+  it('exports only the requested pages for incremental compilation', async () => {
+    const pageRepo = {
+      findPagesByIdsForKnowledgeExport: jest.fn().mockResolvedValue([
+        {
+          id: 'page-2',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          title: 'Changed page',
+          textContent: 'Changed body',
+          content: { type: 'doc' },
+          updatedAt: new Date('2026-07-20T00:00:00.000Z'),
+        },
+      ]),
+    };
+    const backlinkRepo = {
+      findOutgoingPageReferences: jest.fn().mockResolvedValue([]),
+    };
+    const service = new KnowledgeSourceExporterService(
+      pageRepo as unknown as PageRepo,
+      backlinkRepo as unknown as BacklinkRepo,
+    );
+
+    const snapshots = await service.exportPageSources({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageIds: ['page-2'],
+    });
+
+    expect(pageRepo.findPagesByIdsForKnowledgeExport).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      pageIds: ['page-2'],
+    });
+    expect(snapshots.map((source) => source.sourcePageId)).toEqual(['page-2']);
+  });
 });

@@ -52,11 +52,10 @@ export class DocmostKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
         }),
       );
     }
-    const overview = buildOverviewArtifact({
-      input,
-      compilerRunId,
-      sourceTargets,
-    });
+    const overview =
+      input.compileMode === 'pages'
+        ? undefined
+        : buildOverviewArtifact({ input, compilerRunId, sourceTargets });
     if (overview) {
       artifacts.push(overview);
     }
@@ -259,12 +258,34 @@ function buildSameSpaceLinks(input: {
   );
   const links: NonNullable<CompiledKnowledgeArtifact['links']> = [];
 
+  for (const targetPageId of explicitTargetPageIds) {
+    if (targetPageId === input.source.sourcePageId) continue;
+    const target = input.sourceTargets.find(
+      (candidate) => candidate.source.sourcePageId === targetPageId,
+    );
+    links.push({
+      linkType: 'same_space_reference',
+      linkText: target?.source.title ?? '',
+      targetPageId,
+      targetSpaceId: input.source.spaceId,
+      toKnowledgePageId:
+        target?.artifactId ??
+        artifactIdForSourcePage(
+          input.source.workspaceId,
+          input.source.spaceId,
+          targetPageId,
+        ),
+      isDangling: false,
+      inputSourceRefs: [input.sourceRef],
+    });
+  }
+
   for (const target of input.sourceTargets) {
     if (
       target.source.sourcePageId === input.source.sourcePageId ||
       !target.normalizedTitle ||
-      (!explicitTargetPageIds.has(target.source.sourcePageId) &&
-        !haystack.includes(target.normalizedTitle))
+      explicitTargetPageIds.has(target.source.sourcePageId) ||
+      !haystack.includes(target.normalizedTitle)
     ) {
       continue;
     }
@@ -485,15 +506,19 @@ function artifactIdForSource(
   input: CompileSpaceInput,
   source: KnowledgeSourceSnapshot,
 ): string {
-  return stableUuid(
-    [
-      input.workspaceId,
-      input.spaceId,
-      source.sourcePageId,
-      source.sourceVersion,
-      source.contentHash,
-    ].join(':'),
+  return artifactIdForSourcePage(
+    input.workspaceId,
+    input.spaceId,
+    source.sourcePageId,
   );
+}
+
+function artifactIdForSourcePage(
+  workspaceId: string,
+  spaceId: string,
+  sourcePageId: string,
+): string {
+  return stableUuid([workspaceId, spaceId, sourcePageId].join(':'));
 }
 
 function normalizeForMatch(text: string): string {

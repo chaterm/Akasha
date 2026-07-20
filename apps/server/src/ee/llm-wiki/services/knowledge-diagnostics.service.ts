@@ -21,6 +21,7 @@ import {
 const KNOWLEDGE_JOB_NAMES = new Set<string>([
   QueueJob.PAGE_CONTENT_UPDATED,
   QueueJob.KNOWLEDGE_COMPILE_SPACE,
+  QueueJob.KNOWLEDGE_COMPILE_PAGES,
   QueueJob.KNOWLEDGE_MARK_SOURCES_STALE,
   QueueJob.KNOWLEDGE_REINDEX_ACCESS,
 ]);
@@ -514,12 +515,15 @@ function toCompileJobResult(
   value: unknown,
 ): KnowledgeCompileJobResult | undefined {
   if (!isRecord(value)) return undefined;
-  if (value.type !== 'compile-space' || value.status !== 'succeeded') {
+  if (
+    (value.type !== 'compile-space' && value.type !== 'compile-pages') ||
+    value.status !== 'succeeded'
+  ) {
     return undefined;
   }
 
   return {
-    type: 'compile-space',
+    type: value.type,
     status: 'succeeded',
     workspaceId: readString(value.workspaceId),
     spaceId: readString(value.spaceId),

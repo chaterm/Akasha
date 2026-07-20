@@ -357,6 +357,59 @@ describe('DocmostKnowledgeCompilerRunner', () => {
     ]);
   });
 
+  it('compiles one page without a space overview and preserves explicit links', async () => {
+    const runner = new TestDocmostKnowledgeCompilerRunner(
+      () => new Date('2026-07-20T00:00:00.000Z'),
+    );
+    const source = {
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageId: 'page-1',
+      sourceVersion: 'v2',
+      contentHash: 'hash-v2',
+      title: 'Changed page',
+      text: 'This page links to another Wiki page.',
+      references: [
+        {
+          sourcePageId: 'page-1',
+          targetPageId: 'page-2',
+          targetSpaceId: 'space-1',
+          kind: 'same_space_reference' as const,
+          mode: 'opaque' as const,
+        },
+      ],
+    };
+
+    const first = await runner.compileSpace({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      compilerVersion: 'akasha-internal@1',
+      promptVersion: 'wiki-v1',
+      compileMode: 'pages',
+      sources: [source],
+    });
+    const next = await runner.compileSpace({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      compilerVersion: 'akasha-internal@1',
+      promptVersion: 'wiki-v1',
+      compileMode: 'pages',
+      sources: [{ ...source, sourceVersion: 'v3', contentHash: 'hash-v3' }],
+    });
+
+    expect(first.artifacts).toHaveLength(1);
+    expect(first.artifacts[0].artifactKind).toBe('source_summary');
+    expect(first.artifacts[0].artifactId).toBe(next.artifacts[0].artifactId);
+    expect(first.artifacts[0].links).toEqual([
+      expect.objectContaining({
+        targetPageId: 'page-2',
+        targetSpaceId: 'space-1',
+        toKnowledgePageId: expect.any(String),
+        isDangling: false,
+      }),
+    ]);
+  });
+
   it('creates semantic graph edges for related pages without explicit title mentions', async () => {
     const runner = new TestDocmostKnowledgeCompilerRunner(
       () => new Date('2026-06-16T00:00:00.000Z'),
