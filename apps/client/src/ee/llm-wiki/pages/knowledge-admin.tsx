@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Anchor,
@@ -44,6 +44,7 @@ const DIAGNOSTICS_LIMIT = 50;
 export default function KnowledgeAdminPage() {
   const { t } = useTranslation();
   const [spaceIds, setSpaceIds] = useState<string[]>([]);
+  const spaceIdsInitialized = useRef(false);
   const { data: spacesData, isLoading: spacesLoading } = useGetSpacesQuery({
     limit: 100,
   });
@@ -54,10 +55,11 @@ export default function KnowledgeAdminPage() {
   );
 
   useEffect(() => {
-    if (spaceIds.length === 0 && spaceOptions.length > 0) {
-      setSpaceIds(spaceOptions.map((space) => space.value));
+    if (!spaceIdsInitialized.current && spaceOptions.length > 0) {
+      spaceIdsInitialized.current = true;
+      setSpaceIds([spaceOptions[0].value]);
     }
-  }, [spaceIds.length, spaceOptions]);
+  }, [spaceOptions]);
 
   const diagnosticsQuery = useQuery({
     queryKey: ["knowledge-diagnostics", spaceIds],

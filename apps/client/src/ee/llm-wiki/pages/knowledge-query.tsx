@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Anchor,
@@ -40,6 +40,7 @@ export default function KnowledgeQueryPage() {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [spaceIds, setSpaceIds] = useState<string[]>([]);
+  const spaceIdsInitialized = useRef(false);
   const [result, setResult] = useState<KnowledgeQueryResult | null>(null);
   const { data: spacesData, isLoading: spacesLoading } = useGetSpacesQuery({
     limit: 100,
@@ -51,10 +52,11 @@ export default function KnowledgeQueryPage() {
   );
 
   useEffect(() => {
-    if (spaceIds.length === 0 && spaceOptions.length > 0) {
-      setSpaceIds(spaceOptions.map((space) => space.value));
+    if (!spaceIdsInitialized.current && spaceOptions.length > 0) {
+      spaceIdsInitialized.current = true;
+      setSpaceIds([spaceOptions[0].value]);
     }
-  }, [spaceIds.length, spaceOptions]);
+  }, [spaceOptions]);
 
   const mutation = useMutation({
     mutationFn: queryKnowledge,

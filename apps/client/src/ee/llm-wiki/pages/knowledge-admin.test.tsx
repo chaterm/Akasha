@@ -35,6 +35,11 @@ vi.mock("@/features/space/queries/space-query", () => ({
           name: "AIM",
           slug: "aim",
         },
+        {
+          id: "space-2",
+          name: "General",
+          slug: "general",
+        },
       ],
     },
     isLoading: false,
@@ -174,6 +179,18 @@ describe("KnowledgeAdminPage", () => {
     expect(getKnowledgeDiagnostics).toHaveBeenCalledWith({
       spaceIds: ["space-1"],
       limit: 50,
+    });
+
+    fireEvent.click(
+      document
+        .querySelector(".mantine-Pill-label")!
+        .parentElement!.querySelector("button")!,
+    );
+    await waitFor(() => {
+      expect(
+        (screen.getByRole("button", { name: "Refresh" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true);
     });
   });
 });
