@@ -130,6 +130,7 @@ export interface KnowledgeRetrievalDiagnosticsSummary {
   sampleCount: number;
   zeroHitRate: number;
   embeddingFallbackRate: number;
+  accessPolicyFallbackRate: number;
   averageAuthorizedCandidateCount: number;
   averageFilteredCandidateCount: number;
 }

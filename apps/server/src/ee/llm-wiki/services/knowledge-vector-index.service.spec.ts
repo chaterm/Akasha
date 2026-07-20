@@ -41,6 +41,7 @@ describe('KnowledgeVectorIndexService', () => {
     expect(ddl).toContain('embedding::vector(1024)');
     expect(ddl).toContain(`embedding_profile = '${'c'.repeat(64)}'`);
     expect(ddl).toContain('embedding_dimensions = 1024');
+    expect(ddl).toContain('embedding IS NOT NULL');
   });
 
   it('returns exists without issuing DDL for an existing profile index', async () => {

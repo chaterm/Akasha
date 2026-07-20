@@ -95,6 +95,70 @@ describe('KnowledgeImportService', () => {
       profile: 'a'.repeat(64),
       dimensions: 3,
     });
+    expect(
+      vectorIndex.ensureProfileIndex.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      capsuleRepo.upsertCompiledArtifacts.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('does not persist compiled artifacts when a supported HNSW index cannot be created', async () => {
+    const artifact = {
+      artifactId: 'artifact-1',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      title: 'Compiled',
+      contentMarkdown: '# Compiled',
+      sourcePageIds: ['source-1'],
+      artifactKind: 'source_summary' as const,
+      compilerVersion: 'compiler@1',
+      promptVersion: 'prompt@1',
+      inputSourceRefs: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageId: 'source-1',
+          sourceVersion: 'v1',
+          contentHash: 'hash-1',
+        },
+      ],
+      chunks: [{ text: 'Enterprise retrieval' }],
+    };
+    const capsuleRepo = {
+      markCompileScopeStale: jest.fn(),
+      upsertCompiledArtifacts: jest.fn(),
+    };
+    const service = new KnowledgeImportService(
+      { upsertPageSource: jest.fn() } as never,
+      capsuleRepo as never,
+      {
+        validateCompileResult: jest.fn().mockReturnValue({
+          accepted: [artifact],
+          quarantined: [],
+        }),
+      } as never,
+      {
+        embedQuery: jest.fn().mockResolvedValue({
+          vector: [0.1, 0.2, 0.3],
+          profile: 'a'.repeat(64),
+          model: 'bge-m3',
+          dimensions: 3,
+        }),
+      } as never,
+      { recordQuarantinedArtifacts: jest.fn() } as never,
+      createTransactionDb() as never,
+      {
+        ensureProfileIndex: jest.fn().mockResolvedValue('exact-only'),
+      } as never,
+    );
+
+    await expect(
+      service.importCompileResult({
+        input: compileInput(),
+        artifacts: [artifact],
+      }),
+    ).rejects.toThrow('HNSW');
+    expect(capsuleRepo.upsertCompiledArtifacts).not.toHaveBeenCalled();
   });
 
   it('imports only validator-accepted artifacts and dependencies', async () => {
@@ -175,6 +239,7 @@ describe('KnowledgeImportService', () => {
       embeddingProvider as never,
       quarantineRepo as never,
       createTransactionDb() as never,
+      { ensureProfileIndex: jest.fn() } as never,
     );
 
     await expect(
@@ -417,6 +482,7 @@ describe('KnowledgeImportService', () => {
       embeddingProvider as never,
       quarantineRepo as never,
       createTransactionDb() as never,
+      { ensureProfileIndex: jest.fn() } as never,
     );
 
     await service.importCompileResult({
@@ -468,6 +534,7 @@ describe('KnowledgeImportService', () => {
       embeddingProvider as never,
       quarantineRepo as never,
       createTransactionDb() as never,
+      { ensureProfileIndex: jest.fn() } as never,
     );
 
     await expect(
@@ -526,6 +593,7 @@ describe('KnowledgeImportService', () => {
       { embedQuery: jest.fn() } as never,
       { recordQuarantinedArtifacts: jest.fn() } as never,
       createTransactionDb() as never,
+      { ensureProfileIndex: jest.fn() } as never,
     );
 
     await service.importCompileResult({
@@ -601,6 +669,7 @@ describe('KnowledgeImportService', () => {
       embeddingProvider as never,
       quarantineRepo as never,
       createTransactionDb() as never,
+      { ensureProfileIndex: jest.fn() } as never,
     );
 
     await expect(
@@ -710,6 +779,7 @@ describe('KnowledgeImportService', () => {
       embeddingProvider as never,
       quarantineRepo as never,
       createTransactionDb(trx) as never,
+      { ensureProfileIndex: jest.fn() } as never,
     );
 
     await service.importCompileResult({

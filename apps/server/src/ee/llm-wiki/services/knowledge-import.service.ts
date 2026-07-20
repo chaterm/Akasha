@@ -1,4 +1,4 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { toSql as vectorToSql } from 'pgvector';
 import { InjectKysely } from 'nestjs-kysely';
@@ -37,7 +37,7 @@ export class KnowledgeImportService {
     private readonly embeddingProvider: ConfiguredKnowledgeEmbeddingProvider,
     private readonly quarantineRepo: KnowledgeQuarantineRepo,
     @InjectKysely() private readonly db: KyselyDB,
-    @Optional() private readonly vectorIndex?: KnowledgeVectorIndexService,
+    private readonly vectorIndex: KnowledgeVectorIndexService,
   ) {}
 
   async importCompileResult(input: {
@@ -304,6 +304,31 @@ export class KnowledgeImportService {
       reasonCodes: toQuarantineReasonCodes(quarantined.reasons),
     }));
 
+    const embeddingProfiles = new Map<string, number>();
+    for (const chunk of artifactInputs.flatMap(
+      (artifact) => artifact.chunks ?? [],
+    )) {
+      if (chunk.embeddingProfile && chunk.embeddingDimensions) {
+        embeddingProfiles.set(
+          String(chunk.embeddingProfile),
+          Number(chunk.embeddingDimensions),
+        );
+      }
+    }
+    await Promise.all(
+      [...embeddingProfiles].map(async ([profile, dimensions]) => {
+        const result = await this.vectorIndex.ensureProfileIndex({
+          profile,
+          dimensions,
+        });
+        if (dimensions <= 2000 && result === 'exact-only') {
+          throw new Error(
+            `HNSW index is required for ${dimensions}-dimension knowledge embeddings`,
+          );
+        }
+      }),
+    );
+
     if (artifactInputs.length > 0 || quarantineInputs.length > 0) {
       await executeTx(this.db, async (trx) => {
         if (artifactInputs.length > 0) {
@@ -341,25 +366,6 @@ export class KnowledgeImportService {
           await this.capsuleRepo.upsertCompiledArtifacts(artifactInputs, trx);
         }
       });
-    }
-
-    if (this.vectorIndex && artifactInputs.length > 0) {
-      const profiles = new Map<string, number>();
-      for (const chunk of artifactInputs.flatMap(
-        (artifact) => artifact.chunks ?? [],
-      )) {
-        if (chunk.embeddingProfile && chunk.embeddingDimensions) {
-          profiles.set(
-            String(chunk.embeddingProfile),
-            Number(chunk.embeddingDimensions),
-          );
-        }
-      }
-      await Promise.all(
-        [...profiles].map(([profile, dimensions]) =>
-          this.vectorIndex!.ensureProfileIndex({ profile, dimensions }),
-        ),
-      );
     }
 
     return {

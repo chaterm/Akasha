@@ -386,6 +386,7 @@ function normalizeRetrievalDiagnostics(value: unknown) {
     sampleCount: readNumber(value.sampleCount),
     zeroHitRate: readNumber(value.zeroHitRate),
     embeddingFallbackRate: readNumber(value.embeddingFallbackRate),
+    accessPolicyFallbackRate: readNumber(value.accessPolicyFallbackRate),
     averageAuthorizedCandidateCount: readNumber(
       value.averageAuthorizedCandidateCount,
     ),

@@ -72,6 +72,7 @@ vi.mock("../services/knowledge-service", () => ({
       sampleCount: 2,
       zeroHitRate: 0.5,
       embeddingFallbackRate: 0.5,
+      accessPolicyFallbackRate: 0.25,
       averageAuthorizedCandidateCount: 1.5,
       averageFilteredCandidateCount: 2,
     },

@@ -106,12 +106,13 @@ export class LlmWikiController {
         spaceIds: dto.spaceIds,
         queryEmbeddingAvailable: retrievalDiagnostics.queryEmbeddingAvailable,
         candidateSourceCount: retrievalDiagnostics.candidateSourceCount,
-        sidecarEligibleSourceCount:
-          retrievalDiagnostics.sidecarEligibleSourceCount,
-        sidecarFallbackSourceCount:
-          retrievalDiagnostics.sidecarFallbackSourceCount,
-        sidecarFilteredSourceCount:
-          retrievalDiagnostics.sidecarFilteredSourceCount,
+        policyCandidateSourceCount:
+          retrievalDiagnostics.policyCandidateSourceCount,
+        fallbackCandidateSourceCount:
+          retrievalDiagnostics.fallbackCandidateSourceCount,
+        finalAuthorizedSourceCount:
+          retrievalDiagnostics.finalAuthorizedSourceCount,
+        accessPolicyFallbackUsed: retrievalDiagnostics.accessPolicyFallbackUsed,
         candidateChunkCount: retrievalDiagnostics.candidateChunkCount,
         rankedCandidateCount: retrievalDiagnostics.rankedCandidateCount,
         authorizedChunkCount: retrievalDiagnostics.authorizedChunkCount,

@@ -219,6 +219,10 @@ export default function KnowledgeAdminPage() {
                     {t("Embedding fallback")}:{" "}
                     {formatPercent(retrieval.embeddingFallbackRate)}
                   </Badge>
+                  <Badge variant="light">
+                    {t("ACL fallback")}:{" "}
+                    {formatPercent(retrieval.accessPolicyFallbackRate)}
+                  </Badge>
                   <Badge variant="outline">
                     {t("Queries")}: {retrieval.sampleCount}
                   </Badge>
