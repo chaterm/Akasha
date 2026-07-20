@@ -188,14 +188,14 @@ describe('HoidcService provisioning', () => {
     );
   });
 
-  it('updates existing SSO user profile and keeps membership provisioning idempotent', async () => {
+  it('updates an existing SSO user profile without resetting its role', async () => {
     const existingUser = {
       id: 'user-2',
       email: 'existing@example.com',
       name: 'Old Name',
       avatarUrl: null,
       workspaceId,
-      role: 'member',
+      role: 'admin',
     };
     const updatedUser = {
       ...existingUser,
@@ -239,6 +239,7 @@ describe('HoidcService provisioning', () => {
     });
 
     expect(result).toBe(updatedUser);
+    expect(result.role).toBe('admin');
     expect(userRepo.updateUser).toHaveBeenCalledWith(
       {
         name: 'New Name',
@@ -247,10 +248,7 @@ describe('HoidcService provisioning', () => {
       'user-2',
       workspaceId,
     );
-    expect(workspaceService.addUserToWorkspace).toHaveBeenCalledWith(
-      'user-2',
-      workspaceId,
-    );
+    expect(workspaceService.addUserToWorkspace).not.toHaveBeenCalled();
     expect(groupUserRepo.addUserToDefaultGroup).toHaveBeenCalledWith(
       'user-2',
       workspaceId,

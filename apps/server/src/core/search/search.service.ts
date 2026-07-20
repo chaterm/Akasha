@@ -8,6 +8,7 @@ import { PageRepo } from '@akasha/db/repos/page/page.repo';
 import { SpaceMemberRepo } from '@akasha/db/repos/space/space-member.repo';
 import { ShareRepo } from '@akasha/db/repos/share/share.repo';
 import { PagePermissionRepo } from '@akasha/db/repos/page/page-permission.repo';
+import { UserRole } from '../../common/helpers/types/permission';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const tsquery = require('pg-tsquery')();
@@ -91,20 +92,22 @@ export class SearchService {
         return { items: [] };
       }
 
-      const isRestricted =
-        await this.pagePermissionRepo.hasRestrictedAncestor(share.pageId);
+      const isRestricted = await this.pagePermissionRepo.hasRestrictedAncestor(
+        share.pageId,
+      );
       if (isRestricted) {
         return { items: [] };
       }
 
       const pageIdsToSearch = [];
       if (share.includeSubPages) {
-        const pageList = await this.pageRepo.getPageAndDescendantsExcludingRestricted(
-          share.pageId,
-          {
-            includeContent: false,
-          },
-        );
+        const pageList =
+          await this.pageRepo.getPageAndDescendantsExcludingRestricted(
+            share.pageId,
+            {
+              includeContent: false,
+            },
+          );
 
         pageIdsToSearch.push(...pageList.map((page) => page.id));
       } else {
@@ -149,6 +152,111 @@ export class SearchService {
     });
 
     return { items: searchResults };
+  }
+
+  async searchAttachments(
+    searchParams: SearchDTO,
+    opts: {
+      userId: string;
+      userRole: string | null;
+      workspaceId: string;
+    },
+  ) {
+    const query = searchParams.query.trim();
+    if (!query) {
+      return { items: [] };
+    }
+
+    const limit = searchParams.limit || 25;
+    const offset = searchParams.offset || 0;
+    // 有上限地多取候选结果，以复用现有页面权限过滤；
+    // 仅当受限页面经常导致结果不足时再改为 SQL 过滤。
+    const candidateLimit = Math.min((offset + limit) * 5, 500);
+
+    let attachmentsQuery = this.db
+      .selectFrom('attachments')
+      .innerJoin('pages', 'pages.id', 'attachments.pageId')
+      .innerJoin('spaces', 'spaces.id', 'pages.spaceId')
+      .select([
+        'attachments.id',
+        'attachments.fileName',
+        'attachments.pageId',
+        'attachments.creatorId',
+        'attachments.createdAt',
+        'attachments.updatedAt',
+        'spaces.id as spaceId',
+        'spaces.name as spaceName',
+        'spaces.slug as spaceSlug',
+        'spaces.logo as spaceIcon',
+        'pages.title as pageTitle',
+        'pages.slugId as pageSlugId',
+      ])
+      .where('attachments.workspaceId', '=', opts.workspaceId)
+      .where('attachments.deletedAt', 'is', null)
+      .where('attachments.type', '=', 'file')
+      .where('pages.workspaceId', '=', opts.workspaceId)
+      .where('pages.deletedAt', 'is', null)
+      .where('attachments.fileName', 'ilike', `%${query}%`)
+      .orderBy('attachments.fileName', 'asc')
+      .limit(candidateLimit);
+
+    if (searchParams.spaceId) {
+      attachmentsQuery = attachmentsQuery.where(
+        'pages.spaceId',
+        '=',
+        searchParams.spaceId,
+      );
+    } else if (opts.userRole !== UserRole.OWNER) {
+      attachmentsQuery = attachmentsQuery.where(
+        'pages.spaceId',
+        'in',
+        this.spaceMemberRepo.getUserSpaceIdsQuery(opts.userId),
+      );
+    }
+
+    const candidates = await attachmentsQuery.execute();
+    if (candidates.length === 0) {
+      return { items: [] };
+    }
+
+    let accessibleSet: Set<string> | undefined;
+    if (opts.userRole !== UserRole.OWNER) {
+      const pageIds = [...new Set(candidates.map((item) => item.pageId))];
+      const accessiblePageIds =
+        await this.pagePermissionRepo.filterAccessiblePageIds({
+          pageIds,
+          userId: opts.userId,
+          spaceId: searchParams.spaceId,
+        });
+      accessibleSet = new Set(accessiblePageIds);
+    }
+
+    const items = candidates
+      .filter((item) => !accessibleSet || accessibleSet.has(item.pageId))
+      .slice(offset, offset + limit)
+      .map((item) => ({
+        id: item.id,
+        fileName: item.fileName,
+        pageId: item.pageId,
+        creatorId: item.creatorId,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+        rank: 0,
+        highlight: '',
+        space: {
+          id: item.spaceId,
+          name: item.spaceName,
+          slug: item.spaceSlug,
+          icon: item.spaceIcon,
+        },
+        page: {
+          id: item.pageId,
+          title: item.pageTitle,
+          slugId: item.pageSlugId,
+        },
+      }));
+
+    return { items };
   }
 
   async searchSuggestions(
