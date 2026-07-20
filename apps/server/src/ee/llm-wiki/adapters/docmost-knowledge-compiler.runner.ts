@@ -9,9 +9,11 @@ import {
 import { KnowledgeSourceSnapshot } from '../types/source-snapshot.types';
 import { KnowledgeSourceRef } from '../types/knowledge.types';
 import { LlmWikiCompilerRunner } from './llm-wiki-file-compiler.runner';
+import { chunkKnowledgeSource } from '../chunking/knowledge-structural-chunker';
 
-const MAX_CHUNK_LENGTH = 1800;
-const MIN_SEMANTIC_OVERLAP = 4;
+const MIN_SEMANTIC_ANCHORS = 2;
+const MIN_SEMANTIC_SCORE = 6;
+const MAX_SEMANTIC_EDGES_PER_PAGE = 6;
 
 @Injectable()
 export class DocmostKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
@@ -19,18 +21,16 @@ export class DocmostKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
     const compilerRunId = buildCompilerRunId(input, this.now());
     const warnings: CompileDiagnostic[] = [];
     const artifacts: CompiledKnowledgeArtifact[] = [];
-    const sources = input.sources
-      .map((source) => ({ ...source, text: normalizeText(source.text) }))
-      .filter((source) => {
-        if (source.text) return true;
+    const sources = input.sources.filter((source) => {
+      if (source.text.trim()) return true;
 
-        warnings.push({
-          code: 'empty_source',
-          message: 'Source page has no text content and was skipped.',
-          sourcePageId: source.sourcePageId,
-        });
-        return false;
+      warnings.push({
+        code: 'empty_source',
+        message: 'Source page has no text content and was skipped.',
+        sourcePageId: source.sourcePageId,
       });
+      return false;
+    });
     const sourceTargets = sources.map((source, index) => ({
       source,
       index,
@@ -86,11 +86,50 @@ export class DocmostKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
   }): CompiledKnowledgeArtifact {
     const sourceRef = toSourceRef(input.source);
     const sourceClaim = buildSourceSummaryClaim(input.source);
-    const chunks = splitIntoChunks(input.source.text).map((text) => ({
-      text,
-      claimIndex: 0,
-      inputSourceRefs: [sourceRef],
+    const structuralParents = chunkKnowledgeSource({
+      pageTitle: input.source.title || 'Untitled',
+      text: input.source.text,
+      content: input.source.content,
+    });
+    const parentSections = structuralParents.map((parent) => ({
+      stableKey: parent.stableKey,
+      headingPath: parent.headingPath,
+      text: parent.text,
+      contentHash: parent.quoteHash,
+      startOffset: parent.startOffset,
+      endOffset: parent.endOffset,
+      inputSourceRefs: [
+        withSourceRange(
+          sourceRef,
+          parent.startOffset,
+          parent.endOffset,
+          parent.quoteHash,
+        ),
+      ],
     }));
+    const chunks = structuralParents.flatMap((parent) =>
+      parent.children.map((child) => ({
+        text: child.text,
+        embeddingText: child.embeddingText,
+        contentHash: child.quoteHash,
+        stableKey: child.stableKey,
+        parentStableKey: parent.stableKey,
+        chunkRole: 'child' as const,
+        retrievalChannel: 'evidence' as const,
+        headingPath: parent.headingPath,
+        startOffset: child.startOffset,
+        endOffset: child.endOffset,
+        claimIndex: 0,
+        inputSourceRefs: [
+          withSourceRange(
+            sourceRef,
+            child.startOffset,
+            child.endOffset,
+            child.quoteHash,
+          ),
+        ],
+      })),
+    );
     const links = buildSameSpaceLinks({
       source: input.source,
       sourceRef,
@@ -129,6 +168,7 @@ export class DocmostKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
           inputSourceRefs: [sourceRef],
         },
       ],
+      parentSections,
       chunks,
       links: links.length > 0 ? links : undefined,
       graphEdges: graphEdges.length > 0 ? graphEdges : undefined,
@@ -208,13 +248,23 @@ function buildSameSpaceLinks(input: {
   const haystack = normalizeForMatch(
     `${input.source.title}\n${input.source.text}`,
   );
+  const explicitTargetPageIds = new Set(
+    input.source.references
+      .filter(
+        (reference) =>
+          reference.kind === 'same_space_reference' &&
+          reference.targetSpaceId === input.source.spaceId,
+      )
+      .map((reference) => reference.targetPageId),
+  );
   const links: NonNullable<CompiledKnowledgeArtifact['links']> = [];
 
   for (const target of input.sourceTargets) {
     if (
       target.source.sourcePageId === input.source.sourcePageId ||
       !target.normalizedTitle ||
-      !haystack.includes(target.normalizedTitle)
+      (!explicitTargetPageIds.has(target.source.sourcePageId) &&
+        !haystack.includes(target.normalizedTitle))
     ) {
       continue;
     }
@@ -245,7 +295,11 @@ function buildSemanticGraphEdges(input: {
   );
   if (!sourceTarget) return [];
 
-  const graphEdges: NonNullable<CompiledKnowledgeArtifact['graphEdges']> = [];
+  const candidates: Array<{
+    target: SourceTarget;
+    anchors: string[];
+    score: number;
+  }> = [];
 
   for (const target of input.sourceTargets) {
     if (
@@ -257,20 +311,53 @@ function buildSemanticGraphEdges(input: {
 
     const sharedTerms = [...sourceTarget.terms]
       .filter((term) => target.terms.has(term))
-      .filter((term) => !isCommonTerm(term, input.termDocumentCounts));
+      .filter(
+        (term) =>
+          !isCommonTerm(
+            term,
+            input.termDocumentCounts,
+            input.sourceTargets.length,
+          ),
+      );
+    const anchors = maximalTerms(sharedTerms).sort(
+      (a, b) =>
+        semanticTermWeight(
+          b,
+          input.termDocumentCounts,
+          input.sourceTargets.length,
+        ) -
+        semanticTermWeight(
+          a,
+          input.termDocumentCounts,
+          input.sourceTargets.length,
+        ),
+    );
+    const score = anchors.reduce(
+      (total, term) =>
+        total +
+        semanticTermWeight(
+          term,
+          input.termDocumentCounts,
+          input.sourceTargets.length,
+        ),
+      0,
+    );
 
-    if (sharedTerms.length < MIN_SEMANTIC_OVERLAP) {
+    if (anchors.length < MIN_SEMANTIC_ANCHORS || score < MIN_SEMANTIC_SCORE) {
       continue;
     }
 
-    graphEdges.push({
-      toKnowledgePageId: target.artifactId,
-      relation: `相关：${sharedTerms.slice(0, 3).join('、')}`,
-      inputSourceRefs: [input.sourceRef, target.sourceRef],
-    });
+    candidates.push({ target, anchors, score });
   }
 
-  return graphEdges;
+  return candidates
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_SEMANTIC_EDGES_PER_PAGE)
+    .map(({ target, anchors }) => ({
+      toKnowledgePageId: target.artifactId,
+      relation: `共同主题：${anchors.slice(0, 3).join('、')}`,
+      inputSourceRefs: [input.sourceRef, target.sourceRef],
+    }));
 }
 
 function countTermDocuments(
@@ -285,9 +372,40 @@ function countTermDocuments(
   return counts;
 }
 
-function isCommonTerm(term: string, counts: Map<string, number>): boolean {
+function isCommonTerm(
+  term: string,
+  counts: Map<string, number>,
+  documentCount: number,
+): boolean {
   const count = counts.get(term) ?? 0;
-  return count >= 4;
+  return count >= 4 && count / Math.max(documentCount, 1) >= 0.65;
+}
+
+function maximalTerms(terms: string[]): string[] {
+  const uniqueTerms = [...new Set(terms)];
+  return uniqueTerms.filter(
+    (term) =>
+      !uniqueTerms.some(
+        (candidate) =>
+          candidate !== term &&
+          candidate.length > term.length &&
+          candidate.includes(term),
+      ),
+  );
+}
+
+function semanticTermWeight(
+  term: string,
+  counts: Map<string, number>,
+  documentCount: number,
+): number {
+  const documentFrequency = counts.get(term) ?? 1;
+  const inverseDocumentFrequency =
+    Math.log((documentCount + 1) / (documentFrequency + 1)) + 1;
+  const lengthWeight = /\p{Script=Han}/u.test(term)
+    ? Math.min(term.length, 4) / 2
+    : Math.min(term.length, 8) / 4;
+  return inverseDocumentFrequency * Math.max(lengthWeight, 1);
 }
 
 function extractSemanticTerms(text: string): Set<string> {
@@ -305,18 +423,62 @@ function extractSemanticTerms(text: string): Set<string> {
 
     const cjkRuns = token.match(/\p{Script=Han}+/gu) ?? [];
     for (const run of cjkRuns) {
-      for (let size = 2; size <= 4; size += 1) {
-        for (let index = 0; index <= run.length - size; index += 1) {
-          const term = run.slice(index, index + size);
-          if (!CJK_STOP_TERMS.has(term)) {
-            terms.add(term);
-          }
+      for (const term of segmentCjkTerms(run)) {
+        if (!CJK_STOP_TERMS.has(term)) {
+          terms.add(term);
         }
       }
     }
   }
 
   return terms;
+}
+
+type CjkSegment = { segment: string; isWordLike?: boolean };
+type CjkSegmenter = { segment: (text: string) => Iterable<CjkSegment> };
+
+const cjkSegmenter = createCjkSegmenter();
+
+function createCjkSegmenter(): CjkSegmenter | undefined {
+  const Segmenter = (
+    Intl as unknown as {
+      Segmenter?: new (
+        locale: string,
+        options: { granularity: 'word' },
+      ) => CjkSegmenter;
+    }
+  ).Segmenter;
+  return Segmenter ? new Segmenter('zh', { granularity: 'word' }) : undefined;
+}
+
+function segmentCjkTerms(run: string): string[] {
+  if (!cjkSegmenter) {
+    const fallback: string[] = [];
+    for (let size = 2; size <= 4; size += 1) {
+      for (let index = 0; index <= run.length - size; index += 1) {
+        fallback.push(run.slice(index, index + size));
+      }
+    }
+    return fallback;
+  }
+
+  const words = [...cjkSegmenter.segment(run)]
+    .filter((segment) => segment.isWordLike !== false)
+    .map((segment) => segment.segment.trim())
+    .filter(Boolean);
+  const terms = new Set<string>();
+
+  for (let start = 0; start < words.length; start += 1) {
+    let term = '';
+    for (let end = start; end < Math.min(words.length, start + 3); end += 1) {
+      term += words[end];
+      if (term.length >= 2 && term.length <= 8) {
+        terms.add(term);
+      }
+    }
+  }
+
+  return [...terms];
 }
 
 function artifactIdForSource(
@@ -372,56 +534,12 @@ const CJK_STOP_TERMS = new Set([
   '系统',
 ]);
 
-function normalizeText(text: string): string {
-  return text.replace(/\r\n/g, '\n').trim();
-}
-
 function buildSourceSummaryClaim(source: KnowledgeSourceSnapshot): string {
   return `${source.title || 'Untitled'}: ${firstLine(source.text)}`;
 }
 
 function firstLine(text: string): string {
   return text.split(/\n+/)[0]?.trim() ?? '';
-}
-
-function splitIntoChunks(text: string): string[] {
-  const paragraphs = text
-    .split(/\n{2,}/)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean);
-  const chunks: string[] = [];
-  let current = '';
-
-  for (const paragraph of paragraphs.length ? paragraphs : [text]) {
-    if (!current) {
-      current = paragraph;
-      continue;
-    }
-
-    const next = `${current}\n\n${paragraph}`;
-    if (next.length <= MAX_CHUNK_LENGTH) {
-      current = next;
-    } else {
-      chunks.push(current);
-      current = paragraph;
-    }
-  }
-
-  if (current) {
-    chunks.push(current);
-  }
-
-  return chunks.flatMap(splitOversizedChunk);
-}
-
-function splitOversizedChunk(text: string): string[] {
-  if (text.length <= MAX_CHUNK_LENGTH) return [text];
-
-  const chunks: string[] = [];
-  for (let index = 0; index < text.length; index += MAX_CHUNK_LENGTH) {
-    chunks.push(text.slice(index, index + MAX_CHUNK_LENGTH));
-  }
-  return chunks;
 }
 
 function buildCompilerRunId(input: CompileSpaceInput, now: Date): string {
@@ -435,6 +553,19 @@ function toSourceRef(source: KnowledgeSourceSnapshot): KnowledgeSourceRef {
     sourcePageId: source.sourcePageId,
     sourceVersion: source.sourceVersion,
     contentHash: source.contentHash,
+  };
+}
+
+function withSourceRange(
+  source: KnowledgeSourceRef,
+  startOffset: number,
+  endOffset: number,
+  quoteHash: string,
+): KnowledgeSourceRef {
+  return {
+    ...source,
+    sourceRange: { startOffset, endOffset },
+    quoteHash,
   };
 }
 

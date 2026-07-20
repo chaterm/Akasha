@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
@@ -6,8 +7,31 @@ import { embed, EmbeddingModel } from 'ai';
 import { createOllama } from 'ai-sdk-ollama';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
 
+export type KnowledgeEmbedding = {
+  vector: number[];
+  profile: string;
+  model: string;
+  dimensions: number;
+};
+
 export interface KnowledgeEmbeddingProvider {
-  embedQuery(query: string): Promise<number[] | null>;
+  embedQuery(query: string): Promise<KnowledgeEmbedding | null>;
+}
+
+export function buildKnowledgeEmbeddingProfile(input: {
+  driver: string;
+  baseUrl?: string | null;
+  model: string;
+  dimensions: number;
+}): string {
+  const identity = [
+    normalizeIdentityPart(input.driver),
+    normalizeBaseUrl(input.baseUrl),
+    input.model.trim(),
+    String(input.dimensions),
+  ].join('|');
+
+  return createHash('sha256').update(identity).digest('hex');
 }
 
 @Injectable()
@@ -16,10 +40,11 @@ export class ConfiguredKnowledgeEmbeddingProvider
 {
   constructor(private readonly environmentService: EnvironmentService) {}
 
-  async embedQuery(query: string): Promise<number[] | null> {
+  async embedQuery(query: string): Promise<KnowledgeEmbedding | null> {
     const driver = this.environmentService.getAiDriver();
+    const modelName = this.environmentService.getAiEmbeddingModel();
     const model = this.createEmbeddingModel(driver);
-    if (!driver || !model || query.trim().length === 0) {
+    if (!driver || !modelName || !model || query.trim().length === 0) {
       return null;
     }
 
@@ -28,7 +53,25 @@ export class ConfiguredKnowledgeEmbeddingProvider
         model,
         value: query,
       });
-      return result.embedding;
+      const vector = result.embedding;
+      if (
+        vector.length === 0 ||
+        vector.some((value) => !Number.isFinite(value))
+      ) {
+        return null;
+      }
+
+      return {
+        vector,
+        profile: buildKnowledgeEmbeddingProfile({
+          driver,
+          baseUrl: this.embeddingBaseUrl(driver),
+          model: modelName,
+          dimensions: vector.length,
+        }),
+        model: modelName,
+        dimensions: vector.length,
+      };
     } catch {
       return null;
     }
@@ -68,4 +111,24 @@ export class ConfiguredKnowledgeEmbeddingProvider
         return undefined;
     }
   }
+
+  private embeddingBaseUrl(driver: string): string | undefined {
+    switch (driver) {
+      case 'openai':
+      case 'openai-compatible':
+        return this.environmentService.getOpenAiApiUrl();
+      case 'ollama':
+        return this.environmentService.getOllamaApiUrl();
+      default:
+        return undefined;
+    }
+  }
+}
+
+function normalizeIdentityPart(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function normalizeBaseUrl(value?: string | null): string {
+  return (value ?? '').trim().replace(/\/+$/, '').toLowerCase();
 }

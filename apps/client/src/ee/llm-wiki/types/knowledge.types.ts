@@ -174,6 +174,10 @@ export interface KnowledgeGraphNode {
   title: string;
   spaceId: string;
   sourcePageId?: string;
+  kind: "page" | "section";
+  parentPageId?: string;
+  headingPath?: string[];
+  excerpt?: string;
   degree: number;
   artifactKind?: string;
   communityId?: string;
@@ -183,7 +187,7 @@ export interface KnowledgeGraphEdge {
   id: string;
   from: string;
   to: string;
-  type: "link" | "semantic";
+  type: "link" | "semantic" | "contains";
   label: string;
   weight: number;
   reasons: string[];

@@ -1,4 +1,14 @@
 import { KnowledgeCapsuleRepo } from './knowledge-capsule.repo';
+import {
+  CamelCasePlugin,
+  CompiledQuery,
+  DummyDriver,
+  Kysely,
+  PostgresAdapter,
+  PostgresIntrospector,
+  PostgresQueryCompiler,
+} from 'kysely';
+import { DbInterface } from '@akasha/db/types/db.interface';
 
 type QueryCall = {
   method: string;
@@ -139,6 +149,67 @@ function basePageSource(knowledgePageId: string, sourcePageId: string) {
 }
 
 describe('KnowledgeCapsuleRepo', () => {
+  it('applies complete-source authorization before dense candidate limits', async () => {
+    const { repo, queries } = createSqlRepo();
+
+    await repo.findDenseChunkCandidates({
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-1'],
+      eligibleSourcePageIds: ['source-visible'],
+      embedding: {
+        vector: [0.1, 0.2, 0.3],
+        profile: 'a'.repeat(64),
+        model: 'bge-m3',
+        dimensions: 3,
+      },
+      limit: 12,
+    });
+
+    const sql = queries[0].sql;
+    expect(sql).toContain('"embedding_profile" = $');
+    expect(sql).toContain('"embedding_dimensions" = $');
+    expect(sql).toContain('embedding::vector(3) <=>');
+    expect(sql).toContain('exists (select');
+    expect(sql).toContain('not exists (select');
+    expect(sql.indexOf('not exists')).toBeLessThan(sql.indexOf('limit'));
+  });
+
+  it('uses PostgreSQL FTS after complete-source authorization', async () => {
+    const { repo, queries } = createSqlRepo();
+
+    await repo.findLexicalChunkCandidates({
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-1'],
+      eligibleSourcePageIds: ['source-visible'],
+      query: 'Akasha wiki',
+      limit: 10,
+    });
+
+    const sql = queries[0].sql;
+    expect(sql).toContain("websearch_to_tsquery('simple'");
+    expect(sql).toContain('ts_rank_cd');
+    expect(sql).toContain('not exists (select');
+    expect(sql.indexOf('not exists')).toBeLessThan(sql.indexOf('limit'));
+  });
+
+  it('normalizes titles and authorizes every source before title limits', async () => {
+    const { repo, queries } = createSqlRepo();
+
+    await repo.findExactTitleChunkCandidates({
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-1'],
+      eligibleSourcePageIds: ['source-visible'],
+      query: '  Akasha   Wiki ',
+      limit: 8,
+    });
+
+    const sql = queries[0].sql;
+    expect(sql).toContain('regexp_replace');
+    expect(sql).toContain('lower');
+    expect(sql).toContain('not exists (select');
+    expect(sql.indexOf('not exists')).toBeLessThan(sql.indexOf('limit'));
+  });
+
   it('batch upserts pages before relationship rows so new pages can link each other', async () => {
     const query = new FakeKyselyQuery({
       knowledgePages: [{ id: 'knowledge-page-1' }, { id: 'knowledge-page-2' }],
@@ -921,3 +992,25 @@ describe('KnowledgeCapsuleRepo', () => {
     );
   });
 });
+
+function createSqlRepo(): {
+  repo: KnowledgeCapsuleRepo;
+  queries: CompiledQuery[];
+} {
+  const queries: CompiledQuery[] = [];
+  const dialect = {
+    createAdapter: () => new PostgresAdapter(),
+    createDriver: () => new DummyDriver(),
+    createIntrospector: (db: Kysely<unknown>) => new PostgresIntrospector(db),
+    createQueryCompiler: () => new PostgresQueryCompiler(),
+  };
+  const db = new Kysely<DbInterface>({
+    dialect,
+    plugins: [new CamelCasePlugin()],
+    log: (event) => {
+      if (event.level === 'query') queries.push(event.query);
+    },
+  });
+
+  return { repo: new KnowledgeCapsuleRepo(db), queries };
+}

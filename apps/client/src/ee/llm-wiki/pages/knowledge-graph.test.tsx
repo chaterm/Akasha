@@ -54,16 +54,38 @@ vi.mock("../services/knowledge-service", () => ({
         title: "Kafka",
         spaceId: "space-1",
         sourcePageId: "page-1",
+        kind: "page",
         degree: 1,
       },
       {
         id: "kp-2",
         title: "Chaterm",
         spaceId: "space-1",
+        kind: "page",
+        degree: 1,
+      },
+      {
+        id: "section:section-1",
+        title: "Retrieval",
+        spaceId: "space-1",
+        sourcePageId: "page-1",
+        kind: "section",
+        parentPageId: "kp-1",
+        headingPath: ["Architecture", "Retrieval"],
+        excerpt: "ACL filtering runs before candidate limits.",
         degree: 1,
       },
     ],
     edges: [
+      {
+        id: "link-1",
+        from: "kp-1",
+        to: "kp-2",
+        type: "link",
+        label: "references",
+        weight: 3,
+        reasons: ["direct-link"],
+      },
       {
         id: "edge-1",
         from: "kp-1",
@@ -72,6 +94,15 @@ vi.mock("../services/knowledge-service", () => ({
         label: "depends on",
         weight: 2,
         reasons: ["semantic-edge"],
+      },
+      {
+        id: "contains:section-1",
+        from: "kp-1",
+        to: "section:section-1",
+        type: "contains",
+        label: "包含章节",
+        weight: 1,
+        reasons: ["section-membership"],
       },
     ],
     insights: {
@@ -122,14 +153,14 @@ describe("KnowledgeGraphPage", () => {
 
     expect(await screen.findByText("Kafka")).toBeTruthy();
     expect(screen.getByText("Chaterm")).toBeTruthy();
-    expect(screen.getByText("depends on")).toBeTruthy();
+    expect(screen.getByText("references")).toBeTruthy();
     expect(
       screen.getByRole("link", { name: "Kafka" }).getAttribute("href"),
     ).toBe("/p/page-1");
     await waitFor(() => {
       expect(getKnowledgeGraph).toHaveBeenCalledWith({
         spaceId: "space-1",
-        limit: 300,
+        limit: 3000,
       });
     });
   });
@@ -165,7 +196,7 @@ describe("KnowledgeGraphPage", () => {
     await waitFor(() => {
       expect(getKnowledgeGraph).toHaveBeenCalledWith({
         spaceId: "space-current",
-        limit: 300,
+        limit: 3000,
       });
     });
   });
@@ -195,7 +226,7 @@ describe("KnowledgeGraphPage", () => {
 
   it("keeps the graph page within the AppShell viewport", () => {
     expect(graphCss).toMatch(
-      /\.pageContainer\s*{[^}]*height:\s*calc\(100dvh - var\(--app-shell-header-offset, 0px\) - var\(--app-shell-padding, 0px\) - var\(--app-shell-padding, 0px\)\);[^}]*}/s,
+      /\.pageContainer\s*{[^}]*height:\s*calc\([\s\S]*?100dvh[\s\S]*?--app-shell-header-offset[\s\S]*?--app-shell-padding[\s\S]*?\);[^}]*}/s,
     );
     expect(graphCss).toMatch(
       /\.pageContainer\s*{[^}]*padding-block:\s*var\(--mantine-spacing-md\);[^}]*}/s,
@@ -229,14 +260,56 @@ describe("KnowledgeGraphPage", () => {
     expect(screen.getByLabelText("Search")).toBeTruthy();
     expect(screen.getByLabelText("Links")).toBeTruthy();
     expect(screen.getByLabelText("Semantic")).toBeTruthy();
-    expect(screen.getByText("Communities: 1")).toBeTruthy();
-    expect(screen.getByText("Bridge: 2")).toBeTruthy();
+    expect(screen.getByLabelText("Isolated pages")).toBeTruthy();
+    expect((screen.getByLabelText("Links") as HTMLInputElement).checked).toBe(
+      true,
+    );
+    expect(
+      (screen.getByLabelText("Semantic") as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(
+      (screen.getByLabelText("Isolated pages") as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(screen.getByText("Pages: 2")).toBeTruthy();
+    expect(screen.getByText("Sections: 0")).toBeTruthy();
+    expect(screen.getByText("Overview")).toBeTruthy();
+    expect(screen.getByText("Wiki page")).toBeTruthy();
+    expect(screen.getByText("depends on")).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("Search"), {
       target: { value: "Kafka" },
     });
 
     expect(screen.getByText("Kafka")).toBeTruthy();
+  });
+
+  it("focuses a page neighborhood and reveals its structural sections", async () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <HelmetProvider>
+          <MantineProvider>
+            <BrowserRouter>
+              <KnowledgeGraphPage />
+            </BrowserRouter>
+          </MantineProvider>
+        </HelmetProvider>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText("Kafka");
+    expect(screen.queryByText("Retrieval")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Graph node: Kafka" }));
+    fireEvent.click(screen.getByRole("button", { name: "Focus neighborhood" }));
+
+    expect(await screen.findByText("Retrieval")).toBeTruthy();
+    expect(screen.getByText("Focused neighborhood")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Graph node: Retrieval" }),
+    );
+    expect(
+      screen.getByText("ACL filtering runs before candidate limits."),
+    ).toBeTruthy();
   });
 
   it("shows edge labels only when a related node is hovered", async () => {
@@ -253,7 +326,7 @@ describe("KnowledgeGraphPage", () => {
     );
 
     await screen.findByText("Kafka");
-    const edgeLabel = screen.getByText("depends on");
+    const edgeLabel = screen.getByText("references");
 
     expect(edgeLabel.getAttribute("data-visible")).toBe("false");
 

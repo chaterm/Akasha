@@ -357,6 +357,73 @@ describe('AiKnowledgeChatService', () => {
       false,
     );
   });
+
+  it('loads authorized current pages, mentions, and owned attachments as explicit context', async () => {
+    const answer = jest
+      .fn()
+      .mockResolvedValue('Use the current page. [[cite:page-current]]');
+    const service = createService({
+      answerProvider: { answer },
+      pageRepo: {
+        findManyByIds: jest.fn().mockResolvedValue([
+          {
+            id: 'page-current',
+            title: 'Current design',
+            slugId: 'current-design',
+            textContent: 'ACL must run before LIMIT.',
+          },
+        ]),
+      },
+      sourceAuthorization: {
+        filterReadableSources: jest.fn().mockResolvedValue(['page-current']),
+      },
+      attachmentRepo: {
+        findByIdWithContent: jest
+          .fn()
+          .mockResolvedValueOnce({
+            id: 'attachment-owned',
+            workspaceId: 'workspace-1',
+            creatorId: 'user-1',
+            fileName: 'notes.txt',
+            textContent: 'Temporary attachment evidence.',
+          })
+          .mockResolvedValueOnce({
+            id: 'attachment-foreign',
+            workspaceId: 'workspace-1',
+            creatorId: 'user-2',
+            fileName: 'hidden.txt',
+            textContent: 'Must not leak.',
+          }),
+      },
+    });
+
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: 'Explain this',
+      spaceIds: ['space-1'],
+      contextPageId: 'page-current',
+      mentionedPageIds: ['page-hidden'],
+      attachmentIds: ['attachment-owned', 'attachment-foreign'],
+    });
+
+    expect(answer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.stringContaining('ACL must run before LIMIT.'),
+      }),
+    );
+    const context = answer.mock.calls[0][0].context as string;
+    expect(context).toContain('Temporary attachment evidence.');
+    expect(context).not.toContain('Must not leak.');
+    expect(context).not.toContain('page-hidden');
+    expect(result.citations).toEqual([
+      {
+        sourcePageId: 'page-current',
+        title: 'Current design',
+        url: '/p/current-design',
+      },
+    ]);
+  });
 });
 
 function createService(
@@ -365,6 +432,9 @@ function createService(
     contextPack?: Partial<KnowledgeContextPackService>;
     citationResolver?: Partial<KnowledgeCitationResolverService>;
     answerProvider?: Partial<KnowledgeAnswerProvider>;
+    pageRepo?: Record<string, unknown>;
+    sourceAuthorization?: Record<string, unknown>;
+    attachmentRepo?: Record<string, unknown>;
   } = {},
 ) {
   return new AiKnowledgeChatService(
@@ -406,6 +476,9 @@ function createService(
       answer: jest.fn().mockResolvedValue(''),
       ...overrides.answerProvider,
     } as unknown as KnowledgeAnswerProvider,
+    overrides.pageRepo as never,
+    overrides.sourceAuthorization as never,
+    overrides.attachmentRepo as never,
   );
 }
 

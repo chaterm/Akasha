@@ -6,6 +6,7 @@ import {
   KnowledgeRetrievalSignal,
 } from '@akasha/db/repos/llm-wiki/knowledge-capsule.repo';
 import { KnowledgeChunk, KnowledgePage } from '@akasha/db/types/entity.types';
+import type { KnowledgeParentSection } from '@akasha/db/types/entity.types';
 import { UserRepo } from '@akasha/db/repos/user/user.repo';
 import { SpaceAuthorizationService } from '../../../core/space/services/space-authorization.service';
 import { ConfiguredKnowledgeEmbeddingProvider } from './knowledge-embedding-provider.service';
@@ -25,6 +26,7 @@ export type KnowledgeRetrievalResult = {
     page: KnowledgePage;
     sourcePageIds: string[];
     rankReasons: KnowledgeRetrievalRankReason[];
+    parentSection?: KnowledgeParentSection;
   }>;
   capsules: KnowledgePage[];
   completenessNotice: typeof KNOWLEDGE_COMPLETENESS_NOTICE;
@@ -38,9 +40,15 @@ export type KnowledgeRetrievalDiagnostics = {
   sidecarFallbackSourceCount: number;
   sidecarFilteredSourceCount: number;
   candidateChunkCount: number;
+  denseCandidateCount: number;
+  lexicalCandidateCount: number;
+  titleCandidateCount: number;
+  evidenceCandidateCount: number;
+  memoryCandidateCount: number;
   rankedCandidateCount: number;
   authorizedChunkCount: number;
   filteredChunkCount: number;
+  fallbackReason: 'embedding_unavailable' | 'sidecar_unavailable' | null;
 };
 
 @Injectable()
@@ -80,15 +88,11 @@ export class KnowledgeRetrievalService {
 
     const queryEmbedding = await this.embeddingProvider.embedQuery(input.query);
     const queryEmbeddingAvailable = Boolean(queryEmbedding);
-    const signals = retrievalSignals(queryEmbedding);
     const sourceCandidateLimit = candidateLimit * 10;
     const candidateSourcePageIds =
-      await this.capsuleRepo.findCandidateDependencySourcePageIds({
+      await this.capsuleRepo.findDependencySourcePageIdsForSpaces({
         workspaceId: input.workspaceId,
         spaceIds: readableSpaceIds,
-        query: input.query,
-        signals,
-        sourceCandidateLimit,
       });
     if (candidateSourcePageIds.length === 0) {
       return emptyResult({
@@ -141,20 +145,59 @@ export class KnowledgeRetrievalService {
       });
     }
 
-    const chunkCandidates = await this.capsuleRepo.findSidecarEligibleChunks({
+    const candidateScope = {
       workspaceId: input.workspaceId,
       spaceIds: readableSpaceIds,
-      query: input.query,
       eligibleSourcePageIds: retrievalSourcePageIds,
-      signals,
       limit: sourceCandidateLimit,
-    });
-    const rankedCandidates = this.ranker.rankHybridCandidates({
-      query: input.query,
-      queryEmbedding: queryEmbedding ?? undefined,
-      candidates: chunkCandidates,
+    };
+    const recallChannel = (retrievalChannel: 'evidence' | 'memory') =>
+      Promise.all([
+        queryEmbedding
+          ? this.capsuleRepo.findDenseChunkCandidates({
+              ...candidateScope,
+              retrievalChannel,
+              embedding: queryEmbedding,
+            })
+          : Promise.resolve([]),
+        this.capsuleRepo.findLexicalChunkCandidates({
+          ...candidateScope,
+          retrievalChannel,
+          query: input.query,
+        }),
+        this.capsuleRepo.findExactTitleChunkCandidates({
+          ...candidateScope,
+          retrievalChannel,
+          query: input.query,
+        }),
+      ]);
+    const [evidenceRecall, memoryRecall] = await Promise.all([
+      recallChannel('evidence'),
+      recallChannel('memory'),
+    ]);
+    const [evidenceDense, evidenceLexical, evidenceTitle] = evidenceRecall;
+    const [memoryDense, memoryLexical, memoryTitle] = memoryRecall;
+    const denseCandidates = [...evidenceDense, ...memoryDense];
+    const lexicalCandidates = [...evidenceLexical, ...memoryLexical];
+    const titleCandidates = [...evidenceTitle, ...memoryTitle];
+    const rankedCandidates = this.ranker.fuseRecallLists({
+      recallLists: [
+        { signal: 'semantic', candidates: evidenceDense },
+        { signal: 'lexical', candidates: evidenceLexical },
+        { signal: 'exact-title', candidates: evidenceTitle },
+        { signal: 'semantic', candidates: memoryDense },
+        { signal: 'lexical', candidates: memoryLexical },
+        { signal: 'exact-title', candidates: memoryTitle },
+      ],
       limit: candidateLimit,
     });
+    const candidateChunkCount = new Set(
+      [...denseCandidates, ...lexicalCandidates, ...titleCandidates].map(
+        (candidate) => candidate.chunk.id,
+      ),
+    ).size;
+    const evidenceCandidateCount = uniqueCandidateCount(evidenceRecall.flat());
+    const memoryCandidateCount = uniqueCandidateCount(memoryRecall.flat());
     if (rankedCandidates.length === 0) {
       return emptyResult({
         queryEmbeddingAvailable,
@@ -165,7 +208,13 @@ export class KnowledgeRetrievalService {
           candidateSourcePageIds.length -
           eligibleSourcePageIds.length -
           fallbackSourcePageIds.length,
-        candidateChunkCount: chunkCandidates.length,
+        candidateChunkCount,
+        denseCandidateCount: uniqueCandidateCount(denseCandidates),
+        lexicalCandidateCount: uniqueCandidateCount(lexicalCandidates),
+        titleCandidateCount: uniqueCandidateCount(titleCandidates),
+        evidenceCandidateCount,
+        memoryCandidateCount,
+        fallbackReason: queryEmbedding ? null : 'embedding_unavailable',
         rankedCandidateCount: 0,
       });
     }
@@ -203,6 +252,9 @@ export class KnowledgeRetrievalService {
           page: candidate.page,
           sourcePageIds,
           rankReasons: candidate.rankReasons,
+          ...(candidate.parentSection
+            ? { parentSection: candidate.parentSection }
+            : {}),
         });
       }
     }
@@ -221,10 +273,21 @@ export class KnowledgeRetrievalService {
           candidateSourcePageIds.length -
           eligibleSourcePageIds.length -
           fallbackSourcePageIds.length,
-        candidateChunkCount: chunkCandidates.length,
+        candidateChunkCount,
+        denseCandidateCount: uniqueCandidateCount(denseCandidates),
+        lexicalCandidateCount: uniqueCandidateCount(lexicalCandidates),
+        titleCandidateCount: uniqueCandidateCount(titleCandidates),
+        evidenceCandidateCount,
+        memoryCandidateCount,
         rankedCandidateCount: rankedCandidates.length,
         authorizedChunkCount: authorizedChunks.length,
         filteredChunkCount: rankedCandidates.length - authorizedChunks.length,
+        fallbackReason:
+          mode === 'high_completeness_fallback'
+            ? 'sidecar_unavailable'
+            : queryEmbedding
+              ? null
+              : 'embedding_unavailable',
       },
     };
   }
@@ -245,9 +308,15 @@ function emptyResult(
       sidecarFallbackSourceCount: 0,
       sidecarFilteredSourceCount: 0,
       candidateChunkCount: 0,
+      denseCandidateCount: 0,
+      lexicalCandidateCount: 0,
+      titleCandidateCount: 0,
+      evidenceCandidateCount: 0,
+      memoryCandidateCount: 0,
       rankedCandidateCount: 0,
       authorizedChunkCount: 0,
       filteredChunkCount: 0,
+      fallbackReason: null,
       ...diagnostics,
     },
   };
@@ -257,9 +326,8 @@ function unique(values: string[]): string[] {
   return [...new Set(values)];
 }
 
-function retrievalSignals(
-  queryEmbedding: number[] | null,
-): KnowledgeRetrievalSignal[] {
-  if (!queryEmbedding) return ['lexical', 'exact-title'];
-  return ['semantic', 'lexical', 'exact-title'];
+function uniqueCandidateCount(
+  candidates: Array<{ chunk: { id: string } }>,
+): number {
+  return new Set(candidates.map((candidate) => candidate.chunk.id)).size;
 }

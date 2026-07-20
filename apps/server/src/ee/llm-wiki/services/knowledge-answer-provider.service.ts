@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { generateText, LanguageModel } from 'ai';
+import { generateText, LanguageModel, streamText } from 'ai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
@@ -14,6 +14,7 @@ export type KnowledgeAnswerProviderInput = {
 
 export interface KnowledgeAnswerProvider {
   answer(input: KnowledgeAnswerProviderInput): Promise<string>;
+  stream?(input: KnowledgeAnswerProviderInput): AsyncIterable<string>;
 }
 
 @Injectable()
@@ -38,6 +39,22 @@ export class ConfiguredKnowledgeAnswerProvider implements KnowledgeAnswerProvide
     });
 
     return result.text;
+  }
+
+  async *stream(input: KnowledgeAnswerProviderInput): AsyncIterable<string> {
+    const driver = this.environmentService.getAiDriver();
+    if (!driver) return;
+    const model = this.createModel(driver);
+    if (!model) return;
+
+    const result = streamText({
+      model,
+      system: buildSystemPrompt(),
+      prompt: buildPrompt(input),
+    });
+    for await (const token of result.textStream) {
+      yield token;
+    }
   }
 
   private createModel(driver: string): LanguageModel | undefined {
@@ -98,7 +115,7 @@ function buildSystemPrompt(): string {
     'Do not invent citation IDs.',
     'Do not cite general knowledge, calculations, or answers that do not rely on provided workspace context.',
     'Do not reveal or mention hidden, denied, filtered, or unavailable documents.',
-    'Reply in the user\'s language unless they ask otherwise.',
+    "Reply in the user's language unless they ask otherwise.",
     'Be direct, practical, and concise.',
   ].join(' ');
 }

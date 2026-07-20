@@ -43,10 +43,18 @@ describe('KnowledgeImportService', () => {
       }),
     };
     const embeddingProvider = {
-      embedQuery: jest.fn().mockResolvedValue([0.12, 0.34, 0.56]),
+      embedQuery: jest.fn().mockResolvedValue({
+        vector: [0.12, 0.34, 0.56],
+        profile: 'a'.repeat(64),
+        model: 'bge-m3',
+        dimensions: 3,
+      }),
     };
     const quarantineRepo = {
       recordQuarantinedArtifacts: jest.fn().mockResolvedValue(undefined),
+    };
+    const vectorIndex = {
+      ensureProfileIndex: jest.fn().mockResolvedValue('created'),
     };
     const service = new KnowledgeImportService(
       sourceRepo as unknown as KnowledgeSourceRepo,
@@ -55,6 +63,7 @@ describe('KnowledgeImportService', () => {
       embeddingProvider as never,
       quarantineRepo as never,
       createTransactionDb() as never,
+      vectorIndex as never,
     );
 
     await service.importCompileResult({
@@ -71,13 +80,21 @@ describe('KnowledgeImportService', () => {
           chunks: [
             expect.objectContaining({
               text: 'Chaterm Flutter uses layered modules.',
-              embedding: [0.12, 0.34, 0.56],
+              embedding: '[0.12,0.34,0.56]',
+              embeddingLegacy: [0.12, 0.34, 0.56],
+              embeddingProfile: 'a'.repeat(64),
+              embeddingModel: 'bge-m3',
+              embeddingDimensions: 3,
             }),
           ],
         }),
       ],
       expect.anything(),
     );
+    expect(vectorIndex.ensureProfileIndex).toHaveBeenCalledWith({
+      profile: 'a'.repeat(64),
+      dimensions: 3,
+    });
   });
 
   it('imports only validator-accepted artifacts and dependencies', async () => {
@@ -215,6 +232,8 @@ describe('KnowledgeImportService', () => {
               attachmentId: null,
             },
           ],
+          parentSections: [],
+          parentSectionSources: [],
           claims: [
             expect.objectContaining({
               workspaceId: 'workspace-1',

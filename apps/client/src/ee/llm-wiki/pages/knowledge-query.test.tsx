@@ -32,6 +32,11 @@ vi.mock("@/features/space/queries/space-query", () => ({
           name: "AIM",
           slug: "aim",
         },
+        {
+          id: "space-2",
+          name: "General",
+          slug: "general",
+        },
       ],
     },
     isLoading: false,
@@ -126,6 +131,18 @@ describe("KnowledgeQueryPage", () => {
     expect(vi.mocked(queryKnowledge).mock.calls[0]?.[0]).toEqual({
       query: "chaterm 的软著生效时间是",
       spaceIds: ["space-1"],
+    });
+
+    fireEvent.click(
+      document
+        .querySelector(".mantine-Pill-label")!
+        .parentElement!.querySelector("button")!,
+    );
+    await waitFor(() => {
+      expect(
+        (screen.getByRole("button", { name: "Ask" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true);
     });
   });
 });

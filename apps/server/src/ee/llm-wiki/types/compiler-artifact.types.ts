@@ -37,6 +37,15 @@ export interface CompiledKnowledgeArtifact extends KnowledgeScope {
   compilerRunId?: string;
   compileTaskId?: string;
   inputSourceRefs?: KnowledgeSourceRef[];
+  parentSections?: Array<{
+    stableKey: string;
+    headingPath: string[];
+    text: string;
+    contentHash?: string;
+    startOffset?: number | null;
+    endOffset?: number | null;
+    inputSourceRefs?: KnowledgeSourceRef[];
+  }>;
   claims?: Array<{
     text: string;
     confidence?: number | null;
@@ -48,6 +57,14 @@ export interface CompiledKnowledgeArtifact extends KnowledgeScope {
     embedding?: JsonValue;
     contentHash?: string;
     inputSourceRefs?: KnowledgeSourceRef[];
+    stableKey?: string;
+    parentStableKey?: string | null;
+    chunkRole?: 'child' | 'standalone';
+    retrievalChannel?: 'evidence' | 'memory';
+    headingPath?: string[];
+    startOffset?: number | null;
+    endOffset?: number | null;
+    embeddingText?: string;
   }>;
   links?: Array<{
     linkType: string;

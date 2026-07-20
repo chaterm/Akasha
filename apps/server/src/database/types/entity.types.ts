@@ -40,6 +40,8 @@ import {
   KnowledgeLinkSources,
   KnowledgePages,
   KnowledgePageSources,
+  KnowledgeParentSections,
+  KnowledgeParentSectionSources,
   KnowledgeQueryAudit,
   KnowledgeReviewApplications,
   KnowledgeReviewSnapshots,
@@ -56,6 +58,7 @@ import {
   Watchers,
   Audit as _Audit,
   Templates,
+  JsonValue,
 } from './db';
 import { PageEmbeddings } from '@akasha/db/types/embeddings.types';
 
@@ -82,12 +85,21 @@ export type UpdatableKnowledgeSourceChunk = Updateable<
   Omit<KnowledgeSourceChunks, 'id'>
 >;
 
-export type KnowledgePage = Selectable<KnowledgePages>;
+export type KnowledgePage = Omit<Selectable<KnowledgePages>, 'generationMode'> &
+  Partial<Pick<Selectable<KnowledgePages>, 'generationMode'>>;
 export type InsertableKnowledgePage = Insertable<KnowledgePages>;
 export type UpdatableKnowledgePage = Updateable<Omit<KnowledgePages, 'id'>>;
 
 export type KnowledgePageSource = Selectable<KnowledgePageSources>;
 export type InsertableKnowledgePageSource = Insertable<KnowledgePageSources>;
+
+export type KnowledgeParentSection = Selectable<KnowledgeParentSections>;
+export type InsertableKnowledgeParentSection =
+  Insertable<KnowledgeParentSections>;
+export type KnowledgeParentSectionSource =
+  Selectable<KnowledgeParentSectionSources>;
+export type InsertableKnowledgeParentSectionSource =
+  Insertable<KnowledgeParentSectionSources>;
 
 export type KnowledgeClaim = Selectable<KnowledgeClaims>;
 export type InsertableKnowledgeClaim = Insertable<KnowledgeClaims>;
@@ -96,7 +108,26 @@ export type UpdatableKnowledgeClaim = Updateable<Omit<KnowledgeClaims, 'id'>>;
 export type KnowledgeClaimSource = Selectable<KnowledgeClaimSources>;
 export type InsertableKnowledgeClaimSource = Insertable<KnowledgeClaimSources>;
 
-export type KnowledgeChunk = Selectable<KnowledgeChunks>;
+type SelectedKnowledgeChunk = Selectable<KnowledgeChunks>;
+type KnowledgeChunkMigrationColumn =
+  | 'chunkRole'
+  | 'embeddingDimensions'
+  | 'embeddingLegacy'
+  | 'embeddingModel'
+  | 'embeddingProfile'
+  | 'endOffset'
+  | 'headingPath'
+  | 'parentSectionId'
+  | 'retrievalChannel'
+  | 'searchTsv'
+  | 'stableKey'
+  | 'startOffset';
+export type KnowledgeChunk = Omit<
+  SelectedKnowledgeChunk,
+  KnowledgeChunkMigrationColumn | 'embedding'
+> & {
+  embedding: SelectedKnowledgeChunk['embedding'] | JsonValue;
+} & Partial<Pick<SelectedKnowledgeChunk, KnowledgeChunkMigrationColumn>>;
 export type InsertableKnowledgeChunk = Insertable<KnowledgeChunks>;
 export type UpdatableKnowledgeChunk = Updateable<Omit<KnowledgeChunks, 'id'>>;
 

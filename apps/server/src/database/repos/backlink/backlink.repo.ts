@@ -110,6 +110,37 @@ export class BacklinkRepo {
     return rows.map((r) => r.relatedId);
   }
 
+  async findOutgoingPageReferences(input: {
+    workspaceId: string;
+    sourcePageIds: string[];
+  }): Promise<
+    Array<{
+      sourcePageId: string;
+      targetPageId: string;
+      targetSpaceId: string;
+    }>
+  > {
+    if (input.sourcePageIds.length === 0) return [];
+
+    return this.db
+      .selectFrom('backlinks')
+      .innerJoin(
+        'pages as targetPage',
+        'targetPage.id',
+        'backlinks.targetPageId',
+      )
+      .select([
+        'backlinks.sourcePageId',
+        'backlinks.targetPageId',
+        'targetPage.spaceId as targetSpaceId',
+      ])
+      .where('backlinks.workspaceId', '=', input.workspaceId)
+      .where('backlinks.sourcePageId', 'in', input.sourcePageIds)
+      .where('targetPage.workspaceId', '=', input.workspaceId)
+      .where('targetPage.deletedAt', 'is', null)
+      .execute();
+  }
+
   async findPagesByIdsPaginated(
     pageIds: string[],
     pagination: PaginationOptions,

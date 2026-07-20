@@ -1,6 +1,9 @@
 .pageContainer {
   max-width: none;
-  height: calc(100dvh - var(--app-shell-header-offset, 0px) - var(--app-shell-padding, 0px) - var(--app-shell-padding, 0px));
+  height: calc(
+    100dvh - var(--app-shell-header-offset, 0px) -
+      var(--app-shell-padding, 0px) - var(--app-shell-padding, 0px)
+  );
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -24,7 +27,13 @@
   overflow: hidden;
   border: 1px solid var(--mantine-color-default-border);
   border-radius: 8px;
-  background: light-dark(var(--mantine-color-gray-0), #202020);
+  background:
+    radial-gradient(
+      circle at center,
+      light-dark(rgba(34, 139, 230, 0.055), rgba(51, 154, 240, 0.06)),
+      transparent 62%
+    ),
+    light-dark(var(--mantine-color-gray-0), #202020);
 }
 
 .graphControls {
@@ -75,6 +84,29 @@
     stroke-width 120ms ease;
 }
 
+.sectionNode {
+  fill: light-dark(var(--mantine-color-violet-0), rgba(112, 72, 232, 0.2));
+  stroke: light-dark(
+    var(--mantine-color-violet-5),
+    var(--mantine-color-violet-4)
+  );
+  stroke-width: 1.5;
+  transition:
+    filter 120ms ease,
+    stroke-width 120ms ease;
+}
+
+.nodeSelected {
+  stroke: light-dark(
+    var(--mantine-color-orange-6),
+    var(--mantine-color-orange-4)
+  );
+  stroke-width: 3;
+  filter: drop-shadow(
+    0 0 7px light-dark(rgba(245, 159, 0, 0.35), rgba(255, 192, 72, 0.42))
+  );
+}
+
 .nodeLabel {
   fill: light-dark(var(--mantine-color-gray-8), var(--mantine-color-gray-3));
   font-size: 15px;
@@ -107,8 +139,29 @@
     stroke-width 120ms ease;
 }
 
+.containsEdge {
+  stroke: light-dark(
+    var(--mantine-color-violet-4),
+    var(--mantine-color-violet-6)
+  );
+  stroke-width: 1.2;
+  stroke-dasharray: 5 5;
+  opacity: 0.68;
+  transition:
+    opacity 120ms ease,
+    stroke-width 120ms ease;
+}
+
 .edgeInactive {
-  opacity: 0.42;
+  opacity: 0.28;
+}
+
+.semanticEdge.edgeInactive {
+  opacity: 0.12;
+}
+
+.containsEdge.edgeInactive {
+  opacity: 0.38;
 }
 
 .edgeActive {
@@ -145,4 +198,91 @@
   gap: var(--mantine-spacing-xs);
   color: var(--mantine-color-dimmed);
   text-align: center;
+}
+
+.graphLegend {
+  position: absolute;
+  left: var(--mantine-spacing-sm);
+  bottom: var(--mantine-spacing-sm);
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  max-width: calc(100% - 24px);
+  padding: 7px 10px;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: 8px;
+  background: light-dark(rgba(255, 255, 255, 0.88), rgba(32, 32, 32, 0.88));
+  color: var(--mantine-color-dimmed);
+  font-size: 11px;
+  backdrop-filter: blur(8px);
+}
+
+.graphLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.graphLegend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+}
+
+.pageSwatch {
+  border-radius: 50%;
+  background: var(--mantine-color-blue-6);
+}
+
+.sectionSwatch {
+  border: 1px solid var(--mantine-color-violet-5);
+  border-radius: 3px;
+  background: var(--mantine-color-violet-1);
+}
+
+.linkSwatch,
+.semanticSwatch {
+  height: 2px !important;
+}
+
+.linkSwatch {
+  background: var(--mantine-color-gray-5);
+}
+
+.semanticSwatch {
+  background: var(--mantine-color-green-6);
+}
+
+.nodeDetails {
+  position: absolute;
+  top: 54px;
+  right: var(--mantine-spacing-sm);
+  z-index: 2;
+  width: min(310px, calc(100% - 24px));
+  max-height: calc(100% - 112px);
+  overflow: auto;
+  padding: var(--mantine-spacing-md);
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: 12px;
+  background: light-dark(rgba(255, 255, 255, 0.96), rgba(30, 30, 30, 0.96));
+  box-shadow: var(--mantine-shadow-md);
+  backdrop-filter: blur(12px);
+}
+
+.nodeExcerpt {
+  line-height: 1.55;
+}
+
+@media (max-width: 48em) {
+  .graphLegend {
+    display: none;
+  }
+
+  .nodeDetails {
+    top: auto;
+    bottom: var(--mantine-spacing-sm);
+    max-height: 48%;
+  }
 }

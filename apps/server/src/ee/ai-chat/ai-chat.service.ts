@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { AiChatRepo } from '@akasha/db/repos/ai-chat/ai-chat.repo';
 import { SpaceMemberRepo } from '@akasha/db/repos/space/space-member.repo';
@@ -10,6 +11,12 @@ import { AiChat, User, Workspace } from '@akasha/db/types/entity.types';
 import { PaginationOptions } from '@akasha/db/pagination/pagination-options';
 import { UserRole } from '../../common/helpers/types/permission';
 import { AiKnowledgeChatService } from '../llm-wiki/services/ai-knowledge-chat.service';
+import { AttachmentRepo } from '@akasha/db/repos/attachment/attachment.repo';
+
+export type AiChatStreamEvent =
+  | { type: 'chat_created'; chatId: string }
+  | { type: 'progress'; stage: 'permissions' | 'retrieval' | 'generation' }
+  | { type: 'content'; text: string };
 
 export type SendAiChatMessageInput = {
   workspace: Workspace;
@@ -19,12 +26,15 @@ export type SendAiChatMessageInput = {
   mentionedPageIds?: string[];
   contextPageId?: string;
   attachmentIds?: string[];
+  onEvent?: (event: AiChatStreamEvent) => void;
 };
 
 export type SendAiChatMessageResult = {
   chatId: string;
   assistantMessageId: string;
   answer: string;
+  citations?: unknown[];
+  retrievalDiagnostics?: unknown;
 };
 
 @Injectable()
@@ -34,6 +44,7 @@ export class AiChatService {
     private readonly spaceRepo: SpaceRepo,
     private readonly spaceMemberRepo: SpaceMemberRepo,
     private readonly knowledgeChat: AiKnowledgeChatService,
+    @Optional() private readonly attachmentRepo?: AttachmentRepo,
   ) {}
 
   async createChat(input: { workspaceId: string; userId: string }) {
@@ -112,6 +123,16 @@ export class AiChatService {
           creatorId: input.user.id,
           title: buildTitle(content),
         });
+    input.onEvent?.({ type: 'chat_created', chatId: chat.id });
+
+    if (input.attachmentIds?.length && this.attachmentRepo) {
+      await this.attachmentRepo.claimAttachmentsForChat(
+        input.attachmentIds,
+        chat.id,
+        input.user.id,
+        input.workspace.id,
+      );
+    }
 
     const previousMessages = input.chatId
       ? await this.aiChatRepo.findMessages({
@@ -131,11 +152,13 @@ export class AiChatService {
       metadata: buildUserMetadata(input) as never,
     });
 
+    input.onEvent?.({ type: 'progress', stage: 'permissions' });
     const spaceIds = await this.getDefaultReadableSpaceIds({
       workspaceId: input.workspace.id,
       user: input.user,
     });
 
+    input.onEvent?.({ type: 'progress', stage: 'retrieval' });
     const answer = await this.knowledgeChat.chat({
       workspaceId: input.workspace.id,
       userId: input.user.id,
@@ -146,6 +169,11 @@ export class AiChatService {
         .slice(-8)
         .map((message) => `${message.role}: ${message.content}`),
       workspace: input.workspace,
+      mentionedPageIds: input.mentionedPageIds,
+      contextPageId: input.contextPageId,
+      attachmentIds: input.attachmentIds,
+      onToken: (text) => input.onEvent?.({ type: 'content', text }),
+      onStage: (stage) => input.onEvent?.({ type: 'progress', stage }),
     });
 
     const assistantMessage = await this.aiChatRepo.addMessage({
@@ -165,6 +193,8 @@ export class AiChatService {
       chatId: chat.id,
       assistantMessageId: assistantMessage.id,
       answer: answer.answer,
+      citations: answer.citations,
+      retrievalDiagnostics: answer.retrievalDiagnostics,
     };
   }
 
@@ -186,9 +216,12 @@ export class AiChatService {
     user: User;
   }): Promise<string[]> {
     if (input.user.role === UserRole.OWNER) {
-      const spaces = await this.spaceRepo.getSpacesInWorkspace(input.workspaceId, {
-        limit: 100,
-      } as PaginationOptions);
+      const spaces = await this.spaceRepo.getSpacesInWorkspace(
+        input.workspaceId,
+        {
+          limit: 100,
+        } as PaginationOptions,
+      );
       return spaces.items.map((space) => space.id);
     }
 

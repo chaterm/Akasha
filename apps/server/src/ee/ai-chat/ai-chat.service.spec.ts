@@ -11,7 +11,9 @@ describe('AiChatService', () => {
       addMessage: jest
         .fn()
         .mockResolvedValueOnce(message('message-user-1', 'user', 'hello'))
-        .mockResolvedValueOnce(message('message-assistant-1', 'assistant', 'answer')),
+        .mockResolvedValueOnce(
+          message('message-assistant-1', 'assistant', 'answer'),
+        ),
       findMessages: jest.fn(),
     };
     const spaceRepo = {
@@ -25,7 +27,9 @@ describe('AiChatService', () => {
     const knowledgeChat = {
       chat: jest.fn().mockResolvedValue({
         answer: 'answer',
-        citations: [{ sourcePageId: 'page-1', title: 'Page', url: '/p/page-1' }],
+        citations: [
+          { sourcePageId: 'page-1', title: 'Page', url: '/p/page-1' },
+        ],
         completenessNotice: 'notice',
       }),
     };
@@ -46,6 +50,8 @@ describe('AiChatService', () => {
       chatId: 'chat-1',
       assistantMessageId: 'message-assistant-1',
       answer: 'answer',
+      citations: [{ sourcePageId: 'page-1', title: 'Page', url: '/p/page-1' }],
+      retrievalDiagnostics: undefined,
     });
 
     expect(repo.createChat).toHaveBeenCalledWith({
@@ -60,6 +66,11 @@ describe('AiChatService', () => {
       spaceIds: ['space-1', 'space-2'],
       chatContext: [],
       workspace: workspace(),
+      mentionedPageIds: undefined,
+      contextPageId: undefined,
+      attachmentIds: undefined,
+      onToken: expect.any(Function),
+      onStage: expect.any(Function),
     });
     expect(repo.addMessage).toHaveBeenNthCalledWith(1, {
       workspaceId: 'workspace-1',
@@ -78,7 +89,9 @@ describe('AiChatService', () => {
       content: 'answer',
       toolCalls: null,
       metadata: {
-        citations: [{ sourcePageId: 'page-1', title: 'Page', url: '/p/page-1' }],
+        citations: [
+          { sourcePageId: 'page-1', title: 'Page', url: '/p/page-1' },
+        ],
         completenessNotice: 'notice',
       },
     });

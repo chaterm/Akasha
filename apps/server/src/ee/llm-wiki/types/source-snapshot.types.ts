@@ -6,6 +6,7 @@ export interface KnowledgeSourceSnapshot {
   contentHash: string;
   title: string;
   text: string;
+  content?: unknown;
   references: KnowledgeSourceReference[];
 }
 

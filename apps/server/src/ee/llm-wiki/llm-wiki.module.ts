@@ -27,6 +27,7 @@ import { NoopAuditModule } from '../../integrations/audit/audit.module';
 import { LlmWikiFileCompilerAdapter } from './adapters/llm-wiki-file-compiler.adapter';
 import { DocmostKnowledgeCompilerRunner } from './adapters/docmost-knowledge-compiler.runner';
 import { ReviewModule } from './review/review.module';
+import { KnowledgeVectorIndexService } from './services/knowledge-vector-index.service';
 
 @Module({
   imports: [NoopAuditModule, ReviewModule],
@@ -48,6 +49,7 @@ import { ReviewModule } from './review/review.module';
     KnowledgeGraphService,
     AiKnowledgeChatService,
     ConfiguredKnowledgeEmbeddingProvider,
+    KnowledgeVectorIndexService,
     ConfiguredKnowledgeAnswerProvider,
     {
       provide: KNOWLEDGE_ANSWER_PROVIDER,

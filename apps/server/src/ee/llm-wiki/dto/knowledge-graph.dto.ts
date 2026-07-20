@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { MAX_GRAPH_NODE_LIMIT } from '../knowledge-graph.constants';
 
 export class KnowledgeGraphDto {
   @IsString()
@@ -9,6 +10,6 @@ export class KnowledgeGraphDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(500)
+  @Max(MAX_GRAPH_NODE_LIMIT)
   limit?: number;
 }

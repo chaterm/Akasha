@@ -14,6 +14,7 @@ import {
   Button,
   Checkbox,
   Container,
+  Divider,
   Group,
   Loader,
   Select,
@@ -29,11 +30,14 @@ import {
   IconAlertTriangle,
   IconArrowsMaximize,
   IconArrowLeft,
+  IconFileText,
+  IconFocus2,
   IconGitFork,
   IconRefresh,
   IconSearch,
   IconZoomIn,
   IconZoomOut,
+  IconX,
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router-dom";
@@ -50,7 +54,8 @@ import type {
 } from "../types/knowledge.types";
 import classes from "../styles/knowledge-graph.module.css";
 
-const GRAPH_NODE_LIMIT = 300;
+const GRAPH_NODE_LIMIT = 3_000;
+const OVERVIEW_NODE_LIMIT = 80;
 const GRAPH_WIDTH = 1100;
 const GRAPH_HEIGHT = 680;
 const MIN_ZOOM = 0.35;
@@ -92,6 +97,7 @@ type SimulatedNode = GraphPoint & {
   vx: number;
   vy: number;
   degree: number;
+  kind: KnowledgeGraphNode["kind"];
 };
 
 export default function KnowledgeGraphPage() {
@@ -103,6 +109,9 @@ export default function KnowledgeGraphPage() {
     "link",
     "semantic",
   ]);
+  const [showIsolated, setShowIsolated] = useState(true);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [focusPageId, setFocusPageId] = useState<string | null>(null);
   const { data: routeSpace, isLoading: routeSpaceLoading } =
     useGetSpaceBySlugQuery(spaceSlug ?? "");
   const { data: spacesData, isLoading: spacesLoading } = useGetSpacesQuery({
@@ -139,10 +148,22 @@ export default function KnowledgeGraphPage() {
   });
 
   const graph = graphQuery.data ?? EMPTY_GRAPH;
+  const selectedNode = graph.nodes.find((node) => node.id === selectedNodeId);
   const visibleGraph = useMemo(
-    () => filterGraph(graph, search, edgeTypes),
-    [edgeTypes, graph, search],
+    () => filterGraph(graph, search, edgeTypes, focusPageId, showIsolated),
+    [edgeTypes, focusPageId, graph, search, showIsolated],
   );
+  const persistentLabelNodeIds = useMemo(() => {
+    if (focusPageId || visibleGraph.nodes.length <= 24) {
+      return new Set(visibleGraph.nodes.map((node) => node.id));
+    }
+    return new Set(
+      [...visibleGraph.nodes]
+        .sort((a, b) => b.degree - a.degree)
+        .slice(0, 16)
+        .map((node) => node.id),
+    );
+  }, [focusPageId, visibleGraph.nodes]);
   const initialLayout = useMemo(
     () => buildInitialGraphLayout(visibleGraph.nodes, visibleGraph.edges),
     [visibleGraph.nodes, visibleGraph.edges],
@@ -162,6 +183,18 @@ export default function KnowledgeGraphPage() {
   );
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [activeEdgeId, setActiveEdgeId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSelectedNodeId(null);
+    setFocusPageId(null);
+  }, [spaceId]);
+
+  const focusNode = useCallback((node: KnowledgeGraphNode) => {
+    setFocusPageId(
+      node.kind === "section" ? (node.parentPageId ?? null) : node.id,
+    );
+    setSelectedNodeId(node.id);
+  }, []);
 
   const fitGraph = useCallback(() => {
     setTransform(fitGraphTransform(visibleGraph.nodes, positions));
@@ -392,12 +425,31 @@ export default function KnowledgeGraphPage() {
               }
               label={t("Semantic")}
             />
+            <Checkbox
+              checked={showIsolated}
+              onChange={(event) => setShowIsolated(event.currentTarget.checked)}
+              label={t("Isolated pages")}
+            />
             {(spacesLoading || routeSpaceLoading || graphQuery.isLoading) && (
               <Loader size="sm" />
             )}
           </Group>
 
           <Group gap="xs">
+            <Badge variant="light">
+              {t("Pages")}:{" "}
+              {
+                visibleGraph.nodes.filter((node) => node.kind !== "section")
+                  .length
+              }
+            </Badge>
+            <Badge variant="light" color="violet">
+              {t("Sections")}:{" "}
+              {
+                visibleGraph.nodes.filter((node) => node.kind === "section")
+                  .length
+              }
+            </Badge>
             <Badge variant="light">
               {t("Links")}:{" "}
               {visibleGraph.edges.filter((edge) => edge.type === "link").length}
@@ -409,15 +461,18 @@ export default function KnowledgeGraphPage() {
                   .length
               }
             </Badge>
-            <Badge variant="light" color="gray">
-              {t("Communities")}: {graph.insights.communityCount}
+            <Badge variant="dot" color={focusPageId ? "blue" : "gray"}>
+              {focusPageId ? t("Focused neighborhood") : t("Overview")}
             </Badge>
-            <Badge variant="light" color="yellow">
-              {t("Isolated")}: {graph.insights.isolatedNodeIds.length}
-            </Badge>
-            <Badge variant="light" color="blue">
-              {t("Bridge")}: {graph.insights.bridgeNodeIds.length}
-            </Badge>
+            {focusPageId && (
+              <Button
+                size="compact-xs"
+                variant="subtle"
+                onClick={() => setFocusPageId(null)}
+              >
+                {t("Back to overview")}
+              </Button>
+            )}
           </Group>
 
           {graphQuery.isError && (
@@ -463,6 +518,24 @@ export default function KnowledgeGraphPage() {
                     </ActionIcon>
                   </Tooltip>
                 </Group>
+                <div className={classes.graphLegend}>
+                  <span>
+                    <i className={classes.pageSwatch} />
+                    {t("Wiki page")}
+                  </span>
+                  <span>
+                    <i className={classes.sectionSwatch} />
+                    {t("Section")}
+                  </span>
+                  <span>
+                    <i className={classes.linkSwatch} />
+                    {t("Direct link")}
+                  </span>
+                  <span>
+                    <i className={classes.semanticSwatch} />
+                    {t("Semantic relation")}
+                  </span>
+                </div>
                 <svg
                   ref={svgRef}
                   className={classes.graphSvg}
@@ -516,7 +589,7 @@ export default function KnowledgeGraphPage() {
                             y1={from.y}
                             x2={to.x}
                             y2={to.y}
-                            className={`${edge.type === "semantic" ? classes.semanticEdge : classes.linkEdge} ${isActive ? classes.edgeActive : classes.edgeInactive}`}
+                            className={`${edgeClassName(edge.type)} ${isActive ? classes.edgeActive : classes.edgeInactive}`}
                             markerEnd="url(#knowledge-graph-arrow)"
                           />
                           <text
@@ -535,47 +608,141 @@ export default function KnowledgeGraphPage() {
                       const point = positions.get(node.id);
                       if (!point) return null;
                       const radius = nodeRadius(node);
+                      const selected = selectedNodeId === node.id;
+                      const showLabel =
+                        persistentLabelNodeIds.has(node.id) ||
+                        activeNodeId === node.id ||
+                        selected;
 
                       return (
                         <g
                           key={node.id}
                           className={classes.nodeGroup}
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`${t("Graph node")}: ${node.title}`}
                           onPointerDown={(event) =>
                             handleNodePointerDown(event, node.id)
                           }
                           onMouseEnter={() => setActiveNodeId(node.id)}
                           onMouseLeave={() => setActiveNodeId(null)}
+                          onClick={() => setSelectedNodeId(node.id)}
+                          onDoubleClick={() => focusNode(node)}
                         >
-                          <circle
-                            cx={point.x}
-                            cy={point.y}
-                            r={radius}
-                            className={classes.nodeCircle}
-                          />
-                          {node.sourcePageId ? (
+                          <title>
+                            {`${node.kind === "section" ? "Section" : "Page"}: ${node.headingPath?.join(" / ") || node.title}`}
+                          </title>
+                          {node.kind === "section" ? (
+                            <rect
+                              x={point.x - 54}
+                              y={point.y - 16}
+                              width={108}
+                              height={32}
+                              rx={9}
+                              className={`${classes.sectionNode} ${selected ? classes.nodeSelected : ""}`}
+                            />
+                          ) : (
+                            <circle
+                              cx={point.x}
+                              cy={point.y}
+                              r={radius}
+                              className={`${classes.nodeCircle} ${selected ? classes.nodeSelected : ""}`}
+                              style={{ fill: nodeColor(node) }}
+                            />
+                          )}
+                          {showLabel && node.sourcePageId ? (
                             <a href={`/p/${node.sourcePageId}`}>
                               <text
                                 x={point.x}
-                                y={point.y + radius + 18}
+                                y={
+                                  node.kind === "section"
+                                    ? point.y + 4
+                                    : point.y + radius + 18
+                                }
                                 className={classes.nodeLabel}
                               >
-                                {node.title}
+                                {truncateLabel(node.title)}
                               </text>
                             </a>
-                          ) : (
+                          ) : showLabel ? (
                             <text
                               x={point.x}
-                              y={point.y + radius + 18}
+                              y={
+                                node.kind === "section"
+                                  ? point.y + 4
+                                  : point.y + radius + 18
+                              }
                               className={classes.nodeLabel}
                             >
-                              {node.title}
+                              {truncateLabel(node.title)}
                             </text>
-                          )}
+                          ) : null}
                         </g>
                       );
                     })}
                   </g>
                 </svg>
+                {selectedNode && (
+                  <aside className={classes.nodeDetails}>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Badge
+                        color={
+                          selectedNode.kind === "section" ? "violet" : "blue"
+                        }
+                        variant="light"
+                      >
+                        {selectedNode.kind === "section"
+                          ? t("Section")
+                          : t("Wiki page")}
+                      </Badge>
+                      <ActionIcon
+                        variant="subtle"
+                        aria-label={t("Close details")}
+                        onClick={() => setSelectedNodeId(null)}
+                      >
+                        <IconX size={16} />
+                      </ActionIcon>
+                    </Group>
+                    <Text fw={700} size="lg" mt="sm">
+                      {selectedNode.title}
+                    </Text>
+                    {selectedNode.headingPath &&
+                      selectedNode.headingPath.length > 1 && (
+                        <Text size="xs" c="dimmed" mt={4}>
+                          {selectedNode.headingPath.join(" / ")}
+                        </Text>
+                      )}
+                    {selectedNode.excerpt && (
+                      <Text size="sm" mt="md" className={classes.nodeExcerpt}>
+                        {selectedNode.excerpt}
+                      </Text>
+                    )}
+                    <Divider my="md" />
+                    <Group gap="xs">
+                      <Button
+                        size="xs"
+                        leftSection={<IconFocus2 size={14} />}
+                        onClick={() => focusNode(selectedNode)}
+                      >
+                        {t("Focus neighborhood")}
+                      </Button>
+                      {selectedNode.sourcePageId && (
+                        <Button
+                          component={Link}
+                          to={`/p/${selectedNode.sourcePageId}`}
+                          size="xs"
+                          variant="default"
+                          leftSection={<IconFileText size={14} />}
+                        >
+                          {t("Open page")}
+                        </Button>
+                      )}
+                    </Group>
+                    <Text size="xs" c="dimmed" mt="md">
+                      {t("Connections")}: {selectedNode.degree}
+                    </Text>
+                  </aside>
+                )}
               </>
             )}
           </section>
@@ -621,38 +788,88 @@ function filterGraph(
   graph: KnowledgeGraphResult,
   search: string,
   edgeTypes: KnowledgeGraphEdge["type"][],
+  focusPageId: string | null,
+  showIsolated: boolean,
 ): KnowledgeGraphResult {
   const query = search.trim().toLowerCase();
-  const edgeTypeSet = new Set(edgeTypes);
-  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
-  const matchingNodeIds = new Set(
-    graph.nodes
-      .filter((node) => !query || node.title.toLowerCase().includes(query))
-      .map((node) => node.id),
+  const edgeTypeSet = new Set<KnowledgeGraphEdge["type"]>([
+    ...edgeTypes,
+    "contains",
+  ]);
+  const allowedEdges = graph.edges.filter((edge) => edgeTypeSet.has(edge.type));
+  const relationshipEdges = allowedEdges.filter(
+    (edge) => edge.type !== "contains",
   );
-  const matchingEdges = graph.edges.filter((edge) => {
-    if (!edgeTypeSet.has(edge.type)) return false;
-    if (!query) return true;
+  const visibleNodeIds = new Set<string>();
 
-    const from = nodesById.get(edge.from);
-    const to = nodesById.get(edge.to);
-    return (
-      edge.label.toLowerCase().includes(query) ||
-      Boolean(from?.title.toLowerCase().includes(query)) ||
-      Boolean(to?.title.toLowerCase().includes(query))
+  if (focusPageId) {
+    visibleNodeIds.add(focusPageId);
+    for (const edge of relationshipEdges) {
+      if (edge.from === focusPageId) visibleNodeIds.add(edge.to);
+      if (edge.to === focusPageId) visibleNodeIds.add(edge.from);
+    }
+    for (const node of graph.nodes) {
+      if (node.kind === "section" && node.parentPageId === focusPageId) {
+        visibleNodeIds.add(node.id);
+      }
+    }
+  } else if (query) {
+    for (const node of graph.nodes) {
+      const searchable = [
+        node.title,
+        node.excerpt ?? "",
+        ...(node.headingPath ?? []),
+      ]
+        .join(" ")
+        .toLowerCase();
+      if (!searchable.includes(query)) continue;
+      visibleNodeIds.add(node.id);
+      if (node.parentPageId) visibleNodeIds.add(node.parentPageId);
+    }
+    for (const edge of relationshipEdges) {
+      if (
+        edge.label.toLowerCase().includes(query) ||
+        visibleNodeIds.has(edge.from) ||
+        visibleNodeIds.has(edge.to)
+      ) {
+        visibleNodeIds.add(edge.from);
+        visibleNodeIds.add(edge.to);
+      }
+    }
+  } else {
+    const relationshipDegree = new Map<string, number>();
+    for (const edge of relationshipEdges) {
+      relationshipDegree.set(
+        edge.from,
+        (relationshipDegree.get(edge.from) ?? 0) + 1,
+      );
+      relationshipDegree.set(
+        edge.to,
+        (relationshipDegree.get(edge.to) ?? 0) + 1,
+      );
+    }
+    const pageNodes = graph.nodes.filter((node) => node.kind !== "section");
+    const connectedPageNodes = pageNodes.filter(
+      (node) => (relationshipDegree.get(node.id) ?? 0) > 0,
     );
-  });
-  const visibleNodeIds = new Set(
-    query
-      ? [
-          ...matchingNodeIds,
-          ...matchingEdges.flatMap((edge) => [edge.from, edge.to]),
-        ]
-      : graph.nodes.map((node) => node.id),
-  );
+    const overviewCandidates =
+      showIsolated || connectedPageNodes.length === 0
+        ? pageNodes
+        : connectedPageNodes;
+    overviewCandidates
+      .sort((a, b) => {
+        const degreeDelta =
+          (relationshipDegree.get(b.id) ?? 0) -
+          (relationshipDegree.get(a.id) ?? 0);
+        return degreeDelta || a.title.localeCompare(b.title);
+      })
+      .slice(0, OVERVIEW_NODE_LIMIT)
+      .forEach((node) => visibleNodeIds.add(node.id));
+  }
+
   const nodes = graph.nodes.filter((node) => visibleNodeIds.has(node.id));
   const nodeSet = new Set(nodes.map((node) => node.id));
-  const edges = matchingEdges.filter(
+  const edges = allowedEdges.filter(
     (edge) => nodeSet.has(edge.from) && nodeSet.has(edge.to),
   );
 
@@ -661,6 +878,34 @@ function filterGraph(
     edges,
     insights: graph.insights,
   };
+}
+
+function edgeClassName(type: KnowledgeGraphEdge["type"]): string {
+  if (type === "semantic") return classes.semanticEdge;
+  if (type === "contains") return classes.containsEdge;
+  return classes.linkEdge;
+}
+
+function truncateLabel(value: string): string {
+  return value.length > 18 ? `${value.slice(0, 17)}…` : value;
+}
+
+const COMMUNITY_COLORS = [
+  "var(--mantine-color-blue-6)",
+  "var(--mantine-color-teal-6)",
+  "var(--mantine-color-violet-6)",
+  "var(--mantine-color-orange-6)",
+  "var(--mantine-color-cyan-6)",
+  "var(--mantine-color-pink-6)",
+];
+
+function nodeColor(node: KnowledgeGraphNode): string {
+  const key = node.communityId || node.id;
+  let hash = 0;
+  for (let index = 0; index < key.length; index += 1) {
+    hash = (hash * 31 + key.charCodeAt(index)) | 0;
+  }
+  return COMMUNITY_COLORS[Math.abs(hash) % COMMUNITY_COLORS.length];
 }
 
 function uniqueEdgeTypes(
@@ -707,7 +952,9 @@ function buildInitialGraphLayout(
   edges: KnowledgeGraphEdge[],
 ): Map<string, GraphPoint> {
   const connected = new Set(edges.flatMap((edge) => [edge.from, edge.to]));
-  const sortedNodes = [...nodes].sort((a, b) => {
+  const pageNodes = nodes.filter((node) => node.kind !== "section");
+  const sectionNodes = nodes.filter((node) => node.kind === "section");
+  const sortedNodes = [...pageNodes].sort((a, b) => {
     const degreeDelta = b.degree - a.degree;
     if (degreeDelta !== 0) return degreeDelta;
     return a.title.localeCompare(b.title);
@@ -737,6 +984,20 @@ function buildInitialGraphLayout(
     });
   });
 
+  const sectionIndexByPage = new Map<string, number>();
+  for (const section of sectionNodes) {
+    const parentId = section.parentPageId ?? "";
+    const parentPoint = layout.get(parentId) ?? graphCenter();
+    const sectionIndex = sectionIndexByPage.get(parentId) ?? 0;
+    sectionIndexByPage.set(parentId, sectionIndex + 1);
+    const angle = sectionIndex * Math.PI * 0.68 - Math.PI * 0.8;
+    const ring = 92 + Math.floor(sectionIndex / 7) * 70;
+    layout.set(section.id, {
+      x: parentPoint.x + Math.cos(angle) * ring,
+      y: parentPoint.y + Math.sin(angle) * ring,
+    });
+  }
+
   return layout;
 }
 
@@ -753,6 +1014,7 @@ function initializeSimulation(
       vx: 0,
       vy: 0,
       degree: node.degree,
+      kind: node.kind,
     });
   }
   return positions;
@@ -773,10 +1035,11 @@ function simulateGraphStep(input: {
       const [, b] = nodes[j];
       const dx = b.x - a.x || 0.01;
       const dy = b.y - a.y || 0.01;
-      const distanceSq = Math.max(dx * dx + dy * dy, 900);
-      const force = 2600 / distanceSq;
-      const fx = dx * force;
-      const fy = dy * force;
+      const distance = Math.max(Math.hypot(dx, dy), 1);
+      const distanceSq = Math.max(distance * distance, 1600);
+      const force = 5200 / distanceSq;
+      const fx = (dx / distance) * force;
+      const fy = (dy / distance) * force;
 
       a.vx -= fx;
       a.vy -= fy;
@@ -793,7 +1056,8 @@ function simulateGraphStep(input: {
     const dx = to.x - from.x;
     const dy = to.y - from.y;
     const distance = Math.max(Math.hypot(dx, dy), 1);
-    const targetDistance = edge.type === "semantic" ? 150 : 110;
+    const targetDistance =
+      edge.type === "semantic" ? 175 : edge.type === "contains" ? 92 : 125;
     const force = (distance - targetDistance) * 0.014;
     const fx = (dx / distance) * force;
     const fy = (dy / distance) * force;
@@ -808,10 +1072,19 @@ function simulateGraphStep(input: {
   for (const [, node] of nodes) {
     node.vx += (center.x - node.x) * 0.002;
     node.vy += (center.y - node.y) * 0.002;
-    node.vx *= 0.82;
-    node.vy *= 0.82;
-    node.x = clamp(node.x + node.vx, 30, input.width - 30);
-    node.y = clamp(node.y + node.vy, 30, input.height - 30);
+    const margin = 72;
+    if (node.x < margin) node.vx += (margin - node.x) * 0.018;
+    if (node.x > input.width - margin) {
+      node.vx -= (node.x - (input.width - margin)) * 0.018;
+    }
+    if (node.y < margin) node.vy += (margin - node.y) * 0.018;
+    if (node.y > input.height - margin) {
+      node.vy -= (node.y - (input.height - margin)) * 0.018;
+    }
+    node.vx *= 0.78;
+    node.vy *= 0.78;
+    node.x = clamp(node.x + node.vx, 36, input.width - 36);
+    node.y = clamp(node.y + node.vy, 36, input.height - 36);
   }
 
   return next;
@@ -826,5 +1099,6 @@ function clonePositions(
 }
 
 function nodeRadius(node: KnowledgeGraphNode): number {
+  if (node.kind === "section") return 18;
   return Math.min(22, 9 + node.degree * 2);
 }

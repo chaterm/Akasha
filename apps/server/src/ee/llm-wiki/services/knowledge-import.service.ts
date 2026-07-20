@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { createHash } from 'crypto';
+import { toSql as vectorToSql } from 'pgvector';
 import { InjectKysely } from 'nestjs-kysely';
 import { executeTx } from '@akasha/db/utils';
 import { KyselyDB } from '@akasha/db/types/kysely.types';
@@ -15,7 +16,12 @@ import {
 } from '../types/compiler-artifact.types';
 import { KnowledgeSourceRef } from '../types/knowledge.types';
 import { KnowledgeArtifactValidatorService } from './knowledge-artifact-validator.service';
-import { ConfiguredKnowledgeEmbeddingProvider } from './knowledge-embedding-provider.service';
+import {
+  buildKnowledgeEmbeddingProfile,
+  ConfiguredKnowledgeEmbeddingProvider,
+  KnowledgeEmbedding,
+} from './knowledge-embedding-provider.service';
+import { KnowledgeVectorIndexService } from './knowledge-vector-index.service';
 
 export interface KnowledgeImportResult {
   importedArtifactCount: number;
@@ -31,6 +37,7 @@ export class KnowledgeImportService {
     private readonly embeddingProvider: ConfiguredKnowledgeEmbeddingProvider,
     private readonly quarantineRepo: KnowledgeQuarantineRepo,
     @InjectKysely() private readonly db: KyselyDB,
+    @Optional() private readonly vectorIndex?: KnowledgeVectorIndexService,
   ) {}
 
   async importCompileResult(input: {
@@ -56,12 +63,21 @@ export class KnowledgeImportService {
 
     for (const artifact of validation.accepted) {
       const artifactChunks = await Promise.all(
-        (artifact.chunks ?? []).map(async (chunk) => ({
-          ...chunk,
-          embedding:
-            chunk.embedding ??
-            (await this.embeddingProvider.embedQuery(chunk.text)),
-        })),
+        (artifact.chunks ?? []).map(async (chunk) => {
+          const suppliedEmbedding = compilerEmbedding(
+            chunk.embedding,
+            artifact.compilerVersion,
+          );
+
+          return {
+            ...chunk,
+            embedding:
+              suppliedEmbedding ??
+              (await this.embeddingProvider.embedQuery(
+                chunk.embeddingText ?? chunk.text,
+              )),
+          };
+        }),
       );
       const claims = (artifact.claims ?? []).map((claim, index) => ({
         id: stableUuid(`${artifact.artifactId}:claim:${index}`),
@@ -75,6 +91,39 @@ export class KnowledgeImportService {
         compileTaskId: artifact.compileTaskId ?? null,
         staleAt: null,
       }));
+      const parentSections = (artifact.parentSections ?? []).map((parent) => ({
+        id: stableUuid(`${artifact.artifactId}:parent:${parent.stableKey}`),
+        workspaceId: artifact.workspaceId,
+        spaceId: artifact.spaceId,
+        knowledgePageId: artifact.artifactId,
+        stableKey: parent.stableKey,
+        headingPath: parent.headingPath,
+        text: parent.text,
+        contentHash: parent.contentHash ?? hashContent(parent.text),
+        startOffset: parent.startOffset ?? null,
+        endOffset: parent.endOffset ?? null,
+        staleAt: null,
+      }));
+      const parentIdByStableKey = new Map(
+        parentSections.map((parent) => [parent.stableKey, parent.id]),
+      );
+      const parentSectionSources = parentSections.flatMap((parent, index) =>
+        (
+          artifact.parentSections?.[index]?.inputSourceRefs ??
+          artifact.inputSourceRefs ??
+          []
+        ).map((source) => ({
+          workspaceId: artifact.workspaceId,
+          parentSectionId: parent.id,
+          sourcePageId: source.sourcePageId,
+          sourceVersion: source.sourceVersion,
+          sourceRange: toStoredSourceRange(source),
+          quoteHash: source.quoteHash ?? null,
+          contentHash: source.contentHash,
+          provenanceKind: 'source_evidence',
+          attachmentId: null,
+        })),
+      );
       const claimSources = claims.flatMap((claim, index) =>
         (
           artifact.claims?.[index]?.inputSourceRefs ??
@@ -103,7 +152,21 @@ export class KnowledgeImportService {
             : null,
         text: chunk.text,
         contentHash: chunk.contentHash ?? hashContent(chunk.text),
-        embedding: chunk.embedding ?? null,
+        embedding: chunk.embedding ? vectorToSql(chunk.embedding.vector) : null,
+        embeddingLegacy: chunk.embedding?.vector ?? null,
+        embeddingProfile: chunk.embedding?.profile ?? null,
+        embeddingModel: chunk.embedding?.model ?? null,
+        embeddingDimensions: chunk.embedding?.dimensions ?? null,
+        parentSectionId: chunk.parentStableKey
+          ? (parentIdByStableKey.get(chunk.parentStableKey) ?? null)
+          : null,
+        stableKey:
+          chunk.stableKey ?? `${artifact.artifactId}:legacy-chunk:${index}`,
+        chunkRole: chunk.chunkRole ?? 'standalone',
+        retrievalChannel: chunk.retrievalChannel ?? 'memory',
+        headingPath: chunk.headingPath ?? [],
+        startOffset: chunk.startOffset ?? null,
+        endOffset: chunk.endOffset ?? null,
         compilerRunId: artifact.compilerRunId ?? null,
         compileTaskId: artifact.compileTaskId ?? null,
         staleAt: null,
@@ -220,6 +283,8 @@ export class KnowledgeImportService {
           provenanceKind: 'synthesis_lineage',
           attachmentId: null,
         })),
+        parentSections,
+        parentSectionSources,
         claims,
         claimSources,
         chunks,
@@ -268,11 +333,55 @@ export class KnowledgeImportService {
       });
     }
 
+    if (this.vectorIndex && artifactInputs.length > 0) {
+      const profiles = new Map<string, number>();
+      for (const chunk of artifactInputs.flatMap(
+        (artifact) => artifact.chunks ?? [],
+      )) {
+        if (chunk.embeddingProfile && chunk.embeddingDimensions) {
+          profiles.set(
+            String(chunk.embeddingProfile),
+            Number(chunk.embeddingDimensions),
+          );
+        }
+      }
+      await Promise.all(
+        [...profiles].map(([profile, dimensions]) =>
+          this.vectorIndex!.ensureProfileIndex({ profile, dimensions }),
+        ),
+      );
+    }
+
     return {
       importedArtifactCount: validation.accepted.length,
       quarantinedArtifactCount: validation.quarantined.length,
     };
   }
+}
+
+function compilerEmbedding(
+  value: unknown,
+  compilerVersion: string,
+): KnowledgeEmbedding | null {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.some((item) => typeof item !== 'number' || !Number.isFinite(item))
+  ) {
+    return null;
+  }
+
+  const vector = value as number[];
+  return {
+    vector,
+    profile: buildKnowledgeEmbeddingProfile({
+      driver: 'compiler',
+      model: compilerVersion,
+      dimensions: vector.length,
+    }),
+    model: compilerVersion,
+    dimensions: vector.length,
+  };
 }
 
 function hashContent(content: string): string {

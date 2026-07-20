@@ -1,6 +1,59 @@
 import { DocmostKnowledgeCompilerRunner } from './docmost-knowledge-compiler.runner';
 
 describe('DocmostKnowledgeCompilerRunner', () => {
+  it('emits structural evidence children with parent metadata and exact lineage', async () => {
+    const runner = new TestDocmostKnowledgeCompilerRunner(
+      () => new Date('2026-06-16T00:00:00.000Z'),
+    );
+    const text =
+      '# Architecture\nWiki is the source of truth.\n## Retrieval\nACL runs before LIMIT.';
+
+    const result = await runner.compileSpace({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      compilerVersion: 'akasha-internal@2',
+      promptVersion: 'wiki-structural-v1',
+      sources: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageId: 'page-1',
+          sourceVersion: 'v1',
+          contentHash: 'hash-1',
+          title: 'Engineering',
+          text,
+          references: [],
+        },
+      ],
+    });
+
+    const artifact = result.artifacts[0];
+    expect(
+      artifact.parentSections?.map((parent) => parent.headingPath),
+    ).toEqual([['Architecture'], ['Architecture', 'Retrieval']]);
+    expect(artifact.chunks).toHaveLength(2);
+    for (const chunk of artifact.chunks ?? []) {
+      expect(chunk).toEqual(
+        expect.objectContaining({
+          chunkRole: 'child',
+          retrievalChannel: 'evidence',
+          stableKey: expect.stringMatching(/^[a-f0-9]{64}$/),
+          parentStableKey: expect.stringMatching(/^[a-f0-9]{64}$/),
+          embeddingText: expect.stringContaining('Engineering'),
+        }),
+      );
+      const source = chunk.inputSourceRefs?.[0];
+      expect(source?.sourceRange).toBeDefined();
+      expect(
+        text.slice(
+          source!.sourceRange!.startOffset,
+          source!.sourceRange!.endOffset,
+        ),
+      ).toBe(chunk.text);
+      expect(source?.quoteHash).toMatch(/^sha256:/);
+    }
+  });
+
   it('compiles source snapshots into lineage-preserving page capsules and chunks', async () => {
     const runner = new TestDocmostKnowledgeCompilerRunner(
       () => new Date('2026-06-16T00:00:00.000Z'),
@@ -80,20 +133,22 @@ describe('DocmostKnowledgeCompilerRunner', () => {
               ],
             },
           ],
+          parentSections: expect.any(Array),
           chunks: [
-            {
+            expect.objectContaining({
               text: 'Chaterm Flutter 使用分层架构。\n\nUI、service、data 模块按职责拆分。',
               claimIndex: 0,
+              retrievalChannel: 'evidence',
               inputSourceRefs: [
-                {
+                expect.objectContaining({
                   workspaceId: 'workspace-1',
                   spaceId: 'space-1',
                   sourcePageId: 'page-1',
                   sourceVersion: 'v1',
                   contentHash: 'hash-1',
-                },
+                }),
               ],
-            },
+            }),
           ],
         }),
       ],
@@ -245,7 +300,7 @@ describe('DocmostKnowledgeCompilerRunner', () => {
     ]);
   });
 
-  it('creates same-space links when a source mentions another source title', async () => {
+  it('creates same-space links from exported Wiki backlinks', async () => {
     const runner = new TestDocmostKnowledgeCompilerRunner(
       () => new Date('2026-06-16T00:00:00.000Z'),
     );
@@ -265,8 +320,16 @@ describe('DocmostKnowledgeCompilerRunner', () => {
           title: 'Chaterm 企业版登记信息',
           text:
             'Chaterm 企业版软件的登记批准日期是 2026年06月05日。\n\n' +
-            '该登记信息和 Chaterm KMS 加密架构有关。',
-          references: [],
+            '该登记信息引用了另一篇安全设计文档。',
+          references: [
+            {
+              sourcePageId: 'page-registration',
+              targetPageId: 'page-kms',
+              targetSpaceId: 'space-1',
+              kind: 'same_space_reference',
+              mode: 'opaque',
+            },
+          ],
         },
         {
           workspaceId: 'workspace-1',
@@ -345,7 +408,7 @@ describe('DocmostKnowledgeCompilerRunner', () => {
     expect(result.artifacts[0].graphEdges).toEqual([
       {
         toKnowledgePageId: result.artifacts[1].artifactId,
-        relation: expect.stringContaining('相关'),
+        relation: expect.stringContaining('共同主题'),
         inputSourceRefs: [
           result.artifacts[0].inputSourceRefs?.[0],
           result.artifacts[1].inputSourceRefs?.[0],

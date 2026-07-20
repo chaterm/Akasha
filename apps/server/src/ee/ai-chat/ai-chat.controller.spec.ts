@@ -10,7 +10,9 @@ describe('AiChatController', () => {
         answer: 'Chaterm 企业版软件的登记批准日期是2026年06月05日。',
       }),
     };
-    const controller = new AiChatController(service as unknown as AiChatService);
+    const controller = new AiChatController(
+      service as unknown as AiChatService,
+    );
     const response = mockSseResponse();
 
     await controller.send(
@@ -30,6 +32,7 @@ describe('AiChatController', () => {
       mentionedPageIds: undefined,
       contextPageId: undefined,
       attachmentIds: undefined,
+      onEvent: expect.any(Function),
     });
     expect(response.setHeader).toHaveBeenCalledWith(
       'Content-Type',
@@ -52,7 +55,9 @@ describe('AiChatController', () => {
         answer: 'answer',
       }),
     };
-    const controller = new AiChatController(service as unknown as AiChatService);
+    const controller = new AiChatController(
+      service as unknown as AiChatService,
+    );
     const reply = mockFastifyReply();
 
     await controller.send(

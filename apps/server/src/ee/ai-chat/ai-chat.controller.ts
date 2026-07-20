@@ -115,6 +115,8 @@ export class AiChatController {
     this.prepareSse(res);
 
     try {
+      let chatCreatedEmitted = false;
+      let contentEmitted = false;
       const result = await this.aiChatService.sendMessage({
         workspace,
         user,
@@ -123,11 +125,25 @@ export class AiChatController {
         mentionedPageIds: dto.mentionedPageIds,
         contextPageId: dto.contextPageId,
         attachmentIds: dto.attachmentIds,
+        onEvent: (event) => {
+          if (event.type === 'chat_created') chatCreatedEmitted = true;
+          if (event.type === 'content') contentEmitted = true;
+          writeSse(res, event);
+        },
       });
 
-      writeSse(res, { type: 'chat_created', chatId: result.chatId });
-      writeSse(res, { type: 'content', text: result.answer });
-      writeSse(res, { type: 'done', messageId: result.assistantMessageId });
+      if (!chatCreatedEmitted) {
+        writeSse(res, { type: 'chat_created', chatId: result.chatId });
+      }
+      if (!contentEmitted && result.answer) {
+        writeSse(res, { type: 'content', text: result.answer });
+      }
+      writeSse(res, {
+        type: 'done',
+        messageId: result.assistantMessageId,
+        citations: result.citations,
+        retrievalDiagnostics: result.retrievalDiagnostics,
+      });
       writeRaw(res, 'data: [DONE]\n\n');
     } catch (error) {
       writeSse(res, {

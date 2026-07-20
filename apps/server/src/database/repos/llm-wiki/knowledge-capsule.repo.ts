@@ -5,6 +5,8 @@ import { dbOrTx } from '@akasha/db/utils';
 import {
   InsertableKnowledgePage,
   InsertableKnowledgePageSource,
+  InsertableKnowledgeParentSection,
+  InsertableKnowledgeParentSectionSource,
   InsertableKnowledgeClaim,
   InsertableKnowledgeClaimSource,
   InsertableKnowledgeChunk,
@@ -21,8 +23,11 @@ import {
   KnowledgeLinkSource,
   KnowledgePage,
   KnowledgePageSource,
+  KnowledgeParentSection,
+  KnowledgeParentSectionSource,
 } from '@akasha/db/types/entity.types';
 import { sql } from 'kysely';
+import { toSql as vectorToSql } from 'pgvector';
 
 type SourcePageRow = { sourcePageId: string };
 type ChunkSourcePageRow = { chunkId: string; sourcePageId: string };
@@ -38,6 +43,8 @@ type OwnerRow<K extends string> = Record<K, string>;
 export type UpsertCompiledArtifactInput = {
   page: InsertableKnowledgePage;
   pageSources?: InsertableKnowledgePageSource[];
+  parentSections?: InsertableKnowledgeParentSection[];
+  parentSectionSources?: InsertableKnowledgeParentSectionSource[];
   claims?: InsertableKnowledgeClaim[];
   claimSources?: InsertableKnowledgeClaimSource[];
   chunks?: InsertableKnowledgeChunk[];
@@ -50,6 +57,8 @@ export type UpsertCompiledArtifactInput = {
 export type KnowledgeGraphCandidates = {
   pages: KnowledgePage[];
   pageSources: KnowledgePageSource[];
+  parentSections: KnowledgeParentSection[];
+  parentSectionSources: KnowledgeParentSectionSource[];
   links: KnowledgeLink[];
   linkSources: KnowledgeLinkSource[];
   graphEdges: KnowledgeGraphEdge[];
@@ -62,7 +71,16 @@ export type KnowledgeChunkCandidate = {
   sourcePageIds: string[];
   signals: KnowledgeRetrievalSignal[];
   lexicalScore?: number | null;
+  signalScore?: number | null;
+  parentSection?: KnowledgeParentSection;
 };
+export type AuthorizedCandidateInput = {
+  workspaceId: string;
+  spaceIds: string[];
+  eligibleSourcePageIds: string[];
+  retrievalChannel?: 'evidence' | 'memory';
+};
+type RankedChunkId = { chunkId: string; score: number | null };
 export type KnowledgeChunkSourceRef = {
   sourcePageId: string;
   sourceVersion: string;
@@ -105,6 +123,16 @@ export class KnowledgeCapsuleRepo {
       db,
       inputs.flatMap((input) => input.pageSources ?? []),
       'knowledgePageSources',
+    );
+    await this.insertArtifactChildren(
+      db,
+      inputs.flatMap((input) => input.parentSections ?? []),
+      'knowledgeParentSections',
+    );
+    await this.insertArtifactChildren(
+      db,
+      inputs.flatMap((input) => input.parentSectionSources ?? []),
+      'knowledgeParentSectionSources',
     );
     await this.insertArtifactChildren(
       db,
@@ -185,6 +213,8 @@ export class KnowledgeCapsuleRepo {
     rows: T[],
     table:
       | 'knowledgePageSources'
+      | 'knowledgeParentSections'
+      | 'knowledgeParentSectionSources'
       | 'knowledgeClaims'
       | 'knowledgeClaimSources'
       | 'knowledgeChunks'
@@ -285,6 +315,159 @@ export class KnowledgeCapsuleRepo {
       .execute();
   }
 
+  async findDenseChunkCandidates(
+    input: AuthorizedCandidateInput & {
+      embedding: {
+        vector: number[];
+        profile: string;
+        model: string;
+        dimensions: number;
+      };
+      limit: number;
+    },
+    trx?: KyselyTransaction,
+  ): Promise<KnowledgeChunkCandidate[]> {
+    if (!hasCandidateScope(input) || input.embedding.vector.length === 0) {
+      return [];
+    }
+    if (
+      !Number.isInteger(input.embedding.dimensions) ||
+      input.embedding.dimensions <= 0 ||
+      input.embedding.vector.length !== input.embedding.dimensions
+    ) {
+      return [];
+    }
+
+    const db = dbOrTx(this.db, trx);
+    const dimensions = sql.raw(String(input.embedding.dimensions));
+    const queryVector = vectorToSql(input.embedding.vector);
+    const distance = sql<number>`knowledge_chunks.embedding::vector(${dimensions}) <=> ${queryVector}::vector`;
+    let query = db
+      .selectFrom('knowledgeChunks')
+      .select(['knowledgeChunks.id as chunkId', distance.as('score')])
+      .where('knowledgeChunks.workspaceId', '=', input.workspaceId)
+      .where('knowledgeChunks.spaceId', 'in', input.spaceIds)
+      .where('knowledgeChunks.staleAt', 'is', null)
+      .where('knowledgeChunks.embeddingProfile', '=', input.embedding.profile)
+      .where(
+        'knowledgeChunks.embeddingDimensions',
+        '=',
+        input.embedding.dimensions,
+      )
+      .where('knowledgeChunks.embedding', 'is not', null);
+    if (input.retrievalChannel) {
+      query = query.where(
+        'knowledgeChunks.retrievalChannel',
+        '=',
+        input.retrievalChannel,
+      );
+    }
+    const rows = await this.applyAuthorizedChunkScope(
+      query,
+      input.eligibleSourcePageIds,
+    )
+      .orderBy(distance, 'asc')
+      .limit(input.limit)
+      .execute();
+
+    return this.hydrateRankedChunkCandidates(
+      rows as RankedChunkId[],
+      'semantic',
+      input,
+      trx,
+    );
+  }
+
+  async findLexicalChunkCandidates(
+    input: AuthorizedCandidateInput & { query: string; limit: number },
+    trx?: KyselyTransaction,
+  ): Promise<KnowledgeChunkCandidate[]> {
+    if (!hasCandidateScope(input) || input.query.trim().length === 0) return [];
+
+    const db = dbOrTx(this.db, trx);
+    const tsQuery = sql`websearch_to_tsquery('simple', ${input.query.trim()})`;
+    const rank = sql<number>`ts_rank_cd(knowledge_chunks.search_tsv, ${tsQuery})`;
+    let query = db
+      .selectFrom('knowledgeChunks')
+      .select(['knowledgeChunks.id as chunkId', rank.as('score')])
+      .where('knowledgeChunks.workspaceId', '=', input.workspaceId)
+      .where('knowledgeChunks.spaceId', 'in', input.spaceIds)
+      .where('knowledgeChunks.staleAt', 'is', null)
+      .where(sql<boolean>`knowledge_chunks.search_tsv @@ ${tsQuery}`);
+    if (input.retrievalChannel) {
+      query = query.where(
+        'knowledgeChunks.retrievalChannel',
+        '=',
+        input.retrievalChannel,
+      );
+    }
+    const rows = await this.applyAuthorizedChunkScope(
+      query,
+      input.eligibleSourcePageIds,
+    )
+      .orderBy(rank, 'desc')
+      .limit(input.limit)
+      .execute();
+
+    return this.hydrateRankedChunkCandidates(
+      rows as RankedChunkId[],
+      'lexical',
+      input,
+      trx,
+    );
+  }
+
+  async findExactTitleChunkCandidates(
+    input: AuthorizedCandidateInput & { query: string; limit: number },
+    trx?: KyselyTransaction,
+  ): Promise<KnowledgeChunkCandidate[]> {
+    if (!hasCandidateScope(input)) return [];
+    const normalizedQuery = normalizeTitle(input.query);
+    if (!normalizedQuery) return [];
+
+    const db = dbOrTx(this.db, trx);
+    const normalizedTitle = sql<string>`regexp_replace(lower(trim(knowledge_pages.title)), '\\s+', ' ', 'g')`;
+    const titleScore = sql<number>`CASE
+      WHEN ${normalizedTitle} = ${normalizedQuery} THEN 1
+      ELSE 0.5
+    END`;
+    let query = db
+      .selectFrom('knowledgeChunks')
+      .innerJoin(
+        'knowledgePages',
+        'knowledgePages.id',
+        'knowledgeChunks.knowledgePageId',
+      )
+      .select(['knowledgeChunks.id as chunkId', titleScore.as('score')])
+      .where('knowledgeChunks.workspaceId', '=', input.workspaceId)
+      .where('knowledgeChunks.spaceId', 'in', input.spaceIds)
+      .where('knowledgeChunks.staleAt', 'is', null)
+      .where('knowledgePages.staleAt', 'is', null)
+      .where(normalizedTitle, 'like', `${normalizedQuery}%`);
+    if (input.retrievalChannel) {
+      query = query.where(
+        'knowledgeChunks.retrievalChannel',
+        '=',
+        input.retrievalChannel,
+      );
+    }
+    const rows = await this.applyAuthorizedChunkScope(
+      query,
+      input.eligibleSourcePageIds,
+    )
+      .orderBy(titleScore, 'desc')
+      .orderBy('knowledgeChunks.id', 'asc')
+      .limit(input.limit)
+      .execute();
+
+    return this.hydrateRankedChunkCandidates(
+      rows as RankedChunkId[],
+      'exact-title',
+      input,
+      trx,
+    );
+  }
+
   async findCandidateDependencySourcePageIds(
     input: {
       workspaceId: string;
@@ -312,6 +495,29 @@ export class KnowledgeCapsuleRepo {
       .execute();
 
     return unique(rows.map((row) => row.sourcePageId));
+  }
+
+  async findDependencySourcePageIdsForSpaces(
+    input: { workspaceId: string; spaceIds: string[] },
+    trx?: KyselyTransaction,
+  ): Promise<string[]> {
+    if (input.spaceIds.length === 0) return [];
+
+    const rows = await dbOrTx(this.db, trx)
+      .selectFrom('knowledgeChunkSources')
+      .innerJoin(
+        'knowledgeChunks',
+        'knowledgeChunkSources.chunkId',
+        'knowledgeChunks.id',
+      )
+      .select('knowledgeChunkSources.sourcePageId')
+      .distinct()
+      .where('knowledgeChunks.workspaceId', '=', input.workspaceId)
+      .where('knowledgeChunks.spaceId', 'in', input.spaceIds)
+      .where('knowledgeChunks.staleAt', 'is', null)
+      .execute();
+
+    return rows.map((row) => row.sourcePageId);
   }
 
   async findSidecarEligibleChunks(
@@ -426,7 +632,7 @@ export class KnowledgeCapsuleRepo {
 
     return input.knowledgePageIds
       .map((id) => rowById.get(id))
-      .filter((row): row is KnowledgePage => Boolean(row));
+      .filter(Boolean) as KnowledgePage[];
   }
 
   /**
@@ -471,6 +677,8 @@ export class KnowledgeCapsuleRepo {
       return {
         pages,
         pageSources: [],
+        parentSections: [],
+        parentSectionSources: [],
         links: [],
         linkSources: [],
         graphEdges: [],
@@ -478,12 +686,23 @@ export class KnowledgeCapsuleRepo {
       };
     }
 
-    const [pageSources, links, graphEdges] = await Promise.all([
+    const [pageSources, parentSections, links, graphEdges] = await Promise.all([
       db
         .selectFrom('knowledgePageSources')
         .selectAll()
         .where('workspaceId', '=', input.workspaceId)
         .where('knowledgePageId', 'in', pageIds)
+        .execute(),
+      db
+        .selectFrom('knowledgeParentSections')
+        .selectAll()
+        .where('workspaceId', '=', input.workspaceId)
+        .where('spaceId', '=', input.spaceId)
+        .where('knowledgePageId', 'in', pageIds)
+        .where('staleAt', 'is', null)
+        .orderBy('knowledgePageId')
+        .orderBy('startOffset')
+        .limit(input.limit * 8)
         .execute(),
       db
         .selectFrom('knowledgeLinks')
@@ -505,30 +724,42 @@ export class KnowledgeCapsuleRepo {
         .execute(),
     ]);
 
+    const parentSectionIds = parentSections.map((section) => section.id);
     const linkIds = links.map((link) => link.id);
     const graphEdgeIds = graphEdges.map((edge) => edge.id);
-    const [linkSources, graphEdgeSources] = await Promise.all([
-      linkIds.length === 0
-        ? []
-        : db
-            .selectFrom('knowledgeLinkSources')
-            .selectAll()
-            .where('workspaceId', '=', input.workspaceId)
-            .where('linkId', 'in', linkIds)
-            .execute(),
-      graphEdgeIds.length === 0
-        ? []
-        : db
-            .selectFrom('knowledgeGraphEdgeSources')
-            .selectAll()
-            .where('workspaceId', '=', input.workspaceId)
-            .where('graphEdgeId', 'in', graphEdgeIds)
-            .execute(),
-    ]);
+    const [parentSectionSources, linkSources, graphEdgeSources] =
+      await Promise.all([
+        parentSectionIds.length === 0
+          ? []
+          : db
+              .selectFrom('knowledgeParentSectionSources')
+              .selectAll()
+              .where('workspaceId', '=', input.workspaceId)
+              .where('parentSectionId', 'in', parentSectionIds)
+              .execute(),
+        linkIds.length === 0
+          ? []
+          : db
+              .selectFrom('knowledgeLinkSources')
+              .selectAll()
+              .where('workspaceId', '=', input.workspaceId)
+              .where('linkId', 'in', linkIds)
+              .execute(),
+        graphEdgeIds.length === 0
+          ? []
+          : db
+              .selectFrom('knowledgeGraphEdgeSources')
+              .selectAll()
+              .where('workspaceId', '=', input.workspaceId)
+              .where('graphEdgeId', 'in', graphEdgeIds)
+              .execute(),
+      ]);
 
     return {
       pages,
       pageSources,
+      parentSections,
+      parentSectionSources,
       links,
       linkSources,
       graphEdges,
@@ -811,6 +1042,118 @@ export class KnowledgeCapsuleRepo {
       .execute();
   }
 
+  private applyAuthorizedChunkScope<T>(
+    query: T,
+    eligibleSourcePageIds: string[],
+  ): T {
+    return (query as any)
+      .where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom('knowledgeChunkSources as eligibleSources')
+            .select('eligibleSources.chunkId')
+            .whereRef('eligibleSources.chunkId', '=', 'knowledgeChunks.id')
+            .where('eligibleSources.sourcePageId', 'in', eligibleSourcePageIds),
+        ),
+      )
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom('knowledgeChunkSources as hiddenSources')
+              .select('hiddenSources.chunkId')
+              .whereRef('hiddenSources.chunkId', '=', 'knowledgeChunks.id')
+              .where(
+                'hiddenSources.sourcePageId',
+                'not in',
+                eligibleSourcePageIds,
+              ),
+          ),
+        ),
+      );
+  }
+
+  private async hydrateRankedChunkCandidates(
+    rows: RankedChunkId[],
+    signal: KnowledgeRetrievalSignal,
+    input: AuthorizedCandidateInput,
+    trx?: KyselyTransaction,
+  ): Promise<KnowledgeChunkCandidate[]> {
+    if (rows.length === 0) return [];
+
+    const chunkIds = rows.map((row) => row.chunkId);
+    const [chunks, sourceRows] = await Promise.all([
+      dbOrTx(this.db, trx)
+        .selectFrom('knowledgeChunks')
+        .selectAll()
+        .where('workspaceId', '=', input.workspaceId)
+        .where('id', 'in', chunkIds)
+        .where('staleAt', 'is', null)
+        .execute(),
+      this.findChunkSourcePageIdsByChunkIds(
+        { workspaceId: input.workspaceId, chunkIds },
+        trx,
+      ),
+    ]);
+    const pages = await this.findPagesByIds(
+      {
+        workspaceId: input.workspaceId,
+        knowledgePageIds: unique(chunks.map((chunk) => chunk.knowledgePageId)),
+      },
+      trx,
+    );
+    const parentSectionIds = unique(
+      chunks.flatMap((chunk) =>
+        chunk.parentSectionId ? [chunk.parentSectionId] : [],
+      ),
+    );
+    const parentSections = parentSectionIds.length
+      ? await dbOrTx(this.db, trx)
+          .selectFrom('knowledgeParentSections')
+          .selectAll()
+          .where('workspaceId', '=', input.workspaceId)
+          .where('id', 'in', parentSectionIds)
+          .where('staleAt', 'is', null)
+          .execute()
+      : [];
+    const chunkById = new Map(chunks.map((chunk) => [chunk.id, chunk]));
+    const pageById = new Map(pages.map((page) => [page.id, page]));
+    const sourcesByChunkId = new Map(
+      sourceRows.map((row) => [row.chunkId, row.sourcePageIds]),
+    );
+    const eligibleSet = new Set(input.eligibleSourcePageIds);
+    const parentById = new Map(
+      parentSections.map((parent) => [parent.id, parent]),
+    );
+
+    return rows.flatMap((row) => {
+      const chunk = chunkById.get(row.chunkId);
+      if (!chunk) return [];
+      const page = pageById.get(chunk.knowledgePageId);
+      const sourcePageIds = sourcesByChunkId.get(row.chunkId) ?? [];
+      if (
+        !page ||
+        sourcePageIds.length === 0 ||
+        sourcePageIds.some((sourcePageId) => !eligibleSet.has(sourcePageId))
+      ) {
+        return [];
+      }
+
+      const parentSection = chunk.parentSectionId
+        ? parentById.get(chunk.parentSectionId)
+        : undefined;
+      return [
+        {
+          chunk,
+          page,
+          sourcePageIds,
+          signals: [signal],
+          lexicalScore: signal === 'lexical' ? row.score : null,
+          signalScore: row.score,
+          ...(parentSection ? { parentSection } : {}),
+        },
+      ];
+    });
+  }
+
   private async deleteChildArtifacts(
     knowledgePageId: string,
     trx?: KyselyTransaction,
@@ -830,6 +1173,10 @@ export class KnowledgeCapsuleRepo {
       .where('knowledgePageId', '=', knowledgePageId)
       .execute();
     await db
+      .deleteFrom('knowledgeParentSections')
+      .where('knowledgePageId', '=', knowledgePageId)
+      .execute();
+    await db
       .deleteFrom('knowledgeClaims')
       .where('knowledgePageId', '=', knowledgePageId)
       .execute();
@@ -842,6 +1189,14 @@ export class KnowledgeCapsuleRepo {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function hasCandidateScope(input: AuthorizedCandidateInput): boolean {
+  return input.spaceIds.length > 0 && input.eligibleSourcePageIds.length > 0;
+}
+
+function normalizeTitle(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 function uniqueById<T extends { id: string }>(values: T[]): T[] {

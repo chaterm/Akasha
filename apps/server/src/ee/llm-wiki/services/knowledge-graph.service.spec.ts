@@ -19,6 +19,8 @@ describe('KnowledgeGraphService', () => {
           pageSource('kp-2', 'source-2'),
           pageSource('kp-hidden', 'source-hidden'),
         ],
+        parentSections: [],
+        parentSectionSources: [],
         links: [
           link('link-1', 'kp-1', 'kp-2', 'references'),
           link('link-hidden', 'kp-1', 'kp-hidden', 'private'),
@@ -55,6 +57,7 @@ describe('KnowledgeGraphService', () => {
           title: 'Kafka',
           spaceId: 'space-1',
           sourcePageId: 'source-1',
+          kind: 'page',
           degree: 2,
           artifactKind: 'source_summary',
           communityId: 'community-1',
@@ -64,6 +67,7 @@ describe('KnowledgeGraphService', () => {
           title: 'Chaterm',
           spaceId: 'space-1',
           sourcePageId: 'source-2',
+          kind: 'page',
           degree: 2,
           artifactKind: 'source_summary',
           communityId: 'community-1',
@@ -99,7 +103,7 @@ describe('KnowledgeGraphService', () => {
     expect(capsuleRepo.findGraphCandidatesForSpace).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
-      limit: 300,
+      limit: 3000,
     });
     expect(sourceAuthorization.filterReadableSources).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
@@ -137,6 +141,95 @@ describe('KnowledgeGraphService', () => {
 
     expect(capsuleRepo.findGraphCandidatesForSpace).not.toHaveBeenCalled();
   });
+
+  it('adds readable Wiki sections as child nodes and hides synthesis-only overview pages', async () => {
+    const capsuleRepo = {
+      findGraphCandidatesForSpace: jest.fn().mockResolvedValue({
+        pages: [
+          page('kp-1', 'Architecture'),
+          { ...page('overview-1', 'Space overview'), pageType: 'overview' },
+        ],
+        pageSources: [
+          pageSource('kp-1', 'source-1'),
+          pageSource('overview-1', 'source-1'),
+        ],
+        parentSections: [
+          {
+            id: 'section-1',
+            workspaceId: 'workspace-1',
+            spaceId: 'space-1',
+            knowledgePageId: 'kp-1',
+            stableKey: 'stable-1',
+            headingPath: ['Architecture', 'Retrieval'],
+            text: 'ACL filtering runs before candidate limits.',
+            contentHash: 'hash-section-1',
+            startOffset: 10,
+            endOffset: 54,
+            staleAt: null,
+            createdAt: new Date('2026-06-16T00:00:00.000Z'),
+            updatedAt: new Date('2026-06-16T00:00:00.000Z'),
+          },
+        ],
+        parentSectionSources: [
+          {
+            workspaceId: 'workspace-1',
+            parentSectionId: 'section-1',
+            sourcePageId: 'source-1',
+            sourceVersion: 'v1',
+            sourceRange: { startOffset: 10, endOffset: 54 },
+            quoteHash: 'quote-1',
+            contentHash: 'hash-section-1',
+            provenanceKind: 'synthesis_lineage',
+            attachmentId: null,
+            createdAt: new Date('2026-06-16T00:00:00.000Z'),
+          },
+        ],
+        links: [],
+        linkSources: [],
+        graphEdges: [],
+        graphEdgeSources: [],
+      }),
+    };
+    const service = createService({
+      capsuleRepo,
+      sourceAuthorization: {
+        filterReadableSources: jest.fn().mockResolvedValue(['source-1']),
+      },
+    });
+
+    const result = await service.getSpaceGraph({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      spaceId: 'space-1',
+    });
+
+    expect(result.nodes).toEqual([
+      expect.objectContaining({
+        id: 'kp-1',
+        kind: 'page',
+        degree: 1,
+      }),
+      expect.objectContaining({
+        id: 'section:section-1',
+        kind: 'section',
+        parentPageId: 'kp-1',
+        title: 'Retrieval',
+        headingPath: ['Architecture', 'Retrieval'],
+        excerpt: 'ACL filtering runs before candidate limits.',
+      }),
+    ]);
+    expect(result.edges).toEqual([
+      {
+        id: 'contains:section-1',
+        from: 'kp-1',
+        to: 'section:section-1',
+        type: 'contains',
+        label: '包含章节',
+        weight: 1,
+        reasons: ['section-membership'],
+      },
+    ]);
+  });
 });
 
 function createService(
@@ -159,6 +252,8 @@ function createService(
     findGraphCandidatesForSpace: jest.fn().mockResolvedValue({
       pages: [],
       pageSources: [],
+      parentSections: [],
+      parentSectionSources: [],
       links: [],
       linkSources: [],
       graphEdges: [],

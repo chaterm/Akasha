@@ -254,16 +254,28 @@ export interface GroupUsers {
 }
 
 export interface KnowledgeChunks {
+  chunkRole: Generated<string>;
   claimId: string | null;
   compilerRunId: string | null;
   compileTaskId: string | null;
   contentHash: string;
   createdAt: Generated<Timestamp>;
-  embedding: Json | null;
+  embedding: string | null;
+  embeddingDimensions: number | null;
+  embeddingLegacy: Json | null;
+  embeddingModel: string | null;
+  embeddingProfile: string | null;
+  endOffset: number | null;
+  headingPath: Generated<Json>;
   id: Generated<string>;
   knowledgePageId: string;
+  parentSectionId: string | null;
+  retrievalChannel: Generated<string>;
+  searchTsv: Generated<string | null>;
   spaceId: string;
+  stableKey: string;
   staleAt: Timestamp | null;
+  startOffset: number | null;
   text: string;
   workspaceId: string;
 }
@@ -368,6 +380,7 @@ export interface KnowledgePages {
   compileScope: string;
   compileTaskId: string | null;
   createdAt: Generated<Timestamp>;
+  generationMode: Generated<string>;
   id: Generated<string>;
   pageType: string | null;
   slug: string;
@@ -391,6 +404,47 @@ export interface KnowledgePageSources {
   workspaceId: string;
 }
 
+export interface KnowledgeParentSections {
+  contentHash: string;
+  createdAt: Generated<Timestamp>;
+  endOffset: number | null;
+  headingPath: Generated<Json>;
+  id: Generated<string>;
+  knowledgePageId: string;
+  spaceId: string;
+  stableKey: string;
+  staleAt: Timestamp | null;
+  startOffset: number | null;
+  text: string;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
+export interface KnowledgeParentSectionSources {
+  attachmentId: string | null;
+  contentHash: string;
+  createdAt: Generated<Timestamp>;
+  parentSectionId: string;
+  provenanceKind: string;
+  quoteHash: string | null;
+  sourcePageId: string;
+  sourceRange: Json | null;
+  sourceVersion: string;
+  workspaceId: string;
+}
+
+export interface KnowledgeQuarantinedArtifacts {
+  artifactId: string | null;
+  artifactKind: string | null;
+  compilerRunId: string | null;
+  compileTaskId: string | null;
+  createdAt: Generated<Timestamp>;
+  id: Generated<string>;
+  reasonCodes: Json;
+  spaceId: string;
+  workspaceId: string;
+}
+
 export interface KnowledgeQueryAudit {
   authorizedCapsuleCount: number;
   createdAt: Generated<Timestamp>;
@@ -399,19 +453,6 @@ export interface KnowledgeQueryAudit {
   queryHash: string;
   retrievalMode: string;
   userId: string | null;
-  workspaceId: string;
-}
-
-export interface KnowledgeReviewSnapshots {
-  discoveredAt: Generated<Timestamp>;
-  docs: Json;
-  id: Generated<string>;
-  items: Json;
-  jobs: Json;
-  resolvedReviews: Json;
-  spaceId: string;
-  updatedAt: Generated<Timestamp>;
-  version: string;
   workspaceId: string;
 }
 
@@ -428,28 +469,29 @@ export interface KnowledgeReviewApplications {
   id: Generated<string>;
   operation: string;
   patch: Json | null;
-  rationale: string;
+  rationale: Generated<string>;
   revertedAt: Timestamp | null;
   reviewItemId: string;
-  sourceRefs: Json;
+  sourceRefs: Generated<Json>;
   spaceId: string;
-  status: string;
-  targetHeadingPath: Json;
+  status: Generated<string>;
+  targetHeadingPath: Generated<Json>;
   targetPageId: string | null;
   targetPageTitle: string | null;
   updatedAt: Generated<Timestamp>;
   workspaceId: string;
 }
 
-export interface KnowledgeQuarantinedArtifacts {
-  artifactId: string | null;
-  artifactKind: string | null;
-  compileTaskId: string | null;
-  compilerRunId: string | null;
-  createdAt: Generated<Timestamp>;
+export interface KnowledgeReviewSnapshots {
+  discoveredAt: Generated<Timestamp>;
+  docs: Generated<Json>;
   id: Generated<string>;
-  reasonCodes: Json;
+  items: Generated<Json>;
+  jobs: Generated<Json>;
+  resolvedReviews: Generated<Json>;
   spaceId: string;
+  updatedAt: Generated<Timestamp>;
+  version: Generated<string>;
   workspaceId: string;
 }
 
@@ -874,10 +916,12 @@ export interface DB {
   knowledgeLinkSources: KnowledgeLinkSources;
   knowledgePages: KnowledgePages;
   knowledgePageSources: KnowledgePageSources;
+  knowledgeParentSections: KnowledgeParentSections;
+  knowledgeParentSectionSources: KnowledgeParentSectionSources;
+  knowledgeQuarantinedArtifacts: KnowledgeQuarantinedArtifacts;
   knowledgeQueryAudit: KnowledgeQueryAudit;
   knowledgeReviewApplications: KnowledgeReviewApplications;
   knowledgeReviewSnapshots: KnowledgeReviewSnapshots;
-  knowledgeQuarantinedArtifacts: KnowledgeQuarantinedArtifacts;
   knowledgeSourceAccessPolicy: KnowledgeSourceAccessPolicy;
   knowledgeSourceAccessPrincipals: KnowledgeSourceAccessPrincipals;
   knowledgeSourceAccessRequirements: KnowledgeSourceAccessRequirements;

@@ -101,6 +101,59 @@ export class KnowledgeRetrievalRankerService {
       })
       .slice(0, input.limit);
   }
+
+  fuseRecallLists(input: {
+    recallLists: Array<{
+      signal: KnowledgeRetrievalSignal;
+      candidates: KnowledgeChunkCandidate[];
+    }>;
+    limit: number;
+    rrfK?: number;
+    weights?: Partial<Record<KnowledgeRetrievalSignal, number>>;
+  }): KnowledgeRankedChunkCandidate[] {
+    const rrfK = input.rrfK ?? 60;
+    const scores = new Map<string, number>();
+    const merged = new Map<string, KnowledgeChunkCandidate>();
+
+    for (const list of input.recallLists) {
+      const weight = input.weights?.[list.signal] ?? 1;
+      list.candidates.forEach((candidate, rank) => {
+        const chunkId = candidate.chunk.id;
+        scores.set(
+          chunkId,
+          (scores.get(chunkId) ?? 0) + weight / (rrfK + rank + 1),
+        );
+        const previous = merged.get(chunkId);
+        merged.set(chunkId, {
+          ...(previous ?? candidate),
+          sourcePageIds: unique([
+            ...(previous?.sourcePageIds ?? []),
+            ...candidate.sourcePageIds,
+          ]),
+          signals: uniqueSignals([
+            ...(previous?.signals ?? []),
+            list.signal,
+            ...candidate.signals,
+          ]),
+        });
+      });
+    }
+
+    return [...merged.values()]
+      .map((candidate) => ({
+        ...candidate,
+        score: scores.get(candidate.chunk.id) ?? 0,
+        rankReasons: rankReasons(candidate.signals),
+      }))
+      .sort((left, right) => {
+        if (right.score !== left.score) return right.score - left.score;
+        const priority =
+          signalPriority(right.signals) - signalPriority(left.signals);
+        if (priority !== 0) return priority;
+        return left.chunk.id.localeCompare(right.chunk.id);
+      })
+      .slice(0, input.limit);
+  }
 }
 
 function rankSemanticCandidates(input: {
@@ -113,7 +166,9 @@ function rankSemanticCandidates(input: {
   const rankable = input.candidates.flatMap((candidate) => {
     if (!candidate.signals.includes('semantic')) return [];
 
-    const vector = parseEmbeddingVector(candidate.chunk.embedding);
+    const vector = parseEmbeddingVector(
+      candidate.chunk.embeddingLegacy ?? candidate.chunk.embedding,
+    );
     if (!vector || vector.length !== input.queryEmbedding!.length) return [];
 
     return [
@@ -188,7 +243,9 @@ function rankAllChunks(input: {
   chunks: KnowledgeChunk[];
 }): KnowledgeChunk[] {
   const candidates = input.chunks.flatMap((chunk) => {
-    const vector = parseEmbeddingVector(chunk.embedding);
+    const vector = parseEmbeddingVector(
+      chunk.embeddingLegacy ?? chunk.embedding,
+    );
     if (!vector || vector.length !== input.queryEmbedding.length) return [];
     return [
       {
@@ -227,6 +284,16 @@ function cosineSimilarity(a: number[], b: number[]): number {
 
   if (magA === 0 || magB === 0) return 0;
   return dot / (Math.sqrt(magA) * Math.sqrt(magB));
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function uniqueSignals(
+  values: KnowledgeRetrievalSignal[],
+): KnowledgeRetrievalSignal[] {
+  return [...new Set(values)];
 }
 
 function rerankWithBm25(

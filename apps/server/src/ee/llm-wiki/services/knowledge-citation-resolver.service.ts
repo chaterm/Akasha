@@ -107,7 +107,9 @@ export class KnowledgeCitationResolverService {
     });
 
     return input.chunks.map((entry) => ({
-      chunk: entry.chunk,
+      chunk: entry.parentSection
+        ? { ...entry.chunk, text: entry.parentSection.text }
+        : entry.chunk,
       pageTitle: entry.page.title,
       retrievalReasons: entry.rankReasons,
       warnings: [],

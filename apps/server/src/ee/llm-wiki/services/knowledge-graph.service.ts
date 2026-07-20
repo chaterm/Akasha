@@ -2,6 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { KnowledgeCapsuleRepo } from '@akasha/db/repos/llm-wiki/knowledge-capsule.repo';
 import { UserRepo } from '@akasha/db/repos/user/user.repo';
 import { SpaceAuthorizationService } from '../../../core/space/services/space-authorization.service';
+import {
+  DEFAULT_GRAPH_NODE_LIMIT,
+  MAX_GRAPH_NODE_LIMIT,
+} from '../knowledge-graph.constants';
 import { KnowledgeSourceAuthorizationService } from './knowledge-source-authorization.service';
 
 export type KnowledgeGraphResult = {
@@ -15,6 +19,10 @@ export type KnowledgeGraphNode = {
   title: string;
   spaceId: string;
   sourcePageId?: string;
+  kind: 'page' | 'section';
+  parentPageId?: string;
+  headingPath?: string[];
+  excerpt?: string;
   degree: number;
   artifactKind?: string;
   communityId: string;
@@ -24,22 +32,22 @@ export type KnowledgeGraphEdge = {
   id: string;
   from: string;
   to: string;
-  type: 'link' | 'semantic';
+  type: 'link' | 'semantic' | 'contains';
   label: string;
   weight: number;
   reasons: KnowledgeGraphEdgeReason[];
 };
 
-export type KnowledgeGraphEdgeReason = 'direct-link' | 'semantic-edge';
+export type KnowledgeGraphEdgeReason =
+  | 'direct-link'
+  | 'semantic-edge'
+  | 'section-membership';
 
 export type KnowledgeGraphInsights = {
   isolatedNodeIds: string[];
   bridgeNodeIds: string[];
   communityCount: number;
 };
-
-const DEFAULT_GRAPH_NODE_LIMIT = 300;
-const MAX_GRAPH_NODE_LIMIT = 500;
 
 @Injectable()
 export class KnowledgeGraphService {
@@ -78,6 +86,7 @@ export class KnowledgeGraphService {
 
     const allSourcePageIds = unique([
       ...graph.pageSources.map((source) => source.sourcePageId),
+      ...graph.parentSectionSources.map((source) => source.sourcePageId),
       ...graph.linkSources.map((source) => source.sourcePageId),
       ...graph.graphEdgeSources.map((source) => source.sourcePageId),
     ]);
@@ -93,13 +102,28 @@ export class KnowledgeGraphService {
       graph.pageSources,
       (source) => source.knowledgePageId,
     );
-    const visiblePages = graph.pages.filter((page) =>
-      allSourcesReadable(
-        pageSourcesByPageId.get(page.id) ?? [],
-        readableSourceSet,
-      ),
+    const visiblePages = graph.pages.filter(
+      (page) =>
+        page.pageType !== 'overview' &&
+        allSourcesReadable(
+          pageSourcesByPageId.get(page.id) ?? [],
+          readableSourceSet,
+        ),
     );
     const visiblePageIds = new Set(visiblePages.map((page) => page.id));
+
+    const parentSectionSourcesBySectionId = groupBy(
+      graph.parentSectionSources,
+      (source) => source.parentSectionId,
+    );
+    const visibleSections = graph.parentSections.filter(
+      (section) =>
+        visiblePageIds.has(section.knowledgePageId) &&
+        allSourcesReadable(
+          parentSectionSourcesBySectionId.get(section.id) ?? [],
+          readableSourceSet,
+        ),
+    );
 
     const linkSourcesByLinkId = groupBy(
       graph.linkSources,
@@ -150,30 +174,93 @@ export class KnowledgeGraphService {
         reasons: ['semantic-edge' as const],
       }));
 
-    const edges = [...linkEdges, ...semanticEdges];
-    const degreeByPageId = new Map<string, number>();
+    const sectionEdges = visibleSections.map((section) => ({
+      id: `contains:${section.id}`,
+      from: section.knowledgePageId,
+      to: sectionNodeId(section.id),
+      type: 'contains' as const,
+      label: '包含章节',
+      weight: 1,
+      reasons: ['section-membership' as const],
+    }));
+
+    const relationshipEdges = [...linkEdges, ...semanticEdges];
+    const edges = [...relationshipEdges, ...sectionEdges];
+    const degreeByNodeId = new Map<string, number>();
     for (const edge of edges) {
-      degreeByPageId.set(edge.from, (degreeByPageId.get(edge.from) ?? 0) + 1);
-      degreeByPageId.set(edge.to, (degreeByPageId.get(edge.to) ?? 0) + 1);
+      degreeByNodeId.set(edge.from, (degreeByNodeId.get(edge.from) ?? 0) + 1);
+      degreeByNodeId.set(edge.to, (degreeByNodeId.get(edge.to) ?? 0) + 1);
     }
-    const communityByPageId = assignCommunities(visiblePages, edges);
+    const relationshipDegreeByPageId = new Map<string, number>();
+    for (const edge of relationshipEdges) {
+      relationshipDegreeByPageId.set(
+        edge.from,
+        (relationshipDegreeByPageId.get(edge.from) ?? 0) + 1,
+      );
+      relationshipDegreeByPageId.set(
+        edge.to,
+        (relationshipDegreeByPageId.get(edge.to) ?? 0) + 1,
+      );
+    }
+    const communityByPageId = assignCommunities(
+      visiblePages,
+      relationshipEdges,
+    );
+    const pageNodes = visiblePages.map((page) => ({
+      id: page.id,
+      title: page.title,
+      spaceId: page.spaceId,
+      sourcePageId: singleSourcePageId(pageSourcesByPageId.get(page.id) ?? []),
+      kind: 'page' as const,
+      degree: degreeByNodeId.get(page.id) ?? 0,
+      artifactKind: page.pageType ?? undefined,
+      communityId: communityByPageId.get(page.id) ?? 'community-0',
+    }));
+    const sectionNodes = visibleSections.map((section) => {
+      const headingPath = readHeadingPath(section.headingPath);
+      return {
+        id: sectionNodeId(section.id),
+        title: headingPath[headingPath.length - 1] || '正文',
+        spaceId: section.spaceId,
+        sourcePageId: singleSourcePageId(
+          parentSectionSourcesBySectionId.get(section.id) ?? [],
+        ),
+        kind: 'section' as const,
+        parentPageId: section.knowledgePageId,
+        headingPath,
+        excerpt: buildExcerpt(section.text),
+        degree: degreeByNodeId.get(sectionNodeId(section.id)) ?? 0,
+        artifactKind: 'source_section',
+        communityId:
+          communityByPageId.get(section.knowledgePageId) ?? 'community-0',
+      };
+    });
 
     return {
-      nodes: visiblePages.map((page) => ({
-        id: page.id,
-        title: page.title,
-        spaceId: page.spaceId,
-        sourcePageId: singleSourcePageId(
-          pageSourcesByPageId.get(page.id) ?? [],
-        ),
-        degree: degreeByPageId.get(page.id) ?? 0,
-        artifactKind: page.pageType ?? undefined,
-        communityId: communityByPageId.get(page.id) ?? 'community-0',
-      })),
+      nodes: [...pageNodes, ...sectionNodes],
       edges,
-      insights: buildInsights(visiblePages, degreeByPageId, communityByPageId),
+      insights: buildInsights(
+        visiblePages,
+        relationshipDegreeByPageId,
+        communityByPageId,
+      ),
     };
   }
+}
+
+function sectionNodeId(sectionId: string): string {
+  return `section:${sectionId}`;
+}
+
+function readHeadingPath(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((part): part is string => typeof part === 'string')
+    : [];
+}
+
+function buildExcerpt(text: string): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  return compact.length > 180 ? `${compact.slice(0, 177)}…` : compact;
 }
 
 function emptyGraph(): KnowledgeGraphResult {

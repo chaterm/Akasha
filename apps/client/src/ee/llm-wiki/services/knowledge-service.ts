@@ -5,6 +5,7 @@ import type {
   KnowledgeCompileResult,
   KnowledgeCompileStatus,
   KnowledgeDiagnosticsResult,
+  KnowledgeGraphNode,
   KnowledgeGraphResult,
   KnowledgeQualityIssue,
   KnowledgeQuarantinedArtifact,
@@ -457,6 +458,17 @@ function normalizeKnowledgeGraph(value: unknown): KnowledgeGraphResult {
         spaceId: readString(node.spaceId),
         sourcePageId:
           typeof node.sourcePageId === "string" ? node.sourcePageId : undefined,
+        kind: (node.kind === "section"
+          ? "section"
+          : "page") as KnowledgeGraphNode["kind"],
+        parentPageId:
+          typeof node.parentPageId === "string" ? node.parentPageId : undefined,
+        headingPath: Array.isArray(node.headingPath)
+          ? node.headingPath.filter(
+              (part): part is string => typeof part === "string",
+            )
+          : undefined,
+        excerpt: typeof node.excerpt === "string" ? node.excerpt : undefined,
         artifactKind:
           typeof node.artifactKind === "string" ? node.artifactKind : undefined,
         communityId:
@@ -470,9 +482,11 @@ function normalizeKnowledgeGraph(value: unknown): KnowledgeGraphResult {
         id: readString(edge.id),
         from: readString(edge.from),
         to: readString(edge.to),
-        type: (edge.type === "semantic" ? "semantic" : "link") as
-          | "semantic"
-          | "link",
+        type: (edge.type === "semantic"
+          ? "semantic"
+          : edge.type === "contains"
+            ? "contains"
+            : "link") as "semantic" | "contains" | "link",
         label: readString(edge.label),
         weight: readNumber(edge.weight),
         reasons: Array.isArray(edge.reasons)

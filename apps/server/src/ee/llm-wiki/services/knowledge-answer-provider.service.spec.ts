@@ -1,4 +1,4 @@
-import { generateText } from 'ai';
+import { generateText, streamText } from 'ai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
@@ -8,6 +8,7 @@ import { ConfiguredKnowledgeAnswerProvider } from './knowledge-answer-provider.s
 
 jest.mock('ai', () => ({
   generateText: jest.fn(),
+  streamText: jest.fn(),
 }));
 
 jest.mock('@ai-sdk/openai', () => ({
@@ -160,6 +161,31 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
     ).resolves.toBe('');
 
     expect(generateText).not.toHaveBeenCalled();
+  });
+
+  it('exposes the model text stream without buffering the answer', async () => {
+    const openaiProvider = jest.fn().mockReturnValue('openai-model');
+    (createOpenAI as jest.Mock).mockReturnValue(openaiProvider);
+    (streamText as jest.Mock).mockReturnValue({
+      textStream: (async function* () {
+        yield 'first ';
+        yield 'second';
+      })(),
+    });
+    const service = createService({ aiDriver: 'openai' });
+
+    const tokens: string[] = [];
+    for await (const token of service.stream({
+      query: 'Q',
+      context: 'Context',
+    })) {
+      tokens.push(token);
+    }
+
+    expect(tokens).toEqual(['first ', 'second']);
+    expect(streamText).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'openai-model' }),
+    );
   });
 });
 

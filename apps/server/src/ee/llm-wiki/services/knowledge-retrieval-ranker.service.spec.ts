@@ -170,6 +170,58 @@ describe('KnowledgeRetrievalRankerService', () => {
         .map((candidate) => candidate.chunk.id),
     ).toEqual(['chunk-combined', 'chunk-lexical', 'chunk-semantic']);
   });
+
+  it('fuses independently ranked SQL recall lists and merges duplicate signals', () => {
+    const ranker = new KnowledgeRetrievalRankerService();
+    const shared = {
+      chunk: chunk('chunk-shared', 'kp-shared', null, 'deployment guide'),
+      page: page('kp-shared', 'deployment'),
+      sourcePageIds: ['source-shared'],
+      signals: ['semantic' as const],
+      signalScore: 0.1,
+    };
+
+    const ranked = ranker.fuseRecallLists({
+      recallLists: [
+        { signal: 'semantic', candidates: [shared] },
+        {
+          signal: 'lexical',
+          candidates: [
+            {
+              ...shared,
+              signals: ['lexical'],
+              signalScore: 9,
+            },
+            {
+              chunk: chunk('chunk-lexical', 'kp-lexical', null, 'deployment'),
+              page: page('kp-lexical'),
+              sourcePageIds: ['source-lexical'],
+              signals: ['lexical'],
+              signalScore: 8,
+            },
+          ],
+        },
+        {
+          signal: 'exact-title',
+          candidates: [{ ...shared, signals: ['exact-title'], signalScore: 1 }],
+        },
+      ],
+      limit: 2,
+      rrfK: 60,
+    });
+
+    expect(ranked.map((candidate) => candidate.chunk.id)).toEqual([
+      'chunk-shared',
+      'chunk-lexical',
+    ]);
+    expect(ranked[0].rankReasons).toEqual([
+      'exact-title',
+      'semantic',
+      'lexical',
+      'sidecar-prefiltered',
+    ]);
+    expect(ranked[0].signals).toEqual(['semantic', 'lexical', 'exact-title']);
+  });
 });
 
 function page(id: string, title = `Title ${id}`) {
@@ -190,6 +242,7 @@ function page(id: string, title = `Title ${id}`) {
     staleAt: null,
     createdAt: new Date('2026-06-16T00:00:00.000Z'),
     updatedAt: new Date('2026-06-16T00:00:00.000Z'),
+    generationMode: 'legacy',
   };
 }
 
@@ -207,7 +260,12 @@ function chunk(
     claimId: null,
     text,
     contentHash: `${id}-hash`,
-    embedding,
+    embedding: embedding ? JSON.stringify(embedding) : null,
+    embeddingLegacy: embedding,
+    embeddingProfile: embedding ? 'a'.repeat(64) : null,
+    embeddingModel: embedding ? 'test-embedding' : null,
+    embeddingDimensions: embedding?.length ?? null,
+    searchTsv: null,
     compilerRunId: 'run-1',
     compileTaskId: 'task-1',
     staleAt: null,
