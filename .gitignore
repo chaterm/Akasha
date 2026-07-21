@@ -47,3 +47,4 @@ docs/plans/
 
 # CodeGraph (local index, per-machine)
 .codegraph/
+.vscode/
