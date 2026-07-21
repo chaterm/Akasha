@@ -79,11 +79,6 @@ export async function down(db: Kysely<unknown>): Promise<void> {
     SET embedding_vector = embedding
     WHERE embedding IS NOT NULL
   `.execute(db);
-  await sql`
-    CREATE INDEX knowledge_chunks_embedding_vector_hnsw_idx
-      ON knowledge_chunks USING hnsw (embedding_vector vector_cosine_ops)
-      WHERE stale_at IS NULL AND embedding_vector IS NOT NULL
-  `.execute(db);
   await sql`DROP INDEX IF EXISTS idx_knowledge_chunks_embedding_profile`.execute(
     db,
   );
