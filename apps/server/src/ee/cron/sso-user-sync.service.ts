@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { request } from 'undici';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
 import { HoidcService, HoidcProviderConfig } from '../sso/hoidc.service';
+import { WorkspaceRepo } from '@akasha/db/repos/workspace/workspace.repo';
 
 type SsoUserListItem = {
   email?: string;
@@ -25,6 +26,7 @@ export class SsoUserSyncService {
   constructor(
     private readonly environmentService: EnvironmentService,
     private readonly hoidcService: HoidcService,
+    private readonly workspaceRepo: WorkspaceRepo,
   ) {}
 
   @Cron('0 0 2 * * *', { name: 'sso-user-sync' })
@@ -36,7 +38,7 @@ export class SsoUserSyncService {
   }
 
   async syncAllUsers(): Promise<SsoUserSyncResult> {
-    const config = this.getSyncConfig();
+    const config = await this.getSyncConfig();
     if (!config) {
       this.logger.warn('SSO user sync skipped: personnel list config missing');
       return { fetched: 0, synced: 0, skipped: 0, failed: 0 };
@@ -84,19 +86,24 @@ export class SsoUserSyncService {
     return result;
   }
 
-  private getSyncConfig():
+  private async getSyncConfig(): Promise<
     | (HoidcProviderConfig & {
         secret: string;
       })
-    | null {
+    | null
+  > {
     const ssoApi = this.environmentService.getSsoUserListApiUrl().trim();
     const platformId = this.environmentService
       .getSsoUserListPlatformId()
       .trim();
     const secret = this.environmentService.getSsoUserListSecret().trim();
-    const workspaceId = this.environmentService.getHoidcWorkspaceId().trim();
 
-    if (!ssoApi || !platformId || !secret || !workspaceId) {
+    if (!ssoApi || !platformId || !secret) {
+      return null;
+    }
+
+    const workspace = await this.workspaceRepo.findFirst();
+    if (!workspace) {
       return null;
     }
 
@@ -104,7 +111,7 @@ export class SsoUserSyncService {
       ssoApi: ssoApi.replace(/\/+$/, ''),
       platformId,
       secret,
-      workspaceId,
+      workspaceId: workspace.id,
       allowSignup: this.environmentService.isHoidcAllowSignup(),
     };
   }

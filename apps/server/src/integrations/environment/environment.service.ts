@@ -358,10 +358,6 @@ export class EnvironmentService {
     return this.configService.get<string>('HOIDC_PLATFORM_ID', '');
   }
 
-  getHoidcWorkspaceId(): string {
-    return this.configService.get<string>('HOIDC_WORKSPACE_ID', '');
-  }
-
   isHoidcAllowSignup(): boolean {
     return (
       this.configService
