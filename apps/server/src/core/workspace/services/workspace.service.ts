@@ -39,7 +39,7 @@ import {
   generateRandomSuffixNumbers,
   diffAuditTrackedFields,
 } from '../../../common/helpers';
-import { isPageEmbeddingsTableExists } from '@akasha/db/helpers/helpers';
+import { isKnowledgeVectorSearchReady } from '@akasha/db/helpers/helpers';
 import { CursorPaginationResult } from '@akasha/db/pagination/cursor-pagination';
 import { ShareRepo } from '@akasha/db/repos/share/share.repo';
 import { WatcherRepo } from '@akasha/db/repos/watcher/watcher.repo';
@@ -395,10 +395,10 @@ export class WorkspaceService {
     }
 
     if (updateWorkspaceDto.aiSearch) {
-      const tableExists = await isPageEmbeddingsTableExists(this.db);
-      if (!tableExists) {
+      const vectorSearchReady = await isKnowledgeVectorSearchReady(this.db);
+      if (!vectorSearchReady) {
         throw new BadRequestException(
-          'Failed to activate. Make sure pgvector postgres extension is installed.',
+          'Failed to activate. Run knowledge database migrations and make sure pgvector is installed.',
         );
       }
     }
