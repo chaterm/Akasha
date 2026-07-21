@@ -79,7 +79,31 @@ export type KnowledgeDiagnosticsPage = {
   lastCompiledAt: Date | null;
   lastAccessPolicyIndexedAt: Date | null;
   staleAccessPolicyCount: number;
+  compileStatus: KnowledgePageCompileStatus;
+  compileStage: KnowledgePageCompileStage | null;
+  compileAttemptCount: number;
+  compileErrorCode: string | null;
+  compileErrorMessage: string | null;
+  lastSucceededAt: Date | null;
+  servingLastSuccessfulVersion: boolean;
 };
+
+export type KnowledgePageCompileStatus =
+  | 'not_started'
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed';
+
+export type KnowledgePageCompileStage =
+  | 'queued'
+  | 'read_source'
+  | 'analysis'
+  | 'generation'
+  | 'merge'
+  | 'validation'
+  | 'import'
+  | 'completed';
 
 export type KnowledgeDiagnosticsJob = {
   id: string;
@@ -121,6 +145,8 @@ export class KnowledgeDiagnosticsService {
   async getWorkspaceDiagnostics(input: {
     workspaceId: string;
     spaceIds?: string[];
+    statuses?: KnowledgePageCompileStatus[];
+    stages?: KnowledgePageCompileStage[];
     limit?: number;
   }): Promise<{
     pages: KnowledgeDiagnosticsPage[];
@@ -134,6 +160,8 @@ export class KnowledgeDiagnosticsService {
     const pages = await this.findRecentPages({
       workspaceId: input.workspaceId,
       spaceIds: input.spaceIds ?? [],
+      statuses: input.statuses ?? [],
+      stages: input.stages ?? [],
       limit,
     });
     const pageIds = pages.map((page) => page.pageId);
@@ -204,6 +232,8 @@ export class KnowledgeDiagnosticsService {
   private async findRecentPages(input: {
     workspaceId: string;
     spaceIds: string[];
+    statuses: KnowledgePageCompileStatus[];
+    stages: KnowledgePageCompileStage[];
     limit: number;
   }): Promise<
     Omit<
@@ -222,6 +252,7 @@ export class KnowledgeDiagnosticsService {
     let query = this.db
       .selectFrom('pages as p')
       .innerJoin('spaces as s', 's.id', 'p.spaceId')
+      .leftJoin('knowledgeCompilationAttempts as ca', 'ca.sourcePageId', 'p.id')
       .select([
         'p.id as pageId',
         'p.slugId',
@@ -231,6 +262,13 @@ export class KnowledgeDiagnosticsService {
         's.slug as spaceSlug',
         'p.updatedAt',
         'p.deletedAt',
+        'ca.status as compileAttemptStatus',
+        'ca.stage as compileAttemptStage',
+        'ca.attemptCount as compileAttemptCount',
+        'ca.errorCode as compileAttemptErrorCode',
+        'ca.errorMessage as compileAttemptErrorMessage',
+        'ca.lastSuccessfulSourceVersion as lastSuccessfulSourceVersion',
+        'ca.lastSucceededAt as compileAttemptLastSucceededAt',
       ])
       .select((eb) => eb.fn('length', ['p.textContent']).as('textLength'))
       .where('p.workspaceId', '=', input.workspaceId)
@@ -239,6 +277,26 @@ export class KnowledgeDiagnosticsService {
 
     if (input.spaceIds.length > 0) {
       query = query.where('p.spaceId', 'in', input.spaceIds);
+    }
+    if (input.statuses.length > 0) {
+      const includeNotStarted = input.statuses.includes('not_started');
+      const attemptStatuses = input.statuses.filter(
+        (
+          status,
+        ): status is Exclude<KnowledgePageCompileStatus, 'not_started'> =>
+          status !== 'not_started',
+      );
+      query = query.where((eb) =>
+        eb.or([
+          ...(includeNotStarted ? [eb('ca.id', 'is', null)] : []),
+          ...(attemptStatuses.length > 0
+            ? [eb('ca.status', 'in', attemptStatuses)]
+            : []),
+        ]),
+      );
+    }
+    if (input.stages.length > 0) {
+      query = query.where('ca.stage', 'in', input.stages);
     }
 
     const rows = await query.execute();
@@ -252,6 +310,15 @@ export class KnowledgeDiagnosticsService {
       updatedAt: row.updatedAt,
       deletedAt: row.deletedAt,
       textLength: Number(row.textLength ?? 0),
+      ...buildPageCompilationDiagnostics({
+        status: row.compileAttemptStatus,
+        stage: row.compileAttemptStage,
+        attemptCount: row.compileAttemptCount,
+        errorCode: row.compileAttemptErrorCode,
+        errorMessage: row.compileAttemptErrorMessage,
+        lastSuccessfulSourceVersion: row.lastSuccessfulSourceVersion,
+        lastSucceededAt: row.compileAttemptLastSucceededAt,
+      }),
     }));
   }
 
@@ -456,6 +523,93 @@ export class KnowledgeDiagnosticsService {
 
 function rowsToCountMap(rows: CountRow[]): Map<string, number> {
   return new Map(rows.map((row) => [row.sourcePageId, Number(row.count ?? 0)]));
+}
+
+export function buildPageCompilationDiagnostics(input?: {
+  status?: string | null;
+  stage?: string | null;
+  attemptCount?: number | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  lastSuccessfulSourceVersion?: string | null;
+  lastSucceededAt?: Date | null;
+}): Pick<
+  KnowledgeDiagnosticsPage,
+  | 'compileStatus'
+  | 'compileStage'
+  | 'compileAttemptCount'
+  | 'compileErrorCode'
+  | 'compileErrorMessage'
+  | 'lastSucceededAt'
+  | 'servingLastSuccessfulVersion'
+> {
+  const status = toPageCompileStatus(input?.status);
+  const errorCode = input?.errorCode ?? null;
+  return {
+    compileStatus: status,
+    compileStage: toPageCompileStage(input?.stage),
+    compileAttemptCount: Number(input?.attemptCount ?? 0),
+    compileErrorCode: errorCode,
+    compileErrorMessage: errorCode
+      ? safeCompilationErrorMessage(errorCode)
+      : null,
+    lastSucceededAt: input?.lastSucceededAt ?? null,
+    servingLastSuccessfulVersion:
+      status !== 'succeeded' && Boolean(input?.lastSuccessfulSourceVersion),
+  };
+}
+
+function toPageCompileStatus(
+  value: string | null | undefined,
+): KnowledgePageCompileStatus {
+  if (
+    value === 'queued' ||
+    value === 'running' ||
+    value === 'succeeded' ||
+    value === 'failed'
+  ) {
+    return value;
+  }
+  return 'not_started';
+}
+
+function toPageCompileStage(
+  value: string | null | undefined,
+): KnowledgePageCompileStage | null {
+  if (
+    value === 'queued' ||
+    value === 'read_source' ||
+    value === 'analysis' ||
+    value === 'generation' ||
+    value === 'merge' ||
+    value === 'validation' ||
+    value === 'import' ||
+    value === 'completed'
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function safeCompilationErrorMessage(errorCode: string): string {
+  switch (errorCode) {
+    case 'configuration_error':
+      return 'Knowledge compiler is not configured.';
+    case 'invalid_output':
+      return 'Knowledge compiler returned invalid output.';
+    case 'rate_limited':
+      return 'Knowledge compiler provider rate limit was exceeded.';
+    case 'timeout':
+      return 'Knowledge compiler provider timed out.';
+    case 'provider_error':
+      return 'Knowledge compiler provider request failed.';
+    case 'source_changed':
+      return 'Knowledge source changed during compilation.';
+    case 'validation_failed':
+      return 'Knowledge compiler output failed validation.';
+    default:
+      return 'Knowledge compilation failed.';
+  }
 }
 
 export function buildCompileStatusesFromJobs(

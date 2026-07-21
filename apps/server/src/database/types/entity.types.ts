@@ -31,6 +31,8 @@ import {
   Favorites,
   FileTasks,
   KnowledgeChunks,
+  KnowledgeArtifactContributions,
+  KnowledgeCompilationAttempts,
   KnowledgeChunkSources,
   KnowledgeClaims,
   KnowledgeClaimSources,
@@ -50,6 +52,7 @@ import {
   KnowledgeSourceAccessPrincipals as _KnowledgeSourceAccessPrincipals,
   KnowledgeSourceAccessRequirements as _KnowledgeSourceAccessRequirements,
   KnowledgeSourceChunks,
+  KnowledgeSourceAnalyses,
   KnowledgeSources,
   UserMfa as _UserMFA,
   UserSessions,
@@ -78,6 +81,23 @@ export type InsertableAiChatMessage = Omit<Insertable<AiChatMessages>, 'tsv'>;
 export type KnowledgeSource = Selectable<KnowledgeSources>;
 export type InsertableKnowledgeSource = Insertable<KnowledgeSources>;
 export type UpdatableKnowledgeSource = Updateable<Omit<KnowledgeSources, 'id'>>;
+
+export type KnowledgeCompilationAttempt =
+  Selectable<KnowledgeCompilationAttempts>;
+export type InsertableKnowledgeCompilationAttempt =
+  Insertable<KnowledgeCompilationAttempts>;
+export type UpdatableKnowledgeCompilationAttempt = Updateable<
+  Omit<KnowledgeCompilationAttempts, 'id'>
+>;
+
+export type KnowledgeSourceAnalysis = Selectable<KnowledgeSourceAnalyses>;
+export type InsertableKnowledgeSourceAnalysis =
+  Insertable<KnowledgeSourceAnalyses>;
+
+export type KnowledgeArtifactContribution =
+  Selectable<KnowledgeArtifactContributions>;
+export type InsertableKnowledgeArtifactContribution =
+  Insertable<KnowledgeArtifactContributions>;
 
 export type KnowledgeSourceChunk = Selectable<KnowledgeSourceChunks>;
 export type InsertableKnowledgeSourceChunk = Insertable<KnowledgeSourceChunks>;

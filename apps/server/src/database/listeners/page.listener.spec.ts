@@ -26,6 +26,8 @@ describe('PageListener knowledge jobs', () => {
       },
       {
         delay: 5000,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 1000 },
         jobId: expect.stringMatching(
           /^knowledge-compile-pages__workspace-1__space-1__page-1__/,
         ),
@@ -33,7 +35,7 @@ describe('PageListener knowledge jobs', () => {
     );
   });
 
-  it('enqueues knowledge stale and access reindex jobs on page update', async () => {
+  it('keeps last successful knowledge available while a page update recompiles', async () => {
     const { listener, aiQueue, pageRepo } = createListener();
     pageRepo.findExistingPageRefs.mockResolvedValue([
       pageRef('page-1', 'space-1'),
@@ -44,13 +46,9 @@ describe('PageListener knowledge jobs', () => {
       pageIds: ['page-1'],
     });
 
-    expect(aiQueue.add).toHaveBeenCalledWith(
+    expect(aiQueue.add).not.toHaveBeenCalledWith(
       QueueJob.KNOWLEDGE_MARK_SOURCES_STALE,
-      {
-        workspaceId: 'workspace-1',
-        sourcePageIds: ['page-1'],
-        mode: 'source_artifacts',
-      },
+      expect.anything(),
     );
     expect(aiQueue.add).toHaveBeenCalledWith(
       QueueJob.KNOWLEDGE_REINDEX_ACCESS,
@@ -65,6 +63,8 @@ describe('PageListener knowledge jobs', () => {
       },
       {
         delay: 5000,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 1000 },
         jobId: expect.stringMatching(
           /^knowledge-compile-pages__workspace-1__space-1__page-1__/,
         ),
@@ -125,6 +125,8 @@ describe('PageListener knowledge jobs', () => {
       },
       {
         delay: 5000,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 1000 },
         jobId: expect.stringMatching(
           /^knowledge-compile-pages__workspace-1__space-2__page-2__/,
         ),

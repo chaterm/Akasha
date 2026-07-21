@@ -20,14 +20,17 @@ import { LlmWikiProcessor } from './processors/llm-wiki.processor';
 import {
   KNOWLEDGE_ANSWER_PROVIDER,
   KNOWLEDGE_COMPILER_ADAPTER,
+  KNOWLEDGE_COMPILER_LLM_PROVIDER,
   KNOWLEDGE_COMPILER_RUNNER,
 } from './llm-wiki.constants';
 import { LlmWikiController } from './llm-wiki.controller';
 import { NoopAuditModule } from '../../integrations/audit/audit.module';
 import { LlmWikiFileCompilerAdapter } from './adapters/llm-wiki-file-compiler.adapter';
-import { DocmostKnowledgeCompilerRunner } from './adapters/docmost-knowledge-compiler.runner';
+import { SemanticKnowledgeCompilerRunner } from './adapters/semantic-knowledge-compiler.runner';
 import { ReviewModule } from './review/review.module';
 import { KnowledgeVectorIndexService } from './services/knowledge-vector-index.service';
+import { ConfiguredKnowledgeCompilerLlmProvider } from './compiler/knowledge-compiler-llm.provider';
+import { KnowledgeArtifactMaterializerService } from './services/knowledge-artifact-materializer.service';
 
 @Module({
   imports: [NoopAuditModule, ReviewModule],
@@ -51,14 +54,20 @@ import { KnowledgeVectorIndexService } from './services/knowledge-vector-index.s
     ConfiguredKnowledgeEmbeddingProvider,
     KnowledgeVectorIndexService,
     ConfiguredKnowledgeAnswerProvider,
+    ConfiguredKnowledgeCompilerLlmProvider,
+    KnowledgeArtifactMaterializerService,
     {
       provide: KNOWLEDGE_ANSWER_PROVIDER,
       useExisting: ConfiguredKnowledgeAnswerProvider,
     },
-    DocmostKnowledgeCompilerRunner,
+    {
+      provide: KNOWLEDGE_COMPILER_LLM_PROVIDER,
+      useExisting: ConfiguredKnowledgeCompilerLlmProvider,
+    },
+    SemanticKnowledgeCompilerRunner,
     {
       provide: KNOWLEDGE_COMPILER_RUNNER,
-      useExisting: DocmostKnowledgeCompilerRunner,
+      useExisting: SemanticKnowledgeCompilerRunner,
     },
     LlmWikiFileCompilerAdapter,
     {

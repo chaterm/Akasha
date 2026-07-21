@@ -128,7 +128,13 @@ export interface IKnowledgeCompilePagesJob {
   workspaceId: string;
   spaceId: string;
   sourcePageIds: string[];
-  trigger?: 'page_update' | 'page_created' | 'page_restored';
+  trigger?:
+    | 'manual_compile'
+    | 'retry_compile'
+    | 'rebuild_embeddings'
+    | 'page_update'
+    | 'page_created'
+    | 'page_restored';
 }
 
 export interface IKnowledgeReindexAccessJob {

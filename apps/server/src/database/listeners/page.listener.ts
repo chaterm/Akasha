@@ -47,11 +47,6 @@ export class PageListener {
     const { pageIds, workspaceId } = event;
 
     await this.searchQueue.add(QueueJob.PAGE_UPDATED, { pageIds });
-    await this.enqueueKnowledgeSourceInvalidation(
-      workspaceId,
-      pageIds,
-      'source_artifacts',
-    );
     await this.enqueueKnowledgeAccessReindex(workspaceId, pageIds);
     await this.enqueueKnowledgeCompileForPages(workspaceId, pageIds);
   }
@@ -151,6 +146,8 @@ export class PageListener {
         },
         {
           delay: KNOWLEDGE_COMPILE_DELAY_MS,
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 1000 },
           jobId: buildKnowledgeCompilePageJobId({
             workspaceId,
             spaceId: page.spaceId,

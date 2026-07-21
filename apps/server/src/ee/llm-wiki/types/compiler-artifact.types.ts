@@ -7,6 +7,15 @@ export interface CompileSpaceInput extends KnowledgeScope {
   compilerVersion: string;
   promptVersion: string;
   compileMode?: 'space' | 'pages';
+  purpose?: string;
+  schema?: string;
+  catalog?: KnowledgeArtifactCatalogEntry[];
+}
+
+export interface KnowledgeArtifactCatalogEntry {
+  artifactKind: CompiledKnowledgeArtifactKind;
+  canonicalKey: string;
+  title: string;
 }
 
 export interface CompileDiagnostic {
@@ -30,6 +39,7 @@ export type CompiledKnowledgeArtifactKind =
 export interface CompiledKnowledgeArtifact extends KnowledgeScope {
   artifactId: string;
   artifactKind?: CompiledKnowledgeArtifactKind;
+  canonicalKey?: string;
   title: string;
   contentMarkdown: string;
   sourcePageIds: string[];

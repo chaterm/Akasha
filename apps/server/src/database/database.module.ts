@@ -36,6 +36,8 @@ import { KnowledgeCapsuleRepo } from '@akasha/db/repos/llm-wiki/knowledge-capsul
 import { KnowledgeAccessPolicyRepo } from '@akasha/db/repos/llm-wiki/knowledge-access-policy.repo';
 import { KnowledgeQueryAuditRepo } from '@akasha/db/repos/llm-wiki/knowledge-query-audit.repo';
 import { KnowledgeQuarantineRepo } from '@akasha/db/repos/llm-wiki/knowledge-quarantine.repo';
+import { KnowledgeCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-compilation.repo';
+import { KnowledgeArtifactContributionRepo } from '@akasha/db/repos/llm-wiki/knowledge-artifact-contribution.repo';
 import { KnowledgeReviewApplicationRepo } from '@akasha/db/repos/llm-wiki/knowledge-review-application.repo';
 import { KnowledgeReviewSnapshotRepo } from '@akasha/db/repos/llm-wiki/knowledge-review-snapshot.repo';
 import { AiChatRepo } from '@akasha/db/repos/ai-chat/ai-chat.repo';
@@ -107,6 +109,8 @@ import { AiChatRepo } from '@akasha/db/repos/ai-chat/ai-chat.repo';
     KnowledgeReviewApplicationRepo,
     KnowledgeReviewSnapshotRepo,
     KnowledgeQuarantineRepo,
+    KnowledgeCompilationRepo,
+    KnowledgeArtifactContributionRepo,
     AiChatRepo,
     PageListener,
   ],
@@ -140,6 +144,8 @@ import { AiChatRepo } from '@akasha/db/repos/ai-chat/ai-chat.repo';
     KnowledgeReviewApplicationRepo,
     KnowledgeReviewSnapshotRepo,
     KnowledgeQuarantineRepo,
+    KnowledgeCompilationRepo,
+    KnowledgeArtifactContributionRepo,
     AiChatRepo,
   ],
 })

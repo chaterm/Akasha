@@ -199,6 +199,7 @@ export class KnowledgeCapsuleRepo {
           title: input.page.title,
           slug: input.page.slug,
           pageType: input.page.pageType ?? null,
+          canonicalKey: input.page.canonicalKey ?? null,
           body: input.page.body,
           summary: input.page.summary ?? null,
           compiledAt: input.page.compiledAt,
@@ -267,6 +268,44 @@ export class KnowledgeCapsuleRepo {
           .execute(),
       ),
     );
+  }
+
+  async markArtifactsStaleByIds(
+    input: { workspaceId: string; artifactIds: string[] },
+    trx?: KyselyTransaction,
+  ): Promise<void> {
+    if (input.artifactIds.length === 0) return;
+    const db = dbOrTx(this.db, trx);
+    const staleAt = new Date();
+    await Promise.all([
+      db
+        .updateTable('knowledgePages')
+        .set({ staleAt })
+        .where('workspaceId', '=', input.workspaceId)
+        .where('id', 'in', input.artifactIds)
+        .execute(),
+      db
+        .updateTable('knowledgeParentSections')
+        .set({ staleAt })
+        .where('workspaceId', '=', input.workspaceId)
+        .where('knowledgePageId', 'in', input.artifactIds)
+        .execute(),
+      ...(
+        [
+          ['knowledgeClaims', 'knowledgePageId'],
+          ['knowledgeChunks', 'knowledgePageId'],
+          ['knowledgeLinks', 'fromKnowledgePageId'],
+          ['knowledgeGraphEdges', 'fromKnowledgePageId'],
+        ] as const
+      ).map(([table, ownerColumn]) =>
+        db
+          .updateTable(table)
+          .set({ staleAt })
+          .where('workspaceId', '=', input.workspaceId)
+          .where(ownerColumn, 'in', input.artifactIds)
+          .execute(),
+      ),
+    ]);
   }
 
   async findPageCandidates(

@@ -11,6 +11,7 @@ import { LlmWikiController } from './llm-wiki.controller';
 import { KnowledgeDiagnosticsService } from './services/knowledge-diagnostics.service';
 import { KnowledgeGraphService } from './services/knowledge-graph.service';
 import { KnowledgeQueryAuditRepo } from '@akasha/db/repos/llm-wiki/knowledge-query-audit.repo';
+import { PageRepo } from '@akasha/db/repos/page/page.repo';
 
 describe('LlmWikiController', () => {
   it('rejects queries when workspace AI knowledge chat is disabled', async () => {
@@ -459,7 +460,12 @@ describe('LlmWikiController', () => {
 
     await expect(
       controller.getDiagnostics(
-        { spaceIds: ['space-1'], limit: 20 },
+        {
+          spaceIds: ['space-1'],
+          statuses: ['failed'],
+          stages: ['generation'],
+          limit: 20,
+        },
         adminUser(),
         workspace(),
       ),
@@ -472,8 +478,63 @@ describe('LlmWikiController', () => {
     expect(diagnosticsService.getWorkspaceDiagnostics).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       spaceIds: ['space-1'],
+      statuses: ['failed'],
+      stages: ['generation'],
       limit: 20,
     });
+  });
+
+  it('retries explicit source pages as isolated jobs', async () => {
+    const aiQueue = { add: jest.fn().mockResolvedValue(undefined) };
+    const pageRepo = {
+      findExistingPageRefs: jest.fn().mockResolvedValue([
+        {
+          id: 'page-1',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          deletedAt: null,
+        },
+        {
+          id: 'page-2',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-2',
+          deletedAt: null,
+        },
+      ]),
+    };
+    const controller = createController({ aiQueue, pageRepo });
+
+    await expect(
+      controller.retryPages(
+        { pageIds: ['page-1', 'page-2', 'page-1'] },
+        adminUser(),
+        workspace(),
+      ),
+    ).resolves.toEqual({
+      queuedPageCount: 2,
+      jobIds: [
+        expect.stringContaining(
+          'knowledge-compile-pages__workspace-1__space-1__page-1__retry_compile-',
+        ),
+        expect.stringContaining(
+          'knowledge-compile-pages__workspace-1__space-2__page-2__retry_compile-',
+        ),
+      ],
+    });
+
+    expect(aiQueue.add).toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_COMPILE_PAGES,
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageIds: ['page-1'],
+        trigger: 'retry_compile',
+      },
+      expect.objectContaining({
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 1000 },
+      }),
+    );
   });
 
   it('rejects knowledge diagnostics from workspace members', async () => {
@@ -499,6 +560,7 @@ function createController(
     graphService?: Partial<KnowledgeGraphService>;
     queryAuditRepo?: Partial<KnowledgeQueryAuditRepo>;
     aiQueue?: { add: jest.Mock };
+    pageRepo?: Partial<PageRepo>;
   } = {},
 ) {
   return new LlmWikiController(
@@ -531,6 +593,10 @@ function createController(
       add: jest.fn(),
       ...overrides.aiQueue,
     } as never,
+    {
+      findExistingPageRefs: jest.fn().mockResolvedValue([]),
+      ...overrides.pageRepo,
+    } as unknown as PageRepo,
   );
 }
 
