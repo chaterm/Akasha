@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectKysely } from 'nestjs-kysely';
 import { KyselyDB, KyselyTransaction } from '@akasha/db/types/kysely.types';
-import { dbOrTx } from '@akasha/db/utils';
+import { dbOrTx, executeTx } from '@akasha/db/utils';
 import {
   InsertableKnowledgePage,
   InsertableKnowledgePageSource,
@@ -74,11 +74,16 @@ export type KnowledgeChunkCandidate = {
   signalScore?: number | null;
   parentSection?: KnowledgeParentSection;
 };
+export type KnowledgeAccessPrincipal = {
+  principalType: 'user' | 'group';
+  principalId: string;
+};
 export type AuthorizedCandidateInput = {
   workspaceId: string;
   spaceIds: string[];
-  eligibleSourcePageIds: string[];
+  principals: KnowledgeAccessPrincipal[];
   retrievalChannel?: 'evidence' | 'memory';
+  authorizationMode?: 'policy' | 'final-authorization-fallback';
 };
 type RankedChunkId = { chunkId: string; score: number | null };
 export type KnowledgeChunkSourceRef = {
@@ -194,6 +199,7 @@ export class KnowledgeCapsuleRepo {
           title: input.page.title,
           slug: input.page.slug,
           pageType: input.page.pageType ?? null,
+          canonicalKey: input.page.canonicalKey ?? null,
           body: input.page.body,
           summary: input.page.summary ?? null,
           compiledAt: input.page.compiledAt,
@@ -262,6 +268,44 @@ export class KnowledgeCapsuleRepo {
           .execute(),
       ),
     );
+  }
+
+  async markArtifactsStaleByIds(
+    input: { workspaceId: string; artifactIds: string[] },
+    trx?: KyselyTransaction,
+  ): Promise<void> {
+    if (input.artifactIds.length === 0) return;
+    const db = dbOrTx(this.db, trx);
+    const staleAt = new Date();
+    await Promise.all([
+      db
+        .updateTable('knowledgePages')
+        .set({ staleAt })
+        .where('workspaceId', '=', input.workspaceId)
+        .where('id', 'in', input.artifactIds)
+        .execute(),
+      db
+        .updateTable('knowledgeParentSections')
+        .set({ staleAt })
+        .where('workspaceId', '=', input.workspaceId)
+        .where('knowledgePageId', 'in', input.artifactIds)
+        .execute(),
+      ...(
+        [
+          ['knowledgeClaims', 'knowledgePageId'],
+          ['knowledgeChunks', 'knowledgePageId'],
+          ['knowledgeLinks', 'fromKnowledgePageId'],
+          ['knowledgeGraphEdges', 'fromKnowledgePageId'],
+        ] as const
+      ).map(([table, ownerColumn]) =>
+        db
+          .updateTable(table)
+          .set({ staleAt })
+          .where('workspaceId', '=', input.workspaceId)
+          .where(ownerColumn, 'in', input.artifactIds)
+          .execute(),
+      ),
+    ]);
   }
 
   async findPageCandidates(
@@ -337,43 +381,63 @@ export class KnowledgeCapsuleRepo {
     ) {
       return [];
     }
+    if (!/^[a-f0-9]{64}$/.test(input.embedding.profile)) return [];
 
-    const db = dbOrTx(this.db, trx);
-    const dimensions = sql.raw(String(input.embedding.dimensions));
-    const queryVector = vectorToSql(input.embedding.vector);
-    const distance = sql<number>`knowledge_chunks.embedding::vector(${dimensions}) <=> ${queryVector}::vector`;
-    let query = db
-      .selectFrom('knowledgeChunks')
-      .select(['knowledgeChunks.id as chunkId', distance.as('score')])
-      .where('knowledgeChunks.workspaceId', '=', input.workspaceId)
-      .where('knowledgeChunks.spaceId', 'in', input.spaceIds)
-      .where('knowledgeChunks.staleAt', 'is', null)
-      .where('knowledgeChunks.embeddingProfile', '=', input.embedding.profile)
-      .where(
-        'knowledgeChunks.embeddingDimensions',
-        '=',
-        input.embedding.dimensions,
-      )
-      .where('knowledgeChunks.embedding', 'is not', null);
-    if (input.retrievalChannel) {
-      query = query.where(
-        'knowledgeChunks.retrievalChannel',
-        '=',
-        input.retrievalChannel,
+    const runQuery = async (
+      activeDb: KyselyDB | KyselyTransaction,
+      hydrationTrx?: KyselyTransaction,
+    ): Promise<KnowledgeChunkCandidate[]> => {
+      const dimensions = sql.raw(String(input.embedding.dimensions));
+      const profile = input.embedding.profile;
+      const profileLiteral = sql.raw(`'${profile}'`);
+      const queryVector = vectorToSql(input.embedding.vector);
+      const distance = sql<number>`knowledge_chunks.embedding::vector(${dimensions}) <=> ${queryVector}::vector`;
+      let query = activeDb
+        .selectFrom('knowledgeChunks')
+        .select(['knowledgeChunks.id as chunkId', distance.as('score')])
+        .where('knowledgeChunks.workspaceId', '=', input.workspaceId)
+        .where('knowledgeChunks.spaceId', 'in', input.spaceIds)
+        .where('knowledgeChunks.staleAt', 'is', null)
+        .where(
+          sql<boolean>`knowledge_chunks.embedding_profile = ${profileLiteral}`,
+        )
+        .where(
+          sql<boolean>`knowledge_chunks.embedding_dimensions = ${dimensions}`,
+        )
+        .where('knowledgeChunks.embedding', 'is not', null);
+      if (input.retrievalChannel) {
+        query = query.where(
+          'knowledgeChunks.retrievalChannel',
+          '=',
+          input.retrievalChannel,
+        );
+      }
+      const rows = await this.applyAuthorizedChunkScope(query, input)
+        .orderBy(distance, 'asc')
+        .limit(input.limit)
+        .execute();
+
+      return this.hydrateRankedChunkCandidates(
+        rows as RankedChunkId[],
+        'semantic',
+        input,
+        hydrationTrx,
       );
-    }
-    const rows = await this.applyAuthorizedChunkScope(
-      query,
-      input.eligibleSourcePageIds,
-    )
-      .orderBy(distance, 'asc')
-      .limit(input.limit)
-      .execute();
+    };
 
-    return this.hydrateRankedChunkCandidates(
-      rows as RankedChunkId[],
-      'semantic',
-      input,
+    if (input.embedding.dimensions > 2000) {
+      return runQuery(dbOrTx(this.db, trx), trx);
+    }
+
+    return executeTx(
+      this.db,
+      async (activeTrx) => {
+        await sql.raw('SET LOCAL hnsw.ef_search = 200').execute(activeTrx);
+        await sql
+          .raw('SET LOCAL hnsw.iterative_scan = strict_order')
+          .execute(activeTrx);
+        return runQuery(activeTrx, activeTrx);
+      },
       trx,
     );
   }
@@ -401,10 +465,7 @@ export class KnowledgeCapsuleRepo {
         input.retrievalChannel,
       );
     }
-    const rows = await this.applyAuthorizedChunkScope(
-      query,
-      input.eligibleSourcePageIds,
-    )
+    const rows = await this.applyAuthorizedChunkScope(query, input)
       .orderBy(rank, 'desc')
       .limit(input.limit)
       .execute();
@@ -451,10 +512,7 @@ export class KnowledgeCapsuleRepo {
         input.retrievalChannel,
       );
     }
-    const rows = await this.applyAuthorizedChunkScope(
-      query,
-      input.eligibleSourcePageIds,
-    )
+    const rows = await this.applyAuthorizedChunkScope(query, input)
       .orderBy(titleScore, 'desc')
       .orderBy('knowledgeChunks.id', 'asc')
       .limit(input.limit)
@@ -466,153 +524,6 @@ export class KnowledgeCapsuleRepo {
       input,
       trx,
     );
-  }
-
-  async findCandidateDependencySourcePageIds(
-    input: {
-      workspaceId: string;
-      spaceIds: string[];
-      query: string;
-      signals: KnowledgeRetrievalSignal[];
-      sourceCandidateLimit: number;
-    },
-    trx?: KyselyTransaction,
-  ): Promise<string[]> {
-    if (input.spaceIds.length === 0) return [];
-
-    const rows = await dbOrTx(this.db, trx)
-      .selectFrom('knowledgeChunkSources')
-      .innerJoin(
-        'knowledgeChunks',
-        'knowledgeChunkSources.chunkId',
-        'knowledgeChunks.id',
-      )
-      .select('knowledgeChunkSources.sourcePageId')
-      .where('knowledgeChunks.workspaceId', '=', input.workspaceId)
-      .where('knowledgeChunks.spaceId', 'in', input.spaceIds)
-      .where('knowledgeChunks.staleAt', 'is', null)
-      .limit(input.sourceCandidateLimit)
-      .execute();
-
-    return unique(rows.map((row) => row.sourcePageId));
-  }
-
-  async findDependencySourcePageIdsForSpaces(
-    input: { workspaceId: string; spaceIds: string[] },
-    trx?: KyselyTransaction,
-  ): Promise<string[]> {
-    if (input.spaceIds.length === 0) return [];
-
-    const rows = await dbOrTx(this.db, trx)
-      .selectFrom('knowledgeChunkSources')
-      .innerJoin(
-        'knowledgeChunks',
-        'knowledgeChunkSources.chunkId',
-        'knowledgeChunks.id',
-      )
-      .select('knowledgeChunkSources.sourcePageId')
-      .distinct()
-      .where('knowledgeChunks.workspaceId', '=', input.workspaceId)
-      .where('knowledgeChunks.spaceId', 'in', input.spaceIds)
-      .where('knowledgeChunks.staleAt', 'is', null)
-      .execute();
-
-    return rows.map((row) => row.sourcePageId);
-  }
-
-  async findSidecarEligibleChunks(
-    input: {
-      workspaceId: string;
-      spaceIds: string[];
-      query: string;
-      eligibleSourcePageIds: string[];
-      signals: KnowledgeRetrievalSignal[];
-      limit: number;
-    },
-    trx?: KyselyTransaction,
-  ): Promise<KnowledgeChunkCandidate[]> {
-    if (
-      input.spaceIds.length === 0 ||
-      input.eligibleSourcePageIds.length === 0 ||
-      input.signals.length === 0
-    ) {
-      return [];
-    }
-
-    const db = dbOrTx(this.db, trx);
-    const chunkRows = await db
-      .selectFrom('knowledgeChunks')
-      .innerJoin(
-        'knowledgeChunkSources',
-        'knowledgeChunks.id',
-        'knowledgeChunkSources.chunkId',
-      )
-      .selectAll('knowledgeChunks')
-      .where('knowledgeChunks.workspaceId', '=', input.workspaceId)
-      .where('knowledgeChunks.spaceId', 'in', input.spaceIds)
-      .where('knowledgeChunks.staleAt', 'is', null)
-      .where(
-        'knowledgeChunkSources.sourcePageId',
-        'in',
-        input.eligibleSourcePageIds,
-      )
-      .limit(Math.max(input.limit * 10, input.limit))
-      .execute();
-    const chunks = uniqueById(chunkRows as KnowledgeChunk[]);
-    if (chunks.length === 0) return [];
-
-    const [pages, sourceRows] = await Promise.all([
-      this.findPagesByIds(
-        {
-          workspaceId: input.workspaceId,
-          knowledgePageIds: unique(
-            chunks.map((chunk) => chunk.knowledgePageId),
-          ),
-        },
-        trx,
-      ),
-      this.findChunkSourcePageIdsByChunkIds(
-        {
-          workspaceId: input.workspaceId,
-          chunkIds: chunks.map((chunk) => chunk.id),
-        },
-        trx,
-      ),
-    ]);
-    const pagesById = new Map(pages.map((page) => [page.id, page]));
-    const sourcesByChunkId = new Map(
-      sourceRows.map((row) => [row.chunkId, row.sourcePageIds]),
-    );
-    const eligibleSet = new Set(input.eligibleSourcePageIds);
-
-    const candidates: KnowledgeChunkCandidate[] = [];
-    for (const chunk of chunks) {
-      const page = pagesById.get(chunk.knowledgePageId);
-      if (!page) continue;
-
-      const sourcePageIds = sourcesByChunkId.get(chunk.id) ?? [];
-      if (
-        sourcePageIds.length === 0 ||
-        sourcePageIds.some((sourcePageId) => !eligibleSet.has(sourcePageId))
-      ) {
-        continue;
-      }
-
-      const signals = resolveSignals(input, chunk, page);
-      if (signals.length === 0) continue;
-
-      candidates.push({
-        chunk,
-        page,
-        sourcePageIds,
-        signals,
-        lexicalScore: lexicalScore(input.query, chunk, page),
-      });
-
-      if (candidates.length >= input.limit) break;
-    }
-
-    return candidates;
   }
 
   async findPagesByIds(
@@ -1101,31 +1012,78 @@ export class KnowledgeCapsuleRepo {
 
   private applyAuthorizedChunkScope<T>(
     query: T,
-    eligibleSourcePageIds: string[],
+    input: AuthorizedCandidateInput,
   ): T {
-    return (query as any)
-      .where(({ exists, selectFrom }) =>
-        exists(
-          selectFrom('knowledgeChunkSources as eligibleSources')
-            .select('eligibleSources.chunkId')
-            .whereRef('eligibleSources.chunkId', '=', 'knowledgeChunks.id')
-            .where('eligibleSources.sourcePageId', 'in', eligibleSourcePageIds),
-        ),
+    const principalMatch = sql<boolean>`(${sql.join(
+      input.principals.map(
+        (principal) => sql<boolean>`(
+          acl_principal.principal_type = ${principal.principalType}
+          AND acl_principal.principal_id = ${principal.principalId}
+        )`,
+      ),
+      sql` OR `,
+    )})`;
+
+    const sourcePresence = sql<boolean>`
+      EXISTS (
+        SELECT 1
+        FROM knowledge_chunk_sources AS source_presence
+        WHERE source_presence.workspace_id = ${input.workspaceId}
+          AND source_presence.chunk_id = knowledge_chunks.id
       )
-      .where(({ not, exists, selectFrom }) =>
-        not(
-          exists(
-            selectFrom('knowledgeChunkSources as hiddenSources')
-              .select('hiddenSources.chunkId')
-              .whereRef('hiddenSources.chunkId', '=', 'knowledgeChunks.id')
-              .where(
-                'hiddenSources.sourcePageId',
-                'not in',
-                eligibleSourcePageIds,
-              ),
-          ),
-        ),
-      );
+    `;
+    if (input.authorizationMode === 'final-authorization-fallback') {
+      return (query as any).where(sourcePresence);
+    }
+
+    return (query as any).where(sql<boolean>`
+      ${sourcePresence}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM knowledge_chunk_sources AS acl_source
+        WHERE acl_source.workspace_id = ${input.workspaceId}
+          AND acl_source.chunk_id = knowledge_chunks.id
+          AND (
+            NOT EXISTS (
+              SELECT 1
+              FROM knowledge_source_access_policy AS acl_policy
+              WHERE acl_policy.workspace_id = ${input.workspaceId}
+                AND acl_policy.source_page_id = acl_source.source_page_id
+                AND acl_policy.stale_at IS NULL
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM knowledge_source_access_policy AS restricted_policy
+              WHERE restricted_policy.workspace_id = ${input.workspaceId}
+                AND restricted_policy.source_page_id = acl_source.source_page_id
+                AND restricted_policy.stale_at IS NULL
+                AND restricted_policy.restricted_ancestor_count > 0
+                AND (
+                  NOT EXISTS (
+                    SELECT 1
+                    FROM knowledge_source_access_requirements AS missing_requirement
+                    WHERE missing_requirement.workspace_id = ${input.workspaceId}
+                      AND missing_requirement.source_page_id = acl_source.source_page_id
+                  )
+                  OR EXISTS (
+                    SELECT 1
+                    FROM knowledge_source_access_requirements AS acl_requirement
+                    WHERE acl_requirement.workspace_id = ${input.workspaceId}
+                      AND acl_requirement.source_page_id = acl_source.source_page_id
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM knowledge_source_access_principals AS acl_principal
+                        WHERE acl_principal.workspace_id = ${input.workspaceId}
+                          AND acl_principal.source_page_id = acl_requirement.source_page_id
+                          AND acl_principal.requirement_id = acl_requirement.requirement_id
+                          AND ${principalMatch}
+                      )
+                  )
+                )
+            )
+          )
+      )
+    `);
   }
 
   private async hydrateRankedChunkCandidates(
@@ -1176,7 +1134,6 @@ export class KnowledgeCapsuleRepo {
     const sourcesByChunkId = new Map(
       sourceRows.map((row) => [row.chunkId, row.sourcePageIds]),
     );
-    const eligibleSet = new Set(input.eligibleSourcePageIds);
     const parentById = new Map(
       parentSections.map((parent) => [parent.id, parent]),
     );
@@ -1186,11 +1143,7 @@ export class KnowledgeCapsuleRepo {
       if (!chunk) return [];
       const page = pageById.get(chunk.knowledgePageId);
       const sourcePageIds = sourcesByChunkId.get(row.chunkId) ?? [];
-      if (
-        !page ||
-        sourcePageIds.length === 0 ||
-        sourcePageIds.some((sourcePageId) => !eligibleSet.has(sourcePageId))
-      ) {
+      if (!page || sourcePageIds.length === 0) {
         return [];
       }
 
@@ -1249,24 +1202,11 @@ function unique(values: string[]): string[] {
 }
 
 function hasCandidateScope(input: AuthorizedCandidateInput): boolean {
-  return input.spaceIds.length > 0 && input.eligibleSourcePageIds.length > 0;
+  return input.spaceIds.length > 0 && input.principals.length > 0;
 }
 
 function normalizeTitle(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, ' ');
-}
-
-function uniqueById<T extends { id: string }>(values: T[]): T[] {
-  const seen = new Set<string>();
-  const uniqueValues: T[] = [];
-
-  for (const value of values) {
-    if (seen.has(value.id)) continue;
-    seen.add(value.id);
-    uniqueValues.push(value);
-  }
-
-  return uniqueValues;
 }
 
 function groupBy<T>(
@@ -1281,75 +1221,4 @@ function groupBy<T>(
     grouped.set(key, group);
   }
   return grouped;
-}
-
-function resolveSignals(
-  input: {
-    query: string;
-    signals: KnowledgeRetrievalSignal[];
-  },
-  chunk: KnowledgeChunk,
-  page: KnowledgePage,
-): KnowledgeRetrievalSignal[] {
-  const signals: KnowledgeRetrievalSignal[] = [];
-  const requested = new Set(input.signals);
-  const normalizedQuery = input.query.trim().toLowerCase();
-
-  if (requested.has('semantic') && chunk.embedding) {
-    signals.push('semantic');
-  }
-  if (
-    requested.has('lexical') &&
-    normalizedQuery &&
-    hasTokenOverlap(input.query, `${chunk.text}\n${page.body ?? ''}`)
-  ) {
-    signals.push('lexical');
-  }
-  if (
-    requested.has('exact-title') &&
-    normalizedQuery &&
-    hasTokenOverlap(input.query, page.title)
-  ) {
-    signals.push('exact-title');
-  }
-
-  return signals;
-}
-
-function lexicalScore(
-  query: string,
-  chunk: KnowledgeChunk,
-  page: KnowledgePage,
-): number | null {
-  const queryTerms = tokenize(query);
-  if (queryTerms.length === 0) return null;
-
-  const haystackTerms = tokenize(
-    `${page.title}\n${chunk.text}\n${page.body ?? ''}`,
-  );
-  const termCounts = new Map<string, number>();
-  for (const term of haystackTerms) {
-    termCounts.set(term, (termCounts.get(term) ?? 0) + 1);
-  }
-
-  return queryTerms.reduce(
-    (score, term) => score + (termCounts.get(term) ?? 0),
-    0,
-  );
-}
-
-function tokenize(text: string): string[] {
-  const normalized = text.toLowerCase();
-  const latinTerms = normalized.match(/[a-z0-9]+/g) ?? [];
-  const hanChars = normalized.match(/\p{Script=Han}/gu) ?? [];
-  const hanBigrams = hanChars.slice(0, -1).map((char, index) => {
-    return `${char}${hanChars[index + 1]}`;
-  });
-
-  return [...latinTerms, ...hanChars, ...hanBigrams];
-}
-
-function hasTokenOverlap(query: string, text: string): boolean {
-  const textTerms = new Set(tokenize(text));
-  return tokenize(query).some((term) => textTerms.has(term));
 }

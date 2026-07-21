@@ -1,7 +1,10 @@
 import { KnowledgeCapsuleRepo } from '@akasha/db/repos/llm-wiki/knowledge-capsule.repo';
 import { KnowledgeSourceRepo } from '@akasha/db/repos/llm-wiki/knowledge-source.repo';
 import { KnowledgeArtifactValidatorService } from './knowledge-artifact-validator.service';
-import { KnowledgeImportService } from './knowledge-import.service';
+import {
+  KnowledgeCompilationValidationError,
+  KnowledgeImportService,
+} from './knowledge-import.service';
 import { CompileSpaceInput } from '../types/compiler-artifact.types';
 
 describe('KnowledgeImportService', () => {
@@ -95,6 +98,74 @@ describe('KnowledgeImportService', () => {
       profile: 'a'.repeat(64),
       dimensions: 3,
     });
+    expect(
+      vectorIndex.ensureProfileIndex.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      capsuleRepo.upsertCompiledArtifacts.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('publishes textual knowledge with an exact-search warning when HNSW cannot be created', async () => {
+    const artifact = {
+      artifactId: 'artifact-1',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      title: 'Compiled',
+      contentMarkdown: '# Compiled',
+      sourcePageIds: ['source-1'],
+      artifactKind: 'source_summary' as const,
+      compilerVersion: 'compiler@1',
+      promptVersion: 'prompt@1',
+      inputSourceRefs: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageId: 'source-1',
+          sourceVersion: 'v1',
+          contentHash: 'hash-1',
+        },
+      ],
+      chunks: [{ text: 'Enterprise retrieval' }],
+    };
+    const capsuleRepo = {
+      markCompileScopeStale: jest.fn(),
+      upsertCompiledArtifacts: jest.fn(),
+    };
+    const vectorIndex = {
+      ensureProfileIndex: jest.fn().mockResolvedValue('exact-only'),
+    };
+    const service = new KnowledgeImportService(
+      { upsertPageSource: jest.fn() } as never,
+      capsuleRepo as never,
+      {
+        validateCompileResult: jest.fn().mockReturnValue({
+          accepted: [artifact],
+          quarantined: [],
+        }),
+      } as never,
+      {
+        embedQuery: jest.fn().mockResolvedValue({
+          vector: [0.1, 0.2, 0.3],
+          profile: 'a'.repeat(64),
+          model: 'bge-m3',
+          dimensions: 3,
+        }),
+      } as never,
+      { recordQuarantinedArtifacts: jest.fn() } as never,
+      createTransactionDb() as never,
+      vectorIndex as never,
+    );
+
+    await expect(
+      service.importCompileResult({
+        input: compileInput(),
+        artifacts: [artifact],
+      }),
+    ).resolves.toMatchObject({
+      importedArtifactCount: 1,
+      degradedRetrievalProfiles: ['a'.repeat(64)],
+    });
+    expect(capsuleRepo.upsertCompiledArtifacts).toHaveBeenCalled();
   });
 
   it('imports only validator-accepted artifacts and dependencies', async () => {
@@ -175,6 +246,7 @@ describe('KnowledgeImportService', () => {
       embeddingProvider as never,
       quarantineRepo as never,
       createTransactionDb() as never,
+      { ensureProfileIndex: jest.fn() } as never,
     );
 
     await expect(
@@ -417,6 +489,7 @@ describe('KnowledgeImportService', () => {
       embeddingProvider as never,
       quarantineRepo as never,
       createTransactionDb() as never,
+      { ensureProfileIndex: jest.fn() } as never,
     );
 
     await service.importCompileResult({
@@ -468,6 +541,7 @@ describe('KnowledgeImportService', () => {
       embeddingProvider as never,
       quarantineRepo as never,
       createTransactionDb() as never,
+      { ensureProfileIndex: jest.fn() } as never,
     );
 
     await expect(
@@ -526,6 +600,7 @@ describe('KnowledgeImportService', () => {
       { embedQuery: jest.fn() } as never,
       { recordQuarantinedArtifacts: jest.fn() } as never,
       createTransactionDb() as never,
+      { ensureProfileIndex: jest.fn() } as never,
     );
 
     await service.importCompileResult({
@@ -541,6 +616,191 @@ describe('KnowledgeImportService', () => {
       expect.anything(),
     );
     expect(capsuleRepo.upsertCompiledArtifacts).toHaveBeenCalled();
+  });
+
+  it('replaces source contributions and materialized artifacts in one transaction', async () => {
+    const trx = { id: 'trx-contributions' };
+    const artifact = {
+      artifactId: '11111111-1111-4111-8111-111111111111',
+      canonicalKey: 'event-sourcing',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      title: 'Event sourcing',
+      contentMarkdown: '# Event sourcing',
+      sourcePageIds: ['source-1'],
+      artifactKind: 'concept' as const,
+      compilerVersion: 'compiler@1',
+      promptVersion: 'prompt@1',
+      compilerRunId: 'run-2',
+      compileTaskId: 'task-1',
+      inputSourceRefs: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageId: 'source-1',
+          sourceVersion: 'v2',
+          contentHash: 'hash-2',
+        },
+      ],
+      chunks: [],
+    };
+    const previous = {
+      sourcePageId: 'source-1',
+      artifactId: 'artifact-removed',
+    };
+    const other = {
+      sourcePageId: 'source-2',
+      artifactId: artifact.artifactId,
+    };
+    const contributionRepo = {
+      findBySourcePage: jest.fn().mockResolvedValue([previous]),
+      findByArtifactIds: jest.fn().mockResolvedValue([other]),
+      replaceSourceContributions: jest.fn().mockResolvedValue(undefined),
+    };
+    const materializer = {
+      materializeSourceUpdate: jest.fn().mockResolvedValue({
+        artifacts: [artifact],
+        removedArtifactIds: ['artifact-removed'],
+      }),
+    };
+    const capsuleRepo = {
+      markCompileScopeStale: jest.fn(),
+      markSourceArtifactsStaleBySourcePageIds: jest.fn(),
+      markArtifactsStaleByIds: jest.fn().mockResolvedValue(undefined),
+      upsertCompiledArtifacts: jest.fn().mockResolvedValue([]),
+    };
+    const service = new KnowledgeImportService(
+      { upsertPageSource: jest.fn().mockResolvedValue({}) } as never,
+      capsuleRepo as never,
+      {
+        validateCompileResult: jest.fn().mockReturnValue({
+          accepted: [artifact],
+          quarantined: [],
+        }),
+      } as never,
+      { embedQuery: jest.fn() } as never,
+      { recordQuarantinedArtifacts: jest.fn() } as never,
+      createTransactionDb(trx) as never,
+      { ensureProfileIndex: jest.fn() } as never,
+      contributionRepo as never,
+      materializer as never,
+    );
+
+    await service.importCompileResult({
+      input: {
+        ...compileInput(),
+        compileMode: 'pages',
+        sources: [
+          {
+            ...compileInput().sources[0],
+            sourceVersion: 'v2',
+            contentHash: 'hash-2',
+          },
+        ],
+      },
+      artifacts: [artifact],
+    });
+
+    expect(materializer.materializeSourceUpdate).toHaveBeenCalledWith({
+      sourcePageId: 'source-1',
+      previousSourceContributions: [previous],
+      affectedContributions: [other],
+      incomingArtifacts: [artifact],
+    });
+    expect(
+      capsuleRepo.markSourceArtifactsStaleBySourcePageIds,
+    ).not.toHaveBeenCalled();
+    expect(contributionRepo.replaceSourceContributions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'workspace-1',
+        sourcePageId: 'source-1',
+        contributions: [
+          expect.objectContaining({
+            artifactId: artifact.artifactId,
+            canonicalKey: 'event-sourcing',
+          }),
+        ],
+      }),
+      trx,
+    );
+    expect(capsuleRepo.markArtifactsStaleByIds).toHaveBeenCalledWith(
+      {
+        workspaceId: 'workspace-1',
+        artifactIds: ['artifact-removed'],
+      },
+      trx,
+    );
+    expect(capsuleRepo.upsertCompiledArtifacts).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          page: expect.objectContaining({
+            id: artifact.artifactId,
+            canonicalKey: 'event-sourcing',
+          }),
+        }),
+      ],
+      trx,
+    );
+  });
+
+  it('rejects a semantic page publication atomically when any artifact is quarantined', async () => {
+    const artifact = {
+      artifactId: 'artifact-invalid',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      title: 'Invalid summary',
+      contentMarkdown: '# Invalid summary',
+      sourcePageIds: ['source-1'],
+      artifactKind: 'source_summary' as const,
+      compilerVersion: 'compiler@1',
+      promptVersion: 'prompt@1',
+      compilerRunId: 'run-2',
+      compileTaskId: 'task-1',
+    };
+    const contributionRepo = {
+      findBySourcePage: jest.fn(),
+      findByArtifactIds: jest.fn(),
+      replaceSourceContributions: jest.fn(),
+    };
+    const materializer = { materializeSourceUpdate: jest.fn() };
+    const capsuleRepo = {
+      markArtifactsStaleByIds: jest.fn(),
+      upsertCompiledArtifacts: jest.fn(),
+    };
+    const quarantineRepo = {
+      recordQuarantinedArtifacts: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new KnowledgeImportService(
+      { upsertPageSource: jest.fn().mockResolvedValue({}) } as never,
+      capsuleRepo as never,
+      {
+        validateCompileResult: jest.fn().mockReturnValue({
+          accepted: [],
+          quarantined: [
+            { artifact, reasons: ['artifact source range is invalid'] },
+          ],
+        }),
+      } as never,
+      { embedQuery: jest.fn() } as never,
+      quarantineRepo as never,
+      createTransactionDb() as never,
+      { ensureProfileIndex: jest.fn() } as never,
+      contributionRepo as never,
+      materializer as never,
+    );
+
+    await expect(
+      service.importCompileResult({
+        input: { ...compileInput(), compileMode: 'pages' },
+        artifacts: [artifact],
+      }),
+    ).rejects.toBeInstanceOf(KnowledgeCompilationValidationError);
+
+    expect(quarantineRepo.recordQuarantinedArtifacts).toHaveBeenCalled();
+    expect(contributionRepo.replaceSourceContributions).not.toHaveBeenCalled();
+    expect(materializer.materializeSourceUpdate).not.toHaveBeenCalled();
+    expect(capsuleRepo.markArtifactsStaleByIds).not.toHaveBeenCalled();
+    expect(capsuleRepo.upsertCompiledArtifacts).not.toHaveBeenCalled();
   });
 
   it('records quarantined artifact reasons without persisting source content', async () => {
@@ -601,6 +861,7 @@ describe('KnowledgeImportService', () => {
       embeddingProvider as never,
       quarantineRepo as never,
       createTransactionDb() as never,
+      { ensureProfileIndex: jest.fn() } as never,
     );
 
     await expect(
@@ -710,6 +971,7 @@ describe('KnowledgeImportService', () => {
       embeddingProvider as never,
       quarantineRepo as never,
       createTransactionDb(trx) as never,
+      { ensureProfileIndex: jest.fn() } as never,
     );
 
     await service.importCompileResult({

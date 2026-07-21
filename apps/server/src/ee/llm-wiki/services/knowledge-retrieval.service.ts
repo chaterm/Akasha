@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { GroupUserRepo } from '@akasha/db/repos/group/group-user.repo';
-import { KnowledgeAccessPolicyRepo } from '@akasha/db/repos/llm-wiki/knowledge-access-policy.repo';
 import {
   KnowledgeCapsuleRepo,
+  KnowledgeChunkCandidate,
   KnowledgeRetrievalSignal,
 } from '@akasha/db/repos/llm-wiki/knowledge-capsule.repo';
 import { KnowledgeChunk, KnowledgePage } from '@akasha/db/types/entity.types';
@@ -36,9 +36,10 @@ export type KnowledgeRetrievalResult = {
 export type KnowledgeRetrievalDiagnostics = {
   queryEmbeddingAvailable: boolean;
   candidateSourceCount: number;
-  sidecarEligibleSourceCount: number;
-  sidecarFallbackSourceCount: number;
-  sidecarFilteredSourceCount: number;
+  policyCandidateSourceCount: number;
+  fallbackCandidateSourceCount: number;
+  finalAuthorizedSourceCount: number;
+  accessPolicyFallbackUsed: boolean;
   candidateChunkCount: number;
   denseCandidateCount: number;
   lexicalCandidateCount: number;
@@ -48,7 +49,6 @@ export type KnowledgeRetrievalDiagnostics = {
   rankedCandidateCount: number;
   authorizedChunkCount: number;
   filteredChunkCount: number;
-  fallbackReason: 'embedding_unavailable' | 'sidecar_unavailable' | null;
 };
 
 @Injectable()
@@ -57,7 +57,6 @@ export class KnowledgeRetrievalService {
     private readonly userRepo: UserRepo,
     private readonly spaceAuthorization: SpaceAuthorizationService,
     private readonly capsuleRepo: KnowledgeCapsuleRepo,
-    private readonly accessPolicyRepo: KnowledgeAccessPolicyRepo,
     private readonly groupUserRepo: GroupUserRepo,
     private readonly sourceAuthorization: KnowledgeSourceAuthorizationService,
     private readonly embeddingProvider: ConfiguredKnowledgeEmbeddingProvider,
@@ -89,108 +88,88 @@ export class KnowledgeRetrievalService {
     const queryEmbedding = await this.embeddingProvider.embedQuery(input.query);
     const queryEmbeddingAvailable = Boolean(queryEmbedding);
     const sourceCandidateLimit = candidateLimit * 10;
-    const candidateSourcePageIds =
-      await this.capsuleRepo.findDependencySourcePageIdsForSpaces({
-        workspaceId: input.workspaceId,
-        spaceIds: readableSpaceIds,
-      });
-    if (candidateSourcePageIds.length === 0) {
-      return emptyResult({
-        queryEmbeddingAvailable,
-        candidateSourceCount: 0,
-      });
-    }
-
     const groupIds = await this.groupUserRepo.getUserGroupIds(input.userId);
-    const sidecarEligibility =
-      await this.accessPolicyRepo.evaluateSourceEligibilityForPrincipals({
-        workspaceId: input.workspaceId,
-        sourcePageIds: candidateSourcePageIds,
-        principals: [
-          { principalType: 'user', principalId: input.userId },
-          ...groupIds.map((groupId) => ({
-            principalType: 'group' as const,
-            principalId: groupId,
-          })),
-        ],
-      });
-    const eligibleSourcePageIds = sidecarEligibility
-      .filter((source) => source.status === 'eligible')
-      .map((source) => source.sourcePageId);
-    const fallbackSourcePageIds = sidecarEligibility
-      .filter(
-        (source) =>
-          source.status === 'missing_policy' ||
-          source.status === 'stale_policy',
-      )
-      .map((source) => source.sourcePageId);
-    const retrievalSourcePageIds =
-      eligibleSourcePageIds.length > 0
-        ? eligibleSourcePageIds
-        : fallbackSourcePageIds;
-    const mode =
-      eligibleSourcePageIds.length > 0
-        ? 'high_completeness'
-        : 'high_completeness_fallback';
-    if (retrievalSourcePageIds.length === 0) {
-      return emptyResult({
-        queryEmbeddingAvailable,
-        candidateSourceCount: candidateSourcePageIds.length,
-        sidecarEligibleSourceCount: eligibleSourcePageIds.length,
-        sidecarFallbackSourceCount: fallbackSourcePageIds.length,
-        sidecarFilteredSourceCount:
-          candidateSourcePageIds.length -
-          eligibleSourcePageIds.length -
-          fallbackSourcePageIds.length,
-      });
-    }
-
+    const principals = [
+      { principalType: 'user' as const, principalId: input.userId },
+      ...groupIds.map((groupId) => ({
+        principalType: 'group' as const,
+        principalId: groupId,
+      })),
+    ];
     const candidateScope = {
       workspaceId: input.workspaceId,
       spaceIds: readableSpaceIds,
-      eligibleSourcePageIds: retrievalSourcePageIds,
+      principals,
       limit: sourceCandidateLimit,
     };
-    const recallChannel = (retrievalChannel: 'evidence' | 'memory') =>
+    const recallChannel = (
+      retrievalChannel: 'evidence' | 'memory',
+      authorizationMode: 'policy' | 'final-authorization-fallback',
+    ) =>
       Promise.all([
         queryEmbedding
           ? this.capsuleRepo.findDenseChunkCandidates({
               ...candidateScope,
               retrievalChannel,
+              authorizationMode,
               embedding: queryEmbedding,
             })
           : Promise.resolve([]),
         this.capsuleRepo.findLexicalChunkCandidates({
           ...candidateScope,
           retrievalChannel,
+          authorizationMode,
           query: input.query,
         }),
         this.capsuleRepo.findExactTitleChunkCandidates({
           ...candidateScope,
           retrievalChannel,
+          authorizationMode,
           query: input.query,
         }),
       ]);
-    const [evidenceRecall, memoryRecall] = await Promise.all([
-      recallChannel('evidence'),
-      recallChannel('memory'),
-    ]);
+    const recall = (
+      authorizationMode: 'policy' | 'final-authorization-fallback',
+    ) =>
+      Promise.all([
+        recallChannel('evidence', authorizationMode),
+        recallChannel('memory', authorizationMode),
+      ]);
+    const policyRecall = await recall('policy');
+    let selectedRecall = policyRecall;
+    let accessPolicyFallbackUsed = false;
+
+    let rankedCandidates = fuseRecall(
+      this.ranker,
+      selectedRecall,
+      candidateLimit,
+    );
+    let fallbackRecall: Awaited<ReturnType<typeof recall>> | null = null;
+    if (rankedCandidates.length === 0) {
+      accessPolicyFallbackUsed = true;
+      fallbackRecall = await recall('final-authorization-fallback');
+      selectedRecall = fallbackRecall;
+      rankedCandidates = fuseRecall(
+        this.ranker,
+        selectedRecall,
+        candidateLimit,
+      ).map((candidate) => ({
+        ...candidate,
+        rankReasons: [
+          ...candidate.rankReasons.filter(
+            (reason) => reason !== 'sidecar-prefiltered',
+          ),
+          'final-authorization-fallback' as const,
+        ],
+      }));
+    }
+
+    const [evidenceRecall, memoryRecall] = selectedRecall;
     const [evidenceDense, evidenceLexical, evidenceTitle] = evidenceRecall;
     const [memoryDense, memoryLexical, memoryTitle] = memoryRecall;
     const denseCandidates = [...evidenceDense, ...memoryDense];
     const lexicalCandidates = [...evidenceLexical, ...memoryLexical];
     const titleCandidates = [...evidenceTitle, ...memoryTitle];
-    const rankedCandidates = this.ranker.fuseRecallLists({
-      recallLists: [
-        { signal: 'semantic', candidates: evidenceDense },
-        { signal: 'lexical', candidates: evidenceLexical },
-        { signal: 'exact-title', candidates: evidenceTitle },
-        { signal: 'semantic', candidates: memoryDense },
-        { signal: 'lexical', candidates: memoryLexical },
-        { signal: 'exact-title', candidates: memoryTitle },
-      ],
-      limit: candidateLimit,
-    });
     const candidateChunkCount = new Set(
       [...denseCandidates, ...lexicalCandidates, ...titleCandidates].map(
         (candidate) => candidate.chunk.id,
@@ -198,25 +177,33 @@ export class KnowledgeRetrievalService {
     ).size;
     const evidenceCandidateCount = uniqueCandidateCount(evidenceRecall.flat());
     const memoryCandidateCount = uniqueCandidateCount(memoryRecall.flat());
+    const candidateSourcePageIds = unique(
+      [...denseCandidates, ...lexicalCandidates, ...titleCandidates].flatMap(
+        (candidate) => candidate.sourcePageIds,
+      ),
+    );
+    const policyCandidateSourcePageIds = candidateSourceIds(policyRecall);
+    const fallbackCandidateSourcePageIds = fallbackRecall
+      ? candidateSourceIds(fallbackRecall)
+      : [];
     if (rankedCandidates.length === 0) {
-      return emptyResult({
-        queryEmbeddingAvailable,
-        candidateSourceCount: candidateSourcePageIds.length,
-        sidecarEligibleSourceCount: eligibleSourcePageIds.length,
-        sidecarFallbackSourceCount: fallbackSourcePageIds.length,
-        sidecarFilteredSourceCount:
-          candidateSourcePageIds.length -
-          eligibleSourcePageIds.length -
-          fallbackSourcePageIds.length,
-        candidateChunkCount,
-        denseCandidateCount: uniqueCandidateCount(denseCandidates),
-        lexicalCandidateCount: uniqueCandidateCount(lexicalCandidates),
-        titleCandidateCount: uniqueCandidateCount(titleCandidates),
-        evidenceCandidateCount,
-        memoryCandidateCount,
-        fallbackReason: queryEmbedding ? null : 'embedding_unavailable',
-        rankedCandidateCount: 0,
-      });
+      return emptyResult(
+        {
+          queryEmbeddingAvailable,
+          candidateSourceCount: candidateSourcePageIds.length,
+          policyCandidateSourceCount: policyCandidateSourcePageIds.length,
+          fallbackCandidateSourceCount: fallbackCandidateSourcePageIds.length,
+          accessPolicyFallbackUsed,
+          candidateChunkCount,
+          denseCandidateCount: uniqueCandidateCount(denseCandidates),
+          lexicalCandidateCount: uniqueCandidateCount(lexicalCandidates),
+          titleCandidateCount: uniqueCandidateCount(titleCandidates),
+          evidenceCandidateCount,
+          memoryCandidateCount,
+          rankedCandidateCount: 0,
+        },
+        'high_completeness_fallback',
+      );
     }
 
     const sourceRows = await this.capsuleRepo.findChunkSourcePageIdsByChunkIds({
@@ -258,21 +245,24 @@ export class KnowledgeRetrievalService {
         });
       }
     }
+    const finalAuthorizedSourceCount = unique(
+      authorizedChunks.flatMap((candidate) => candidate.sourcePageIds),
+    ).length;
 
     return {
-      mode,
+      mode: accessPolicyFallbackUsed
+        ? 'high_completeness_fallback'
+        : 'high_completeness',
       chunks: authorizedChunks,
       capsules: [],
       completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
       diagnostics: {
         queryEmbeddingAvailable,
         candidateSourceCount: candidateSourcePageIds.length,
-        sidecarEligibleSourceCount: eligibleSourcePageIds.length,
-        sidecarFallbackSourceCount: fallbackSourcePageIds.length,
-        sidecarFilteredSourceCount:
-          candidateSourcePageIds.length -
-          eligibleSourcePageIds.length -
-          fallbackSourcePageIds.length,
+        policyCandidateSourceCount: policyCandidateSourcePageIds.length,
+        fallbackCandidateSourceCount: fallbackCandidateSourcePageIds.length,
+        finalAuthorizedSourceCount,
+        accessPolicyFallbackUsed,
         candidateChunkCount,
         denseCandidateCount: uniqueCandidateCount(denseCandidates),
         lexicalCandidateCount: uniqueCandidateCount(lexicalCandidates),
@@ -282,12 +272,6 @@ export class KnowledgeRetrievalService {
         rankedCandidateCount: rankedCandidates.length,
         authorizedChunkCount: authorizedChunks.length,
         filteredChunkCount: rankedCandidates.length - authorizedChunks.length,
-        fallbackReason:
-          mode === 'high_completeness_fallback'
-            ? 'sidecar_unavailable'
-            : queryEmbedding
-              ? null
-              : 'embedding_unavailable',
       },
     };
   }
@@ -295,18 +279,20 @@ export class KnowledgeRetrievalService {
 
 function emptyResult(
   diagnostics?: Partial<KnowledgeRetrievalDiagnostics>,
+  mode: KnowledgeRetrievalResult['mode'] = 'high_completeness',
 ): KnowledgeRetrievalResult {
   return {
-    mode: 'high_completeness',
+    mode,
     chunks: [],
     capsules: [],
     completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
     diagnostics: {
       queryEmbeddingAvailable: false,
       candidateSourceCount: 0,
-      sidecarEligibleSourceCount: 0,
-      sidecarFallbackSourceCount: 0,
-      sidecarFilteredSourceCount: 0,
+      policyCandidateSourceCount: 0,
+      fallbackCandidateSourceCount: 0,
+      finalAuthorizedSourceCount: 0,
+      accessPolicyFallbackUsed: false,
       candidateChunkCount: 0,
       denseCandidateCount: 0,
       lexicalCandidateCount: 0,
@@ -316,10 +302,58 @@ function emptyResult(
       rankedCandidateCount: 0,
       authorizedChunkCount: 0,
       filteredChunkCount: 0,
-      fallbackReason: null,
       ...diagnostics,
     },
   };
+}
+
+function fuseRecall(
+  ranker: KnowledgeRetrievalRankerService,
+  recall: [
+    [
+      KnowledgeChunkCandidate[],
+      KnowledgeChunkCandidate[],
+      KnowledgeChunkCandidate[],
+    ],
+    [
+      KnowledgeChunkCandidate[],
+      KnowledgeChunkCandidate[],
+      KnowledgeChunkCandidate[],
+    ],
+  ],
+  limit: number,
+) {
+  const [evidenceRecall, memoryRecall] = recall;
+  const [evidenceDense, evidenceLexical, evidenceTitle] = evidenceRecall;
+  const [memoryDense, memoryLexical, memoryTitle] = memoryRecall;
+  return ranker.fuseRecallLists({
+    recallLists: [
+      { signal: 'semantic', candidates: evidenceDense },
+      { signal: 'lexical', candidates: evidenceLexical },
+      { signal: 'exact-title', candidates: evidenceTitle },
+      { signal: 'semantic', candidates: memoryDense },
+      { signal: 'lexical', candidates: memoryLexical },
+      { signal: 'exact-title', candidates: memoryTitle },
+    ],
+    limit,
+  });
+}
+
+function candidateSourceIds(
+  recall: [
+    [
+      KnowledgeChunkCandidate[],
+      KnowledgeChunkCandidate[],
+      KnowledgeChunkCandidate[],
+    ],
+    [
+      KnowledgeChunkCandidate[],
+      KnowledgeChunkCandidate[],
+      KnowledgeChunkCandidate[],
+    ],
+  ],
+): string[] {
+  return unique(recall.flat(2).flatMap((candidate) => candidate.sourcePageIds));
 }
 
 function unique(values: string[]): string[] {

@@ -4,6 +4,7 @@ import {
   getKnowledgeGraph,
   getKnowledgeDiagnostics,
   queryKnowledge,
+  retryKnowledgePages,
   runKnowledgeAdminAction,
 } from "./knowledge-service";
 
@@ -160,6 +161,14 @@ describe("queryKnowledge", () => {
               title: "Chaterm",
               spaceName: "AIM",
               knowledgeChunkCount: 3,
+              compileStatus: "failed",
+              compileStage: "generation",
+              compileAttemptCount: 3,
+              compileErrorCode: "invalid_output",
+              compileErrorMessage:
+                "Knowledge compiler returned invalid output.",
+              lastSucceededAt: "2026-07-20T10:00:00.000Z",
+              servingLastSuccessfulVersion: true,
             },
           ],
           compileStatuses: [
@@ -180,6 +189,7 @@ describe("queryKnowledge", () => {
             sampleCount: 2,
             zeroHitRate: 0.5,
             embeddingFallbackRate: 0.5,
+            accessPolicyFallbackRate: 0.25,
             averageAuthorizedCandidateCount: 1.5,
             averageFilteredCandidateCount: 2,
           },
@@ -229,6 +239,13 @@ describe("queryKnowledge", () => {
           lastCompiledAt: null,
           lastAccessPolicyIndexedAt: null,
           staleAccessPolicyCount: 0,
+          compileStatus: "failed",
+          compileStage: "generation",
+          compileAttemptCount: 3,
+          compileErrorCode: "invalid_output",
+          compileErrorMessage: "Knowledge compiler returned invalid output.",
+          lastSucceededAt: "2026-07-20T10:00:00.000Z",
+          servingLastSuccessfulVersion: true,
         },
       ],
       jobs: [],
@@ -250,6 +267,7 @@ describe("queryKnowledge", () => {
         sampleCount: 2,
         zeroHitRate: 0.5,
         embeddingFallbackRate: 0.5,
+        accessPolicyFallbackRate: 0.25,
         averageAuthorizedCandidateCount: 1.5,
         averageFilteredCandidateCount: 2,
       },
@@ -277,6 +295,34 @@ describe("queryKnowledge", () => {
         method: "POST",
         credentials: "include",
         body: JSON.stringify({ spaceIds: ["space-1"], limit: 20 }),
+      }),
+    );
+  });
+
+  it("retries explicit source pages", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: {
+          queuedPageCount: 2,
+          jobIds: ["page-job-1", "page-job-2"],
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      retryKnowledgePages({ pageIds: ["page-1", "page-2"] }),
+    ).resolves.toEqual({
+      queuedPageCount: 2,
+      jobIds: ["page-job-1", "page-job-2"],
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/llm-wiki/admin/retry-pages",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify({ pageIds: ["page-1", "page-2"] }),
       }),
     );
   });

@@ -58,6 +58,28 @@ export interface KnowledgeAdminActionResult extends KnowledgeCompileResult {
   action: KnowledgeAdminSpaceAction;
 }
 
+export interface KnowledgeRetryPagesResult {
+  queuedPageCount: number;
+  jobIds: string[];
+}
+
+export type KnowledgePageCompileStatus =
+  | "not_started"
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed";
+
+export type KnowledgePageCompileStage =
+  | "queued"
+  | "read_source"
+  | "analysis"
+  | "generation"
+  | "merge"
+  | "validation"
+  | "import"
+  | "completed";
+
 export interface KnowledgeDiagnosticsPage {
   pageId: string;
   slugId: string;
@@ -77,6 +99,13 @@ export interface KnowledgeDiagnosticsPage {
   lastCompiledAt: string | null;
   lastAccessPolicyIndexedAt: string | null;
   staleAccessPolicyCount: number;
+  compileStatus: KnowledgePageCompileStatus;
+  compileStage: KnowledgePageCompileStage | null;
+  compileAttemptCount: number;
+  compileErrorCode: string | null;
+  compileErrorMessage: string | null;
+  lastSucceededAt: string | null;
+  servingLastSuccessfulVersion: boolean;
 }
 
 export interface KnowledgeDiagnosticsJob {
@@ -130,6 +159,7 @@ export interface KnowledgeRetrievalDiagnosticsSummary {
   sampleCount: number;
   zeroHitRate: number;
   embeddingFallbackRate: number;
+  accessPolicyFallbackRate: number;
   averageAuthorizedCandidateCount: number;
   averageFilteredCandidateCount: number;
 }

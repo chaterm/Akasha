@@ -280,6 +280,51 @@ export interface KnowledgeChunks {
   workspaceId: string;
 }
 
+export interface KnowledgeArtifactContributions {
+  artifact: Json;
+  artifactId: string;
+  artifactKind: string;
+  canonicalKey: string;
+  compilerRunId: string;
+  compilerVersion: string;
+  compileTaskId: string;
+  createdAt: Generated<Timestamp>;
+  id: Generated<string>;
+  promptVersion: string;
+  sourceContentHash: string;
+  sourcePageId: string;
+  sourceVersion: string;
+  spaceId: string;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
+export interface KnowledgeCompilationAttempts {
+  attemptCount: Generated<number>;
+  compilerRunId: string | null;
+  compilerVersion: string;
+  compileTaskId: string | null;
+  createdAt: Generated<Timestamp>;
+  errorCode: string | null;
+  errorMessage: string | null;
+  finishedAt: Timestamp | null;
+  id: Generated<string>;
+  lastSucceededAt: Timestamp | null;
+  lastSuccessfulSourceHash: string | null;
+  lastSuccessfulSourceVersion: string | null;
+  promptVersion: string;
+  queuedAt: Generated<Timestamp>;
+  sourceContentHash: string | null;
+  sourcePageId: string;
+  sourceVersion: string | null;
+  spaceId: string;
+  stage: Generated<string>;
+  startedAt: Timestamp | null;
+  status: Generated<string>;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
 export interface KnowledgeChunkSources {
   attachmentId: string | null;
   chunkId: string;
@@ -374,6 +419,7 @@ export interface KnowledgeLinkSources {
 
 export interface KnowledgePages {
   body: string;
+  canonicalKey: string | null;
   compiledAt: Timestamp;
   compilerRunId: string | null;
   compilerVersion: string;
@@ -388,6 +434,20 @@ export interface KnowledgePages {
   staleAt: Timestamp | null;
   summary: string | null;
   title: string;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
+export interface KnowledgeSourceAnalyses {
+  analysis: Json;
+  compilerVersion: string;
+  createdAt: Generated<Timestamp>;
+  id: Generated<string>;
+  promptVersion: string;
+  sourceContentHash: string;
+  sourcePageId: string;
+  sourceVersion: string;
+  spaceId: string;
   updatedAt: Generated<Timestamp>;
   workspaceId: string;
 }
@@ -906,10 +966,12 @@ export interface DB {
   fileTasks: FileTasks;
   groups: Groups;
   groupUsers: GroupUsers;
+  knowledgeArtifactContributions: KnowledgeArtifactContributions;
   knowledgeChunks: KnowledgeChunks;
   knowledgeChunkSources: KnowledgeChunkSources;
   knowledgeClaims: KnowledgeClaims;
   knowledgeClaimSources: KnowledgeClaimSources;
+  knowledgeCompilationAttempts: KnowledgeCompilationAttempts;
   knowledgeGraphEdges: KnowledgeGraphEdges;
   knowledgeGraphEdgeSources: KnowledgeGraphEdgeSources;
   knowledgeLinks: KnowledgeLinks;
@@ -925,6 +987,7 @@ export interface DB {
   knowledgeSourceAccessPolicy: KnowledgeSourceAccessPolicy;
   knowledgeSourceAccessPrincipals: KnowledgeSourceAccessPrincipals;
   knowledgeSourceAccessRequirements: KnowledgeSourceAccessRequirements;
+  knowledgeSourceAnalyses: KnowledgeSourceAnalyses;
   knowledgeSourceChunks: KnowledgeSourceChunks;
   knowledgeSources: KnowledgeSources;
   labels: Labels;

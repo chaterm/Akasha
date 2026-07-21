@@ -5,11 +5,14 @@ import type {
   KnowledgeCompileResult,
   KnowledgeCompileStatus,
   KnowledgeDiagnosticsResult,
+  KnowledgePageCompileStage,
+  KnowledgePageCompileStatus,
   KnowledgeGraphNode,
   KnowledgeGraphResult,
   KnowledgeQualityIssue,
   KnowledgeQuarantinedArtifact,
   KnowledgeQueryResult,
+  KnowledgeRetryPagesResult,
   KnowledgeSourceWindow,
 } from "../types/knowledge.types";
 
@@ -97,6 +100,8 @@ function normalizeAdminActionResult(
 
 export async function getKnowledgeDiagnostics(params: {
   spaceIds?: string[];
+  statuses?: KnowledgePageCompileStatus[];
+  stages?: KnowledgePageCompileStage[];
   limit?: number;
 }): Promise<KnowledgeDiagnosticsResult> {
   const response = await fetch("/api/llm-wiki/admin/diagnostics", {
@@ -112,6 +117,33 @@ export async function getKnowledgeDiagnostics(params: {
   }
 
   return normalizeKnowledgeDiagnostics(unwrapApiData(await response.json()));
+}
+
+export async function retryKnowledgePages(params: {
+  pageIds: string[];
+}): Promise<KnowledgeRetryPagesResult> {
+  const response = await fetch("/api/llm-wiki/admin/retry-pages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    const message = await readErrorMessage(response);
+    throw new Error(message);
+  }
+
+  const body = unwrapApiData(await response.json());
+  const record = isRecord(body) ? body : {};
+  return {
+    queuedPageCount: readNumber(record.queuedPageCount),
+    jobIds: Array.isArray(record.jobIds)
+      ? record.jobIds.filter(
+          (jobId): jobId is string => typeof jobId === "string",
+        )
+      : [],
+  };
 }
 
 export async function getKnowledgeGraph(params: {
@@ -282,6 +314,20 @@ function normalizeKnowledgeDiagnostics(
           ? page.lastAccessPolicyIndexedAt
           : null,
       staleAccessPolicyCount: readNumber(page.staleAccessPolicyCount),
+      compileStatus: normalizePageCompileStatus(page.compileStatus),
+      compileStage: normalizePageCompileStage(page.compileStage),
+      compileAttemptCount: readNumber(page.compileAttemptCount),
+      compileErrorCode:
+        typeof page.compileErrorCode === "string"
+          ? page.compileErrorCode
+          : null,
+      compileErrorMessage:
+        typeof page.compileErrorMessage === "string"
+          ? page.compileErrorMessage
+          : null,
+      lastSucceededAt:
+        typeof page.lastSucceededAt === "string" ? page.lastSucceededAt : null,
+      servingLastSuccessfulVersion: page.servingLastSuccessfulVersion === true,
     })),
     jobs: jobs.filter(isRecord).map((job) => ({
       id: readString(job.id),
@@ -308,6 +354,38 @@ function normalizeKnowledgeDiagnostics(
     quarantines: quarantines.filter(isRecord).map(normalizeQuarantinedArtifact),
     quality: normalizeKnowledgeQuality(record.quality),
   };
+}
+
+function normalizePageCompileStatus(
+  value: unknown,
+): KnowledgePageCompileStatus {
+  if (
+    value === "queued" ||
+    value === "running" ||
+    value === "succeeded" ||
+    value === "failed"
+  ) {
+    return value;
+  }
+  return "not_started";
+}
+
+function normalizePageCompileStage(
+  value: unknown,
+): KnowledgePageCompileStage | null {
+  if (
+    value === "queued" ||
+    value === "read_source" ||
+    value === "analysis" ||
+    value === "generation" ||
+    value === "merge" ||
+    value === "validation" ||
+    value === "import" ||
+    value === "completed"
+  ) {
+    return value;
+  }
+  return null;
 }
 
 function normalizeQuarantinedArtifact(
@@ -386,6 +464,7 @@ function normalizeRetrievalDiagnostics(value: unknown) {
     sampleCount: readNumber(value.sampleCount),
     zeroHitRate: readNumber(value.zeroHitRate),
     embeddingFallbackRate: readNumber(value.embeddingFallbackRate),
+    accessPolicyFallbackRate: readNumber(value.accessPolicyFallbackRate),
     averageAuthorizedCandidateCount: readNumber(
       value.averageAuthorizedCandidateCount,
     ),

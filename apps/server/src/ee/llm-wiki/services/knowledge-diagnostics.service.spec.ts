@@ -1,6 +1,7 @@
 import { QueueJob } from '../../../integrations/queue/constants';
 import {
   KnowledgeDiagnosticsJob,
+  buildPageCompilationDiagnostics,
   buildCompileStatusesFromJobs,
 } from './knowledge-diagnostics.service';
 
@@ -67,6 +68,42 @@ describe('buildCompileStatusesFromJobs', () => {
       },
     ]);
     expect(JSON.stringify(statuses)).not.toContain('Kafka backs async events');
+  });
+});
+
+describe('buildPageCompilationDiagnostics', () => {
+  it('reports failed stage and last-success serving without exposing stored text', () => {
+    expect(
+      buildPageCompilationDiagnostics({
+        status: 'failed',
+        stage: 'generation',
+        attemptCount: 3,
+        errorCode: 'invalid_output',
+        errorMessage: 'private page text must never be returned',
+        lastSuccessfulSourceVersion: 'v1',
+        lastSucceededAt: new Date('2026-07-20T10:00:00.000Z'),
+      }),
+    ).toEqual({
+      compileStatus: 'failed',
+      compileStage: 'generation',
+      compileAttemptCount: 3,
+      compileErrorCode: 'invalid_output',
+      compileErrorMessage: 'Knowledge compiler returned invalid output.',
+      lastSucceededAt: new Date('2026-07-20T10:00:00.000Z'),
+      servingLastSuccessfulVersion: true,
+    });
+  });
+
+  it('reports pages without an attempt as not started', () => {
+    expect(buildPageCompilationDiagnostics(undefined)).toEqual({
+      compileStatus: 'not_started',
+      compileStage: null,
+      compileAttemptCount: 0,
+      compileErrorCode: null,
+      compileErrorMessage: null,
+      lastSucceededAt: null,
+      servingLastSuccessfulVersion: false,
+    });
   });
 });
 

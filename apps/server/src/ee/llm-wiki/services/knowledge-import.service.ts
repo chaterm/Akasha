@@ -10,6 +10,8 @@ import {
 } from '@akasha/db/repos/llm-wiki/knowledge-capsule.repo';
 import { KnowledgeQuarantineRepo } from '@akasha/db/repos/llm-wiki/knowledge-quarantine.repo';
 import { KnowledgeSourceRepo } from '@akasha/db/repos/llm-wiki/knowledge-source.repo';
+import { KnowledgeArtifactContributionRepo } from '@akasha/db/repos/llm-wiki/knowledge-artifact-contribution.repo';
+import { JsonValue } from '@akasha/db/types/db';
 import {
   CompiledKnowledgeArtifact,
   CompileSpaceInput,
@@ -22,10 +24,22 @@ import {
   KnowledgeEmbedding,
 } from './knowledge-embedding-provider.service';
 import { KnowledgeVectorIndexService } from './knowledge-vector-index.service';
+import { KnowledgeArtifactMaterializerService } from './knowledge-artifact-materializer.service';
 
 export interface KnowledgeImportResult {
   importedArtifactCount: number;
   quarantinedArtifactCount: number;
+  degradedRetrievalProfiles?: string[];
+}
+
+export class KnowledgeCompilationValidationError extends Error {
+  readonly code = 'validation_failed';
+  readonly retryable = false;
+
+  constructor() {
+    super('Knowledge compiler output failed validation.');
+    this.name = 'KnowledgeCompilationValidationError';
+  }
 }
 
 @Injectable()
@@ -37,7 +51,11 @@ export class KnowledgeImportService {
     private readonly embeddingProvider: ConfiguredKnowledgeEmbeddingProvider,
     private readonly quarantineRepo: KnowledgeQuarantineRepo,
     @InjectKysely() private readonly db: KyselyDB,
-    @Optional() private readonly vectorIndex?: KnowledgeVectorIndexService,
+    private readonly vectorIndex: KnowledgeVectorIndexService,
+    @Optional()
+    private readonly contributionRepo?: KnowledgeArtifactContributionRepo,
+    @Optional()
+    private readonly materializer?: KnowledgeArtifactMaterializerService,
   ) {}
 
   async importCompileResult(input: {
@@ -59,9 +77,100 @@ export class KnowledgeImportService {
       });
     }
 
+    const quarantineInputs = validation.quarantined.map((quarantined) => ({
+      artifactId: quarantined.artifact.artifactId,
+      artifactKind: quarantined.artifact.artifactKind ?? null,
+      compilerRunId: quarantined.artifact.compilerRunId ?? null,
+      compileTaskId: quarantined.artifact.compileTaskId ?? null,
+      reasonCodes: toQuarantineReasonCodes(quarantined.reasons),
+    }));
+    const isSemanticPagePublication =
+      input.input.compileMode === 'pages' &&
+      input.input.sources.length === 1 &&
+      Boolean(this.contributionRepo && this.materializer);
+    if (isSemanticPagePublication && quarantineInputs.length > 0) {
+      await executeTx(this.db, async (trx) => {
+        await this.quarantineRepo.recordQuarantinedArtifacts(
+          {
+            workspaceId: input.input.workspaceId,
+            spaceId: input.input.spaceId,
+            artifacts: quarantineInputs,
+          },
+          trx,
+        );
+      });
+      throw new KnowledgeCompilationValidationError();
+    }
+
+    let artifactsToPublish = validation.accepted;
+    let contributionPublication:
+      | {
+          sourcePageId: string;
+          contributions: Parameters<
+            KnowledgeArtifactContributionRepo['replaceSourceContributions']
+          >[0]['contributions'];
+          removedArtifactIds: string[];
+        }
+      | undefined;
+    if (isSemanticPagePublication) {
+      const source = input.input.sources[0];
+      const previousSourceContributions =
+        await this.contributionRepo.findBySourcePage({
+          workspaceId: input.input.workspaceId,
+          sourcePageId: source.sourcePageId,
+        });
+      const affectedArtifactIds = [
+        ...new Set([
+          ...previousSourceContributions.map((item) => item.artifactId),
+          ...validation.accepted.map((artifact) => artifact.artifactId),
+        ]),
+      ];
+      const affectedContributions =
+        await this.contributionRepo.findByArtifactIds({
+          workspaceId: input.input.workspaceId,
+          artifactIds: affectedArtifactIds,
+        });
+      const materialized = await this.materializer.materializeSourceUpdate({
+        sourcePageId: source.sourcePageId,
+        previousSourceContributions,
+        affectedContributions,
+        incomingArtifacts: validation.accepted,
+      });
+      artifactsToPublish = materialized.artifacts;
+      contributionPublication = {
+        sourcePageId: source.sourcePageId,
+        removedArtifactIds: materialized.removedArtifactIds,
+        contributions: validation.accepted.map((artifact) => {
+          if (!artifact.artifactKind || !artifact.canonicalKey) {
+            throw new Error(
+              'semantic artifact contribution requires kind and canonical key',
+            );
+          }
+          return {
+            id: stableUuid(
+              `${input.input.workspaceId}:${source.sourcePageId}:${artifact.artifactId}`,
+            ),
+            workspaceId: input.input.workspaceId,
+            spaceId: input.input.spaceId,
+            sourcePageId: source.sourcePageId,
+            sourceVersion: source.sourceVersion,
+            sourceContentHash: source.contentHash,
+            artifactId: artifact.artifactId,
+            artifactKind: artifact.artifactKind,
+            canonicalKey: artifact.canonicalKey,
+            compilerVersion: artifact.compilerVersion,
+            promptVersion: artifact.promptVersion,
+            compilerRunId: artifact.compilerRunId!,
+            compileTaskId: artifact.compileTaskId!,
+            artifact: toJsonValue(artifact),
+          };
+        }),
+      };
+    }
+
     const artifactInputs: UpsertCompiledArtifactInput[] = [];
 
-    for (const artifact of validation.accepted) {
+    for (const artifact of artifactsToPublish) {
       const artifactChunks = await Promise.all(
         (artifact.chunks ?? []).map(async (chunk) => {
           const suppliedEmbedding = compilerEmbedding(
@@ -264,6 +373,8 @@ export class KnowledgeImportService {
           title: artifact.title,
           slug: artifact.artifactId,
           body: artifact.contentMarkdown,
+          canonicalKey:
+            artifact.canonicalKey ?? artifact.rawArtifactKey ?? null,
           summary: null,
           pageType: artifact.artifactKind ?? null,
           compiledAt: new Date(),
@@ -296,18 +407,54 @@ export class KnowledgeImportService {
       });
     }
 
-    const quarantineInputs = validation.quarantined.map((quarantined) => ({
-      artifactId: quarantined.artifact.artifactId,
-      artifactKind: quarantined.artifact.artifactKind ?? null,
-      compilerRunId: quarantined.artifact.compilerRunId ?? null,
-      compileTaskId: quarantined.artifact.compileTaskId ?? null,
-      reasonCodes: toQuarantineReasonCodes(quarantined.reasons),
-    }));
+    const embeddingProfiles = new Map<string, number>();
+    for (const chunk of artifactInputs.flatMap(
+      (artifact) => artifact.chunks ?? [],
+    )) {
+      if (chunk.embeddingProfile && chunk.embeddingDimensions) {
+        embeddingProfiles.set(
+          String(chunk.embeddingProfile),
+          Number(chunk.embeddingDimensions),
+        );
+      }
+    }
+    const degradedRetrievalProfiles: string[] = [];
+    await Promise.all(
+      [...embeddingProfiles].map(async ([profile, dimensions]) => {
+        try {
+          const result = await this.vectorIndex.ensureProfileIndex({
+            profile,
+            dimensions,
+          });
+          if (result === 'exact-only') {
+            degradedRetrievalProfiles.push(profile);
+          }
+        } catch {
+          degradedRetrievalProfiles.push(profile);
+        }
+      }),
+    );
 
     if (artifactInputs.length > 0 || quarantineInputs.length > 0) {
       await executeTx(this.db, async (trx) => {
         if (artifactInputs.length > 0) {
-          if (input.input.compileMode === 'pages') {
+          if (contributionPublication) {
+            await this.contributionRepo!.replaceSourceContributions(
+              {
+                workspaceId: input.input.workspaceId,
+                sourcePageId: contributionPublication.sourcePageId,
+                contributions: contributionPublication.contributions,
+              },
+              trx,
+            );
+            await this.capsuleRepo.markArtifactsStaleByIds(
+              {
+                workspaceId: input.input.workspaceId,
+                artifactIds: contributionPublication.removedArtifactIds,
+              },
+              trx,
+            );
+          } else if (input.input.compileMode === 'pages') {
             await this.capsuleRepo.markSourceArtifactsStaleBySourcePageIds(
               {
                 workspaceId: input.input.workspaceId,
@@ -343,28 +490,16 @@ export class KnowledgeImportService {
       });
     }
 
-    if (this.vectorIndex && artifactInputs.length > 0) {
-      const profiles = new Map<string, number>();
-      for (const chunk of artifactInputs.flatMap(
-        (artifact) => artifact.chunks ?? [],
-      )) {
-        if (chunk.embeddingProfile && chunk.embeddingDimensions) {
-          profiles.set(
-            String(chunk.embeddingProfile),
-            Number(chunk.embeddingDimensions),
-          );
-        }
-      }
-      await Promise.all(
-        [...profiles].map(([profile, dimensions]) =>
-          this.vectorIndex!.ensureProfileIndex({ profile, dimensions }),
-        ),
-      );
-    }
-
     return {
       importedArtifactCount: validation.accepted.length,
       quarantinedArtifactCount: validation.quarantined.length,
+      ...(degradedRetrievalProfiles.length > 0
+        ? {
+            degradedRetrievalProfiles: [
+              ...new Set(degradedRetrievalProfiles),
+            ].sort(),
+          }
+        : {}),
     };
   }
 }
@@ -421,6 +556,10 @@ function stableUuid(input: string): string {
       hash.slice(18, 20),
     hash.slice(20, 32),
   ].join('-');
+}
+
+function toJsonValue(value: unknown): JsonValue {
+  return JSON.parse(JSON.stringify(value)) as JsonValue;
 }
 
 const QUARANTINE_REASON_CODES = new Map<string, string>([

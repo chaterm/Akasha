@@ -4,10 +4,12 @@ import {
   Anchor,
   Badge,
   Button,
+  Checkbox,
   Container,
   Group,
   Loader,
   MultiSelect,
+  Select,
   Stack,
   Table,
   Text,
@@ -31,19 +33,50 @@ import { useGetSpacesQuery } from "@/features/space/queries/space-query";
 import {
   compileKnowledgeSpaces,
   getKnowledgeDiagnostics,
+  retryKnowledgePages,
   runKnowledgeAdminAction,
 } from "../services/knowledge-service";
 import classes from "../styles/knowledge-admin.module.css";
 import type {
   KnowledgeAdminSpaceAction,
   KnowledgeCompileStatus,
+  KnowledgePageCompileStage,
+  KnowledgePageCompileStatus,
 } from "../types/knowledge.types";
 
 const DIAGNOSTICS_LIMIT = 50;
+const COMPILE_STATUS_OPTIONS: Array<{
+  value: KnowledgePageCompileStatus;
+  label: string;
+}> = [
+  { value: "failed", label: "failed" },
+  { value: "running", label: "running" },
+  { value: "queued", label: "queued" },
+  { value: "succeeded", label: "succeeded" },
+  { value: "not_started", label: "not started" },
+];
+const COMPILE_STAGE_OPTIONS: Array<{
+  value: KnowledgePageCompileStage;
+  label: string;
+}> = [
+  "queued",
+  "read_source",
+  "analysis",
+  "generation",
+  "merge",
+  "validation",
+  "import",
+  "completed",
+].map((value) => ({ value: value as KnowledgePageCompileStage, label: value }));
 
 export default function KnowledgeAdminPage() {
   const { t } = useTranslation();
   const [spaceIds, setSpaceIds] = useState<string[]>([]);
+  const [compileStatus, setCompileStatus] =
+    useState<KnowledgePageCompileStatus | null>(null);
+  const [compileStage, setCompileStage] =
+    useState<KnowledgePageCompileStage | null>(null);
+  const [selectedPageIds, setSelectedPageIds] = useState<string[]>([]);
   const spaceIdsInitialized = useRef(false);
   const { data: spacesData, isLoading: spacesLoading } = useGetSpacesQuery({
     limit: 100,
@@ -62,10 +95,12 @@ export default function KnowledgeAdminPage() {
   }, [spaceOptions]);
 
   const diagnosticsQuery = useQuery({
-    queryKey: ["knowledge-diagnostics", spaceIds],
+    queryKey: ["knowledge-diagnostics", spaceIds, compileStatus, compileStage],
     queryFn: () =>
       getKnowledgeDiagnostics({
         spaceIds,
+        ...(compileStatus ? { statuses: [compileStatus] } : {}),
+        ...(compileStage ? { stages: [compileStage] } : {}),
         limit: DIAGNOSTICS_LIMIT,
       }),
     enabled: spaceIds.length > 0,
@@ -106,6 +141,22 @@ export default function KnowledgeAdminPage() {
         color: "red",
         message: error.message,
       });
+    },
+  });
+
+  const retryPagesMutation = useMutation({
+    mutationFn: retryKnowledgePages,
+    onSuccess: (data) => {
+      setSelectedPageIds([]);
+      notifications.show({
+        message: t("Knowledge page retries queued", {
+          count: data.queuedPageCount,
+        }),
+      });
+      void diagnosticsQuery.refetch();
+    },
+    onError: (error) => {
+      notifications.show({ color: "red", message: error.message });
     },
   });
 
@@ -178,15 +229,35 @@ export default function KnowledgeAdminPage() {
           </Group>
 
           <section className={classes.panel}>
-            <MultiSelect
-              data={spaceOptions}
-              value={spaceIds}
-              onChange={setSpaceIds}
-              label={t("Spaces")}
-              searchable
-              clearable
-              disabled={spacesLoading}
-            />
+            <Group align="end" grow>
+              <MultiSelect
+                data={spaceOptions}
+                value={spaceIds}
+                onChange={setSpaceIds}
+                label={t("Spaces")}
+                searchable
+                clearable
+                disabled={spacesLoading}
+              />
+              <Select
+                data={COMPILE_STATUS_OPTIONS}
+                value={compileStatus}
+                onChange={(value) =>
+                  setCompileStatus(value as KnowledgePageCompileStatus | null)
+                }
+                label={t("Compile status")}
+                clearable
+              />
+              <Select
+                data={COMPILE_STAGE_OPTIONS}
+                value={compileStage}
+                onChange={(value) =>
+                  setCompileStage(value as KnowledgePageCompileStage | null)
+                }
+                label={t("Compile stage")}
+                clearable
+              />
+            </Group>
           </section>
 
           {diagnosticsQuery.isError && (
@@ -218,6 +289,10 @@ export default function KnowledgeAdminPage() {
                   <Badge variant="light">
                     {t("Embedding fallback")}:{" "}
                     {formatPercent(retrieval.embeddingFallbackRate)}
+                  </Badge>
+                  <Badge variant="light">
+                    {t("ACL fallback")}:{" "}
+                    {formatPercent(retrieval.accessPolicyFallbackRate)}
                   </Badge>
                   <Badge variant="outline">
                     {t("Queries")}: {retrieval.sampleCount}
@@ -481,13 +556,27 @@ export default function KnowledgeAdminPage() {
               <Title order={2} size="h4">
                 {t("Recent pages")}
               </Title>
-              {diagnosticsQuery.isLoading && <Loader size="sm" />}
+              <Group gap="sm">
+                {diagnosticsQuery.isLoading && <Loader size="sm" />}
+                <Button
+                  size="xs"
+                  variant="light"
+                  disabled={selectedPageIds.length === 0}
+                  loading={retryPagesMutation.isPending}
+                  onClick={() =>
+                    retryPagesMutation.mutate({ pageIds: selectedPageIds })
+                  }
+                >
+                  {t("Retry selected")}
+                </Button>
+              </Group>
             </Group>
 
-            <Table.ScrollContainer minWidth={980}>
+            <Table.ScrollContainer minWidth={1180}>
               <Table highlightOnHover verticalSpacing="sm">
                 <Table.Thead>
                   <Table.Tr>
+                    <Table.Th>{t("Select")}</Table.Th>
                     <Table.Th>{t("Page")}</Table.Th>
                     <Table.Th>{t("Space")}</Table.Th>
                     <Table.Th>{t("Updated")}</Table.Th>
@@ -499,12 +588,13 @@ export default function KnowledgeAdminPage() {
                     <Table.Th>{t("Compiled")}</Table.Th>
                     <Table.Th>{t("Access")}</Table.Th>
                     <Table.Th>{t("State")}</Table.Th>
+                    <Table.Th>{t("Actions")}</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   {pages.length === 0 ? (
                     <Table.Tr>
-                      <Table.Td colSpan={11}>
+                      <Table.Td colSpan={13}>
                         <Text className={classes.emptyText}>
                           {t("No pages")}
                         </Text>
@@ -513,6 +603,19 @@ export default function KnowledgeAdminPage() {
                   ) : (
                     pages.map((page) => (
                       <Table.Tr key={page.pageId}>
+                        <Table.Td>
+                          <Checkbox
+                            aria-label={`Select ${page.title || page.slugId}`}
+                            checked={selectedPageIds.includes(page.pageId)}
+                            onChange={(event) =>
+                              setSelectedPageIds((current) =>
+                                event.currentTarget.checked
+                                  ? [...new Set([...current, page.pageId])]
+                                  : current.filter((id) => id !== page.pageId),
+                              )
+                            }
+                          />
+                        </Table.Td>
                         <Table.Td>
                           <Anchor
                             component={Link}
@@ -557,31 +660,73 @@ export default function KnowledgeAdminPage() {
                           </Stack>
                         </Table.Td>
                         <Table.Td>
-                          <Group gap="xs">
-                            {page.deletedAt ? (
-                              <Badge color="red" variant="light">
-                                {t("Deleted")}
+                          <Stack gap={4}>
+                            <Group gap="xs">
+                              <Badge
+                                color={compileStatusColor(page.compileStatus)}
+                                variant="light"
+                              >
+                                {page.compileStatus}
                               </Badge>
-                            ) : page.knowledgeChunkCount > 0 ? (
-                              <Badge color="green" variant="light">
-                                {t("Compiled")}
-                              </Badge>
-                            ) : (
-                              <Badge color="gray" variant="light">
-                                {t("Missing")}
-                              </Badge>
+                              {page.compileStage && (
+                                <Badge variant="outline">
+                                  {page.compileStage}
+                                </Badge>
+                              )}
+                              {page.servingLastSuccessfulVersion && (
+                                <Badge color="blue" variant="light">
+                                  {t("Last successful version")}
+                                </Badge>
+                              )}
+                            </Group>
+                            {page.compileErrorMessage && (
+                              <Text size="xs" c="red">
+                                {page.compileErrorMessage}
+                              </Text>
                             )}
-                            {page.staleSourceCount > 0 && (
-                              <Badge color="yellow" variant="light">
-                                {t("Stale")}
-                              </Badge>
-                            )}
-                            {page.missingEmbeddingChunkCount > 0 && (
-                              <Badge color="orange" variant="light">
-                                {t("Embedding")}
-                              </Badge>
-                            )}
-                          </Group>
+                            <Group gap="xs">
+                              {page.deletedAt ? (
+                                <Badge color="red" variant="light">
+                                  {t("Deleted")}
+                                </Badge>
+                              ) : page.knowledgeChunkCount > 0 ? (
+                                <Badge color="green" variant="light">
+                                  {t("Compiled")}
+                                </Badge>
+                              ) : (
+                                <Badge color="gray" variant="light">
+                                  {t("Missing")}
+                                </Badge>
+                              )}
+                              {page.staleSourceCount > 0 && (
+                                <Badge color="yellow" variant="light">
+                                  {t("Stale")}
+                                </Badge>
+                              )}
+                              {page.missingEmbeddingChunkCount > 0 && (
+                                <Badge color="orange" variant="light">
+                                  {t("Embedding")}
+                                </Badge>
+                              )}
+                            </Group>
+                          </Stack>
+                        </Table.Td>
+                        <Table.Td>
+                          {page.compileStatus === "failed" && (
+                            <Button
+                              size="compact-xs"
+                              variant="light"
+                              aria-label={`Retry ${page.title || page.slugId}`}
+                              loading={retryPagesMutation.isPending}
+                              onClick={() =>
+                                retryPagesMutation.mutate({
+                                  pageIds: [page.pageId],
+                                })
+                              }
+                            >
+                              {t("Retry")}
+                            </Button>
+                          )}
                         </Table.Td>
                       </Table.Tr>
                     ))

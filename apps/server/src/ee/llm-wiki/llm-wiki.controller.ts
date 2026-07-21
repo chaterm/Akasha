@@ -1,5 +1,6 @@
 import {
   Body,
+  BadRequestException,
   Controller,
   ForbiddenException,
   Get,
@@ -15,6 +16,7 @@ import { createHash } from 'crypto';
 import { Queue } from 'bullmq';
 import { User, Workspace } from '@akasha/db/types/entity.types';
 import { KnowledgeQueryAuditRepo } from '@akasha/db/repos/llm-wiki/knowledge-query-audit.repo';
+import { PageRepo } from '@akasha/db/repos/page/page.repo';
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
 import { AuthWorkspace } from '../../common/decorators/auth-workspace.decorator';
 import { AuditEvent, AuditResource } from '../../common/events/audit-events';
@@ -32,6 +34,7 @@ import {
 import { AdminKnowledgeSpaceActionDto } from './dto/admin-space-action.dto';
 import { CompileSpacesDto } from './dto/compile-spaces.dto';
 import { AdminKnowledgeDiagnosticsDto } from './dto/admin-diagnostics.dto';
+import { AdminKnowledgeRetryPagesDto } from './dto/admin-retry-pages.dto';
 import { ImportCompileResultDto } from './dto/import-compile-result.dto';
 import { KnowledgeGraphDto } from './dto/knowledge-graph.dto';
 import { QueryKnowledgeDto } from './dto/query-knowledge.dto';
@@ -42,6 +45,7 @@ import { KnowledgeImportService } from './services/knowledge-import.service';
 import {
   buildKnowledgeAdminActionJobId,
   buildKnowledgeCompileJobId,
+  buildKnowledgeCompilePageJobId,
   buildKnowledgeRunKey,
   uniqueValues,
 } from './services/knowledge-queue.utils';
@@ -61,6 +65,7 @@ export class LlmWikiController {
     private readonly graphService: KnowledgeGraphService,
     private readonly queryAuditRepo: KnowledgeQueryAuditRepo,
     @InjectQueue(QueueName.AI_QUEUE) private readonly aiQueue: Queue,
+    private readonly pageRepo: PageRepo,
   ) {}
 
   @HttpCode(HttpStatus.OK)
@@ -106,12 +111,13 @@ export class LlmWikiController {
         spaceIds: dto.spaceIds,
         queryEmbeddingAvailable: retrievalDiagnostics.queryEmbeddingAvailable,
         candidateSourceCount: retrievalDiagnostics.candidateSourceCount,
-        sidecarEligibleSourceCount:
-          retrievalDiagnostics.sidecarEligibleSourceCount,
-        sidecarFallbackSourceCount:
-          retrievalDiagnostics.sidecarFallbackSourceCount,
-        sidecarFilteredSourceCount:
-          retrievalDiagnostics.sidecarFilteredSourceCount,
+        policyCandidateSourceCount:
+          retrievalDiagnostics.policyCandidateSourceCount,
+        fallbackCandidateSourceCount:
+          retrievalDiagnostics.fallbackCandidateSourceCount,
+        finalAuthorizedSourceCount:
+          retrievalDiagnostics.finalAuthorizedSourceCount,
+        accessPolicyFallbackUsed: retrievalDiagnostics.accessPolicyFallbackUsed,
         candidateChunkCount: retrievalDiagnostics.candidateChunkCount,
         rankedCandidateCount: retrievalDiagnostics.rankedCandidateCount,
         authorizedChunkCount: retrievalDiagnostics.authorizedChunkCount,
@@ -221,8 +227,78 @@ export class LlmWikiController {
     return this.diagnosticsService.getWorkspaceDiagnostics({
       workspaceId: workspace.id,
       spaceIds: dto.spaceIds,
+      statuses: dto.statuses,
+      stages: dto.stages,
       limit: dto.limit,
     });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('admin/retry-pages')
+  async retryPages(
+    @Body() dto: AdminKnowledgeRetryPagesDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ): Promise<{ queuedPageCount: number; jobIds: string[] }> {
+    if (!this.chatService.isEnabledForWorkspace(workspace)) {
+      throw new ForbiddenException('AI knowledge chat is disabled');
+    }
+    this.assertAdmin(user, 'AI knowledge retry is restricted to admins');
+
+    const pageIds = uniqueValues(dto.pageIds);
+    const pageRefs = await this.pageRepo.findExistingPageRefs({
+      workspaceId: workspace.id,
+      pageIds,
+    });
+    const pageById = new Map(
+      pageRefs
+        .filter((page) => !page.deletedAt)
+        .map((page) => [page.id, page] as const),
+    );
+    if (pageIds.some((pageId) => !pageById.has(pageId))) {
+      throw new BadRequestException(
+        'One or more source pages are unavailable for retry',
+      );
+    }
+
+    const runKey = buildKnowledgeRunKey('retry_compile');
+    const jobIds: string[] = [];
+    for (const pageId of pageIds) {
+      const page = pageById.get(pageId) as (typeof pageRefs)[number];
+      const jobId = buildKnowledgeCompilePageJobId({
+        workspaceId: workspace.id,
+        spaceId: page.spaceId,
+        sourcePageId: page.id,
+        runKey,
+      });
+      await this.aiQueue.add(
+        QueueJob.KNOWLEDGE_COMPILE_PAGES,
+        {
+          workspaceId: workspace.id,
+          spaceId: page.spaceId,
+          sourcePageIds: [page.id],
+          trigger: 'retry_compile',
+        },
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 1000 },
+          jobId,
+        },
+      );
+      jobIds.push(jobId);
+    }
+
+    this.auditService.log({
+      event: AuditEvent.KNOWLEDGE_COMPILE_QUEUED,
+      resourceType: AuditResource.KNOWLEDGE,
+      resourceId: workspace.id,
+      metadata: {
+        action: 'retry_pages',
+        pageIds,
+        queuedPageCount: jobIds.length,
+      },
+    });
+    return { queuedPageCount: jobIds.length, jobIds };
   }
 
   @HttpCode(HttpStatus.OK)

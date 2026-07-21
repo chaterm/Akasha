@@ -61,7 +61,8 @@ export class KnowledgeVectorIndexService {
             ((embedding::vector(${input.dimensions})) vector_cosine_ops)
           WHERE embedding_profile = '${input.profile}'
             AND embedding_dimensions = ${input.dimensions}
-            AND stale_at IS NULL`,
+            AND stale_at IS NULL
+            AND embedding IS NOT NULL`,
       );
 
       return 'created';

@@ -50,9 +50,24 @@ describe('native knowledge retrieval migration', () => {
     expect(source).toContain('search_tsv');
     expect(source).toContain('USING GIN (search_tsv)');
     expect(source).toContain('embedding = embedding_vector');
-    expect(source).toContain(
-      'DROP COLUMN IF EXISTS embedding_vector',
-    );
+    expect(source).toContain('DROP COLUMN IF EXISTS embedding_vector');
     expect(source).not.toContain('DROP EXTENSION');
+  });
+
+  it('adds bounded enterprise retrieval correlation indexes', async () => {
+    const source = await readFile(
+      resolve(
+        __dirname,
+        'migrations/20260720T120000-enterprise-knowledge-retrieval.ts',
+      ),
+      'utf8',
+    );
+
+    expect(source).toContain('idx_knowledge_chunk_sources_acl');
+    expect(source).toContain('idx_knowledge_access_policy_fresh');
+    expect(source).toContain('idx_knowledge_access_principals_requirement');
+    expect(source).toContain('idx_knowledge_chunks_active_channel');
+    expect(source).toContain('idx_knowledge_pages_normalized_title');
+    expect(source).toContain("split_part(vector_version, '.', 2)::integer < 8");
   });
 });

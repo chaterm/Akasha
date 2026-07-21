@@ -20,7 +20,8 @@ export type KnowledgeRetrievalRankReason =
   | 'semantic'
   | 'lexical'
   | 'exact-title'
-  | 'sidecar-prefiltered';
+  | 'sidecar-prefiltered'
+  | 'final-authorization-fallback';
 
 export type KnowledgeRankedChunkCandidate = KnowledgeChunkCandidate & {
   score: number;

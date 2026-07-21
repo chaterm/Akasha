@@ -7,6 +7,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import KnowledgeAdminPage from "./knowledge-admin";
 import {
   getKnowledgeDiagnostics,
+  retryKnowledgePages,
   runKnowledgeAdminAction,
 } from "../services/knowledge-service";
 
@@ -72,6 +73,7 @@ vi.mock("../services/knowledge-service", () => ({
       sampleCount: 2,
       zeroHitRate: 0.5,
       embeddingFallbackRate: 0.5,
+      accessPolicyFallbackRate: 0.25,
       averageAuthorizedCandidateCount: 1.5,
       averageFilteredCandidateCount: 2,
     },
@@ -119,6 +121,10 @@ vi.mock("../services/knowledge-service", () => ({
     queuedSpaceCount: 1,
     jobIds: ["knowledge-compile-space:workspace-1:space-1:retry-1"],
   }),
+  retryKnowledgePages: vi.fn().mockResolvedValue({
+    queuedPageCount: 1,
+    jobIds: ["knowledge-compile-pages:page-1:retry-1"],
+  }),
 }));
 
 describe("KnowledgeAdminPage", () => {
@@ -162,7 +168,7 @@ describe("KnowledgeAdminPage", () => {
     expect(await screen.findByText("Compile job failed: Error")).toBeTruthy();
     expect(screen.getByText("Zero-hit: 50%")).toBeTruthy();
     expect(screen.getByText("Embedding fallback: 50%")).toBeTruthy();
-    expect(screen.getByText("failed")).toBeTruthy();
+    expect(screen.getAllByText("failed").length).toBeGreaterThan(0);
     expect(screen.getByText("Quarantined: 2")).toBeTruthy();
     expect(screen.getByText("artifact_source_range_invalid")).toBeTruthy();
     expect(screen.getByText("artifact-1")).toBeTruthy();
@@ -191,6 +197,91 @@ describe("KnowledgeAdminPage", () => {
         (screen.getByRole("button", { name: "Refresh" }) as HTMLButtonElement)
           .disabled,
       ).toBe(true);
+    });
+  });
+
+  it("filters page attempts and retries one or selected failed pages", async () => {
+    vi.mocked(getKnowledgeDiagnostics).mockResolvedValue({
+      pages: [
+        {
+          pageId: "page-1",
+          slugId: "failed-page",
+          title: "Failed page",
+          spaceId: "space-1",
+          spaceName: "AIM",
+          spaceSlug: "aim",
+          updatedAt: "2026-07-20T11:00:00.000Z",
+          deletedAt: null,
+          textLength: 100,
+          knowledgeSourceCount: 1,
+          staleSourceCount: 0,
+          oldestStaleSourceAt: null,
+          knowledgePageSourceCount: 1,
+          knowledgeChunkCount: 2,
+          missingEmbeddingChunkCount: 0,
+          lastCompiledAt: "2026-07-20T10:00:00.000Z",
+          lastAccessPolicyIndexedAt: null,
+          staleAccessPolicyCount: 0,
+          compileStatus: "failed",
+          compileStage: "generation",
+          compileAttemptCount: 3,
+          compileErrorCode: "invalid_output",
+          compileErrorMessage: "Knowledge compiler returned invalid output.",
+          lastSucceededAt: "2026-07-20T10:00:00.000Z",
+          servingLastSuccessfulVersion: true,
+        },
+      ],
+      jobs: [],
+      compileStatuses: [],
+      quarantines: [],
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <HelmetProvider>
+          <MantineProvider>
+            <BrowserRouter>
+              <KnowledgeAdminPage />
+            </BrowserRouter>
+          </MantineProvider>
+        </HelmetProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Last successful version")).toBeTruthy();
+    expect(
+      screen
+        .getAllByLabelText("Compile status")
+        .some((element) => element.tagName === "INPUT"),
+    ).toBe(true);
+    expect(
+      screen
+        .getAllByLabelText("Compile stage")
+        .some((element) => element.tagName === "INPUT"),
+    ).toBe(true);
+    expect(
+      screen.getByText("Knowledge compiler returned invalid output."),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("Select Failed page"));
+    fireEvent.click(screen.getByRole("button", { name: "Retry selected" }));
+    await waitFor(() => {
+      expect(retryKnowledgePages).toHaveBeenCalledWith(
+        {
+          pageIds: ["page-1"],
+        },
+        expect.anything(),
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry Failed page" }));
+    await waitFor(() => {
+      expect(retryKnowledgePages).toHaveBeenLastCalledWith(
+        {
+          pageIds: ["page-1"],
+        },
+        expect.anything(),
+      );
     });
   });
 });

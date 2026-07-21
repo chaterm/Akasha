@@ -155,7 +155,10 @@ describe('KnowledgeCapsuleRepo', () => {
     await repo.findDenseChunkCandidates({
       workspaceId: 'workspace-1',
       spaceIds: ['space-1'],
-      eligibleSourcePageIds: ['source-visible'],
+      principals: [
+        { principalType: 'user', principalId: 'user-visible' },
+        { principalType: 'group', principalId: 'group-visible' },
+      ],
       embedding: {
         vector: [0.1, 0.2, 0.3],
         profile: 'a'.repeat(64),
@@ -165,13 +168,92 @@ describe('KnowledgeCapsuleRepo', () => {
       limit: 12,
     });
 
-    const sql = queries[0].sql;
-    expect(sql).toContain('"embedding_profile" = $');
-    expect(sql).toContain('"embedding_dimensions" = $');
+    const sql = queries
+      .find((query) => query.sql.startsWith('select'))!
+      .sql.toLowerCase()
+      .replace(/\s+/g, ' ');
+    expect(sql).toContain(`embedding_profile = '${'a'.repeat(64)}'`);
+    expect(sql).toContain('embedding_dimensions = 3');
     expect(sql).toContain('embedding::vector(3) <=>');
-    expect(sql).toContain('exists (select');
-    expect(sql).toContain('not exists (select');
+    expect(sql).toContain('knowledge_source_access_policy');
+    expect(sql).toContain('knowledge_source_access_requirements');
+    expect(sql).toContain('knowledge_source_access_principals');
+    expect(sql).toContain('restricted_ancestor_count > 0');
+    expect(sql).toContain(
+      'not exists ( select 1 from knowledge_source_access_requirements',
+    );
+    expect(sql).toContain('exists ( select');
+    expect(sql).toContain('not exists ( select');
     expect(sql.indexOf('not exists')).toBeLessThan(sql.indexOf('limit'));
+    expect(
+      queries.find((query) => query.sql.startsWith('select'))!.parameters,
+    ).toEqual(expect.arrayContaining(['user-visible', 'group-visible']));
+  });
+
+  it('supports bounded final-authorization fallback without treating it as policy-filtered', async () => {
+    const { repo, queries } = createSqlRepo();
+
+    await repo.findLexicalChunkCandidates({
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-1'],
+      principals: [{ principalType: 'user', principalId: 'user-visible' }],
+      authorizationMode: 'final-authorization-fallback',
+      query: 'Akasha wiki',
+      limit: 10,
+    });
+
+    const sql = queries[0].sql.toLowerCase().replace(/\s+/g, ' ');
+    expect(sql).toContain('knowledge_chunk_sources as source_presence');
+    expect(sql).not.toContain('knowledge_source_access_policy');
+    expect(sql.indexOf('source_presence')).toBeLessThan(sql.indexOf('limit'));
+  });
+
+  it('enables iterative HNSW scanning for filtered enterprise retrieval', async () => {
+    const { repo, queries } = createSqlRepo();
+
+    await repo.findDenseChunkCandidates({
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-1'],
+      principals: [{ principalType: 'user', principalId: 'user-visible' }],
+      embedding: {
+        vector: [0.1, 0.2, 0.3],
+        profile: 'a'.repeat(64),
+        model: 'bge-m3',
+        dimensions: 3,
+      },
+      limit: 12,
+    });
+
+    const statements = queries.map((query) => query.sql.toLowerCase());
+    expect(statements).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('set local hnsw.ef_search = 200'),
+        expect.stringContaining('set local hnsw.iterative_scan = strict_order'),
+      ]),
+    );
+  });
+
+  it('does not pay HNSW transaction overhead for unsupported exact-only dimensions', async () => {
+    const { repo, queries } = createSqlRepo();
+
+    await repo.findDenseChunkCandidates({
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-1'],
+      principals: [{ principalType: 'user', principalId: 'user-visible' }],
+      embedding: {
+        vector: Array.from({ length: 2001 }, () => 0.1),
+        profile: 'a'.repeat(64),
+        model: 'large-embedding',
+        dimensions: 2001,
+      },
+      limit: 12,
+    });
+
+    expect(
+      queries.some((query) =>
+        query.sql.toLowerCase().includes('set local hnsw'),
+      ),
+    ).toBe(false);
   });
 
   it('uses PostgreSQL FTS after complete-source authorization', async () => {
@@ -180,15 +262,15 @@ describe('KnowledgeCapsuleRepo', () => {
     await repo.findLexicalChunkCandidates({
       workspaceId: 'workspace-1',
       spaceIds: ['space-1'],
-      eligibleSourcePageIds: ['source-visible'],
+      principals: [{ principalType: 'user', principalId: 'user-visible' }],
       query: 'Akasha wiki',
       limit: 10,
     });
 
-    const sql = queries[0].sql;
+    const sql = queries[0].sql.toLowerCase().replace(/\s+/g, ' ');
     expect(sql).toContain("websearch_to_tsquery('simple'");
     expect(sql).toContain('ts_rank_cd');
-    expect(sql).toContain('not exists (select');
+    expect(sql).toContain('not exists ( select');
     expect(sql.indexOf('not exists')).toBeLessThan(sql.indexOf('limit'));
   });
 
@@ -198,15 +280,15 @@ describe('KnowledgeCapsuleRepo', () => {
     await repo.findExactTitleChunkCandidates({
       workspaceId: 'workspace-1',
       spaceIds: ['space-1'],
-      eligibleSourcePageIds: ['source-visible'],
+      principals: [{ principalType: 'user', principalId: 'user-visible' }],
       query: '  Akasha   Wiki ',
       limit: 8,
     });
 
-    const sql = queries[0].sql;
+    const sql = queries[0].sql.toLowerCase().replace(/\s+/g, ' ');
     expect(sql).toContain('regexp_replace');
     expect(sql).toContain('lower');
-    expect(sql).toContain('not exists (select');
+    expect(sql).toContain('not exists ( select');
     expect(sql.indexOf('not exists')).toBeLessThan(sql.indexOf('limit'));
   });
 
@@ -795,156 +877,6 @@ describe('KnowledgeCapsuleRepo', () => {
         args: ['knowledgeChunkSources.chunkId', 'in', ['chunk-2', 'chunk-1']],
       },
       { method: 'execute', args: [] },
-    ]);
-  });
-
-  it('finds candidate dependency source page ids for sidecar evaluation', async () => {
-    const query = new FakeKyselyQuery({
-      knowledgeChunkSources: [
-        { sourcePageId: 'source-1' },
-        { sourcePageId: 'source-2' },
-        { sourcePageId: 'source-1' },
-      ],
-    });
-    const repo = createRepo(query);
-
-    await expect(
-      repo.findCandidateDependencySourcePageIds({
-        workspaceId: 'workspace-1',
-        spaceIds: ['space-1'],
-        query: 'AkashaQwenSmokeTest',
-        signals: ['semantic', 'lexical', 'exact-title'],
-        sourceCandidateLimit: 20,
-      }),
-    ).resolves.toEqual(['source-1', 'source-2']);
-
-    expect(query.calls).toEqual(
-      expect.arrayContaining([
-        { method: 'selectFrom', args: ['knowledgeChunkSources'] },
-        {
-          method: 'innerJoin',
-          args: [
-            'knowledgeChunks',
-            'knowledgeChunkSources.chunkId',
-            'knowledgeChunks.id',
-          ],
-        },
-        {
-          method: 'where',
-          args: ['knowledgeChunks.workspaceId', '=', 'workspace-1'],
-        },
-        {
-          method: 'where',
-          args: ['knowledgeChunks.spaceId', 'in', ['space-1']],
-        },
-        { method: 'limit', args: [20] },
-      ]),
-    );
-  });
-
-  it('returns only chunks whose full dependency set is sidecar eligible', async () => {
-    const query = new FakeKyselyQuery({
-      knowledgeChunks: [
-        {
-          id: 'chunk-visible',
-          workspaceId: 'workspace-1',
-          spaceId: 'space-1',
-          knowledgePageId: 'kp-visible',
-          text: 'Visible AkashaQwenSmokeTest',
-          embedding: [1, 0],
-        },
-        {
-          id: 'chunk-mixed',
-          workspaceId: 'workspace-1',
-          spaceId: 'space-1',
-          knowledgePageId: 'kp-mixed',
-          text: 'Mixed AkashaQwenSmokeTest',
-          embedding: [1, 0],
-        },
-        {
-          id: 'chunk-empty',
-          workspaceId: 'workspace-1',
-          spaceId: 'space-1',
-          knowledgePageId: 'kp-empty',
-          text: 'No lineage',
-          embedding: [1, 0],
-        },
-      ],
-      knowledgePages: [
-        { ...basePage('kp-visible'), title: 'Visible' },
-        { ...basePage('kp-mixed'), title: 'Mixed' },
-        { ...basePage('kp-empty'), title: 'Empty' },
-      ],
-      knowledgeChunkSources: [
-        { chunkId: 'chunk-visible', sourcePageId: 'source-visible' },
-        { chunkId: 'chunk-mixed', sourcePageId: 'source-visible' },
-        { chunkId: 'chunk-mixed', sourcePageId: 'source-hidden' },
-      ],
-    });
-    const repo = createRepo(query);
-
-    await expect(
-      repo.findSidecarEligibleChunks({
-        workspaceId: 'workspace-1',
-        spaceIds: ['space-1'],
-        query: 'AkashaQwenSmokeTest',
-        eligibleSourcePageIds: ['source-visible'],
-        signals: ['semantic', 'lexical', 'exact-title'],
-        limit: 10,
-      }),
-    ).resolves.toEqual([
-      {
-        chunk: expect.objectContaining({ id: 'chunk-visible' }),
-        page: expect.objectContaining({ id: 'kp-visible' }),
-        sourcePageIds: ['source-visible'],
-        signals: ['semantic', 'lexical'],
-        lexicalScore: expect.any(Number),
-      },
-    ]);
-  });
-
-  it('uses token overlap for lexical candidates instead of requiring the full query string', async () => {
-    const query = new FakeKyselyQuery({
-      knowledgeChunks: [
-        {
-          id: 'chunk-lexical',
-          workspaceId: 'workspace-1',
-          spaceId: 'space-1',
-          knowledgePageId: 'kp-lexical',
-          text: 'AkashaQwenSmokeTest lexical fallback',
-          embedding: null,
-        },
-      ],
-      knowledgePages: [
-        {
-          ...basePage('kp-lexical'),
-          title: 'AkashaQwenSmokeTest',
-          body: 'fallback body',
-        },
-      ],
-      knowledgeChunkSources: [
-        { chunkId: 'chunk-lexical', sourcePageId: 'source-lexical' },
-      ],
-    });
-    const repo = createRepo(query);
-
-    await expect(
-      repo.findSidecarEligibleChunks({
-        workspaceId: 'workspace-1',
-        spaceIds: ['space-1'],
-        query: 'AkashaQwenSmokeTest 是什么？',
-        eligibleSourcePageIds: ['source-lexical'],
-        signals: ['lexical', 'exact-title'],
-        limit: 10,
-      }),
-    ).resolves.toEqual([
-      {
-        chunk: expect.objectContaining({ id: 'chunk-lexical' }),
-        page: expect.objectContaining({ id: 'kp-lexical' }),
-        sourcePageIds: ['source-lexical'],
-        signals: ['lexical', 'exact-title'],
-        lexicalScore: expect.any(Number),
-      },
     ]);
   });
 

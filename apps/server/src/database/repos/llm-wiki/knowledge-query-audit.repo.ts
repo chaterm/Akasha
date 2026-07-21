@@ -7,9 +7,10 @@ export type KnowledgeQueryAuditMetadata = {
   spaceIds: string[];
   queryEmbeddingAvailable: boolean;
   candidateSourceCount: number;
-  sidecarEligibleSourceCount: number;
-  sidecarFallbackSourceCount: number;
-  sidecarFilteredSourceCount: number;
+  policyCandidateSourceCount: number;
+  fallbackCandidateSourceCount: number;
+  finalAuthorizedSourceCount: number;
+  accessPolicyFallbackUsed: boolean;
   candidateChunkCount: number;
   rankedCandidateCount: number;
   authorizedChunkCount: number;
@@ -20,6 +21,7 @@ export type KnowledgeRetrievalAuditSummary = {
   sampleCount: number;
   zeroHitRate: number;
   embeddingFallbackRate: number;
+  accessPolicyFallbackRate: number;
   averageAuthorizedCandidateCount: number;
   averageFilteredCandidateCount: number;
 };
@@ -81,6 +83,12 @@ export class KnowledgeQueryAuditRepo {
         ).length,
         sampleCount,
       ),
+      accessPolicyFallbackRate: rate(
+        metadataRows.filter(
+          (metadata) => metadata.accessPolicyFallbackUsed === true,
+        ).length,
+        sampleCount,
+      ),
       averageAuthorizedCandidateCount: average(
         metadataRows.map((metadata) => metadata.authorizedChunkCount),
       ),
@@ -96,6 +104,7 @@ function emptySummary(): KnowledgeRetrievalAuditSummary {
     sampleCount: 0,
     zeroHitRate: 0,
     embeddingFallbackRate: 0,
+    accessPolicyFallbackRate: 0,
     averageAuthorizedCandidateCount: 0,
     averageFilteredCandidateCount: 0,
   };
