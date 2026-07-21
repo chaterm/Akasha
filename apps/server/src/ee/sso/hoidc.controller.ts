@@ -9,29 +9,35 @@ import {
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { HoidcService, HoidcProviderConfig } from './hoidc.service';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
+import { WorkspaceRepo } from '@akasha/db/repos/workspace/workspace.repo';
 
 @Controller('sso/hoidc')
 export class HoidcController {
   constructor(
     private readonly hoidcService: HoidcService,
     private readonly environmentService: EnvironmentService,
+    private readonly workspaceRepo: WorkspaceRepo,
   ) {}
 
-  private getProviderConfig(): HoidcProviderConfig {
+  private async getProviderConfig(): Promise<HoidcProviderConfig> {
     const ssoApi = this.environmentService.getHoidcSsoApi();
     const platformId = this.environmentService.getHoidcPlatformId();
-    const workspaceId = this.environmentService.getHoidcWorkspaceId();
 
-    if (!ssoApi || !platformId || !workspaceId) {
+    if (!ssoApi || !platformId) {
       throw new BadRequestException(
-        'HOIDC is not fully configured. Required: HOIDC_SSO_API, HOIDC_PLATFORM_ID, HOIDC_WORKSPACE_ID',
+        'HOIDC is not fully configured. Required: HOIDC_SSO_API, HOIDC_PLATFORM_ID',
       );
+    }
+
+    const workspace = await this.workspaceRepo.findFirst();
+    if (!workspace) {
+      throw new BadRequestException('Workspace is not initialized');
     }
 
     return {
       ssoApi,
       platformId,
-      workspaceId,
+      workspaceId: workspace.id,
       allowSignup: this.environmentService.isHoidcAllowSignup(),
     };
   }
@@ -46,7 +52,7 @@ export class HoidcController {
     @Req() req: FastifyRequest,
     @Res() res: FastifyReply,
   ) {
-    const config = this.getProviderConfig();
+    const config = await this.getProviderConfig();
 
     const loginPage = this.environmentService.getHoidcLoginPage();
     if (!loginPage) {
@@ -79,7 +85,7 @@ export class HoidcController {
     @Req() req: FastifyRequest,
     @Res() res: FastifyReply,
   ) {
-    const config = this.getProviderConfig();
+    const config = await this.getProviderConfig();
 
     const userInfo = await this.hoidcService.verifyToken(config, token);
 

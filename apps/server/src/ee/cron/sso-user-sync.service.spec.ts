@@ -10,8 +10,10 @@ describe('SsoUserSyncService', () => {
     getSsoUserListApiUrl: jest.fn(() => 'https://webapi-sso.example.com'),
     getSsoUserListPlatformId: jest.fn(() => 'platform-1'),
     getSsoUserListSecret: jest.fn(() => 'secret-1'),
-    getHoidcWorkspaceId: jest.fn(() => 'workspace-1'),
     isHoidcAllowSignup: jest.fn(() => true),
+  };
+  const workspaceRepo = {
+    findFirst: jest.fn(() => Promise.resolve({ id: 'workspace-1' })),
   };
 
   beforeEach(() => {
@@ -46,7 +48,11 @@ describe('SsoUserSyncService', () => {
       },
     });
 
-    const service = new SsoUserSyncService(env as any, hoidcService as any);
+    const service = new SsoUserSyncService(
+      env as any,
+      hoidcService as any,
+      workspaceRepo as any,
+    );
 
     const result = await service.syncAllUsers();
 
@@ -57,6 +63,7 @@ describe('SsoUserSyncService', () => {
       { method: 'POST', body: '' },
     );
     expect(hoidcService.provisionSsoUser).toHaveBeenCalledTimes(2);
+    expect(workspaceRepo.findFirst).toHaveBeenCalledTimes(1);
     expect(hoidcService.provisionSsoUser).toHaveBeenNthCalledWith(1, {
       config: {
         ssoApi: 'https://webapi-sso.example.com',
@@ -113,7 +120,11 @@ describe('SsoUserSyncService', () => {
       },
     });
 
-    const service = new SsoUserSyncService(env as any, hoidcService as any);
+    const service = new SsoUserSyncService(
+      env as any,
+      hoidcService as any,
+      workspaceRepo as any,
+    );
 
     const result = await service.syncAllUsers();
 
@@ -137,6 +148,32 @@ describe('SsoUserSyncService', () => {
     const service = new SsoUserSyncService(
       disabledEnv as any,
       hoidcService as any,
+      workspaceRepo as any,
+    );
+
+    const result = await service.syncAllUsers();
+
+    expect(request).not.toHaveBeenCalled();
+    expect(hoidcService.provisionSsoUser).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      fetched: 0,
+      synced: 0,
+      skipped: 0,
+      failed: 0,
+    });
+  });
+
+  it('skips sync when the database has no workspace', async () => {
+    const hoidcService = {
+      provisionSsoUser: jest.fn(),
+    };
+    const emptyWorkspaceRepo = {
+      findFirst: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new SsoUserSyncService(
+      env as any,
+      hoidcService as any,
+      emptyWorkspaceRepo as any,
     );
 
     const result = await service.syncAllUsers();
