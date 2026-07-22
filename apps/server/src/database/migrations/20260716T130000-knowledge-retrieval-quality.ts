@@ -26,11 +26,9 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     WHERE embedding IS NOT NULL
   `.execute(db);
 
-  await sql`
-    CREATE INDEX knowledge_chunks_embedding_vector_hnsw_idx
-      ON knowledge_chunks USING hnsw (embedding_vector vector_cosine_ops)
-      WHERE stale_at IS NULL AND embedding_vector IS NOT NULL
-  `.execute(db);
+  // Do not create a HNSW index on this compatibility column: pgvector needs a
+  // fixed vector dimension for HNSW, and this migration did not record one.
+  // The native retrieval path creates profile/dimension-specific indexes later.
   await sql`
     CREATE INDEX knowledge_chunks_text_trgm_idx
       ON knowledge_chunks USING GIN (text gin_trgm_ops)

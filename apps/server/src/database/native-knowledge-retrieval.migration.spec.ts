@@ -25,7 +25,12 @@ describe('native knowledge retrieval migration', () => {
     );
 
     expect(source).toContain('ADD COLUMN embedding_vector vector');
-    expect(source).toContain('knowledge_chunks_embedding_vector_hnsw_idx');
+    expect(source).toContain(
+      'DROP INDEX IF EXISTS knowledge_chunks_embedding_vector_hnsw_idx',
+    );
+    expect(source).not.toContain(
+      'USING hnsw (embedding_vector vector_cosine_ops)',
+    );
     expect(source).toContain('knowledge_chunks_text_trgm_idx');
     expect(source).toContain('knowledge_pages_title_trgm_idx');
     expect(source).toContain('knowledge_pages_retrieval_mode_idx');
@@ -51,6 +56,9 @@ describe('native knowledge retrieval migration', () => {
     expect(source).toContain('USING GIN (search_tsv)');
     expect(source).toContain('embedding = embedding_vector');
     expect(source).toContain('DROP COLUMN IF EXISTS embedding_vector');
+    expect(source).not.toContain(
+      'USING hnsw (embedding_vector vector_cosine_ops)',
+    );
     expect(source).not.toContain('DROP EXTENSION');
   });
 

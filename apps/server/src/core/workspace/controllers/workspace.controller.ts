@@ -83,6 +83,9 @@ export class WorkspaceController {
     if (!features.includes(Feature.API_KEYS)) {
       features.push(Feature.API_KEYS);
     }
+    if (!features.includes(Feature.AI)) {
+      features.push(Feature.AI);
+    }
     if (!features.includes(Feature.MCP)) {
       features.push(Feature.MCP);
     }

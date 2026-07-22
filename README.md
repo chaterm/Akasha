@@ -361,6 +361,80 @@ AI handles the infinite "how" space. Humans define "why" — the value function,
 
 ---
 
+# Quick Start
+
+## Prerequisites
+
+* [Node.js](https://nodejs.org/) 22+ (LTS recommended)
+* [pnpm](https://pnpm.io/) 10.4.0 (see `packageManager` in `package.json`)
+* [Docker](https://www.docker.com/) (for PostgreSQL with pgvector)
+* Redis (local install or container)
+
+## Local development
+
+1. Clone the repository and enter the project root:
+
+   ```bash
+   git clone https://github.com/akasha/akasha.git
+   cd akasha
+   ```
+
+2. Copy the environment file and set a local secret:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Generate an `APP_SECRET` with `openssl rand -hex 32`. The other defaults are ready for the included PostgreSQL Docker Compose service and a local Redis on `6379`.
+
+3. Start PostgreSQL (pgvector):
+
+   ```bash
+   docker compose up -d db
+   ```
+
+4. Start Redis locally, for example:
+
+   ```bash
+   # macOS (Homebrew)
+   brew services start redis
+
+   # or run a Redis container
+   docker run -d --name akasha-redis -p 6379:6379 redis:7
+   ```
+
+5. Install dependencies (from the repository root):
+
+   ```bash
+   pnpm install
+   ```
+
+   > Use `pnpm`, not `npm`. This is a pnpm workspace monorepo.
+
+6. Run database migrations:
+
+   ```bash
+   pnpm --filter ./apps/server run migration:latest
+   ```
+
+7. Start the development servers (frontend + backend):
+
+   ```bash
+   pnpm run dev
+   ```
+
+8. Open [http://localhost:3000](http://localhost:3000).
+
+The frontend dev server runs on port 3000 and proxies `/api`, `/socket.io`, and `/collab` to `BACKEND_URL`.
+
+To verify the backend and its dependencies:
+
+```bash
+curl http://127.0.0.1:8080/api/health
+```
+
+---
+
 # Self-hosted First
 
 Akasha is designed for:

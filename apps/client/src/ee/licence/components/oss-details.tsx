@@ -6,16 +6,11 @@ const enterpriseFeatures = [
   "SSO (SAML, OIDC, LDAP)",
   "SCIM Provisioning",
   "Multi-factor Authentication (2FA)",
-  "Page-level Permissions",
   "Page Verification & Approval Workflow",
   "Audit Logs",
   "Enterprise Controls",
-  "API Keys",
   "Advanced Search Engine Support",
   "Full-text Search in Attachments (PDF, DOCX)",
-  "Resolve Comments",
-  "Confluence Import",
-  "PDF & DOCX Import",
   "Templates",
 ];
 
