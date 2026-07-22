@@ -42,6 +42,7 @@ import {
   IAuditService,
 } from '../../../integrations/audit/audit.service';
 import { isAdminActingOnOwner } from '../workspace.util';
+import { SpaceService } from '../../space/services/space.service';
 
 @Injectable()
 export class WorkspaceInvitationService {
@@ -53,6 +54,7 @@ export class WorkspaceInvitationService {
     private domainService: DomainService,
     private tokenService: TokenService,
     private sessionService: SessionService,
+    private spaceService: SpaceService,
     @InjectKysely() private readonly db: KyselyDB,
     @InjectQueue(QueueName.BILLING_QUEUE) private billingQueue: Queue,
     private readonly environmentService: EnvironmentService,
@@ -265,6 +267,7 @@ export class WorkspaceInvitationService {
           workspace.id,
           trx,
         );
+        await this.spaceService.ensurePersonalSpace(newUser, workspace.id, trx);
 
         if (invitation.groupIds && invitation.groupIds.length > 0) {
           // Ensure the groups are valid

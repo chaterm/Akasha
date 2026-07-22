@@ -38,9 +38,7 @@ describe('HoidcService pure helpers', () => {
       });
 
       expect(result).toContain('platform_id=pid123');
-      expect(result).toContain(
-        'redirect=' + encodeURIComponent(callbackUrl),
-      );
+      expect(result).toContain('redirect=' + encodeURIComponent(callbackUrl));
     });
   });
 
@@ -83,7 +81,9 @@ describe('HoidcService pure helpers', () => {
       };
 
       expect(() => svc.parseUserInfo(resp)).toThrow(UnauthorizedException);
-      expect(() => svc.parseUserInfo(resp)).toThrow('SSO response missing email');
+      expect(() => svc.parseUserInfo(resp)).toThrow(
+        'SSO response missing email',
+      );
     });
 
     it('throws UnauthorizedException when data is null', () => {
@@ -181,10 +181,12 @@ describe('HoidcService provisioning', () => {
     expect(groupUserRepo.addUserToDefaultGroup).toHaveBeenCalledWith(
       'user-1',
       workspaceId,
+      trx,
     );
     expect(spaceService.ensurePersonalSpace).toHaveBeenCalledWith(
       newUser,
       workspaceId,
+      trx,
     );
   });
 

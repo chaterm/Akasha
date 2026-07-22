@@ -1,7 +1,4 @@
-import {
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { User } from '@akasha/db/types/entity.types';
 import { SessionService } from '../../core/session/session.service';
 import { UserRepo } from '@akasha/db/repos/user/user.repo';
@@ -152,12 +149,15 @@ export class HoidcService {
           undefined,
           trx,
         );
+        await this.groupUserRepo.addUserToDefaultGroup(
+          newUser.id,
+          workspaceId,
+          trx,
+        );
+        await this.spaceService.ensurePersonalSpace(newUser, workspaceId, trx);
 
         return newUser;
       });
-
-      await this.spaceService.ensurePersonalSpace(user, workspaceId);
-      await this.groupUserRepo.addUserToDefaultGroup(user.id, workspaceId);
 
       return user;
     }

@@ -35,6 +35,11 @@ class FakeKyselyQuery {
     return this;
   }
 
+  limit(...args: unknown[]) {
+    this.calls.push({ method: 'limit', args });
+    return this;
+  }
+
   innerJoin(...args: unknown[]) {
     this.calls.push({ method: 'innerJoin', args });
     return this;
@@ -205,12 +210,63 @@ describe('PageRepo', () => {
         {
           method: 'select',
           args: [
-            ['id', 'workspaceId', 'spaceId', 'title', 'textContent', 'updatedAt'],
+            [
+              'id',
+              'workspaceId',
+              'spaceId',
+              'title',
+              'textContent',
+              'content',
+              'updatedAt',
+            ],
           ],
         },
         { method: 'where', args: ['workspaceId', '=', 'workspace-1'] },
         { method: 'where', args: ['spaceId', '=', 'space-1'] },
         { method: 'where', args: ['deletedAt', 'is', null] },
+        { method: 'execute', args: [] },
+      ]);
+    });
+  });
+
+  describe('searchPagesInSpace', () => {
+    it('searches non-deleted page titles and text inside one workspace space', async () => {
+      const rows = [
+        {
+          id: 'page-1',
+          title: '雷雨',
+          textContent: '雷声越过屋檐',
+          updatedAt: new Date('2026-07-22T00:00:00.000Z'),
+        },
+      ];
+      const query = new FakeKyselyQuery(rows);
+      const repo = createRepo(query);
+
+      await expect(
+        repo.searchPagesInSpace({
+          workspaceId: 'workspace-1',
+          spaceId: 'personal-1',
+          query: '雷雨',
+          limit: 5,
+        }),
+      ).resolves.toEqual(rows);
+
+      expect(query.calls.slice(0, 5)).toEqual([
+        { method: 'selectFrom', args: ['pages'] },
+        {
+          method: 'select',
+          args: [['id', 'title', 'textContent', 'updatedAt']],
+        },
+        { method: 'where', args: ['workspaceId', '=', 'workspace-1'] },
+        { method: 'where', args: ['spaceId', '=', 'personal-1'] },
+        { method: 'where', args: ['deletedAt', 'is', null] },
+      ]);
+      expect(query.calls[5]).toEqual({
+        method: 'where',
+        args: [expect.anything()],
+      });
+      expect(query.calls.slice(6)).toEqual([
+        { method: 'limit', args: [5] },
         { method: 'execute', args: [] },
       ]);
     });

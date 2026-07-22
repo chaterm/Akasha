@@ -4,9 +4,13 @@ import {
   IsEnum,
   IsIn,
   IsNotEmpty,
+  IsInt,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
+  MaxLength,
+  Min,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 
@@ -42,6 +46,19 @@ export class PageInfoDto extends PageIdDto {
   @Transform(({ value }) => value?.toLowerCase())
   @IsIn(['json', 'markdown', 'html'])
   format?: ContentFormat;
+}
+
+export class PersonalPageSearchDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  query: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  limit = 10;
 }
 
 export class DeletePageDto extends PageIdDto {

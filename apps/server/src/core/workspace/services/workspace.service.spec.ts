@@ -37,4 +37,55 @@ describe('WorkspaceService', () => {
       type: 'hoidc',
     });
   });
+
+  it('keeps the personal-space owner membership when deleting a workspace user', async () => {
+    const trx = {
+      deleteFrom: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      execute: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = Object.create(WorkspaceService.prototype) as any;
+    service.db = {
+      transaction: jest.fn(() => ({
+        execute: (callback: (activeTrx: typeof trx) => Promise<void>) =>
+          callback(trx),
+      })),
+    };
+    service.userRepo = {
+      findById: jest.fn().mockResolvedValue({
+        id: 'user-1',
+        name: 'Alice',
+        email: 'alice@example.com',
+        role: 'member',
+        deletedAt: null,
+      }),
+      roleCountByWorkspaceId: jest.fn().mockResolvedValue(1),
+      updateUser: jest.fn().mockResolvedValue(undefined),
+    };
+    service.spaceMemberService = {
+      removeUserFromNonPersonalSpaces: jest.fn().mockResolvedValue(undefined),
+    };
+    service.watcherRepo = {
+      deleteByUserAndWorkspace: jest.fn().mockResolvedValue(undefined),
+    };
+    service.favoriteRepo = {
+      deleteByUserAndWorkspace: jest.fn().mockResolvedValue(undefined),
+    };
+    service.userSessionRepo = {
+      revokeByUserId: jest.fn().mockResolvedValue(undefined),
+    };
+    service.auditService = { log: jest.fn() };
+    service.attachmentQueue = { add: jest.fn().mockResolvedValue(undefined) };
+
+    await service.deleteUser(
+      { id: 'admin-1', role: 'owner' },
+      'user-1',
+      'workspace-1',
+    );
+
+    expect(
+      service.spaceMemberService.removeUserFromNonPersonalSpaces,
+    ).toHaveBeenCalledWith('user-1', 'workspace-1', trx);
+    expect(trx.deleteFrom).not.toHaveBeenCalledWith('spaceMembers');
+  });
 });

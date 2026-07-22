@@ -28,7 +28,6 @@ import { CustomAvatar } from "@/components/ui/custom-avatar.tsx";
 import { useTranslation } from "react-i18next";
 import useUserRole from "@/hooks/use-user-role.tsx";
 import { AvatarIconType } from "@/features/attachments/types/attachment.types.ts";
-import { useGetSpacesQuery } from "@/features/space/queries/space-query.ts";
 
 export default function TopMenu() {
   const { t } = useTranslation();
@@ -36,25 +35,10 @@ export default function TopMenu() {
   const { logout } = useAuth();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const { isOwner } = useUserRole();
-  const { data: spaces } = useGetSpacesQuery({ limit: 100 });
 
   const user = currentUser?.user;
   const workspace = currentUser?.workspace;
-  const expectedPersonalSpaceNames = user
-    ? [user.name ? `${user.name}(${user.email})` : null, user.email].filter(
-        Boolean,
-      )
-    : [];
-  const personalSpace =
-    spaces?.items.find(
-      (space) =>
-        space.creatorId === user?.id &&
-        expectedPersonalSpaceNames.includes(space.name),
-    ) ??
-    spaces?.items.find(
-      (space) =>
-        space.creatorId === user?.id && space.membership?.role === "admin",
-    );
+  const personalSpaceId = currentUser?.personalSpaceId;
 
   if (!user || !workspace) {
     return <></>;
@@ -81,10 +65,10 @@ export default function TopMenu() {
       <Menu.Dropdown>
         <Menu.Label>{t("Workspace")}</Menu.Label>
 
-        {personalSpace && (
+        {personalSpaceId && (
           <Menu.Item
             component={Link}
-            to={`/s/${personalSpace.slug}`}
+            to={`/s/${personalSpaceId}`}
             leftSection={<IconHome size={16} />}
           >
             {t("Personal space")}
@@ -114,7 +98,14 @@ export default function TopMenu() {
         <Menu.Divider />
 
         <Menu.Label>{t("Account")}</Menu.Label>
-        <Menu.Item component={Link} to={isOwner ? APP_ROUTE.SETTINGS.ACCOUNT.PROFILE : APP_ROUTE.SETTINGS.ACCOUNT.PREFERENCES}>
+        <Menu.Item
+          component={Link}
+          to={
+            isOwner
+              ? APP_ROUTE.SETTINGS.ACCOUNT.PROFILE
+              : APP_ROUTE.SETTINGS.ACCOUNT.PREFERENCES
+          }
+        >
           <Group wrap={"nowrap"}>
             <CustomAvatar
               size={"sm"}

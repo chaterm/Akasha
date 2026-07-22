@@ -155,7 +155,6 @@ export class SpaceService {
       ) {
         throw new ForbiddenException('This feature requires a valid license');
       }
-
     }
 
     const spaceBefore = await this.spaceRepo.findById(
@@ -265,6 +264,9 @@ export class SpaceService {
     if (!space) {
       throw new NotFoundException('Space not found');
     }
+    if (space.personalOwnerId) {
+      throw new BadRequestException('Personal spaces cannot be deleted');
+    }
 
     await this.spaceRepo.deleteSpace(spaceId, workspaceId);
     await this.attachmentQueue.add(QueueJob.DELETE_SPACE_ATTACHMENTS, space);
@@ -284,32 +286,57 @@ export class SpaceService {
     });
   }
 
-  async ensurePersonalSpace(user: User, workspaceId: string): Promise<void> {
-    const spaceIds = await this.spaceMemberRepo.getUserSpaceIds(user.id);
-    if (spaceIds.length > 0) {
-      return;
+  async ensurePersonalSpace(
+    user: User,
+    workspaceId: string,
+    trx?: KyselyTransaction,
+  ): Promise<Space> {
+    const existingSpace = await this.spaceRepo.findPersonalSpaceForUser({
+      userId: user.id,
+      workspaceId,
+      trx,
+    });
+    if (existingSpace) {
+      return existingSpace;
     }
 
-    const slug = nanoIdGen(8);
-    await executeTx(this.db, async (trx) => {
-      const space = await this.spaceRepo.insertSpace(
-        {
-          name: user.name ? `${user.name}(${user.email})` : user.email,
-          logo: user.avatarUrl ?? null,
-          creatorId: user.id,
-          workspaceId,
-          slug,
-        },
-        trx,
-      );
+    return executeTx(
+      this.db,
+      async (activeTrx) => {
+        const space = await this.spaceRepo.insertPersonalSpace(
+          {
+            name: user.name ? `${user.name}(${user.email})` : user.email,
+            logo: user.avatarUrl ?? null,
+            creatorId: user.id,
+            personalOwnerId: user.id,
+            workspaceId,
+            slug: nanoIdGen(8),
+          },
+          activeTrx,
+        );
 
-      await this.spaceMemberService.addUserToSpace(
-        user.id,
-        space.id,
-        SpaceRole.ADMIN,
-        workspaceId,
-        trx,
-      );
-    });
+        if (space) {
+          await this.spaceMemberService.addUserToSpace(
+            user.id,
+            space.id,
+            SpaceRole.ADMIN,
+            workspaceId,
+            activeTrx,
+          );
+          return space;
+        }
+
+        const concurrentSpace = await this.spaceRepo.findPersonalSpaceForUser({
+          userId: user.id,
+          workspaceId,
+          trx: activeTrx,
+        });
+        if (!concurrentSpace) {
+          throw new Error('Failed to create personal space');
+        }
+        return concurrentSpace;
+      },
+      trx,
+    );
   }
 }

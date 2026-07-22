@@ -22,6 +22,7 @@ import {
   PageHistoryIdDto,
   PageIdDto,
   PageInfoDto,
+  PersonalPageSearchDto,
   RemovePagePermissionDto,
   UpdatePagePermissionRoleDto,
 } from './dto/page.dto';
@@ -56,13 +57,30 @@ import {
   IAuditService,
 } from '../../integrations/audit/audit.service';
 import { getPageTitle } from '../../common/helpers';
-import { PageAccessLevel, PagePermissionRole, UserRole } from '../../common/helpers/types/permission';
+import {
+  PageAccessLevel,
+  PagePermissionRole,
+  UserRole,
+} from '../../common/helpers/types/permission';
 import { InjectKysely } from 'nestjs-kysely';
 import { KyselyDB } from '@akasha/db/types/kysely.types';
 import { executeTx } from '@akasha/db/utils';
 import { resolvePageAuthorDisplay } from './services/page-author-display';
 import { RestorePageAuthorsDto } from './dto/restore-page-authors.dto';
 import { PageAuthorMigrationService } from './services/page-author-migration.service';
+import { getApiKeyAccess } from '../../common/auth/api-key-access';
+
+function pageSearchExcerpt(text: string | null, query: string): string {
+  if (!text) return '';
+  const maxLength = 240;
+  const index = text.toLocaleLowerCase().indexOf(query.toLocaleLowerCase());
+  const center = index >= 0 ? index : 0;
+  const start = Math.max(0, center - 80);
+  const excerpt = text.slice(start, start + maxLength);
+  return `${start > 0 ? '…' : ''}${excerpt}${
+    start + maxLength < text.length ? '…' : ''
+  }`;
+}
 
 @UseGuards(JwtAuthGuard)
 @Controller('pages')
@@ -98,7 +116,10 @@ export class PageController {
     }
 
     const { canEdit, hasRestriction } =
-      await this.pageAccessService.validateCanViewWithPermissions(page, user);
+      await this.pageAccessService.validateCanReadSourceWithPermissions(
+        page,
+        user,
+      );
 
     const permissions = { canEdit, hasRestriction };
     const displayPage = resolvePageAuthorDisplay(page);
@@ -119,6 +140,41 @@ export class PageController {
   }
 
   @HttpCode(HttpStatus.OK)
+  @Post('/search')
+  async searchPersonalPages(
+    @Body() dto: PersonalPageSearchDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    const personalSpaceId = getApiKeyAccess(user)?.personalSpaceId;
+    if (!personalSpaceId) {
+      throw new ForbiddenException(
+        'API key personal space is required for Page source search',
+      );
+    }
+
+    const pages = await this.pageRepo.searchPagesInSpace({
+      workspaceId: workspace.id,
+      spaceId: personalSpaceId,
+      query: dto.query,
+      limit: dto.limit,
+    });
+
+    return {
+      items: pages.map((page) => ({
+        pageId: page.id,
+        title: getPageTitle(page.title),
+        excerpt: pageSearchExcerpt(page.textContent, dto.query),
+        updatedAt: page.updatedAt,
+      })),
+      meta: {
+        count: pages.length,
+        limit: dto.limit,
+      },
+    };
+  }
+
+  @HttpCode(HttpStatus.OK)
   @Post('migration/restore-authors')
   async restoreAuthors(
     @Body() dto: RestorePageAuthorsDto,
@@ -134,12 +190,7 @@ export class PageController {
     for (const spaceId of spaceIds) {
       try {
         const ability = await this.spaceAbility.createForUser(user, spaceId);
-        if (
-          ability.cannot(
-            SpaceCaslAction.Manage,
-            SpaceCaslSubject.Settings,
-          )
-        ) {
+        if (ability.cannot(SpaceCaslAction.Manage, SpaceCaslSubject.Settings)) {
           throw new ForbiddenException();
         }
       } catch {
@@ -172,10 +223,7 @@ export class PageController {
 
   @HttpCode(HttpStatus.OK)
   @Post('permission-info')
-  async getPagePermissionInfo(
-    @Body() dto: PageIdDto,
-    @AuthUser() user: User,
-  ) {
+  async getPagePermissionInfo(@Body() dto: PageIdDto, @AuthUser() user: User) {
     const page = await this.pageRepo.findById(dto.pageId);
     if (!page) {
       throw new NotFoundException('Page not found');
@@ -286,12 +334,11 @@ export class PageController {
         );
       }
 
-      const existing =
-        await this.pagePermissionRepo.findPagePermissionByUserId(
-          pageAccess.id,
-          user.id,
-          trx,
-        );
+      const existing = await this.pagePermissionRepo.findPagePermissionByUserId(
+        pageAccess.id,
+        user.id,
+        trx,
+      );
       if (existing) {
         await this.pagePermissionRepo.updatePagePermissionRole(
           pageAccess.id,
@@ -317,10 +364,7 @@ export class PageController {
 
   @HttpCode(HttpStatus.OK)
   @Post('remove-restriction')
-  async removePageRestriction(
-    @Body() dto: PageIdDto,
-    @AuthUser() user: User,
-  ) {
+  async removePageRestriction(@Body() dto: PageIdDto, @AuthUser() user: User) {
     const page = await this.pageRepo.findById(dto.pageId);
     if (!page || page.deletedAt) {
       throw new NotFoundException('Page not found');
@@ -511,19 +555,12 @@ export class PageController {
 
     await this.pageAccessService.validateCanEdit(page, user);
 
-    return this.labelService.addLabelsToPage(
-      page.id,
-      dto.names,
-      workspace.id,
-    );
+    return this.labelService.addLabelsToPage(page.id, dto.names, workspace.id);
   }
 
   @HttpCode(HttpStatus.OK)
   @Post('labels/remove')
-  async removePageLabel(
-    @Body() dto: RemoveLabelDto,
-    @AuthUser() user: User,
-  ) {
+  async removePageLabel(@Body() dto: RemoveLabelDto, @AuthUser() user: User) {
     const page = await this.pageRepo.findById(dto.pageId);
     if (!page || page.deletedAt) {
       throw new NotFoundException('Page not found');
@@ -825,17 +862,19 @@ export class PageController {
     const targetUserId = dto.userId ?? user.id;
 
     if (dto.spaceId) {
-      const ability = await this.spaceAbility.createForUser(
-        user,
-        dto.spaceId,
-      );
+      const ability = await this.spaceAbility.createForUser(user, dto.spaceId);
 
       if (ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page)) {
         throw new ForbiddenException();
       }
     }
 
-    return this.pageService.getCreatedByPages(targetUserId, user.id, pagination, dto.spaceId);
+    return this.pageService.getCreatedByPages(
+      targetUserId,
+      user.id,
+      pagination,
+      dto.spaceId,
+    );
   }
 
   @HttpCode(HttpStatus.OK)

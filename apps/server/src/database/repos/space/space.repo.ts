@@ -43,6 +43,37 @@ export class SpaceRepo {
     return query.executeTakeFirst();
   }
 
+  async findPersonalSpaceForUser(opts: {
+    userId: string;
+    workspaceId: string;
+    trx?: KyselyTransaction;
+  }): Promise<Space | undefined> {
+    const db = dbOrTx(this.db, opts.trx);
+
+    return db
+      .selectFrom('spaces')
+      .selectAll('spaces')
+      .where('workspaceId', '=', opts.workspaceId)
+      .where('personalOwnerId', '=', opts.userId)
+      .where('deletedAt', 'is', null)
+      .executeTakeFirst();
+  }
+
+  async insertPersonalSpace(
+    insertableSpace: InsertableSpace,
+    trx?: KyselyTransaction,
+  ): Promise<Space | undefined> {
+    const db = dbOrTx(this.db, trx);
+    return db
+      .insertInto('spaces')
+      .values(insertableSpace)
+      .onConflict((oc) =>
+        oc.columns(['workspaceId', 'personalOwnerId']).doNothing(),
+      )
+      .returningAll()
+      .executeTakeFirst();
+  }
+
   async findBySlug(
     slug: string,
     workspaceId: string,

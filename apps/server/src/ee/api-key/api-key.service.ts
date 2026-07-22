@@ -13,6 +13,9 @@ import { WorkspaceRepo } from '@akasha/db/repos/workspace/workspace.repo';
 import { JwtApiKeyPayload } from '../../core/auth/dto/jwt-payload';
 import { UserRole } from '../../common/helpers/types/permission';
 import { PaginationOptions } from '@akasha/db/pagination/pagination-options';
+import { SpaceRepo } from '@akasha/db/repos/space/space.repo';
+import { withApiKeyAccess } from '../../common/auth/api-key-access';
+import type { User, Workspace } from '@akasha/db/types/entity.types';
 
 @Injectable()
 export class ApiKeyService {
@@ -23,6 +26,7 @@ export class ApiKeyService {
     private tokenService: TokenService,
     private userRepo: UserRepo,
     private workspaceRepo: WorkspaceRepo,
+    private spaceRepo: SpaceRepo,
   ) {}
 
   async createApiKey(opts: {
@@ -139,7 +143,9 @@ export class ApiKeyService {
     await this.apiKeyRepo.softDelete(apiKeyId, workspaceId);
   }
 
-  async validateApiKey(payload: JwtApiKeyPayload) {
+  async validateApiKey(
+    payload: JwtApiKeyPayload,
+  ): Promise<{ user: User; workspace: Workspace }> {
     const key = await this.apiKeyRepo.findById(
       payload.apiKeyId,
       payload.workspaceId,
@@ -156,6 +162,15 @@ export class ApiKeyService {
     const user = await this.userRepo.findById(payload.sub, payload.workspaceId);
     if (!user) throw new UnauthorizedException();
 
+    const personalSpace = await this.spaceRepo.findPersonalSpaceForUser({
+      userId: user.id,
+      workspaceId: payload.workspaceId,
+    });
+    const authenticatedUser = withApiKeyAccess(user, {
+      apiKeyId: key.id,
+      personalSpaceId: personalSpace?.id ?? null,
+    });
+
     this.apiKeyRepo
       .updateLastUsed(key.id)
       .catch((err) =>
@@ -164,6 +179,6 @@ export class ApiKeyService {
         ),
       );
 
-    return { user, workspace };
+    return { user: authenticatedUser, workspace };
   }
 }

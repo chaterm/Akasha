@@ -172,6 +172,31 @@ export class PageRepo {
     return rows.map((row) => row.spaceId);
   }
 
+  async searchPagesInSpace(input: {
+    workspaceId: string;
+    spaceId: string;
+    query: string;
+    limit: number;
+  }) {
+    const escapedQuery = input.query.replace(/[\\%_]/g, '\\$&');
+    const pattern = `%${escapedQuery}%`;
+
+    return this.db
+      .selectFrom('pages')
+      .select(['id', 'title', 'textContent', 'updatedAt'])
+      .where('workspaceId', '=', input.workspaceId)
+      .where('spaceId', '=', input.spaceId)
+      .where('deletedAt', 'is', null)
+      .where((eb) =>
+        eb.or([
+          eb('title', 'ilike', pattern),
+          eb('textContent', 'ilike', pattern),
+        ]),
+      )
+      .limit(input.limit)
+      .execute();
+  }
+
   async getPageAndDescendantIds(input: {
     rootPageId: string;
     workspaceId: string;

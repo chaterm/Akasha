@@ -57,6 +57,18 @@ export class SpaceMemberService {
     );
   }
 
+  async removeUserFromNonPersonalSpaces(
+    userId: string,
+    workspaceId: string,
+    trx?: KyselyTransaction,
+  ): Promise<void> {
+    await this.spaceMemberRepo.removeUserFromNonPersonalSpaces(
+      userId,
+      workspaceId,
+      trx,
+    );
+  }
+
   async addGroupToSpace(
     groupId: string,
     spaceId: string,
@@ -99,7 +111,6 @@ export class SpaceMemberService {
     authUser: User,
     workspaceId: string,
   ): Promise<void> {
-
     const space = await this.spaceRepo.findById(dto.spaceId, workspaceId);
     if (!space) {
       throw new NotFoundException('Space not found');
@@ -222,6 +233,11 @@ export class SpaceMemberService {
     if (!space) {
       throw new NotFoundException('Space not found');
     }
+    if (dto.userId && space.personalOwnerId === dto.userId) {
+      throw new BadRequestException(
+        'The personal space owner cannot be removed',
+      );
+    }
 
     let spaceMember: SpaceMember = null;
 
@@ -307,6 +323,15 @@ export class SpaceMemberService {
     const space = await this.spaceRepo.findById(dto.spaceId, workspaceId);
     if (!space) {
       throw new NotFoundException('Space not found');
+    }
+    if (
+      dto.userId &&
+      space.personalOwnerId === dto.userId &&
+      dto.role !== SpaceRole.ADMIN
+    ) {
+      throw new BadRequestException(
+        'The personal space owner must remain an admin',
+      );
     }
 
     let spaceMember: SpaceMember = null;

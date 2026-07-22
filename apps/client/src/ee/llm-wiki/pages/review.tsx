@@ -22,6 +22,7 @@ import { IconCheck, IconSearch, IconX } from "@tabler/icons-react";
 import { Helmet } from "react-helmet-async";
 import { useTranslation } from "react-i18next";
 import { getAppName } from "@/lib/config";
+import { findPersonalSpaceById } from "@/features/space/personal-space";
 import { useGetSpacesQuery } from "@/features/space/queries/space-query";
 import useCurrentUser from "@/features/user/hooks/use-current-user";
 import {
@@ -112,11 +113,12 @@ export default function ReviewPage() {
       return;
     }
 
-    if (!currentUser?.user) return;
-
-    const personalSpace = findPersonalReviewSpace(spaces, currentUser.user);
+    const personalSpace = findPersonalSpaceById(
+      spaces,
+      currentUser?.personalSpaceId,
+    );
     setSpaceId((personalSpace ?? spaces[0]).id);
-  }, [spaceId, spaces, currentUser?.user]);
+  }, [spaceId, spaces, currentUser?.personalSpaceId]);
 
   const handleSpaceChange = (value: string | null) => {
     setSpaceId(value);
@@ -691,35 +693,6 @@ function findRememberedReviewSpace<T extends { id: string }>(
   return spaces.find((space) => space.id === rememberedSpaceId);
 }
 
-function findPersonalReviewSpace<
-  T extends { name: string; slug?: string | null },
->(
-  spaces: T[],
-  user: { name?: string | null; email?: string | null },
-): T | undefined {
-  const userName = normalizeLookupValue(user.name);
-  const email = normalizeLookupValue(user.email);
-  const emailName = normalizeLookupValue(email.split("@")[0]);
-  const candidates = [userName, emailName, email].filter(Boolean);
-
-  return (
-    spaces.find((space) => {
-      const name = normalizeLookupValue(space.name);
-      const slug = normalizeLookupValue(space.slug);
-      return candidates.some((candidate) =>
-        [name, slug].some((value) => value === candidate),
-      );
-    }) ??
-    spaces.find((space) => {
-      const name = normalizeLookupValue(space.name);
-      const slug = normalizeLookupValue(space.slug);
-      return candidates.some((candidate) =>
-        [name, slug].some((value) => value.includes(candidate)),
-      );
-    })
-  );
-}
-
 function readRememberedReviewSpaceId(): string | null {
   if (typeof window === "undefined") return null;
   try {
@@ -740,10 +713,6 @@ function rememberReviewSpace(spaceId: string | null): void {
   } catch {
     // Ignore private-mode or quota failures; the selector still works.
   }
-}
-
-function normalizeLookupValue(value: string | null | undefined): string {
-  return (value ?? "").trim().toLowerCase();
 }
 
 function previewText(value: string, maxLength: number): string {

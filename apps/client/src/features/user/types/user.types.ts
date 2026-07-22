@@ -32,6 +32,7 @@ export interface IUser {
 export interface ICurrentUser {
   user: IUser;
   workspace: IWorkspace;
+  personalSpaceId: string | null;
 }
 
 export interface IUserSettings {

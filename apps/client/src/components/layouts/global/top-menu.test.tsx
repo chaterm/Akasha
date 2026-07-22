@@ -16,6 +16,7 @@ const currentUser = {
     name: "知识库",
     logo: "",
   },
+  personalSpaceId: "personal-1",
 };
 
 vi.mock("react-i18next", () => ({
@@ -41,19 +42,9 @@ vi.mock("@/hooks/use-user-role.tsx", () => ({
 }));
 
 vi.mock("@/features/space/queries/space-query.ts", () => ({
-  useGetSpacesQuery: () => ({
-    data: {
-      items: [
-        {
-          id: "space-1",
-          name: "xxxxxxx(xxxxxx@xxxxx.net)",
-          slug: "personal-space",
-          creatorId: "user-1",
-          membership: { userId: "user-1", role: "admin" },
-        },
-      ],
-    },
-  }),
+  useGetSpacesQuery: () => {
+    throw new Error("TopMenu must not load spaces to find a personal space");
+  },
 }));
 
 describe("TopMenu", () => {
@@ -82,7 +73,7 @@ describe("TopMenu", () => {
       </MantineProvider>,
     );
 
-    expect(screen.getByTitle("姚旭红")).toBeTruthy();
+    expect(screen.getByTitle("name001")).toBeTruthy();
     expect(screen.queryByTitle("知识库")).toBeNull();
   });
 
@@ -101,6 +92,6 @@ describe("TopMenu", () => {
       name: "Personal space",
     });
 
-    expect(personalSpace.getAttribute("href")).toBe("/s/personal-space");
+    expect(personalSpace.getAttribute("href")).toBe("/s/personal-1");
   });
 });

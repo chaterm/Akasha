@@ -15,6 +15,11 @@ class FakeKyselyQuery {
     return this;
   }
 
+  deleteFrom(...args: unknown[]) {
+    this.calls.push({ method: 'deleteFrom', args });
+    return this;
+  }
+
   select(...args: unknown[]) {
     this.calls.push({ method: 'select', args });
     return this;
@@ -81,5 +86,35 @@ describe('SpaceMemberRepo.findUserSpaceRolesForSpaces', () => {
         { method: 'execute', args: [] },
       ]),
     );
+  });
+});
+
+describe('SpaceMemberRepo.removeUserFromNonPersonalSpaces', () => {
+  it('keeps the owner membership of the user personal space', async () => {
+    const query = new FakeKyselyQuery();
+    const repo = createRepo(query);
+
+    await repo.removeUserFromNonPersonalSpaces(
+      'user-1',
+      'workspace-1',
+      query as never,
+    );
+
+    expect(query.calls).toEqual(
+      expect.arrayContaining([
+        { method: 'selectFrom', args: ['spaces'] },
+        { method: 'where', args: ['workspaceId', '=', 'workspace-1'] },
+        { method: 'where', args: ['personalOwnerId', '=', 'user-1'] },
+        { method: 'deleteFrom', args: ['spaceMembers'] },
+        { method: 'where', args: ['userId', '=', 'user-1'] },
+        { method: 'execute', args: [] },
+      ]),
+    );
+
+    const protectedSpaceFilter = query.calls.find(
+      (call) => call.method === 'where' && call.args[1] === 'not in',
+    );
+    expect(protectedSpaceFilter?.args[0]).toBe('spaceId');
+    expect(protectedSpaceFilter?.args[2]).toBe(query);
   });
 });

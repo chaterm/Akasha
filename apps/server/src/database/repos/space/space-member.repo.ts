@@ -92,6 +92,25 @@ export class SpaceMemberRepo {
       .execute();
   }
 
+  async removeUserFromNonPersonalSpaces(
+    userId: string,
+    workspaceId: string,
+    trx?: KyselyTransaction,
+  ): Promise<void> {
+    const db = dbOrTx(this.db, trx);
+    const personalSpaceIds = db
+      .selectFrom('spaces')
+      .select('id')
+      .where('workspaceId', '=', workspaceId)
+      .where('personalOwnerId', '=', userId);
+
+    await db
+      .deleteFrom('spaceMembers')
+      .where('userId', '=', userId)
+      .where('spaceId', 'not in', personalSpaceIds)
+      .execute();
+  }
+
   async roleCountBySpaceId(role: string, spaceId: string): Promise<number> {
     const { count } = await this.db
       .selectFrom('spaceMembers')

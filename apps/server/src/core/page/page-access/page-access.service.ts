@@ -8,6 +8,10 @@ import {
 } from '../../casl/interfaces/space-ability.type';
 import { SpaceRepo } from '@akasha/db/repos/space/space.repo';
 import { UserRole } from '../../../common/helpers/types/permission';
+import {
+  getApiKeyAccess,
+  isOrdinaryApiKeySpaceReadOnly,
+} from '../../../common/auth/api-key-access';
 
 @Injectable()
 export class PageAccessService {
@@ -64,6 +68,8 @@ export class PageAccessService {
       throw new ForbiddenException();
     }
 
+    const apiKeyReadOnly = isOrdinaryApiKeySpaceReadOnly(user, page.spaceId);
+
     const { hasAnyRestriction, canAccess, canEdit } =
       await this.pagePermissionRepo.canUserEditPage(user.id, page.id);
 
@@ -72,11 +78,31 @@ export class PageAccessService {
     }
 
     return {
-      canEdit: hasAnyRestriction
-        ? canEdit
-        : ability.can(SpaceCaslAction.Edit, SpaceCaslSubject.Page),
+      canEdit: apiKeyReadOnly
+        ? false
+        : hasAnyRestriction
+          ? canEdit
+          : ability.can(SpaceCaslAction.Edit, SpaceCaslSubject.Page),
       hasRestriction: hasAnyRestriction,
     };
+  }
+
+  /**
+   * API keys may read raw Page source only from their personal space.
+   * Session authentication keeps the existing Page viewing behavior.
+   */
+  async validateCanReadSourceWithPermissions(
+    page: Page,
+    user: User,
+  ): Promise<{ canEdit: boolean; hasRestriction: boolean }> {
+    const apiKeyAccess = getApiKeyAccess(user);
+    if (apiKeyAccess && apiKeyAccess.personalSpaceId !== page.spaceId) {
+      throw new ForbiddenException(
+        'API key can read Page source only in its personal space',
+      );
+    }
+
+    return this.validateCanViewWithPermissions(page, user);
   }
 
   /**
@@ -98,6 +124,12 @@ export class PageAccessService {
     // User must be at least a space member
     if (ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page)) {
       throw new ForbiddenException();
+    }
+
+    if (isOrdinaryApiKeySpaceReadOnly(user, page.spaceId)) {
+      throw new ForbiddenException(
+        'API key has read-only access to this space',
+      );
     }
 
     const { hasAnyRestriction, canEdit } =
@@ -123,6 +155,12 @@ export class PageAccessService {
     user: User,
     workspaceId: string,
   ): Promise<void> {
+    if (isOrdinaryApiKeySpaceReadOnly(user, page.spaceId)) {
+      throw new ForbiddenException(
+        'API key has read-only access to this space',
+      );
+    }
+
     // Workspace owner can always comment
     if (user.role === UserRole.OWNER) {
       return;

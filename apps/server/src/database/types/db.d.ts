@@ -813,6 +813,7 @@ export interface Spaces {
   id: Generated<string>;
   logo: string | null;
   name: string | null;
+  personalOwnerId: string | null;
   settings: Json | null;
   slug: string;
   updatedAt: Generated<Timestamp>;

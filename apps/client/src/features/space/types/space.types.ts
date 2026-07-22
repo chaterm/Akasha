@@ -26,6 +26,7 @@ export interface ISpace {
   slug: string;
   hostname: string;
   creatorId: string;
+  personalOwnerId: string | null;
   createdAt: Date;
   updatedAt: Date;
   memberCount?: number;

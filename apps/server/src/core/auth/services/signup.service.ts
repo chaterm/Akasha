@@ -15,6 +15,7 @@ import {
   AUDIT_SERVICE,
   IAuditService,
 } from '../../../integrations/audit/audit.service';
+import { SpaceService } from '../../space/services/space.service';
 
 @Injectable()
 export class SignupService {
@@ -22,6 +23,7 @@ export class SignupService {
     private userRepo: UserRepo,
     private workspaceService: WorkspaceService,
     private groupUserRepo: GroupUserRepo,
+    private spaceService: SpaceService,
     @InjectKysely() private readonly db: KyselyDB,
     @Inject(AUDIT_SERVICE) private readonly auditService: IAuditService,
   ) {}
@@ -68,6 +70,7 @@ export class SignupService {
           workspaceId,
           trx,
         );
+        await this.spaceService.ensurePersonalSpace(user, workspaceId, trx);
         return user;
       },
       trx,
@@ -127,6 +130,7 @@ export class SignupService {
         );
 
         user.workspaceId = workspace.id;
+        await this.spaceService.ensurePersonalSpace(user, workspace.id, trx);
         return user;
       },
       trx,

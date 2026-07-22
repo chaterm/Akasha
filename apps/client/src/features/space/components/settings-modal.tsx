@@ -75,10 +75,7 @@ export default function SpaceSettingsModal({
                 <Tabs.Panel value="general">
                   <ScrollArea h={580} scrollbarSize={5} pr={8}>
                     <div style={{ paddingBottom: "100px" }}>
-                      <SpaceDetails
-                        spaceId={space?.id}
-                        readOnly={!isOwner}
-                      />
+                      <SpaceDetails spaceId={space?.id} readOnly={!isOwner} />
                     </div>
                   </ScrollArea>
                 </Tabs.Panel>
@@ -93,6 +90,7 @@ export default function SpaceSettingsModal({
 
                   <SpaceMembersList
                     spaceId={space?.id}
+                    personalOwnerId={space?.personalOwnerId}
                     readOnly={spaceAbility.cannot(
                       SpaceCaslAction.Manage,
                       SpaceCaslSubject.Member,

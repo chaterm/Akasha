@@ -835,10 +835,11 @@ export class WorkspaceService {
       );
 
       await trx.deleteFrom('groupUsers').where('userId', '=', userId).execute();
-      await trx
-        .deleteFrom('spaceMembers')
-        .where('userId', '=', userId)
-        .execute();
+      await this.spaceMemberService.removeUserFromNonPersonalSpaces(
+        userId,
+        workspaceId,
+        trx,
+      );
       await trx
         .deleteFrom('authAccounts')
         .where('userId', '=', userId)

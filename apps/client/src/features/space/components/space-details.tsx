@@ -18,7 +18,7 @@ import {
   ResponsiveSettingsControl,
   ResponsiveSettingsRow,
 } from "@/components/ui/responsive-settings-row.tsx";
-
+import { isPersonalSpace } from "@/features/space/personal-space.ts";
 
 interface SpaceDetailsProps {
   spaceId: string;
@@ -104,19 +104,23 @@ export default function SpaceDetails({ spaceId, readOnly }: SpaceDetailsProps) {
                 </ResponsiveSettingsControl>
               </ResponsiveSettingsRow>
 
-              <Divider my="lg" />
+              {!isPersonalSpace(space) && (
+                <>
+                  <Divider my="lg" />
 
-              <ResponsiveSettingsRow>
-                <ResponsiveSettingsContent>
-                  <Text size="md">{t("Delete space")}</Text>
-                  <Text size="sm" c="dimmed">
-                    {t("Delete this space with all its pages and data.")}
-                  </Text>
-                </ResponsiveSettingsContent>
-                <ResponsiveSettingsControl>
-                  <DeleteSpaceModal space={space} />
-                </ResponsiveSettingsControl>
-              </ResponsiveSettingsRow>
+                  <ResponsiveSettingsRow>
+                    <ResponsiveSettingsContent>
+                      <Text size="md">{t("Delete space")}</Text>
+                      <Text size="sm" c="dimmed">
+                        {t("Delete this space with all its pages and data.")}
+                      </Text>
+                    </ResponsiveSettingsContent>
+                    <ResponsiveSettingsControl>
+                      <DeleteSpaceModal space={space} />
+                    </ResponsiveSettingsControl>
+                  </ResponsiveSettingsRow>
+                </>
+              )}
 
               <ExportModal
                 type="space"
