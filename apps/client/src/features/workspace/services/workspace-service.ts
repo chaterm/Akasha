@@ -8,6 +8,7 @@ import {
   IPublicWorkspace,
   IInvitationLink,
   IVersion,
+  IWorkspaceSkillSettings,
 } from "../types/workspace.types";
 import { IPagination, QueryParams } from "@/lib/types.ts";
 import { ISetupWorkspace } from "@/features/auth/types/auth.types.ts";
@@ -56,6 +57,23 @@ export async function activateWorkspaceMember(data: {
 
 export async function updateWorkspace(data: Partial<IWorkspace>) {
   const req = await api.post<IWorkspace>("/workspace/update", data);
+  return req.data;
+}
+
+export async function getSkillSettings(): Promise<IWorkspaceSkillSettings> {
+  const req = await api.get<IWorkspaceSkillSettings>(
+    "/workspace/settings/ai/skill",
+  );
+  return req.data;
+}
+
+export async function updateSkillSettings(
+  data: IWorkspaceSkillSettings,
+): Promise<IWorkspaceSkillSettings> {
+  const req = await api.put<IWorkspaceSkillSettings>(
+    "/workspace/settings/ai/skill",
+    data,
+  );
   return req.data;
 }
 

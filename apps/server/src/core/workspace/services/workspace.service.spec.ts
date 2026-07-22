@@ -88,4 +88,69 @@ describe('WorkspaceService', () => {
     ).toHaveBeenCalledWith('user-1', 'workspace-1', trx);
     expect(trx.deleteFrom).not.toHaveBeenCalledWith('spaceMembers');
   });
+
+  it('reads Akasha Skill release settings from the workspace', async () => {
+    const workspaceRepo = {
+      findById: jest.fn().mockResolvedValue({
+        id: 'workspace-1',
+        settings: {
+          ai: {
+            skill: {
+              latestVersion: '1.0.0',
+              upgradeUrl: 'https://example.com/akasha-skill',
+            },
+          },
+        },
+      }),
+    };
+    const service = Object.create(WorkspaceService.prototype) as any;
+    service.workspaceRepo = workspaceRepo;
+
+    await expect(service.getSkillSettings('workspace-1')).resolves.toEqual({
+      latestVersion: '1.0.0',
+      upgradeUrl: 'https://example.com/akasha-skill',
+    });
+  });
+
+  it('replaces invalid legacy Skill settings with the two saved fields', async () => {
+    const workspaceRepo = {
+      findById: jest.fn().mockResolvedValue({
+        id: 'workspace-1',
+        settings: { ai: { skill: [{}, '{"latestVersion":"1.0.0"}'] } },
+      }),
+      updateAiSkillSettings: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = Object.create(WorkspaceService.prototype) as any;
+    service.workspaceRepo = workspaceRepo;
+    service.auditService = { log: jest.fn() };
+
+    await expect(
+      service.updateSkillSettings('workspace-1', {
+        latestVersion: '1.1.0',
+        upgradeUrl: 'https://example.com/akasha-skill',
+      }),
+    ).resolves.toEqual({
+      latestVersion: '1.1.0',
+      upgradeUrl: 'https://example.com/akasha-skill',
+    });
+
+    expect(workspaceRepo.updateAiSkillSettings).toHaveBeenCalledWith(
+      'workspace-1',
+      {
+        latestVersion: '1.1.0',
+        upgradeUrl: 'https://example.com/akasha-skill',
+      },
+    );
+    expect(service.auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changes: {
+          before: { latestVersion: '', upgradeUrl: '' },
+          after: {
+            latestVersion: '1.1.0',
+            upgradeUrl: 'https://example.com/akasha-skill',
+          },
+        },
+      }),
+    );
+  });
 });

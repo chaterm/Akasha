@@ -47,6 +47,12 @@ export interface IWorkspaceAiSettings {
   generative?: boolean;
   mcp?: boolean;
   chat?: boolean;
+  skill?: IWorkspaceSkillSettings;
+}
+
+export interface IWorkspaceSkillSettings {
+  latestVersion: string;
+  upgradeUrl: string;
 }
 
 export interface IWorkspaceSharingSettings {

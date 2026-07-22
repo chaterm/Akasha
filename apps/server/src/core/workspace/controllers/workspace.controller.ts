@@ -2,9 +2,11 @@ import {
   Body,
   Controller,
   ForbiddenException,
+  Get,
   HttpCode,
   HttpStatus,
   Post,
+  Put,
   Req,
   Res,
   UseGuards,
@@ -37,6 +39,7 @@ import { CheckHostnameDto } from '../dto/check-hostname.dto';
 import { RemoveWorkspaceUserDto } from '../dto/remove-workspace-user.dto';
 import { WorkspaceRepo } from '@akasha/db/repos/workspace/workspace.repo';
 import { Feature } from '../../../common/features';
+import { UpdateSkillSettingsDto } from '../dto/skill-settings.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('workspace')
@@ -61,6 +64,39 @@ export class WorkspaceController {
   @Post('/info')
   async getWorkspace(@AuthWorkspace() workspace: Workspace) {
     return this.workspaceService.getWorkspaceInfo(workspace.id);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Get('settings/ai/skill')
+  async getSkillSettings(
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    const ability = this.workspaceAbility.createForUser(user, workspace);
+    if (
+      ability.cannot(WorkspaceCaslAction.Manage, WorkspaceCaslSubject.Settings)
+    ) {
+      throw new ForbiddenException();
+    }
+
+    return this.workspaceService.getSkillSettings(workspace.id);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Put('settings/ai/skill')
+  async updateSkillSettings(
+    @Body() dto: UpdateSkillSettingsDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    const ability = this.workspaceAbility.createForUser(user, workspace);
+    if (
+      ability.cannot(WorkspaceCaslAction.Manage, WorkspaceCaslSubject.Settings)
+    ) {
+      throw new ForbiddenException();
+    }
+
+    return this.workspaceService.updateSkillSettings(workspace.id, dto);
   }
 
   @HttpCode(HttpStatus.OK)

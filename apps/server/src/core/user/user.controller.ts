@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Headers,
   HttpCode,
   HttpStatus,
   Post,
@@ -17,6 +18,38 @@ import { SpaceRepo } from '@akasha/db/repos/space/space.repo';
 import { getApiKeyAccess } from '../../common/auth/api-key-access';
 import { UserRole } from '../../common/helpers/types/permission';
 
+type StableVersion = [major: string, minor: string, patch: string];
+
+function parseStableVersion(value: unknown): StableVersion | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(value);
+  if (!match) {
+    return null;
+  }
+  return [match[1], match[2], match[3]];
+}
+
+function isOlderVersion(current: unknown, latest: unknown): boolean {
+  const currentParts = parseStableVersion(current);
+  const latestParts = parseStableVersion(latest);
+  if (!currentParts || !latestParts) {
+    return false;
+  }
+  for (let index = 0; index < currentParts.length; index += 1) {
+    const currentPart = currentParts[index];
+    const latestPart = latestParts[index];
+    if (currentPart !== latestPart) {
+      return (
+        currentPart.length < latestPart.length ||
+        (currentPart.length === latestPart.length && currentPart < latestPart)
+      );
+    }
+  }
+  return false;
+}
+
 @UseGuards(JwtAuthGuard)
 @Controller('users')
 export class UserController {
@@ -31,6 +64,7 @@ export class UserController {
   async getUserInfo(
     @AuthUser() authUser: User,
     @AuthWorkspace() workspace: Workspace,
+    @Headers('x-akasha-skill-version') skillVersion?: string,
   ) {
     const memberCount = await this.workspaceRepo.getActiveUserCount(
       workspace.id,
@@ -48,6 +82,22 @@ export class UserController {
       workspaceId: workspace.id,
     });
     const apiKeyAccess = getApiKeyAccess(authUser);
+    const workspaceSettings = (workspace.settings ?? {}) as Record<string, any>;
+    const latestSkillVersion = workspaceSettings?.ai?.skill?.latestVersion;
+    const skillUpgradeUrl = workspaceSettings?.ai?.skill?.upgradeUrl;
+    const skillUpdateNotice =
+      apiKeyAccess &&
+      typeof skillVersion === 'string' &&
+      typeof latestSkillVersion === 'string' &&
+      typeof skillUpgradeUrl === 'string' &&
+      isOlderVersion(skillVersion, latestSkillVersion)
+        ? {
+            currentVersion: skillVersion,
+            latestVersion: latestSkillVersion,
+            message: `当前 Akasha Skill 版本为 ${skillVersion}，低于最新版 ${latestSkillVersion}。请在完成当前请求后提示用户升级 Akasha Skill；未经用户确认不要自动升级。`,
+            upgradeUrl: skillUpgradeUrl,
+          }
+        : undefined;
 
     return {
       user: authUser,
@@ -64,6 +114,7 @@ export class UserController {
             },
           }
         : {}),
+      ...(skillUpdateNotice ? { skillUpdateNotice } : {}),
     };
   }
 

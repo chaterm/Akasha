@@ -15,6 +15,7 @@ import { Feature } from "@/ee/features";
 import { useUpgradeLabel } from "@/ee/hooks/use-upgrade-label";
 import { isCloud } from "@/lib/config.ts";
 import { useLocation, useNavigate } from "react-router-dom";
+import SkillSettings from "@/ee/ai/components/skill-settings.tsx";
 
 export default function AiSettings() {
   const { t } = useTranslation();
@@ -24,7 +25,11 @@ export default function AiSettings() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const activeTab = location.pathname.endsWith("/mcp") ? "mcp" : "ai";
+  const activeTab = location.pathname.endsWith("/mcp")
+    ? "mcp"
+    : location.pathname.endsWith("/skill")
+      ? "skill"
+      : "ai";
 
   if (!isAdmin) {
     return null;
@@ -33,6 +38,8 @@ export default function AiSettings() {
   const handleTabChange = (value: string | null) => {
     if (value === "mcp") {
       navigate("/settings/ai/mcp");
+    } else if (value === "skill") {
+      navigate("/settings/ai/skill");
     } else {
       navigate("/settings/ai");
     }
@@ -53,6 +60,9 @@ export default function AiSettings() {
           <Tabs.Tab fw={500} value="mcp">
             {t("MCP")}
           </Tabs.Tab>
+          <Tabs.Tab fw={500} value="skill">
+            {t("Skill")}
+          </Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="ai" pt="md">
@@ -65,6 +75,10 @@ export default function AiSettings() {
 
         <Tabs.Panel value="mcp" pt="md">
           <McpSettings />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="skill" pt="md">
+          <SkillSettings />
         </Tabs.Panel>
       </Tabs>
     </>

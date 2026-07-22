@@ -211,6 +211,31 @@ export class WorkspaceRepo {
       .executeTakeFirst();
   }
 
+  async updateAiSkillSettings(
+    workspaceId: string,
+    skillSettings: {
+      latestVersion: string;
+      upgradeUrl: string;
+    },
+    trx?: KyselyTransaction,
+  ) {
+    const db = dbOrTx(this.db, trx);
+    return db
+      .updateTable('workspaces')
+      .set({
+        settings: sql`COALESCE(settings, '{}'::jsonb)
+                || jsonb_build_object('ai', COALESCE(settings->'ai', '{}'::jsonb)
+                || jsonb_build_object('skill', jsonb_build_object(
+                  'latestVersion', ${skillSettings.latestVersion}::text,
+                  'upgradeUrl', ${skillSettings.upgradeUrl}::text
+                )))`,
+        updatedAt: new Date(),
+      })
+      .where('id', '=', workspaceId)
+      .returning(this.baseFields)
+      .executeTakeFirst();
+  }
+
   async updateSharingSettings(
     workspaceId: string,
     prefKey: string,

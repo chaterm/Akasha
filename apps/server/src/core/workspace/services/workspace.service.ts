@@ -10,6 +10,7 @@ import { LicenseCheckService } from '../../../integrations/environment/license-c
 import { UserSessionRepo } from '@akasha/db/repos/session/user-session.repo';
 import { CreateWorkspaceDto } from '../dto/create-workspace.dto';
 import { UpdateWorkspaceDto } from '../dto/update-workspace.dto';
+import { UpdateSkillSettingsDto } from '../dto/skill-settings.dto';
 import { SpaceService } from '../../space/services/space.service';
 import { CreateSpaceDto } from '../../space/dto/create-space.dto';
 import { SpaceRole, UserRole } from '../../../common/helpers/types/permission';
@@ -86,6 +87,50 @@ export class WorkspaceService {
     }
 
     return workspace;
+  }
+
+  async getSkillSettings(workspaceId: string) {
+    const workspace = await this.workspaceRepo.findById(workspaceId);
+    if (!workspace) {
+      throw new NotFoundException('Workspace not found');
+    }
+
+    const skill = (workspace.settings as Record<string, any>)?.ai?.skill;
+    if (!skill || Array.isArray(skill) || typeof skill !== 'object') {
+      return { latestVersion: '', upgradeUrl: '' };
+    }
+
+    return {
+      latestVersion:
+        typeof skill.latestVersion === 'string' ? skill.latestVersion : '',
+      upgradeUrl: typeof skill.upgradeUrl === 'string' ? skill.upgradeUrl : '',
+    };
+  }
+
+  async updateSkillSettings(
+    workspaceId: string,
+    skillSettings: UpdateSkillSettingsDto,
+  ) {
+    const previous = await this.getSkillSettings(workspaceId);
+
+    await this.workspaceRepo.updateAiSkillSettings(workspaceId, skillSettings);
+
+    if (
+      previous.latestVersion !== skillSettings.latestVersion ||
+      previous.upgradeUrl !== skillSettings.upgradeUrl
+    ) {
+      this.auditService.log({
+        event: AuditEvent.WORKSPACE_UPDATED,
+        resourceType: AuditResource.WORKSPACE,
+        resourceId: workspaceId,
+        changes: {
+          before: previous,
+          after: skillSettings,
+        },
+      });
+    }
+
+    return skillSettings;
   }
 
   async getWorkspacePublicData(workspaceId: string) {
