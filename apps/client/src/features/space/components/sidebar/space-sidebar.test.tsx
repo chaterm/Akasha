@@ -1,8 +1,10 @@
 import { MantineProvider } from "@mantine/core";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { SpaceSidebar } from "./space-sidebar";
+
+const featureAccess = vi.hoisted(() => ({ enabled: true }));
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -19,9 +21,8 @@ vi.mock("jotai", async () => {
 });
 
 vi.mock("@mantine/hooks", async () => {
-  const actual = await vi.importActual<typeof import("@mantine/hooks")>(
-    "@mantine/hooks",
-  );
+  const actual =
+    await vi.importActual<typeof import("@mantine/hooks")>("@mantine/hooks");
   return {
     ...actual,
     useDisclosure: () => [false, { open: vi.fn(), close: vi.fn() }],
@@ -53,9 +54,12 @@ vi.mock("@/features/page/tree/hooks/use-tree-mutation.ts", () => ({
   }),
 }));
 
-vi.mock("@/components/layouts/global/hooks/hooks/use-toggle-sidebar.ts", () => ({
-  useToggleSidebar: () => vi.fn(),
-}));
+vi.mock(
+  "@/components/layouts/global/hooks/hooks/use-toggle-sidebar.ts",
+  () => ({
+    useToggleSidebar: () => vi.fn(),
+  }),
+);
 
 vi.mock("@/features/search/constants", () => ({
   searchSpotlight: { open: vi.fn() },
@@ -98,7 +102,7 @@ vi.mock("@/features/favorite/queries/favorite-query", () => ({
 }));
 
 vi.mock("@/ee/hooks/use-feature", () => ({
-  useHasFeature: () => true,
+  useHasFeature: () => featureAccess.enabled,
 }));
 
 vi.mock("@/ee/hooks/use-upgrade-label", () => ({
@@ -137,5 +141,26 @@ describe("SpaceSidebar", () => {
     expect(
       screen.queryByRole("link", { name: "Relationship graph" }),
     ).toBeNull();
+  });
+
+  it("hides the templates entry when templates are unavailable", async () => {
+    featureAccess.enabled = false;
+
+    render(
+      <MantineProvider>
+        <MemoryRouter initialEntries={["/s/aim"]}>
+          <Routes>
+            <Route path="/s/:spaceSlug" element={<SpaceSidebar />} />
+          </Routes>
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+
+    const menuButton = screen.getByRole("button", { name: "Space menu" });
+    fireEvent.mouseDown(menuButton);
+    fireEvent.click(menuButton);
+
+    expect(await screen.findByText("Add to favorites")).toBeTruthy();
+    expect(screen.queryByText("Templates")).toBeNull();
   });
 });

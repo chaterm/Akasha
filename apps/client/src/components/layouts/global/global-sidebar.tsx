@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { ScrollArea, Text, Divider, Modal, UnstyledButton, Tooltip } from "@mantine/core";
+import {
+  ScrollArea,
+  Text,
+  Divider,
+  Modal,
+  UnstyledButton,
+} from "@mantine/core";
 import {
   IconHome,
   IconClock,
@@ -25,7 +31,6 @@ import { CustomAvatar } from "@/components/ui/custom-avatar";
 import { AvatarIconType } from "@/features/attachments/types/attachment.types";
 import { useHasFeature } from "@/ee/hooks/use-feature";
 import { Feature } from "@/ee/features";
-import { useUpgradeLabel } from "@/ee/hooks/use-upgrade-label";
 import useUserRole from "@/hooks/use-user-role";
 
 export default function GlobalSidebar() {
@@ -35,28 +40,32 @@ export default function GlobalSidebar() {
   const [mobileSidebarOpened] = useAtom(mobileSidebarAtom);
   const toggleMobileSidebar = useToggleSidebar(mobileSidebarAtom);
   const hasTemplates = useHasFeature(Feature.TEMPLATES);
-  const upgradeLabel = useUpgradeLabel();
   const { isOwner } = useUserRole();
-  const settingsPath = isOwner ? "/settings/account/profile" : "/settings/account/preferences";
+  const settingsPath = isOwner
+    ? "/settings/account/profile"
+    : "/settings/account/preferences";
   const mainNavItems = [
     { label: "Home", icon: IconHome, path: "/home" },
     { label: "Knowledge", icon: IconDatabaseSearch, path: "/knowledge" },
     { label: "Review", icon: IconChecklist, path: "/review" },
     { label: "Favorites", icon: IconStar, path: "/favorites" },
     { label: "Spaces", icon: IconLayoutGrid, path: "/spaces" },
-    {
-      label: "Templates",
-      icon: IconTemplate,
-      path: "/templates",
-      disabled: !hasTemplates,
-    },
+    ...(hasTemplates
+      ? [{ label: "Templates", icon: IconTemplate, path: "/templates" }]
+      : []),
   ];
-  const { data: favoriteSpacesData, isPending: isFavoritesPending } = useFavoritesQuery("space");
-  const favoriteSpaces = favoriteSpacesData?.pages.flatMap((p) => p.items) ?? [];
+  const { data: favoriteSpacesData, isPending: isFavoritesPending } =
+    useFavoritesQuery("space");
+  const favoriteSpaces =
+    favoriteSpacesData?.pages.flatMap((p) => p.items) ?? [];
   const sortedFavoriteSpaces = [...favoriteSpaces]
     .filter((fav) => fav.space)
     .sort((a, b) => {
-      const cmp = (a.space!.name ?? "").localeCompare(b.space!.name ?? "", undefined, { sensitivity: "base" });
+      const cmp = (a.space!.name ?? "").localeCompare(
+        b.space!.name ?? "",
+        undefined,
+        { sensitivity: "base" },
+      );
       return cmp !== 0 ? cmp : a.id.localeCompare(b.id);
     });
   const [inviteOpened, { open: openInvite, close: closeInvite }] =
@@ -76,38 +85,19 @@ export default function GlobalSidebar() {
     <div className={classes.navbar}>
       <ScrollArea w="100%" style={{ flex: 1 }}>
         <div className={classes.section}>
-          {mainNavItems.map((item) =>
-            item.disabled ? (
-              <Tooltip
-                key={item.label}
-                label={upgradeLabel}
-                position="right"
-                withArrow
-              >
-                <UnstyledButton
-                  className={classes.link}
-                  data-disabled
-                  aria-disabled="true"
-                  tabIndex={-1}
-                >
-                  <item.icon className={classes.linkIcon} stroke={2} />
-                  <span>{t(item.label)}</span>
-                </UnstyledButton>
-              </Tooltip>
-            ) : (
-              <Link
-                key={item.label}
-                className={classes.link}
-                data-active={active === item.path || undefined}
-                aria-current={active === item.path ? "page" : undefined}
-                to={item.path}
-                onClick={handleNavClick}
-              >
-                <item.icon className={classes.linkIcon} stroke={2} />
-                <span>{t(item.label)}</span>
-              </Link>
-            ),
-          )}
+          {mainNavItems.map((item) => (
+            <Link
+              key={item.label}
+              className={classes.link}
+              data-active={active === item.path || undefined}
+              aria-current={active === item.path ? "page" : undefined}
+              to={item.path}
+              onClick={handleNavClick}
+            >
+              <item.icon className={classes.linkIcon} stroke={2} />
+              <span>{t(item.label)}</span>
+            </Link>
+          ))}
         </div>
 
         <Divider my="xs" />
@@ -153,15 +143,11 @@ export default function GlobalSidebar() {
             </>
           )}
         </div>
-
       </ScrollArea>
 
       <div className={classes.bottomSection}>
         {isOwner && (
-          <UnstyledButton
-            className={classes.link}
-            onClick={openInvite}
-          >
+          <UnstyledButton className={classes.link} onClick={openInvite}>
             <IconUserPlus className={classes.linkIcon} stroke={2} />
             <span>{t("Invite People")}</span>
           </UnstyledButton>

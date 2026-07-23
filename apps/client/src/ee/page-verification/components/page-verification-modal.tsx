@@ -19,7 +19,6 @@ import { extractPageSlugId } from "@/lib";
 import { usePageQuery } from "@/features/page/queries/page-query";
 import { usePageVerificationInfoQuery } from "@/ee/page-verification/queries/page-verification-query";
 import { useHasFeature } from "@/ee/hooks/use-feature";
-import { useUpgradeLabel } from "@/ee/hooks/use-upgrade-label";
 import { Feature } from "@/ee/features";
 import { SetupVerificationForm } from "./setup-verification-form";
 import { ManageVerificationForm } from "./manage-verification-form";
@@ -47,7 +46,9 @@ export function PageVerificationModal({
     <Modal
       opened={opened}
       onClose={onClose}
-      aria-label={status === "none" ? t("Set up verification") : t("Verify page")}
+      aria-label={
+        status === "none" ? t("Set up verification") : t("Verify page")
+      }
       title={
         <Group gap="xs">
           <IconShieldCheck
@@ -96,28 +97,9 @@ export function PageVerificationBadge({
   const { data: verificationInfo, isLoading } = usePageVerificationInfoQuery(
     hasVerificationFeature ? pageId : undefined,
   );
-  const upgradeLabel = useUpgradeLabel();
 
   if (!pageId) return null;
-  if (!hasVerificationFeature) {
-    if (readOnly) return null;
-    const lockedLabel = `${t("Add verification")} — ${upgradeLabel}`;
-    // Use ActionIcon (a real <button>) instead of a ThemeIcon so the tooltip
-    // is reachable on keyboard focus, and screen readers announce the upgrade
-    // hint via the accessible name. Click is a no-op since the feature is
-    // gated; the tooltip explains why.
-    return (
-      <Tooltip label={lockedLabel} withArrow openDelay={250}>
-        <ActionIcon
-          variant="subtle"
-          color="gray"
-          aria-label={lockedLabel}
-        >
-          <IconShieldCheck size={20} stroke={1.5} />
-        </ActionIcon>
-      </Tooltip>
-    );
-  }
+  if (!hasVerificationFeature) return null;
   if (isLoading) return null;
 
   const status = verificationInfo?.status ?? "none";
@@ -187,11 +169,12 @@ export function PageVerificationMenuItem({
 }: PageVerificationMenuItemProps) {
   const { t } = useTranslation();
   const hasVerificationFeature = useHasFeature(Feature.PAGE_VERIFICATION);
-  const upgradeLabel = useUpgradeLabel();
 
   const { data: verificationInfo } = usePageVerificationInfoQuery(
     hasVerificationFeature ? pageId : undefined,
   );
+
+  if (!hasVerificationFeature) return null;
 
   const hasVerification =
     !!verificationInfo && verificationInfo.status !== "none";
@@ -199,23 +182,9 @@ export function PageVerificationMenuItem({
     ? t("Edit verification")
     : t("Add verification");
 
-  const menuItem = (
-    <Menu.Item
-      disabled={!hasVerificationFeature}
-      leftSection={<IconShieldCheck size={16} />}
-      onClick={hasVerificationFeature ? onClick : undefined}
-    >
+  return (
+    <Menu.Item leftSection={<IconShieldCheck size={16} />} onClick={onClick}>
       {label}
     </Menu.Item>
   );
-
-  if (!hasVerificationFeature) {
-    return (
-      <Tooltip label={upgradeLabel} position="left" withinPortal={false}>
-        {menuItem}
-      </Tooltip>
-    );
-  }
-
-  return menuItem;
 }
