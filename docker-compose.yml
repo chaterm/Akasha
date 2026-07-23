@@ -1,0 +1,15 @@
+services:
+  db:
+    image: pgvector/pgvector:pg18-trixie
+    #image: pgvector/pgvector:pg18
+    environment:
+      POSTGRES_DB: akasha
+      POSTGRES_USER: akasha
+      POSTGRES_PASSWORD: STRONG_DB_PASSWORD
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql
+volumes:
+  db_data:

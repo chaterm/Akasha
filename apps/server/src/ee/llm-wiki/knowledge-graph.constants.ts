@@ -1,0 +1,2 @@
+export const DEFAULT_GRAPH_NODE_LIMIT = 3_000;
+export const MAX_GRAPH_NODE_LIMIT = 5_000;
