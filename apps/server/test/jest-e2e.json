@@ -1,0 +1,14 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": ".",
+  "testEnvironment": "node",
+  "testRegex": ".e2e-spec.ts$",
+  "transform": {
+    "^.+\\.(t|j)s$": "ts-jest"
+  },
+  "moduleNameMapper": {
+    "^@akasha/db/(.*)$": "<rootDir>/../src/database/$1",
+    "^@akasha/transactional/(.*)$": "<rootDir>/../src/integrations/transactional/$1",
+    "^@akasha/ee/(.*)$": "<rootDir>/../src/ee/$1"
+  }
+}

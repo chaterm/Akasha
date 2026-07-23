@@ -1,0 +1,23 @@
+.editor {
+    height: 100%;
+    padding: 8px 0;
+    margin: 48px auto;
+
+    @media print {
+        padding: 0;
+        margin: 0;
+    }
+}
+
+.byline {
+    padding-left: 3rem;
+
+    @media (max-width: $mantine-breakpoint-sm) {
+        padding-left: 1rem;
+    }
+
+    @media print {
+        padding-left: 0;
+    }
+}
+

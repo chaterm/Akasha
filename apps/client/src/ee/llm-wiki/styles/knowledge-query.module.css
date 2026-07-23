@@ -1,0 +1,81 @@
+.queryPanel {
+  border: 1px solid
+    light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+  border-radius: var(--mantine-radius-sm);
+  padding: var(--mantine-spacing-lg);
+  background: light-dark(
+    var(--mantine-color-white),
+    var(--mantine-color-dark-7)
+  );
+}
+
+.answerSection,
+.snippetSection,
+.citationSection {
+  border: 1px solid
+    light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+  border-radius: var(--mantine-radius-sm);
+  padding: var(--mantine-spacing-lg);
+  background: light-dark(
+    var(--mantine-color-white),
+    var(--mantine-color-dark-7)
+  );
+}
+
+.sectionLabel {
+  font-size: var(--mantine-font-size-xs);
+  font-weight: 600;
+  color: var(--mantine-color-dimmed);
+  text-transform: uppercase;
+  margin-bottom: var(--mantine-spacing-xs);
+}
+
+.answerText {
+  white-space: pre-wrap;
+  line-height: 1.65;
+}
+
+.snippetItem {
+  padding-top: var(--mantine-spacing-sm);
+  border-top: 1px solid
+    light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+}
+
+.snippetItem:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.snippetTitle {
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.snippetText,
+.sourceWindowText {
+  margin-top: var(--mantine-spacing-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+
+.sourceWindowList {
+  margin-top: var(--mantine-spacing-sm);
+  padding-left: var(--mantine-spacing-md);
+  border-left: 2px solid
+    light-dark(var(--mantine-color-blue-2), var(--mantine-color-blue-8));
+}
+
+.sourceWindowText {
+  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-3));
+  font-size: var(--mantine-font-size-sm);
+}
+
+.citationLink {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: var(--mantine-font-size-sm);
+}

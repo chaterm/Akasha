@@ -1,0 +1,4 @@
+interface:
+  display_name: "Akasha"
+  short_description: "查询已编译 Wiki，并查找、读取、创建或更新个人空间 Page"
+  default_prompt: "使用 $akasha 查询已编译 Wiki，或查找、读取并编辑个人空间 Page。"
