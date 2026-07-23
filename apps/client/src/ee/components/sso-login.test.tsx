@@ -1,6 +1,14 @@
 import { MantineProvider } from "@mantine/core";
 import { render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import SsoLogin from "./sso-login";
 import { SSO_PROVIDER } from "@/ee/security/contants";
 
@@ -100,6 +108,17 @@ describe("SsoLogin", () => {
 
   it("auto redirects /login to HOIDC with /home as the post-login redirect", async () => {
     renderSsoLogin("/login");
+
+    await waitFor(() => {
+      expect(assignedHref).toBe(
+        "http://localhost:3000/api/sso/hoidc/login?redirect=%2Fhome",
+      );
+    });
+  });
+
+  it("auto redirects /login?logout=1 to HOIDC after logout", async () => {
+    sessionStorage.setItem("akasha:ssoAutoAttempt", String(Date.now()));
+    renderSsoLogin("/login?logout=1");
 
     await waitFor(() => {
       expect(assignedHref).toBe(

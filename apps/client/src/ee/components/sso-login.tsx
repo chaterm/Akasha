@@ -42,7 +42,8 @@ export default function SsoLogin() {
   const { data, isLoading } = useWorkspacePublicDataQuery();
   const { data: currentUser } = useCurrentUser();
   const [ldapModalOpened, setLdapModalOpened] = useState(false);
-  const [selectedLdapProvider, setSelectedLdapProvider] = useState<IAuthProvider | null>(null);
+  const [selectedLdapProvider, setSelectedLdapProvider] =
+    useState<IAuthProvider | null>(null);
   const autoRedirectedRef = useRef(false);
 
   const handleSsoLogin = (provider: IAuthProvider) => {
@@ -73,9 +74,8 @@ export default function SsoLogin() {
     // instead of racing it through the IdP.
     if (currentUser?.user) return;
 
-    // Explicit logout: don't immediately bounce them back to the IdP.
     const params = new URLSearchParams(window.location.search);
-    if (params.has("logout")) return;
+    const isLogout = params.has("logout");
     if (autoLoginDisabled()) return;
 
     const isLoginPage = window.location.pathname === APP_ROUTE.AUTH.LOGIN;
@@ -84,7 +84,7 @@ export default function SsoLogin() {
     // Circuit-breaker: if we already auto-redirected within the TTL, the
     // user came back (likely from an IdP failure). Show the page so they
     // can read errors or pick a different account.
-    if (recentAutoAttempt()) return;
+    if (!isLogout && recentAutoAttempt()) return;
 
     autoRedirectedRef.current = true;
     markAutoAttempt();
