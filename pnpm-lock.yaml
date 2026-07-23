@@ -618,6 +618,9 @@ importers:
       cookie:
         specifier: ^1.1.1
         version: 1.1.1
+      dotenv:
+        specifier: 17.4.1
+        version: 17.4.1
       fast-bm25:
         specifier: 0.0.5
         version: 0.0.5(typescript@5.9.3)
@@ -6367,10 +6370,6 @@ packages:
 
   dotenv@16.4.7:
     resolution: {integrity: sha512-47qPchRCykZC03FhkYAhrvwU4xDBFIj1QPqaarj6mdM/hgUzfPHcpkHJOn3mJAufFeeAxAzeGsr5X0M4k6fLZQ==}
-    engines: {node: '>=12'}
-
-  dotenv@17.2.4:
-    resolution: {integrity: sha512-mudtfb4zRB4bVvdj0xRo+e6duH1csJRM8IukBqfTRvHotn9+LBXB8ynAidP9zHqoRC/fsllXgk4kCKlR21fIhw==}
     engines: {node: '>=12'}
 
   dotenv@17.4.1:
@@ -16690,8 +16689,6 @@ snapshots:
 
   dotenv@16.4.7: {}
 
-  dotenv@17.2.4: {}
-
   dotenv@17.4.1: {}
 
   duck@0.1.12:
@@ -18484,7 +18481,7 @@ snapshots:
       chalk: 4.1.2
       cosmiconfig: 9.0.0(typescript@5.9.3)
       diff: 8.0.3
-      dotenv: 17.2.4
+      dotenv: 17.4.1
       dotenv-expand: 12.0.3
       kysely: 0.28.17
       micromatch: 4.0.8

@@ -1,5 +1,4 @@
 import { NestFactory, Reflector } from '@nestjs/core';
-import { AppModule } from './app.module';
 import {
   FastifyAdapter,
   NestFastifyApplication,
@@ -14,8 +13,12 @@ import fastifyIp from 'fastify-ip';
 import { InternalLogFilter } from './common/logger/internal-log-filter';
 import { EnvironmentService } from './integrations/environment/environment.service';
 import { resolveFrameHeader } from './common/helpers';
+import { loadRuntimeConfiguration } from './integrations/environment/consul-config.loader';
 
 async function bootstrap() {
+  await loadRuntimeConfiguration();
+  const { AppModule } = await import('./app.module');
+
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     new FastifyAdapter({
@@ -165,4 +168,8 @@ async function bootstrap() {
   });
 }
 
-bootstrap();
+bootstrap().catch((error) => {
+  const reason = error instanceof Error ? error.message : String(error);
+  console.error(`Failed to bootstrap Akasha: ${reason}`);
+  process.exit(1);
+});

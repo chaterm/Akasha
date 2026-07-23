@@ -1,5 +1,4 @@
 import { NestFactory, Reflector } from '@nestjs/core';
-import { CollabAppModule } from './collab-app.module';
 import {
   FastifyAdapter,
   NestFastifyApplication,
@@ -8,8 +7,12 @@ import { TransformHttpResponseInterceptor } from '../../common/interceptors/http
 import { Logger } from '@nestjs/common';
 import { Logger as PinoLogger } from 'nestjs-pino';
 import { InternalLogFilter } from '../../common/logger/internal-log-filter';
+import { loadRuntimeConfiguration } from '../../integrations/environment/consul-config.loader';
 
 async function bootstrap() {
+  await loadRuntimeConfiguration();
+  const { CollabAppModule } = await import('./collab-app.module');
+
   const app = await NestFactory.create<NestFastifyApplication>(
     CollabAppModule,
     new FastifyAdapter({
@@ -44,4 +47,8 @@ async function bootstrap() {
   });
 }
 
-bootstrap();
+bootstrap().catch((error) => {
+  const reason = error instanceof Error ? error.message : String(error);
+  console.error(`Failed to bootstrap Akasha collaboration server: ${reason}`);
+  process.exit(1);
+});
