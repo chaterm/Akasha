@@ -20,8 +20,8 @@ export class SsoUserSyncController {
   @HttpCode(HttpStatus.OK)
   @Post('sync')
   async sync(@AuthUser() user: User): Promise<SsoUserSyncResult> {
-    if (user.role !== UserRole.ADMIN) {
-      throw new ForbiddenException('SSO user sync is restricted to admins');
+    if (user.role !== UserRole.OWNER) {
+      throw new ForbiddenException('SSO user sync is restricted to owners');
     }
 
     return this.ssoUserSyncService.syncAllUsers();

@@ -11,17 +11,17 @@ describe('SsoUserSyncController', () => {
     failed: 0,
   };
 
-  it('runs the SSO user sync for an admin', async () => {
+  it('runs the SSO user sync for an owner', async () => {
     const ssoUserSyncService = {
       syncAllUsers: jest.fn().mockResolvedValue(syncResult),
     };
     const controller = new SsoUserSyncController(ssoUserSyncService as any);
 
-    await expect(controller.sync(adminUser())).resolves.toEqual(syncResult);
+    await expect(controller.sync(ownerUser())).resolves.toEqual(syncResult);
     expect(ssoUserSyncService.syncAllUsers).toHaveBeenCalledTimes(1);
   });
 
-  it.each([UserRole.OWNER, UserRole.MEMBER])(
+  it.each([UserRole.ADMIN, UserRole.MEMBER])(
     'rejects the %s role',
     async (role) => {
       const ssoUserSyncService = {
@@ -37,8 +37,8 @@ describe('SsoUserSyncController', () => {
   );
 });
 
-function adminUser(): User {
-  return userWithRole(UserRole.ADMIN);
+function ownerUser(): User {
+  return userWithRole(UserRole.OWNER);
 }
 
 function userWithRole(role: UserRole): User {
