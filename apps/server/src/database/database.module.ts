@@ -1,4 +1,4 @@
-import { Global, Logger, Module, OnApplicationBootstrap } from '@nestjs/common';
+import { Global, Logger, Module, OnModuleInit } from '@nestjs/common';
 import { InjectKysely, KyselyModule } from 'nestjs-kysely';
 import { EnvironmentService } from '../integrations/environment/environment.service';
 import { CamelCasePlugin, LogEvent, sql } from 'kysely';
@@ -38,6 +38,7 @@ import { KnowledgeQueryAuditRepo } from '@akasha/db/repos/llm-wiki/knowledge-que
 import { KnowledgeQuarantineRepo } from '@akasha/db/repos/llm-wiki/knowledge-quarantine.repo';
 import { KnowledgeCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-compilation.repo';
 import { KnowledgeArtifactContributionRepo } from '@akasha/db/repos/llm-wiki/knowledge-artifact-contribution.repo';
+import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
 import { KnowledgeReviewApplicationRepo } from '@akasha/db/repos/llm-wiki/knowledge-review-application.repo';
 import { KnowledgeReviewSnapshotRepo } from '@akasha/db/repos/llm-wiki/knowledge-review-snapshot.repo';
 import { AiChatRepo } from '@akasha/db/repos/ai-chat/ai-chat.repo';
@@ -111,6 +112,7 @@ import { AiChatRepo } from '@akasha/db/repos/ai-chat/ai-chat.repo';
     KnowledgeQuarantineRepo,
     KnowledgeCompilationRepo,
     KnowledgeArtifactContributionRepo,
+    KnowledgeSpaceCompilationRepo,
     AiChatRepo,
     PageListener,
   ],
@@ -146,10 +148,11 @@ import { AiChatRepo } from '@akasha/db/repos/ai-chat/ai-chat.repo';
     KnowledgeQuarantineRepo,
     KnowledgeCompilationRepo,
     KnowledgeArtifactContributionRepo,
+    KnowledgeSpaceCompilationRepo,
     AiChatRepo,
   ],
 })
-export class DatabaseModule implements OnApplicationBootstrap {
+export class DatabaseModule implements OnModuleInit {
   private readonly logger = new Logger(DatabaseModule.name);
 
   constructor(
@@ -158,7 +161,7 @@ export class DatabaseModule implements OnApplicationBootstrap {
     private readonly environmentService: EnvironmentService,
   ) {}
 
-  async onApplicationBootstrap() {
+  async onModuleInit() {
     await this.establishConnection();
 
     if (this.environmentService.getNodeEnv() === 'production') {

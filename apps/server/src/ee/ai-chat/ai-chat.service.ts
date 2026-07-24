@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
   Optional,
 } from '@nestjs/common';
@@ -12,6 +13,8 @@ import { PaginationOptions } from '@akasha/db/pagination/pagination-options';
 import { UserRole } from '../../common/helpers/types/permission';
 import { AiKnowledgeChatService } from '../llm-wiki/services/ai-knowledge-chat.service';
 import { AttachmentRepo } from '@akasha/db/repos/attachment/attachment.repo';
+import { KnowledgeQueryAuditRepo } from '@akasha/db/repos/llm-wiki/knowledge-query-audit.repo';
+import { createHash } from 'crypto';
 
 export type AiChatStreamEvent =
   | { type: 'chat_created'; chatId: string }
@@ -26,6 +29,7 @@ export type SendAiChatMessageInput = {
   mentionedPageIds?: string[];
   contextPageId?: string;
   attachmentIds?: string[];
+  spaceIds?: string[];
   onEvent?: (event: AiChatStreamEvent) => void;
 };
 
@@ -34,16 +38,24 @@ export type SendAiChatMessageResult = {
   assistantMessageId: string;
   answer: string;
   citations?: unknown[];
+  citationEvidence?: unknown[];
+  retrievedSources?: unknown[];
   retrievalDiagnostics?: unknown;
+  retrievalReasons?: string[];
+  completenessNotice?: string;
+  answerMode?: 'knowledge' | 'no_match';
 };
 
 @Injectable()
 export class AiChatService {
+  private readonly logger = new Logger(AiChatService.name);
+
   constructor(
     private readonly aiChatRepo: AiChatRepo,
     private readonly spaceRepo: SpaceRepo,
     private readonly spaceMemberRepo: SpaceMemberRepo,
     private readonly knowledgeChat: AiKnowledgeChatService,
+    private readonly queryAuditRepo: KnowledgeQueryAuditRepo,
     @Optional() private readonly attachmentRepo?: AttachmentRepo,
   ) {}
 
@@ -142,6 +154,13 @@ export class AiChatService {
         })
       : [];
 
+    input.onEvent?.({ type: 'progress', stage: 'permissions' });
+    const readableSpaceIds = await this.getDefaultReadableSpaceIds({
+      workspaceId: input.workspace.id,
+      user: input.user,
+    });
+    const spaceIds = resolveRequestedSpaceIds(input.spaceIds, readableSpaceIds);
+
     await this.aiChatRepo.addMessage({
       workspaceId: input.workspace.id,
       chatId: chat.id,
@@ -149,13 +168,7 @@ export class AiChatService {
       role: 'user',
       content,
       toolCalls: null,
-      metadata: buildUserMetadata(input) as never,
-    });
-
-    input.onEvent?.({ type: 'progress', stage: 'permissions' });
-    const spaceIds = await this.getDefaultReadableSpaceIds({
-      workspaceId: input.workspace.id,
-      user: input.user,
+      metadata: buildUserMetadata(input, spaceIds) as never,
     });
 
     input.onEvent?.({ type: 'progress', stage: 'retrieval' });
@@ -185,8 +198,25 @@ export class AiChatService {
       toolCalls: null,
       metadata: {
         citations: answer.citations,
+        citationEvidence: answer.citationEvidence,
+        retrievedSources: answer.retrievedSources,
+        retrievalDiagnostics: answer.retrievalDiagnostics,
+        retrievalReasons: answer.retrievalReasons,
         completenessNotice: answer.completenessNotice,
+        answerMode: answer.answerMode,
+        spaceIds,
       } as never,
+    });
+
+    await this.recordQueryAudit({
+      workspaceId: input.workspace.id,
+      userId: input.user.id,
+      query: content,
+      spaceIds,
+      answerMode: answer.answerMode,
+      citationCount: answer.citations.length,
+      retrievedSourceCount: answer.retrievedSources.length,
+      retrievalDiagnostics: answer.retrievalDiagnostics,
     });
 
     return {
@@ -194,7 +224,12 @@ export class AiChatService {
       assistantMessageId: assistantMessage.id,
       answer: answer.answer,
       citations: answer.citations,
+      citationEvidence: answer.citationEvidence,
+      retrievedSources: answer.retrievedSources,
       retrievalDiagnostics: answer.retrievalDiagnostics,
+      retrievalReasons: answer.retrievalReasons,
+      completenessNotice: answer.completenessNotice,
+      answerMode: answer.answerMode,
     };
   }
 
@@ -227,15 +262,76 @@ export class AiChatService {
 
     return this.spaceMemberRepo.getUserSpaceIds(input.user.id);
   }
+
+  private async recordQueryAudit(input: {
+    workspaceId: string;
+    userId: string;
+    query: string;
+    spaceIds: string[];
+    answerMode: 'knowledge' | 'no_match';
+    citationCount: number;
+    retrievedSourceCount: number;
+    retrievalDiagnostics: {
+      mode: string;
+      queryEmbeddingAvailable: boolean;
+      candidateSourceCount: number;
+      policyCandidateSourceCount: number;
+      fallbackCandidateSourceCount: number;
+      finalAuthorizedSourceCount: number;
+      accessPolicyFallbackUsed: boolean;
+      candidateChunkCount: number;
+      rankedCandidateCount: number;
+      authorizedChunkCount: number;
+      filteredChunkCount: number;
+    };
+  }): Promise<void> {
+    const diagnostics = input.retrievalDiagnostics;
+    if (!diagnostics) return;
+
+    try {
+      await this.queryAuditRepo.recordQuery({
+        workspaceId: input.workspaceId,
+        userId: input.userId,
+        queryHash: `sha256:${createHash('sha256').update(input.query).digest('hex')}`,
+        retrievalMode: diagnostics.mode,
+        authorizedCapsuleCount: diagnostics.authorizedChunkCount,
+        metadata: {
+          origin: 'ai_qa',
+          answerMode: input.answerMode,
+          citationCount: input.citationCount,
+          retrievedSourceCount: input.retrievedSourceCount,
+          spaceIds: input.spaceIds,
+          queryEmbeddingAvailable: diagnostics.queryEmbeddingAvailable,
+          candidateSourceCount: diagnostics.candidateSourceCount,
+          policyCandidateSourceCount: diagnostics.policyCandidateSourceCount,
+          fallbackCandidateSourceCount:
+            diagnostics.fallbackCandidateSourceCount,
+          finalAuthorizedSourceCount: diagnostics.finalAuthorizedSourceCount,
+          accessPolicyFallbackUsed: diagnostics.accessPolicyFallbackUsed,
+          candidateChunkCount: diagnostics.candidateChunkCount,
+          rankedCandidateCount: diagnostics.rankedCandidateCount,
+          authorizedChunkCount: diagnostics.authorizedChunkCount,
+          filteredChunkCount: diagnostics.filteredChunkCount,
+        },
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Failed to record AI Q&A retrieval audit: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
 }
 
 function buildTitle(content: string): string {
   const title = content.replace(/\s+/g, ' ').trim();
-  return title.length > 60 ? `${title.slice(0, 57)}...` : title || 'New chat';
+  return title.length > 60
+    ? `${title.slice(0, 57)}...`
+    : title || 'New question';
 }
 
-function buildUserMetadata(input: SendAiChatMessageInput) {
+function buildUserMetadata(input: SendAiChatMessageInput, spaceIds: string[]) {
   const metadata: Record<string, unknown> = {};
+  metadata.spaceIds = spaceIds;
   if (input.mentionedPageIds?.length) {
     metadata.mentionedPageIds = input.mentionedPageIds;
   }
@@ -246,5 +342,14 @@ function buildUserMetadata(input: SendAiChatMessageInput) {
     metadata.attachmentIds = input.attachmentIds;
   }
 
-  return Object.keys(metadata).length ? metadata : null;
+  return metadata;
+}
+
+function resolveRequestedSpaceIds(
+  requestedSpaceIds: string[] | undefined,
+  readableSpaceIds: string[],
+): string[] {
+  const readable = new Set(readableSpaceIds);
+  const requested = requestedSpaceIds ?? readableSpaceIds;
+  return [...new Set(requested)].filter((spaceId) => readable.has(spaceId));
 }

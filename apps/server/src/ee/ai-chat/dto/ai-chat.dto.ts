@@ -30,6 +30,11 @@ export class SendAiChatMessageDto {
   @IsArray()
   @IsString({ each: true })
   attachmentIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  spaceIds?: string[];
 }
 
 export class ChatIdDto {

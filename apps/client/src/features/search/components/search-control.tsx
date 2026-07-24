@@ -15,10 +15,42 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { platformModifierLabel } from "@/lib";
 
-interface SearchControlProps extends BoxProps, ElementProps<"button"> {}
+interface SearchControlProps extends BoxProps, ElementProps<"button"> {
+  compact?: boolean;
+}
 
-export function SearchControl({ className, ...others }: SearchControlProps) {
+export function SearchControl({
+  className,
+  compact = false,
+  ...others
+}: SearchControlProps) {
   const { t } = useTranslation();
+
+  if (compact) {
+    return (
+      <Tooltip
+        label={`${t("Search")} (${platformModifierLabel} + K)`}
+        openDelay={250}
+        withArrow
+      >
+        <UnstyledButton
+          {...others}
+          className={cx(classes.compactRoot, className)}
+          aria-label={t("Search")}
+        >
+          <Group gap={6} wrap="nowrap">
+            <IconSearch
+              style={{ width: rem(16), height: rem(16) }}
+              stroke={1.75}
+            />
+            <Text fz="sm" fw={500} inherit>
+              {t("Search")}
+            </Text>
+          </Group>
+        </UnstyledButton>
+      </Tooltip>
+    );
+  }
 
   return (
     <UnstyledButton {...others} className={cx(classes.root, className)}>

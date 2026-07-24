@@ -3,6 +3,7 @@ import {
   KnowledgeDiagnosticsJob,
   buildPageCompilationDiagnostics,
   buildCompileStatusesFromJobs,
+  buildCompileStatusesFromRuns,
 } from './knowledge-diagnostics.service';
 
 describe('buildCompileStatusesFromJobs', () => {
@@ -71,6 +72,49 @@ describe('buildCompileStatusesFromJobs', () => {
   });
 });
 
+describe('buildCompileStatusesFromRuns', () => {
+  it('keeps a durable partial Space result after Bull jobs disappear', () => {
+    expect(
+      buildCompileStatusesFromRuns([
+        {
+          id: 'run-1',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          status: 'partial',
+          expectedPageCount: 61,
+          succeededPageCount: 56,
+          failedPageCount: 5,
+          skippedPageCount: 0,
+          importedArtifactCount: 1,
+          quarantinedArtifactCount: 0,
+          aggregateJobId: 'aggregate-job-1',
+          errorCode: null,
+          queuedAt: new Date('2026-07-24T01:00:00.000Z'),
+          startedAt: new Date('2026-07-24T01:00:01.000Z'),
+          finishedAt: new Date('2026-07-24T01:02:00.000Z'),
+          updatedAt: new Date('2026-07-24T01:02:00.000Z'),
+        },
+      ]),
+    ).toEqual([
+      {
+        spaceId: 'space-1',
+        status: 'partial',
+        jobId: 'aggregate-job-1',
+        lastRunId: 'run-1',
+        durationMs: 120_000,
+        sourceCount: 61,
+        succeededPageCount: 56,
+        failedPageCount: 5,
+        skippedPageCount: 0,
+        importedArtifactCount: 1,
+        quarantinedArtifactCount: 0,
+        failureReason: undefined,
+        updatedAt: new Date('2026-07-24T01:02:00.000Z').getTime(),
+      },
+    ]);
+  });
+});
+
 describe('buildPageCompilationDiagnostics', () => {
   it('reports failed stage and last-success serving without exposing stored text', () => {
     expect(
@@ -104,6 +148,21 @@ describe('buildPageCompilationDiagnostics', () => {
       lastSucceededAt: null,
       servingLastSuccessfulVersion: false,
     });
+  });
+
+  it('recognizes an active legacy artifact as the last successful version', () => {
+    const legacyInput = {
+      status: 'failed',
+      stage: 'generation',
+      attemptCount: 1,
+      errorCode: 'invalid_output',
+      lastSuccessfulSourceVersion: null,
+      lastSucceededAt: null,
+      hasActiveArtifact: true,
+    };
+    expect(
+      buildPageCompilationDiagnostics(legacyInput).servingLastSuccessfulVersion,
+    ).toBe(true);
   });
 });
 

@@ -17,11 +17,13 @@ import {
   KnowledgeQualityReport,
   KnowledgeQualityService,
 } from './knowledge-quality.service';
+import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
 
 const KNOWLEDGE_JOB_NAMES = new Set<string>([
   QueueJob.PAGE_CONTENT_UPDATED,
   QueueJob.KNOWLEDGE_COMPILE_SPACE,
   QueueJob.KNOWLEDGE_COMPILE_PAGES,
+  QueueJob.KNOWLEDGE_AGGREGATE_SPACE,
   QueueJob.KNOWLEDGE_MARK_SOURCES_STALE,
   QueueJob.KNOWLEDGE_REINDEX_ACCESS,
 ]);
@@ -121,15 +123,37 @@ export type KnowledgeDiagnosticsJob = {
 
 export type KnowledgeCompileStatus = {
   spaceId: string;
-  status: 'queued' | 'running' | 'succeeded' | 'failed';
+  status: 'queued' | 'running' | 'succeeded' | 'partial' | 'failed';
   jobId: string;
   lastRunId: string;
   durationMs: number | null;
   sourceCount: number;
+  succeededPageCount?: number;
+  failedPageCount?: number;
+  skippedPageCount?: number;
   importedArtifactCount: number;
   quarantinedArtifactCount: number;
   failureReason?: string;
   updatedAt?: number;
+};
+
+type DurableSpaceRunDiagnostic = {
+  id: string;
+  workspaceId: string;
+  spaceId: string;
+  status: string;
+  expectedPageCount: number;
+  succeededPageCount: number;
+  failedPageCount: number;
+  skippedPageCount: number;
+  importedArtifactCount: number;
+  quarantinedArtifactCount: number;
+  aggregateJobId: string | null;
+  errorCode: string | null;
+  queuedAt: Date;
+  startedAt: Date | null;
+  finishedAt: Date | null;
+  updatedAt: Date;
 };
 
 @Injectable()
@@ -140,6 +164,7 @@ export class KnowledgeDiagnosticsService {
     private readonly quality: KnowledgeQualityService,
     private readonly queryAuditRepo: KnowledgeQueryAuditRepo,
     private readonly quarantineRepo: KnowledgeQuarantineRepo,
+    private readonly spaceRunRepo: KnowledgeSpaceCompilationRepo,
   ) {}
 
   async getWorkspaceDiagnostics(input: {
@@ -175,6 +200,7 @@ export class KnowledgeDiagnosticsService {
       lastCompiledAts,
       accessPolicyStats,
       jobs,
+      durableRuns,
     ] = await Promise.all([
       this.countSources(input.workspaceId, pageIds, false),
       this.countSources(input.workspaceId, pageIds, true),
@@ -193,9 +219,15 @@ export class KnowledgeDiagnosticsService {
       this.findLastCompiledAtBySourcePage(input.workspaceId, pageIds),
       this.findAccessPolicyStatsBySourcePage(input.workspaceId, pageIds),
       this.findKnowledgeJobs(input.workspaceId, limit),
+      this.spaceRunRepo.findRecentRuns({
+        workspaceId: input.workspaceId,
+        spaceIds: input.spaceIds,
+        limit,
+      }),
     ]);
     const diagnosticPages = pages.map((page) => {
       const policyStats = accessPolicyStats.get(page.pageId);
+      const lastCompiledAt = lastCompiledAts.get(page.pageId) ?? null;
 
       return {
         ...page,
@@ -206,17 +238,30 @@ export class KnowledgeDiagnosticsService {
         knowledgeChunkCount: chunkCounts.get(page.pageId) ?? 0,
         missingEmbeddingChunkCount:
           missingEmbeddingCounts.get(page.pageId) ?? 0,
-        lastCompiledAt: lastCompiledAts.get(page.pageId) ?? null,
+        lastCompiledAt,
         lastAccessPolicyIndexedAt:
           policyStats?.lastAccessPolicyIndexedAt ?? null,
         staleAccessPolicyCount: policyStats?.staleAccessPolicyCount ?? 0,
+        servingLastSuccessfulVersion:
+          page.compileStatus !== 'succeeded' &&
+          (page.servingLastSuccessfulVersion || Boolean(lastCompiledAt)),
       };
     });
+
+    const durableStatuses = buildCompileStatusesFromRuns(durableRuns);
+    const durableSpaceIds = new Set(
+      durableStatuses.map((status) => status.spaceId),
+    );
+    const legacyJobStatuses = buildCompileStatusesFromJobs(jobs).filter(
+      (status) => !durableSpaceIds.has(status.spaceId),
+    );
 
     return {
       pages: diagnosticPages,
       jobs,
-      compileStatuses: buildCompileStatusesFromJobs(jobs),
+      compileStatuses: [...durableStatuses, ...legacyJobStatuses].sort(
+        (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0),
+      ),
       retrieval: await this.queryAuditRepo.summarizeWorkspace({
         workspaceId: input.workspaceId,
         limit,
@@ -408,6 +453,7 @@ export class KnowledgeDiagnosticsService {
       ])
       .where('knowledgePageSources.workspaceId', '=', workspaceId)
       .where('knowledgePageSources.sourcePageId', 'in', sourcePageIds)
+      .where('knowledgePages.staleAt', 'is', null)
       .execute();
 
     const latestBySource = new Map<string, Date>();
@@ -533,6 +579,7 @@ export function buildPageCompilationDiagnostics(input?: {
   errorMessage?: string | null;
   lastSuccessfulSourceVersion?: string | null;
   lastSucceededAt?: Date | null;
+  hasActiveArtifact?: boolean;
 }): Pick<
   KnowledgeDiagnosticsPage,
   | 'compileStatus'
@@ -555,7 +602,9 @@ export function buildPageCompilationDiagnostics(input?: {
       : null,
     lastSucceededAt: input?.lastSucceededAt ?? null,
     servingLastSuccessfulVersion:
-      status !== 'succeeded' && Boolean(input?.lastSuccessfulSourceVersion),
+      status !== 'succeeded' &&
+      (Boolean(input?.lastSuccessfulSourceVersion) ||
+        Boolean(input?.hasActiveArtifact)),
   };
 }
 
@@ -605,6 +654,10 @@ function safeCompilationErrorMessage(errorCode: string): string {
       return 'Knowledge compiler provider request failed.';
     case 'source_changed':
       return 'Knowledge source changed during compilation.';
+    case 'empty_source':
+      return 'Knowledge source is empty.';
+    case 'source_unavailable':
+      return 'Knowledge source page is unavailable for compilation.';
     case 'validation_failed':
       return 'Knowledge compiler output failed validation.';
     default:
@@ -643,6 +696,47 @@ export function buildCompileStatusesFromJobs(
         : undefined,
     updatedAt: jobUpdatedAt(job) || undefined,
   }));
+}
+
+export function buildCompileStatusesFromRuns(
+  runs: DurableSpaceRunDiagnostic[],
+): KnowledgeCompileStatus[] {
+  const latestBySpace = new Map<string, DurableSpaceRunDiagnostic>();
+  for (const run of [...runs].sort(
+    (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
+  )) {
+    if (!latestBySpace.has(run.spaceId)) latestBySpace.set(run.spaceId, run);
+  }
+  return [...latestBySpace.values()].map((run) => ({
+    spaceId: run.spaceId,
+    status: toDurableCompileStatus(run.status),
+    jobId: run.aggregateJobId ?? run.id,
+    lastRunId: run.id,
+    durationMs: run.finishedAt
+      ? Math.max(0, run.finishedAt.getTime() - run.queuedAt.getTime())
+      : null,
+    sourceCount: run.expectedPageCount,
+    succeededPageCount: run.succeededPageCount,
+    failedPageCount: run.failedPageCount,
+    skippedPageCount: run.skippedPageCount,
+    importedArtifactCount: run.importedArtifactCount,
+    quarantinedArtifactCount: run.quarantinedArtifactCount,
+    failureReason:
+      run.status === 'failed' && run.errorCode
+        ? safeCompilationErrorMessage(run.errorCode)
+        : undefined,
+    updatedAt: run.updatedAt.getTime(),
+  }));
+}
+
+function toDurableCompileStatus(
+  status: string,
+): KnowledgeCompileStatus['status'] {
+  if (status === 'succeeded' || status === 'partial' || status === 'failed') {
+    return status;
+  }
+  if (status === 'queued') return 'queued';
+  return 'running';
 }
 
 function toCompileStatus(state: string): KnowledgeCompileStatus['status'] {

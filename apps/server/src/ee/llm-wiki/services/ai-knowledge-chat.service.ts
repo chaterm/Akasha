@@ -26,6 +26,12 @@ import { KnowledgeSourceAuthorizationService } from './knowledge-source-authoriz
 
 export { KnowledgeAnswerProvider, KnowledgeAnswerProviderInput };
 
+export type AiKnowledgeCitationEvidence = KnowledgeCitation & {
+  excerpts: Array<
+    Pick<KnowledgeSourceWindow, 'text' | 'sourceRange' | 'quoteHash'>
+  >;
+};
+
 type AiKnowledgeChatInput = {
   workspaceId: string;
   userId: string;
@@ -40,9 +46,14 @@ type AiKnowledgeChatInput = {
   onStage?: (stage: 'generation') => void;
 };
 
-type AiKnowledgeChatResult = {
+export type AiKnowledgeChatResult = {
   answer: string;
+  answerMode: 'knowledge' | 'no_match';
   citations: ReturnType<
+    KnowledgeContextPackService['buildContextPack']
+  >['citations'];
+  citationEvidence: AiKnowledgeCitationEvidence[];
+  retrievedSources: ReturnType<
     KnowledgeContextPackService['buildContextPack']
   >['citations'];
   snippets: Array<{
@@ -117,6 +128,36 @@ export class AiKnowledgeChatService {
       capsules: capsuleCitations,
     });
     const explicit = await this.loadExplicitContext(input);
+    const allCitations = uniqueCitations([
+      ...explicit.citations,
+      ...pack.citations,
+    ]);
+    const retrievalDiagnostics = {
+      mode: retrieval.mode,
+      ...retrieval.diagnostics,
+    };
+    const hasKnowledgeEvidence =
+      explicit.context.trim().length > 0 || pack.primary.length > 0;
+
+    if (!hasKnowledgeEvidence) {
+      const noMatchAnswer = buildNoMatchAnswer(input.query);
+      input.onStage?.('generation');
+      input.onToken?.(noMatchAnswer);
+      return {
+        answer: noMatchAnswer,
+        answerMode: 'no_match',
+        citations: [],
+        citationEvidence: [],
+        retrievedSources: [],
+        snippets: [],
+        warnings: pack.warnings,
+        retrievalReasons: pack.retrievalReasons,
+        budget: pack.budget,
+        completenessNotice: pack.completenessNotice,
+        retrievalDiagnostics,
+      };
+    }
+
     const answerInput = {
       query: input.query,
       context: [explicit.context, buildAnswerContext(pack)]
@@ -137,12 +178,26 @@ export class AiKnowledgeChatService {
       rawAnswer = await this.answerProvider.answer(answerInput);
       input.onToken?.(stripCitationMarkers(rawAnswer));
     }
+    let cleanAnswer = stripCitationMarkers(rawAnswer);
+    if (!cleanAnswer) {
+      cleanAnswer = buildGenerationUnavailableAnswer(input.query);
+      input.onToken?.(cleanAnswer);
+    }
     const citedSourceIds = extractCitedSourceIds(rawAnswer);
-    const allCitations = [...explicit.citations, ...pack.citations];
+    const citations = filterCitationsByUsedSourceIds(
+      allCitations,
+      citedSourceIds,
+    );
 
     return {
-      answer: stripCitationMarkers(rawAnswer),
-      citations: filterCitationsByUsedSourceIds(allCitations, citedSourceIds),
+      answer: cleanAnswer,
+      answerMode: 'knowledge',
+      citations,
+      citationEvidence: buildCitationEvidence(
+        citations,
+        pack.primary.flatMap((entry) => entry.sourceWindows),
+      ),
+      retrievedSources: allCitations,
       snippets: pack.primary.map((entry) => ({
         id: entry.id,
         title: entry.title,
@@ -154,10 +209,7 @@ export class AiKnowledgeChatService {
       retrievalReasons: pack.retrievalReasons,
       budget: pack.budget,
       completenessNotice: pack.completenessNotice,
-      retrievalDiagnostics: {
-        mode: retrieval.mode,
-        ...retrieval.diagnostics,
-      },
+      retrievalDiagnostics,
     };
   }
 
@@ -313,6 +365,64 @@ function filterCitationsByUsedSourceIds(
   return citations.filter((citation) =>
     citedSourceIds.has(citation.sourcePageId),
   );
+}
+
+function buildCitationEvidence(
+  citations: KnowledgeCitation[],
+  sourceWindows: KnowledgeSourceWindow[],
+): AiKnowledgeCitationEvidence[] {
+  const windowsBySourceId = new Map<string, KnowledgeSourceWindow[]>();
+
+  for (const sourceWindow of sourceWindows) {
+    const windows = windowsBySourceId.get(sourceWindow.sourcePageId) ?? [];
+    const isDuplicate = windows.some(
+      (window) =>
+        window.quoteHash === sourceWindow.quoteHash &&
+        window.sourceRange.startOffset ===
+          sourceWindow.sourceRange.startOffset &&
+        window.sourceRange.endOffset === sourceWindow.sourceRange.endOffset,
+    );
+    if (!isDuplicate && windows.length < 2) {
+      windows.push(sourceWindow);
+      windowsBySourceId.set(sourceWindow.sourcePageId, windows);
+    }
+  }
+
+  return citations.map((citation) => ({
+    ...citation,
+    excerpts: (windowsBySourceId.get(citation.sourcePageId) ?? []).map(
+      ({ text, sourceRange, quoteHash }) => ({
+        text,
+        sourceRange,
+        quoteHash,
+      }),
+    ),
+  }));
+}
+
+function uniqueCitations(citations: KnowledgeCitation[]): KnowledgeCitation[] {
+  const seen = new Set<string>();
+  return citations.filter((citation) => {
+    if (seen.has(citation.sourcePageId)) return false;
+    seen.add(citation.sourcePageId);
+    return true;
+  });
+}
+
+function buildNoMatchAnswer(query: string): string {
+  if (/\p{Script=Han}/u.test(query)) {
+    return '在当前选择的知识库中没有找到足够的相关内容。请尝试换一种问法，或扩大知识空间范围后重试。';
+  }
+
+  return "I couldn't find enough relevant information in the selected knowledge base. Try rephrasing the question or selecting more knowledge spaces.";
+}
+
+function buildGenerationUnavailableAnswer(query: string): string {
+  if (/\p{Script=Han}/u.test(query)) {
+    return '已检索到相关知识，但回答模型当前未能生成内容。请稍后重试，或联系管理员检查 AI 模型配置。';
+  }
+
+  return 'Relevant knowledge was retrieved, but the answer model did not produce a response. Try again later or ask an administrator to check the AI model configuration.';
 }
 
 class CitationStreamSanitizer {

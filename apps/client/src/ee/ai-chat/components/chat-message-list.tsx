@@ -3,7 +3,11 @@ import { ErrorBoundary } from "react-error-boundary";
 import { IconArrowDown, IconAlertTriangle } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import { VisuallyHidden } from "@mantine/core";
-import type { AiChatMessage, AiChatToolCall } from "../types/ai-chat.types";
+import type {
+  AiChatMessage,
+  AiChatToolCall,
+  AiQaProgressStage,
+} from "../types/ai-chat.types";
 import ChatMessage from "./chat-message";
 import classes from "../styles/ai-chat.module.css";
 
@@ -22,6 +26,7 @@ type Props = {
   isStreaming: boolean;
   streamingContent: string;
   streamingToolCalls: AiChatToolCall[];
+  progressStage?: AiQaProgressStage | null;
 };
 
 const BOTTOM_THRESHOLD_PX = 32;
@@ -33,6 +38,7 @@ export default function ChatMessageList({
   isStreaming,
   streamingContent,
   streamingToolCalls,
+  progressStage,
 }: Props) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -174,10 +180,7 @@ export default function ChatMessageList({
         aria-label={t("Chat transcript")}
       >
         {messages.map((msg) => (
-          <ErrorBoundary
-            key={msg.id}
-            fallback={<ChatMessageErrorFallback />}
-          >
+          <ErrorBoundary key={msg.id} fallback={<ChatMessageErrorFallback />}>
             <ChatMessage message={msg} />
           </ErrorBoundary>
         ))}
@@ -199,6 +202,7 @@ export default function ChatMessageList({
               isStreaming
               streamingContent={streamingContent}
               streamingToolCalls={streamingToolCalls}
+              progressStage={progressStage}
             />
           </ErrorBoundary>
         )}

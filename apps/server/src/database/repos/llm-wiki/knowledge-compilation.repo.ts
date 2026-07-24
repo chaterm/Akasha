@@ -30,6 +30,16 @@ type CompilationIdentity = {
   sourcePageId: string;
 };
 
+type CompilationAttemptInput = CompilationIdentity & {
+  spaceId: string;
+  sourceVersion?: string;
+  sourceContentHash?: string;
+  compilerVersion: string;
+  promptVersion: string;
+  compilerRunId: string;
+  compileTaskId: string;
+};
+
 type AnalysisCacheKey = CompilationIdentity & {
   sourceContentHash: string;
   compilerVersion: string;
@@ -40,18 +50,8 @@ type AnalysisCacheKey = CompilationIdentity & {
 export class KnowledgeCompilationRepo {
   constructor(@InjectKysely() private readonly db: KyselyDB) {}
 
-  async startAttempt(
-    input: {
-      workspaceId: string;
-      spaceId: string;
-      sourcePageId: string;
-      sourceVersion: string;
-      sourceContentHash: string;
-      compilerVersion: string;
-      promptVersion: string;
-      compilerRunId: string;
-      compileTaskId: string;
-    },
+  async queueAttempt(
+    input: CompilationAttemptInput,
     trx?: KyselyTransaction,
   ): Promise<void> {
     const now = new Date();
@@ -59,6 +59,53 @@ export class KnowledgeCompilationRepo {
       .insertInto('knowledgeCompilationAttempts')
       .values({
         ...input,
+        sourceVersion: input.sourceVersion ?? null,
+        sourceContentHash: input.sourceContentHash ?? null,
+        status: 'queued',
+        stage: 'queued',
+        attemptCount: 0,
+        errorCode: null,
+        errorMessage: null,
+        queuedAt: now,
+        startedAt: null,
+        finishedAt: null,
+        updatedAt: now,
+      })
+      .onConflict((oc) =>
+        oc.columns(['workspaceId', 'sourcePageId']).doUpdateSet({
+          spaceId: input.spaceId,
+          sourceVersion: input.sourceVersion ?? null,
+          sourceContentHash: input.sourceContentHash ?? null,
+          compilerVersion: input.compilerVersion,
+          promptVersion: input.promptVersion,
+          compilerRunId: input.compilerRunId,
+          compileTaskId: input.compileTaskId,
+          status: 'queued',
+          stage: 'queued',
+          // attemptCount is cumulative worker starts; enqueueing does not
+          // represent an execution and deliberately leaves it unchanged.
+          errorCode: null,
+          errorMessage: null,
+          queuedAt: now,
+          startedAt: null,
+          finishedAt: null,
+          updatedAt: now,
+        }),
+      )
+      .execute();
+  }
+
+  async startAttempt(
+    input: CompilationAttemptInput,
+    trx?: KyselyTransaction,
+  ): Promise<void> {
+    const now = new Date();
+    await dbOrTx(this.db, trx)
+      .insertInto('knowledgeCompilationAttempts')
+      .values({
+        ...input,
+        sourceVersion: input.sourceVersion ?? null,
+        sourceContentHash: input.sourceContentHash ?? null,
         status: 'running',
         stage: 'read_source',
         attemptCount: 1,
@@ -72,8 +119,8 @@ export class KnowledgeCompilationRepo {
       .onConflict((oc) =>
         oc.columns(['workspaceId', 'sourcePageId']).doUpdateSet({
           spaceId: input.spaceId,
-          sourceVersion: input.sourceVersion,
-          sourceContentHash: input.sourceContentHash,
+          sourceVersion: input.sourceVersion ?? null,
+          sourceContentHash: input.sourceContentHash ?? null,
           compilerVersion: input.compilerVersion,
           promptVersion: input.promptVersion,
           compilerRunId: input.compilerRunId,
@@ -83,12 +130,30 @@ export class KnowledgeCompilationRepo {
           attemptCount: sql<number>`knowledge_compilation_attempts.attempt_count + 1`,
           errorCode: null,
           errorMessage: null,
-          queuedAt: now,
           startedAt: now,
           finishedAt: null,
           updatedAt: now,
         }),
       )
+      .execute();
+  }
+
+  async updateSourceSnapshot(
+    input: CompilationIdentity & {
+      sourceVersion: string;
+      sourceContentHash: string;
+    },
+    trx?: KyselyTransaction,
+  ): Promise<void> {
+    await dbOrTx(this.db, trx)
+      .updateTable('knowledgeCompilationAttempts')
+      .set({
+        sourceVersion: input.sourceVersion,
+        sourceContentHash: input.sourceContentHash,
+        updatedAt: new Date(),
+      })
+      .where('workspaceId', '=', input.workspaceId)
+      .where('sourcePageId', '=', input.sourcePageId)
       .execute();
   }
 
@@ -223,10 +288,16 @@ export class KnowledgeCompilationRepo {
 }
 
 function sanitizeErrorCode(value: string): string {
-  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '_');
   return normalized.slice(0, 80) || 'compile_failed';
 }
 
 function sanitizeErrorMessage(value: string): string {
-  return value.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 500);
+  return value
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .trim()
+    .slice(0, 500);
 }

@@ -20,6 +20,7 @@ export type KnowledgeRetrievalRankReason =
   | 'semantic'
   | 'lexical'
   | 'exact-title'
+  | 'graph-neighbor'
   | 'sidecar-prefiltered'
   | 'final-authorization-fallback';
 
@@ -224,7 +225,12 @@ function rankReasons(
   signals: KnowledgeRetrievalSignal[],
 ): KnowledgeRankedChunkCandidate['rankReasons'] {
   const reasons: KnowledgeRankedChunkCandidate['rankReasons'] = [];
-  for (const signal of ['exact-title', 'semantic', 'lexical'] as const) {
+  for (const signal of [
+    'exact-title',
+    'semantic',
+    'lexical',
+    'graph-neighbor',
+  ] as const) {
     if (signals.includes(signal)) reasons.push(signal);
   }
   reasons.push('sidecar-prefiltered');
@@ -234,6 +240,7 @@ function rankReasons(
 function signalPriority(signals: KnowledgeRetrievalSignal[]): number {
   if (signals.includes('exact-title')) return 3;
   if (signals.includes('semantic')) return 2;
+  if (signals.includes('graph-neighbor')) return 1;
   if (signals.includes('lexical')) return 1;
   return 0;
 }

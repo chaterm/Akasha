@@ -16,14 +16,14 @@ export default function EnableAiChat() {
     <Group justify="space-between" wrap="nowrap" gap="xl">
       <div>
         <Group gap="xs" align="center">
-          <Text size="md">{t("AI Chat")}</Text>
+          <Text size="md">{t("AI Q&A")}</Text>
           <Badge color="gray" variant="light" size="sm" radius="sm">
             {t("Beta")}
           </Badge>
         </Group>
         <Text size="sm" c="dimmed">
           {t(
-            "Enable AI Chat to allow users to have multi-turn conversations with AI about your workspace content.",
+            "Enable AI Q&A so users can ask multi-turn questions grounded in workspace knowledge.",
           )}
         </Text>
       </div>
@@ -60,7 +60,7 @@ function AiChatToggle() {
         defaultChecked={checked}
         onChange={handleChange}
         disabled={!hasAccess}
-        aria-label={t("Toggle AI Chat")}
+        aria-label={t("Toggle AI Q&A")}
       />
     </Tooltip>
   );

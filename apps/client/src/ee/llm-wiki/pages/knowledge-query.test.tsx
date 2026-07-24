@@ -97,6 +97,25 @@ describe("KnowledgeQueryPage", () => {
     });
   });
 
+  it("keeps knowledge updates in Diagnostics instead of the query page", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <HelmetProvider>
+          <MantineProvider>
+            <BrowserRouter>
+              <KnowledgeQueryPage />
+            </BrowserRouter>
+          </MantineProvider>
+        </HelmetProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByRole("link", { name: "Diagnostics" })).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Update knowledge" }),
+    ).toBeNull();
+  });
+
   it("shows the answer and citations without exposing retrieved snippets", async () => {
     render(
       <QueryClientProvider client={new QueryClient()}>

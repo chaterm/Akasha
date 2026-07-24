@@ -174,11 +174,14 @@ describe("queryKnowledge", () => {
           compileStatuses: [
             {
               spaceId: "space-1",
-              status: "failed",
+              status: "partial",
               jobId: "job-1",
               lastRunId: "run-1",
               durationMs: null,
               sourceCount: 0,
+              succeededPageCount: 56,
+              failedPageCount: 5,
+              skippedPageCount: 0,
               importedArtifactCount: 0,
               quarantinedArtifactCount: 0,
               failureReason: "Compile job failed: Error",
@@ -252,11 +255,14 @@ describe("queryKnowledge", () => {
       compileStatuses: [
         {
           spaceId: "space-1",
-          status: "failed",
+          status: "partial",
           jobId: "job-1",
           lastRunId: "run-1",
           durationMs: null,
           sourceCount: 0,
+          succeededPageCount: 56,
+          failedPageCount: 5,
+          skippedPageCount: 0,
           importedArtifactCount: 0,
           quarantinedArtifactCount: 0,
           failureReason: "Compile job failed: Error",

@@ -17,8 +17,17 @@ class FakeKyselyQuery {
     return this;
   }
 
-  onConflict(...args: unknown[]) {
+  onConflict(callback: (builder: unknown) => unknown) {
+    const args = [callback];
     this.calls.push({ method: 'onConflict', args });
+    callback({
+      columns: (columns: unknown) => ({
+        doUpdateSet: (values: unknown) => {
+          this.calls.push({ method: 'doUpdateSet', args: [columns, values] });
+          return this;
+        },
+      }),
+    });
     return this;
   }
 
@@ -69,6 +78,44 @@ class FakeKyselyQuery {
 }
 
 describe('KnowledgeCompilationRepo', () => {
+  it('queues a page without incrementing attempts or clearing last-success fields', async () => {
+    const query = new FakeKyselyQuery();
+    const repo = new KnowledgeCompilationRepo(query as never);
+
+    await repo.queueAttempt({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageId: 'page-1',
+      sourceVersion: 'v2',
+      sourceContentHash: 'hash-2',
+      compilerVersion: 'compiler-v2',
+      promptVersion: 'prompt-v2',
+      compilerRunId: 'run-2',
+      compileTaskId: 'task-page-1',
+    });
+
+    const valuesCall = query.calls.find((call) => call.method === 'values');
+    expect(valuesCall?.args[0]).toEqual(
+      expect.objectContaining({
+        status: 'queued',
+        stage: 'queued',
+        attemptCount: 0,
+        sourceVersion: 'v2',
+        sourceContentHash: 'hash-2',
+        startedAt: null,
+        finishedAt: null,
+      }),
+    );
+    expect(JSON.stringify(query.calls)).not.toContain(
+      'lastSuccessfulSourceVersion',
+    );
+    expect(JSON.stringify(query.calls)).not.toContain('attempt_count + 1');
+    const conflictUpdate = query.calls.find(
+      (call) => call.method === 'doUpdateSet',
+    );
+    expect(conflictUpdate?.args[1]).not.toHaveProperty('attemptCount');
+  });
+
   it('starts a page attempt without clearing the last successful version', async () => {
     const query = new FakeKyselyQuery();
     const repo = new KnowledgeCompilationRepo(query as never);
@@ -93,6 +140,46 @@ describe('KnowledgeCompilationRepo', () => {
       method: 'onConflict',
       args: [expect.any(Function)],
     });
+  });
+
+  it('starts before source export and fills the source snapshot afterward', async () => {
+    const query = new FakeKyselyQuery();
+    const repo = new KnowledgeCompilationRepo(query as never);
+
+    await repo.startAttempt({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageId: 'page-1',
+      compilerVersion: 'compiler-v2',
+      promptVersion: 'prompt-v2',
+      compilerRunId: 'run-2',
+      compileTaskId: 'task-page-1',
+    });
+    await repo.updateSourceSnapshot({
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-1',
+      sourceVersion: 'v2',
+      sourceContentHash: 'hash-2',
+    });
+
+    expect(
+      query.calls.find((call) => call.method === 'values')?.args[0],
+    ).toEqual(
+      expect.objectContaining({
+        status: 'running',
+        stage: 'read_source',
+        attemptCount: 1,
+        sourceVersion: null,
+        sourceContentHash: null,
+      }),
+    );
+    const setCalls = query.calls.filter((call) => call.method === 'set');
+    expect(setCalls[setCalls.length - 1]?.args[0]).toEqual(
+      expect.objectContaining({
+        sourceVersion: 'v2',
+        sourceContentHash: 'hash-2',
+      }),
+    );
   });
 
   it('records a sanitized failure without overwriting last-success fields', async () => {
@@ -164,6 +251,32 @@ describe('KnowledgeCompilationRepo', () => {
       { method: 'where', args: ['sourceContentHash', '=', 'hash-1'] },
       { method: 'where', args: ['compilerVersion', '=', 'compiler-v1'] },
       { method: 'where', args: ['promptVersion', '=', 'prompt-v1'] },
+    ]);
+  });
+
+  it('upserts Stage 1 analysis using the database cache-key index', async () => {
+    const query = new FakeKyselyQuery();
+    const repo = new KnowledgeCompilationRepo(query as never);
+
+    await repo.saveAnalysis({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageId: 'page-1',
+      sourceVersion: 'v1',
+      sourceContentHash: 'hash-1',
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+      analysis: { synopsis: 'Cached analysis' },
+    });
+
+    expect(
+      query.calls.find((call) => call.method === 'doUpdateSet')?.args[0],
+    ).toEqual([
+      'workspaceId',
+      'sourcePageId',
+      'sourceContentHash',
+      'compilerVersion',
+      'promptVersion',
     ]);
   });
 

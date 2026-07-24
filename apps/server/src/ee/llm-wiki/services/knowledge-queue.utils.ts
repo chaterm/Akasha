@@ -33,6 +33,12 @@ export function buildKnowledgeCompilePageJobId(input: {
   ].join('__');
 }
 
+export function buildKnowledgeAggregateSpaceJobId(input: {
+  runId: string;
+}): string {
+  return ['knowledge-aggregate-space', input.runId].join('__');
+}
+
 export function buildKnowledgeAdminActionJobId(input: {
   action: KnowledgeAdminSpaceAction;
   workspaceId: string;

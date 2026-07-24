@@ -3,7 +3,7 @@ import { PageListener } from './page.listener';
 
 describe('PageListener knowledge jobs', () => {
   it('enqueues delayed knowledge compile jobs for page spaces on page creation', async () => {
-    const { listener, aiQueue, pageRepo } = createListener();
+    const { listener, aiQueue, pageRepo, compilationRepo } = createListener();
     pageRepo.findExistingPageRefs.mockResolvedValue([
       pageRef('page-1', 'space-1'),
     ]);
@@ -33,6 +33,25 @@ describe('PageListener knowledge jobs', () => {
         ),
       },
     );
+    expect(compilationRepo.queueAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageId: 'page-1',
+        sourceVersion: undefined,
+        sourceContentHash: undefined,
+        compileTaskId: expect.stringMatching(
+          /^knowledge-compile-pages__workspace-1__space-1__page-1__/,
+        ),
+      }),
+    );
+    const compileAddCall = aiQueue.add.mock.calls.findIndex(
+      ([name]) => name === QueueJob.KNOWLEDGE_COMPILE_PAGES,
+    );
+    expect(compileAddCall).toBeGreaterThanOrEqual(0);
+    expect(
+      compilationRepo.queueAttempt.mock.invocationCallOrder[0],
+    ).toBeLessThan(aiQueue.add.mock.invocationCallOrder[compileAddCall]);
   });
 
   it('keeps last successful knowledge available while a page update recompiles', async () => {
@@ -149,6 +168,9 @@ function createListener() {
     findSpaceIdsForPages: jest.fn().mockResolvedValue([]),
     findExistingPageRefs: jest.fn().mockResolvedValue([]),
   };
+  const compilationRepo = {
+    queueAttempt: jest.fn().mockResolvedValue(undefined),
+  };
 
   return {
     listener: new PageListener(
@@ -156,10 +178,12 @@ function createListener() {
       pageRepo as never,
       searchQueue as never,
       aiQueue as never,
+      compilationRepo as never,
     ),
     searchQueue,
     aiQueue,
     pageRepo,
+    compilationRepo,
   };
 }
 

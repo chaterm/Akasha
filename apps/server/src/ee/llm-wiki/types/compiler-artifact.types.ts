@@ -13,9 +13,11 @@ export interface CompileSpaceInput extends KnowledgeScope {
 }
 
 export interface KnowledgeArtifactCatalogEntry {
+  artifactId?: string;
   artifactKind: CompiledKnowledgeArtifactKind;
   canonicalKey: string;
   title: string;
+  summary?: string;
 }
 
 export interface CompileDiagnostic {
@@ -45,6 +47,7 @@ export interface CompiledKnowledgeArtifact extends KnowledgeScope {
   sourcePageIds: string[];
   compilerVersion: string;
   promptVersion: string;
+  generationMode?: 'semantic' | 'legacy' | 'raw_fallback';
   compilerRunId?: string;
   compileTaskId?: string;
   inputSourceRefs?: KnowledgeSourceRef[];
@@ -82,6 +85,8 @@ export interface CompiledKnowledgeArtifact extends KnowledgeScope {
     linkText?: string;
     targetPageId?: string;
     targetSpaceId?: string;
+    targetArtifactKind?: CompiledKnowledgeArtifactKind;
+    targetCanonicalKey?: string;
     toKnowledgePageId?: string;
     isOpaque?: boolean;
     isDangling?: boolean;

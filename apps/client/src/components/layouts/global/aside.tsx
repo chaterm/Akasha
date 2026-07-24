@@ -1,4 +1,11 @@
-import { ActionIcon, Box, Group, ScrollArea, Title, Tooltip } from "@mantine/core";
+import {
+  ActionIcon,
+  Box,
+  Group,
+  ScrollArea,
+  Title,
+  Tooltip,
+} from "@mantine/core";
 import { IconX } from "@tabler/icons-react";
 import CommentListWithTabs from "@/features/comment/components/comment-list-with-tabs.tsx";
 import { useAtom } from "jotai";
@@ -37,7 +44,7 @@ export default function Aside() {
       break;
     case "chat":
       component = <AsideChatPanel />;
-      title = "AI Chat";
+      title = "AI Q&A";
       break;
     case "details":
       component = <PageDetailsAside />;
@@ -49,12 +56,17 @@ export default function Aside() {
   }
 
   return (
-    <Box p="md" style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+    <Box
+      p="md"
+      style={{ height: "100%", display: "flex", flexDirection: "column" }}
+    >
       {component && (
         <>
           {tab !== "chat" && (
             <Group justify="space-between" wrap="nowrap" mb="md">
-              <Title order={2} size="h6" fw={500}>{t(title)}</Title>
+              <Title order={2} size="h6" fw={500}>
+                {t(title)}
+              </Title>
               <Tooltip label={t("Close")} withArrow>
                 <ActionIcon
                   variant="subtle"

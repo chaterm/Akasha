@@ -87,9 +87,12 @@ export default function AiChatSidebar() {
         centered: true,
         children: (
           <Text size="sm">
-            {t("Are you sure you want to delete '{{title}}'? This action cannot be undone.", {
-              title: title || t("Untitled"),
-            })}
+            {t(
+              "Are you sure you want to delete '{{title}}'? This action cannot be undone.",
+              {
+                title: title || t("Untitled"),
+              },
+            )}
           </Text>
         ),
         labels: { confirm: t("Delete"), cancel: t("Cancel") },
@@ -120,15 +123,15 @@ export default function AiChatSidebar() {
   return (
     <div className={classes.sidebar}>
       <div className={classes.header}>
-        <h2 className={classes.title}>{t("AI Chat")}</h2>
-        <Tooltip label={t("New chat")} openDelay={250} withArrow>
+        <h2 className={classes.title}>{t("AI Q&A")}</h2>
+        <Tooltip label={t("New question")} openDelay={250} withArrow>
           <ActionIcon
             component={Link}
             to="/ai"
             variant="subtle"
             color="gray"
             onClick={handleNewChat}
-            aria-label={t("New chat")}
+            aria-label={t("New question")}
           >
             <IconPlus size={18} />
           </ActionIcon>
@@ -137,8 +140,8 @@ export default function AiChatSidebar() {
 
       <TextInput
         className={classes.searchInput}
-        placeholder={t("Search chats...")}
-        aria-label={t("Search chats")}
+        placeholder={t("Search questions...")}
+        aria-label={t("Search questions")}
         leftSection={<IconSearch size={14} />}
         size="xs"
         value={search}
@@ -155,12 +158,12 @@ export default function AiChatSidebar() {
               className={classes.chatListEmptyIcon}
             />
             <div className={classes.chatListEmptyTitle}>
-              {isSearching ? t("No chats found") : t("No conversations yet")}
+              {isSearching ? t("No questions found") : t("No questions yet")}
             </div>
             <div className={classes.chatListEmptyHint}>
               {isSearching
                 ? t("Try a different search term.")
-                : t("Start a new chat to see it here.")}
+                : t("Ask a knowledge question to see it here.")}
             </div>
           </div>
         )}

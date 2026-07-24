@@ -271,7 +271,35 @@ describe("KnowledgeGraphPage", () => {
       (screen.getByLabelText("Isolated pages") as HTMLInputElement).checked,
     ).toBe(true);
     expect(screen.getByText("Pages: 2")).toBeTruthy();
-    expect(screen.getByText("Sections: 0")).toBeTruthy();
+    expect(screen.getByText("Sections: 1")).toBeTruthy();
+    expect(screen.getByText("Retrieval")).toBeTruthy();
+    expect(
+      screen
+        .getByRole("button", { name: "Graph node: Retrieval" })
+        .getAttribute("data-section-mode"),
+    ).toBe("compact");
+    const sectionShape = screen
+      .getByRole("button", { name: "Graph node: Retrieval" })
+      .querySelector("rect");
+    const containsEdge = screen
+      .getByRole("img", { name: "Relationship graph" })
+      .querySelector('[data-edge-id="contains:section-1"]');
+    expect(sectionShape).not.toBeNull();
+    expect(containsEdge).not.toBeNull();
+    const sectionCenter = {
+      x:
+        Number(sectionShape?.getAttribute("x")) +
+        Number(sectionShape?.getAttribute("width")) / 2,
+      y:
+        Number(sectionShape?.getAttribute("y")) +
+        Number(sectionShape?.getAttribute("height")) / 2,
+    };
+    expect(
+      Math.hypot(
+        Number(containsEdge?.getAttribute("x2")) - sectionCenter.x,
+        Number(containsEdge?.getAttribute("y2")) - sectionCenter.y,
+      ),
+    ).toBeGreaterThan(5);
     expect(screen.getByText("Overview")).toBeTruthy();
     expect(screen.getByText("Wiki page")).toBeTruthy();
     expect(screen.getByText("depends on")).toBeTruthy();
@@ -297,12 +325,17 @@ describe("KnowledgeGraphPage", () => {
     );
 
     await screen.findByText("Kafka");
-    expect(screen.queryByText("Retrieval")).toBeNull();
+    expect(screen.getByText("Retrieval")).toBeTruthy();
+    const sectionNode = screen.getByRole("button", {
+      name: "Graph node: Retrieval",
+    });
+    expect(sectionNode.getAttribute("data-section-mode")).toBe("compact");
 
     fireEvent.click(screen.getByRole("button", { name: "Graph node: Kafka" }));
     fireEvent.click(screen.getByRole("button", { name: "Focus neighborhood" }));
 
     expect(await screen.findByText("Retrieval")).toBeTruthy();
+    expect(sectionNode.getAttribute("data-section-mode")).toBe("expanded");
     expect(screen.getByText("Focused neighborhood")).toBeTruthy();
     fireEvent.click(
       screen.getByRole("button", { name: "Graph node: Retrieval" }),
@@ -333,5 +366,38 @@ describe("KnowledgeGraphPage", () => {
     fireEvent.mouseEnter(screen.getByText("Kafka"));
 
     expect(edgeLabel.getAttribute("data-visible")).toBe("true");
+  });
+
+  it("shows visible and total page counts when the overview is capped", async () => {
+    vi.mocked(getKnowledgeGraph).mockResolvedValueOnce({
+      nodes: Array.from({ length: 81 }, (_, index) => ({
+        id: `kp-${index + 1}`,
+        title: `Page ${String(index + 1).padStart(2, "0")}`,
+        spaceId: "space-1",
+        kind: "page" as const,
+        degree: 0,
+        communityId: `community-${index + 1}`,
+      })),
+      edges: [],
+      insights: {
+        isolatedNodeIds: [],
+        bridgeNodeIds: [],
+        communityCount: 81,
+      },
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <HelmetProvider>
+          <MantineProvider>
+            <BrowserRouter>
+              <KnowledgeGraphPage />
+            </BrowserRouter>
+          </MantineProvider>
+        </HelmetProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Pages: 80 / 81")).toBeTruthy();
   });
 });

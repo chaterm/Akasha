@@ -86,82 +86,82 @@ export default function GlobalAppShell({
     <>
       <SkipToMain />
       <AppShell
-      header={{ height: 45 }}
-      navbar={{
-        width: isSpaceRoute ? sidebarWidth : 300,
-        breakpoint: "sm",
-        collapsed: {
-          mobile: !mobileOpened,
-          desktop: !desktopOpened,
-        },
-      }}
-      aside={
-        isPageRoute && {
-          width: 350,
+        header={{ height: 45 }}
+        navbar={{
+          width: isSpaceRoute ? sidebarWidth : 300,
           breakpoint: "sm",
-          collapsed: { mobile: !isAsideOpen, desktop: !isAsideOpen },
+          collapsed: {
+            mobile: !mobileOpened,
+            desktop: !desktopOpened,
+          },
+        }}
+        aside={
+          isPageRoute && {
+            width: 350,
+            breakpoint: "sm",
+            collapsed: { mobile: !isAsideOpen, desktop: !isAsideOpen },
+          }
         }
-      }
-      padding="md"
-    >
-      <AppShell.Header px="md" className={classes.header}>
-        <AppHeader />
-      </AppShell.Header>
-      <AppShell.Navbar
-        className={classes.navbar}
-        withBorder={false}
-        ref={sidebarRef}
-        aria-label={
-          isSpaceRoute
-            ? t("Space navigation")
-            : isSettingsRoute
-              ? t("Settings navigation")
-              : isAiRoute
-                ? t("AI navigation")
-                : t("Main navigation")
-        }
+        padding="md"
       >
-        {isSpaceRoute && (
-          <div className={classes.resizeHandle} onMouseDown={startResizing} />
-        )}
-        {isSpaceRoute && <SpaceSidebar />}
-        {isSettingsRoute && <SettingsSidebar />}
-        {isAiRoute && <AiChatSidebar />}
-        {showGlobalSidebar && <GlobalSidebar />}
-      </AppShell.Navbar>
-      <AppShell.Main id={MAIN_CONTENT_ID} tabIndex={-1}>
-        {isSettingsRoute ? (
-          <Container size={900} pb={80}>
-            {children}
-          </Container>
-        ) : (
-          children
-        )}
-      </AppShell.Main>
-
-      {isPageRoute && (
-        <AppShell.Aside
-          id={ASIDE_PANEL_ID}
-          tabIndex={-1}
-          className={classes.aside}
-          p="md"
+        <AppShell.Header px="md" className={classes.header}>
+          <AppHeader />
+        </AppShell.Header>
+        <AppShell.Navbar
+          className={classes.navbar}
           withBorder={false}
+          ref={sidebarRef}
           aria-label={
-            asideTab === "comments"
-              ? t("Comments")
-              : asideTab === "toc"
-                ? t("Table of contents")
-                : asideTab === "chat"
-                  ? t("AI Chat")
-                  : asideTab === "details"
-                    ? t("Details")
-                    : undefined
+            isSpaceRoute
+              ? t("Space navigation")
+              : isSettingsRoute
+                ? t("Settings navigation")
+                : isAiRoute
+                  ? t("AI navigation")
+                  : t("Main navigation")
           }
         >
-          <Aside />
-        </AppShell.Aside>
-      )}
-    </AppShell>
+          {isSpaceRoute && (
+            <div className={classes.resizeHandle} onMouseDown={startResizing} />
+          )}
+          {isSpaceRoute && <SpaceSidebar />}
+          {isSettingsRoute && <SettingsSidebar />}
+          {isAiRoute && <AiChatSidebar />}
+          {showGlobalSidebar && <GlobalSidebar />}
+        </AppShell.Navbar>
+        <AppShell.Main id={MAIN_CONTENT_ID} tabIndex={-1}>
+          {isSettingsRoute ? (
+            <Container size={900} pb={80}>
+              {children}
+            </Container>
+          ) : (
+            children
+          )}
+        </AppShell.Main>
+
+        {isPageRoute && (
+          <AppShell.Aside
+            id={ASIDE_PANEL_ID}
+            tabIndex={-1}
+            className={classes.aside}
+            p="md"
+            withBorder={false}
+            aria-label={
+              asideTab === "comments"
+                ? t("Comments")
+                : asideTab === "toc"
+                  ? t("Table of contents")
+                  : asideTab === "chat"
+                    ? t("AI Q&A")
+                    : asideTab === "details"
+                      ? t("Details")
+                      : undefined
+            }
+          >
+            <Aside />
+          </AppShell.Aside>
+        )}
+      </AppShell>
     </>
   );
 }

@@ -15,7 +15,6 @@ import {
 } from "@mantine/core";
 import { useMutation } from "@tanstack/react-query";
 import { Helmet } from "react-helmet-async";
-import { notifications } from "@mantine/notifications";
 import {
   IconAlertTriangle,
   IconArrowRight,
@@ -23,16 +22,12 @@ import {
   IconGitFork,
   IconInfoCircle,
   IconListDetails,
-  IconRefresh,
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { getAppName } from "@/lib/config";
 import { useGetSpacesQuery } from "@/features/space/queries/space-query";
-import {
-  compileKnowledgeSpaces,
-  queryKnowledge,
-} from "../services/knowledge-service";
+import { queryKnowledge } from "../services/knowledge-service";
 import type { KnowledgeQueryResult } from "../types/knowledge.types";
 import classes from "../styles/knowledge-query.module.css";
 
@@ -61,22 +56,6 @@ export default function KnowledgeQueryPage() {
   const mutation = useMutation({
     mutationFn: queryKnowledge,
     onSuccess: (data) => setResult(data),
-  });
-  const compileMutation = useMutation({
-    mutationFn: compileKnowledgeSpaces,
-    onSuccess: (data) => {
-      notifications.show({
-        message: t("Knowledge update queued", {
-          count: data.queuedSpaceCount,
-        }),
-      });
-    },
-    onError: (error) => {
-      notifications.show({
-        color: "red",
-        message: error.message,
-      });
-    },
   });
   const citations = result?.citations ?? [];
   const warnings = result?.warnings ?? [];
@@ -123,15 +102,6 @@ export default function KnowledgeQueryPage() {
                 leftSection={<IconListDetails size={16} />}
               >
                 {t("Diagnostics")}
-              </Button>
-              <Button
-                variant="default"
-                leftSection={<IconRefresh size={16} />}
-                loading={compileMutation.isPending}
-                disabled={spaceIds.length === 0}
-                onClick={() => compileMutation.mutate({ spaceIds })}
-              >
-                {t("Update knowledge")}
               </Button>
             </Group>
           </Group>

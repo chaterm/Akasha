@@ -253,6 +253,25 @@ export interface GroupUsers {
   userId: string;
 }
 
+export interface KnowledgeArtifactContributions {
+  artifact: Json;
+  artifactId: string;
+  artifactKind: string;
+  canonicalKey: string;
+  compilerRunId: string;
+  compilerVersion: string;
+  compileTaskId: string;
+  createdAt: Generated<Timestamp>;
+  id: Generated<string>;
+  promptVersion: string;
+  sourceContentHash: string;
+  sourcePageId: string;
+  sourceVersion: string;
+  spaceId: string;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
 export interface KnowledgeChunks {
   chunkRole: Generated<string>;
   claimId: string | null;
@@ -277,51 +296,6 @@ export interface KnowledgeChunks {
   staleAt: Timestamp | null;
   startOffset: number | null;
   text: string;
-  workspaceId: string;
-}
-
-export interface KnowledgeArtifactContributions {
-  artifact: Json;
-  artifactId: string;
-  artifactKind: string;
-  canonicalKey: string;
-  compilerRunId: string;
-  compilerVersion: string;
-  compileTaskId: string;
-  createdAt: Generated<Timestamp>;
-  id: Generated<string>;
-  promptVersion: string;
-  sourceContentHash: string;
-  sourcePageId: string;
-  sourceVersion: string;
-  spaceId: string;
-  updatedAt: Generated<Timestamp>;
-  workspaceId: string;
-}
-
-export interface KnowledgeCompilationAttempts {
-  attemptCount: Generated<number>;
-  compilerRunId: string | null;
-  compilerVersion: string;
-  compileTaskId: string | null;
-  createdAt: Generated<Timestamp>;
-  errorCode: string | null;
-  errorMessage: string | null;
-  finishedAt: Timestamp | null;
-  id: Generated<string>;
-  lastSucceededAt: Timestamp | null;
-  lastSuccessfulSourceHash: string | null;
-  lastSuccessfulSourceVersion: string | null;
-  promptVersion: string;
-  queuedAt: Generated<Timestamp>;
-  sourceContentHash: string | null;
-  sourcePageId: string;
-  sourceVersion: string | null;
-  spaceId: string;
-  stage: Generated<string>;
-  startedAt: Timestamp | null;
-  status: Generated<string>;
-  updatedAt: Generated<Timestamp>;
   workspaceId: string;
 }
 
@@ -363,6 +337,32 @@ export interface KnowledgeClaimSources {
   workspaceId: string;
 }
 
+export interface KnowledgeCompilationAttempts {
+  attemptCount: Generated<number>;
+  compilerRunId: string | null;
+  compilerVersion: string;
+  compileTaskId: string | null;
+  createdAt: Generated<Timestamp>;
+  errorCode: string | null;
+  errorMessage: string | null;
+  finishedAt: Timestamp | null;
+  id: Generated<string>;
+  lastSucceededAt: Timestamp | null;
+  lastSuccessfulSourceHash: string | null;
+  lastSuccessfulSourceVersion: string | null;
+  promptVersion: string;
+  queuedAt: Generated<Timestamp>;
+  sourceContentHash: string | null;
+  sourcePageId: string;
+  sourceVersion: string | null;
+  spaceId: string;
+  stage: Generated<string>;
+  startedAt: Timestamp | null;
+  status: Generated<string>;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
 export interface KnowledgeGraphEdges {
   compilerRunId: string | null;
   compileTaskId: string | null;
@@ -399,6 +399,8 @@ export interface KnowledgeLinks {
   linkType: string;
   spaceId: string;
   staleAt: Timestamp | null;
+  targetArtifactKind: string | null;
+  targetCanonicalKey: string | null;
   targetPageId: string | null;
   targetSpaceId: string | null;
   toKnowledgePageId: string | null;
@@ -434,20 +436,6 @@ export interface KnowledgePages {
   staleAt: Timestamp | null;
   summary: string | null;
   title: string;
-  updatedAt: Generated<Timestamp>;
-  workspaceId: string;
-}
-
-export interface KnowledgeSourceAnalyses {
-  analysis: Json;
-  compilerVersion: string;
-  createdAt: Generated<Timestamp>;
-  id: Generated<string>;
-  promptVersion: string;
-  sourceContentHash: string;
-  sourcePageId: string;
-  sourceVersion: string;
-  spaceId: string;
   updatedAt: Generated<Timestamp>;
   workspaceId: string;
 }
@@ -584,6 +572,20 @@ export interface KnowledgeSourceAccessRequirements {
   workspaceId: string;
 }
 
+export interface KnowledgeSourceAnalyses {
+  analysis: Json;
+  compilerVersion: string;
+  createdAt: Generated<Timestamp>;
+  id: Generated<string>;
+  promptVersion: string;
+  sourceContentHash: string;
+  sourcePageId: string;
+  sourceVersion: string;
+  spaceId: string;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
 export interface KnowledgeSourceChunks {
   contentHash: string;
   createdAt: Generated<Timestamp>;
@@ -609,6 +611,52 @@ export interface KnowledgeSources {
   sourceType: string;
   sourceVersion: string;
   staleAt: Timestamp | null;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
+export interface KnowledgeSpaceCompileRunPages {
+  createdAt: Generated<Timestamp>;
+  errorCode: string | null;
+  errorMessage: string | null;
+  expectedSourceContentHash: string;
+  expectedSourceVersion: string;
+  finishedAt: Timestamp | null;
+  id: Generated<string>;
+  jobId: string | null;
+  queuedAt: Timestamp | null;
+  runId: string;
+  sourcePageId: string;
+  spaceId: string;
+  startedAt: Timestamp | null;
+  status: Generated<string>;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
+export interface KnowledgeSpaceCompileRuns {
+  aggregateJobId: string | null;
+  aggregateStartedAt: Timestamp | null;
+  catalogHash: string;
+  catalogSnapshot: Generated<Json>;
+  compilerVersion: string;
+  createdAt: Generated<Timestamp>;
+  errorCode: string | null;
+  errorMessage: string | null;
+  expectedPageCount: Generated<number>;
+  failedPageCount: Generated<number>;
+  finishedAt: Timestamp | null;
+  id: Generated<string>;
+  importedArtifactCount: Generated<number>;
+  promptVersion: string;
+  quarantinedArtifactCount: Generated<number>;
+  queuedAt: Generated<Timestamp>;
+  skippedPageCount: Generated<number>;
+  spaceId: string;
+  startedAt: Timestamp | null;
+  status: Generated<string>;
+  succeededPageCount: Generated<number>;
+  trigger: string;
   updatedAt: Generated<Timestamp>;
   workspaceId: string;
 }
@@ -991,6 +1039,8 @@ export interface DB {
   knowledgeSourceAnalyses: KnowledgeSourceAnalyses;
   knowledgeSourceChunks: KnowledgeSourceChunks;
   knowledgeSources: KnowledgeSources;
+  knowledgeSpaceCompileRunPages: KnowledgeSpaceCompileRunPages;
+  knowledgeSpaceCompileRuns: KnowledgeSpaceCompileRuns;
   labels: Labels;
   notifications: Notifications;
   pageAccess: PageAccess;

@@ -1,4 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import { UndirectedGraph } from 'graphology';
+import * as louvainModule from 'graphology-communities-louvain';
 import { KnowledgeCapsuleRepo } from '@akasha/db/repos/llm-wiki/knowledge-capsule.repo';
 import { UserRepo } from '@akasha/db/repos/user/user.repo';
 import { SpaceAuthorizationService } from '../../../core/space/services/space-authorization.service';
@@ -7,6 +9,9 @@ import {
   MAX_GRAPH_NODE_LIMIT,
 } from '../knowledge-graph.constants';
 import { KnowledgeSourceAuthorizationService } from './knowledge-source-authorization.service';
+
+const runLouvain = (louvainModule.default ??
+  louvainModule) as typeof louvainModule.default;
 
 export type KnowledgeGraphResult = {
   nodes: KnowledgeGraphNode[];
@@ -130,6 +135,7 @@ export class KnowledgeGraphService {
       (source) => source.linkId,
     );
     const linkEdges = graph.links
+      .filter((link) => link.linkType !== 'catalog_entry')
       .filter((link) => link.toKnowledgePageId)
       .filter(
         (link) =>
@@ -155,6 +161,7 @@ export class KnowledgeGraphService {
       (source) => source.graphEdgeId,
     );
     const semanticEdges = graph.graphEdges
+      .filter((edge) => edge.relation !== 'catalog_entry')
       .filter(
         (edge) =>
           visiblePageIds.has(edge.fromKnowledgePageId) &&
@@ -174,6 +181,13 @@ export class KnowledgeGraphService {
         reasons: ['semantic-edge' as const],
       }));
 
+    const derivedSemanticEdges = buildDerivedSemanticEdges({
+      pages: visiblePages,
+      pageSourcesByPageId,
+      directEdges: linkEdges,
+      explicitSemanticEdges: semanticEdges,
+    });
+
     const sectionEdges = visibleSections.map((section) => ({
       id: `contains:${section.id}`,
       from: section.knowledgePageId,
@@ -184,7 +198,11 @@ export class KnowledgeGraphService {
       reasons: ['section-membership' as const],
     }));
 
-    const relationshipEdges = [...linkEdges, ...semanticEdges];
+    const relationshipEdges = [
+      ...linkEdges,
+      ...semanticEdges,
+      ...derivedSemanticEdges,
+    ];
     const edges = [...relationshipEdges, ...sectionEdges];
     const degreeByNodeId = new Map<string, number>();
     for (const edge of edges) {
@@ -216,11 +234,18 @@ export class KnowledgeGraphService {
       artifactKind: page.pageType ?? undefined,
       communityId: communityByPageId.get(page.id) ?? 'community-0',
     }));
+    const visiblePageById = new Map(
+      visiblePages.map((page) => [page.id, page] as const),
+    );
     const sectionNodes = visibleSections.map((section) => {
       const headingPath = readHeadingPath(section.headingPath);
       return {
         id: sectionNodeId(section.id),
-        title: headingPath[headingPath.length - 1] || '正文',
+        title: buildSectionTitle({
+          headingPath,
+          text: section.text,
+          pageTitle: visiblePageById.get(section.knowledgePageId)?.title,
+        }),
         spaceId: section.spaceId,
         sourcePageId: singleSourcePageId(
           parentSectionSourcesBySectionId.get(section.id) ?? [],
@@ -243,9 +268,223 @@ export class KnowledgeGraphService {
         visiblePages,
         relationshipDegreeByPageId,
         communityByPageId,
+        [...linkEdges, ...semanticEdges],
       ),
     };
   }
+}
+
+const MAX_DERIVED_SEMANTIC_NEIGHBORS = 6;
+const MAX_DERIVED_SEMANTIC_CANDIDATES = 250_000;
+
+const TYPE_AFFINITY: Record<string, Record<string, number>> = {
+  entity: {
+    concept: 1.2,
+    entity: 0.8,
+    source_summary: 1,
+    comparison: 1,
+  },
+  concept: {
+    entity: 1.2,
+    concept: 0.8,
+    source_summary: 1,
+    comparison: 1.2,
+  },
+  source_summary: {
+    entity: 1,
+    concept: 1,
+    source_summary: 0.5,
+    comparison: 1,
+  },
+  comparison: {
+    entity: 1,
+    concept: 1.2,
+    source_summary: 1,
+    comparison: 0.8,
+  },
+};
+
+function buildDerivedSemanticEdges<
+  TPage extends { id: string; pageType: string | null },
+>(input: {
+  pages: TPage[];
+  pageSourcesByPageId: Map<string, Array<{ sourcePageId: string }>>;
+  directEdges: Array<{ from: string; to: string }>;
+  explicitSemanticEdges: Array<{ from: string; to: string }>;
+}): KnowledgeGraphEdge[] {
+  const pageById = new Map(input.pages.map((page) => [page.id, page]));
+  const sourceIdsByPageId = new Map(
+    input.pages.map((page) => [
+      page.id,
+      new Set(
+        (input.pageSourcesByPageId.get(page.id) ?? []).map(
+          (source) => source.sourcePageId,
+        ),
+      ),
+    ]),
+  );
+  const pageIdsBySourceId = new Map<string, string[]>();
+  for (const [pageId, sourceIds] of sourceIdsByPageId) {
+    for (const sourceId of sourceIds) {
+      pageIdsBySourceId.set(sourceId, [
+        ...(pageIdsBySourceId.get(sourceId) ?? []),
+        pageId,
+      ]);
+    }
+  }
+
+  const neighborsByPageId = new Map(
+    input.pages.map((page) => [page.id, new Set<string>()]),
+  );
+  for (const edge of input.directEdges) {
+    neighborsByPageId.get(edge.from)?.add(edge.to);
+    neighborsByPageId.get(edge.to)?.add(edge.from);
+  }
+
+  const candidatePairs = new Map<string, [string, string]>();
+  const addCandidate = (first: string, second: string) => {
+    if (
+      first === second ||
+      candidatePairs.size >= MAX_DERIVED_SEMANTIC_CANDIDATES
+    ) {
+      return;
+    }
+    const pair = orderedPair(first, second);
+    candidatePairs.set(pairKey(pair[0], pair[1]), pair);
+  };
+  for (const pageIds of pageIdsBySourceId.values()) {
+    const uniquePageIds = [...new Set(pageIds)].sort();
+    for (let left = 0; left < uniquePageIds.length; left++) {
+      for (let right = left + 1; right < uniquePageIds.length; right++) {
+        addCandidate(uniquePageIds[left], uniquePageIds[right]);
+      }
+    }
+  }
+  for (const neighbors of neighborsByPageId.values()) {
+    const neighborIds = [...neighbors].sort();
+    for (let left = 0; left < neighborIds.length; left++) {
+      for (let right = left + 1; right < neighborIds.length; right++) {
+        addCandidate(neighborIds[left], neighborIds[right]);
+      }
+    }
+  }
+
+  const explicitPairs = new Set(
+    input.explicitSemanticEdges.map((edge) => {
+      const pair = orderedPair(edge.from, edge.to);
+      return pairKey(pair[0], pair[1]);
+    }),
+  );
+  const candidates: Array<{
+    from: string;
+    to: string;
+    label: string;
+    score: number;
+  }> = [];
+  for (const [key, [from, to]] of candidatePairs) {
+    if (explicitPairs.has(key)) continue;
+    const fromPage = pageById.get(from);
+    const toPage = pageById.get(to);
+    if (!fromPage || !toPage) continue;
+
+    const sharedSourceCount = intersectionSize(
+      sourceIdsByPageId.get(from) ?? new Set(),
+      sourceIdsByPageId.get(to) ?? new Set(),
+    );
+    const commonNeighborScore = adamicAdarScore(
+      neighborsByPageId.get(from) ?? new Set(),
+      neighborsByPageId.get(to) ?? new Set(),
+      neighborsByPageId,
+    );
+    if (sharedSourceCount === 0 && commonNeighborScore === 0) continue;
+
+    const score =
+      sharedSourceCount * 4 +
+      commonNeighborScore * 1.5 +
+      typeAffinity(fromPage.pageType, toPage.pageType);
+    candidates.push({
+      from,
+      to,
+      label:
+        sharedSourceCount > 0 && commonNeighborScore > 0
+          ? '共享来源 · 共同邻居'
+          : sharedSourceCount > 0
+            ? '共享来源'
+            : '共同邻居',
+      score: Math.round(score * 1_000) / 1_000,
+    });
+  }
+
+  const derivedDegree = new Map<string, number>();
+  const edges: KnowledgeGraphEdge[] = [];
+  for (const candidate of candidates.sort(
+    (left, right) =>
+      right.score - left.score ||
+      pairKey(left.from, left.to).localeCompare(pairKey(right.from, right.to)),
+  )) {
+    if (
+      (derivedDegree.get(candidate.from) ?? 0) >=
+        MAX_DERIVED_SEMANTIC_NEIGHBORS ||
+      (derivedDegree.get(candidate.to) ?? 0) >= MAX_DERIVED_SEMANTIC_NEIGHBORS
+    ) {
+      continue;
+    }
+    edges.push({
+      id: `derived:${candidate.from}:${candidate.to}`,
+      from: candidate.from,
+      to: candidate.to,
+      type: 'semantic',
+      label: candidate.label,
+      weight: candidate.score,
+      reasons: ['semantic-edge'],
+    });
+    derivedDegree.set(
+      candidate.from,
+      (derivedDegree.get(candidate.from) ?? 0) + 1,
+    );
+    derivedDegree.set(candidate.to, (derivedDegree.get(candidate.to) ?? 0) + 1);
+  }
+  return edges;
+}
+
+function orderedPair(first: string, second: string): [string, string] {
+  return first.localeCompare(second) <= 0 ? [first, second] : [second, first];
+}
+
+function pairKey(first: string, second: string): string {
+  return `${first}\u001f${second}`;
+}
+
+function intersectionSize(first: Set<string>, second: Set<string>): number {
+  let count = 0;
+  for (const value of first) {
+    if (second.has(value)) count++;
+  }
+  return count;
+}
+
+function adamicAdarScore(
+  first: Set<string>,
+  second: Set<string>,
+  neighborsByPageId: Map<string, Set<string>>,
+): number {
+  let score = 0;
+  for (const neighborId of first) {
+    if (!second.has(neighborId)) continue;
+    const degree = neighborsByPageId.get(neighborId)?.size ?? 0;
+    score += 1 / Math.log(Math.max(degree, 2));
+  }
+  return score;
+}
+
+function typeAffinity(
+  firstType: string | null,
+  secondType: string | null,
+): number {
+  if (!firstType || !secondType) return 0.5;
+  const forward = TYPE_AFFINITY[firstType]?.[secondType] ?? 0.5;
+  const backward = TYPE_AFFINITY[secondType]?.[firstType] ?? 0.5;
+  return (forward + backward) / 2;
 }
 
 function sectionNodeId(sectionId: string): string {
@@ -261,6 +500,31 @@ function readHeadingPath(value: unknown): string[] {
 function buildExcerpt(text: string): string {
   const compact = text.replace(/\s+/g, ' ').trim();
   return compact.length > 180 ? `${compact.slice(0, 177)}…` : compact;
+}
+
+function buildSectionTitle(input: {
+  headingPath: string[];
+  text: string;
+  pageTitle?: string;
+}): string {
+  const heading = input.headingPath[input.headingPath.length - 1]?.trim();
+  if (heading) return heading;
+
+  const compact = input.text
+    .replace(/^\s*#{1,6}\s+/u, '')
+    .replace(/[`*_>\[\]]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const sentenceEnd = compact.search(/[。！？.!?]/u);
+  const firstSentence = (
+    sentenceEnd >= 0 ? compact.slice(0, sentenceEnd) : compact
+  ).trim();
+  if (firstSentence) {
+    return firstSentence.length > 32
+      ? `${firstSentence.slice(0, 31)}…`
+      : firstSentence;
+  }
+  return input.pageTitle ? `${input.pageTitle} · 内容` : '内容片段';
 }
 
 function emptyGraph(): KnowledgeGraphResult {
@@ -316,39 +580,59 @@ function groupBy<T>(
 
 function assignCommunities<T extends { id: string }>(
   pages: T[],
-  edges: Array<{ from: string; to: string }>,
+  edges: Array<{ from: string; to: string; weight?: number }>,
 ): Map<string, string> {
-  const neighborsByPageId = new Map<string, Set<string>>();
-  for (const page of pages) {
-    neighborsByPageId.set(page.id, new Set());
-  }
+  if (pages.length === 0) return new Map();
+
+  const graph = new UndirectedGraph({ allowSelfLoops: false });
+  const pageIds = [...new Set(pages.map((page) => page.id))].sort();
+  for (const pageId of pageIds) graph.addNode(pageId);
+
   for (const edge of edges) {
-    neighborsByPageId.get(edge.from)?.add(edge.to);
-    neighborsByPageId.get(edge.to)?.add(edge.from);
-  }
-
-  const communityByPageId = new Map<string, string>();
-  let communityIndex = 0;
-
-  for (const page of pages) {
-    if (communityByPageId.has(page.id)) continue;
-
-    communityIndex += 1;
-    const communityId = `community-${communityIndex}`;
-    const stack = [page.id];
-
-    while (stack.length > 0) {
-      const pageId = stack.pop() as string;
-      if (communityByPageId.has(pageId)) continue;
-
-      communityByPageId.set(pageId, communityId);
-      for (const neighborId of neighborsByPageId.get(pageId) ?? []) {
-        if (!communityByPageId.has(neighborId)) {
-          stack.push(neighborId);
-        }
-      }
+    if (
+      edge.from === edge.to ||
+      !graph.hasNode(edge.from) ||
+      !graph.hasNode(edge.to)
+    ) {
+      continue;
+    }
+    const [from, to] = orderedPair(edge.from, edge.to);
+    const key = pairKey(from, to);
+    const weight = Math.max(Number(edge.weight ?? 1), 0.001);
+    if (graph.hasEdge(key)) {
+      graph.updateEdgeAttribute(
+        key,
+        'weight',
+        (current) => Number(current ?? 0) + weight,
+      );
+    } else {
+      graph.addUndirectedEdgeWithKey(key, from, to, { weight });
     }
   }
+
+  const rawAssignments = runLouvain(graph, {
+    resolution: 1,
+    randomWalk: false,
+    getEdgeWeight: 'weight',
+  });
+  const membersByRawCommunity = new Map<number, string[]>();
+  for (const pageId of pageIds) {
+    const rawCommunity = rawAssignments[pageId];
+    const members = membersByRawCommunity.get(rawCommunity) ?? [];
+    members.push(pageId);
+    membersByRawCommunity.set(rawCommunity, members);
+  }
+  const orderedCommunities = [...membersByRawCommunity.values()].sort(
+    (left, right) =>
+      right.length - left.length || left[0].localeCompare(right[0]),
+  );
+  const communityByPageId = new Map<string, string>();
+  orderedCommunities.forEach((members, index) => {
+    const communityId = `community-${index + 1}`;
+    for (const pageId of members) {
+      communityByPageId.set(pageId, communityId);
+    }
+  });
 
   return communityByPageId;
 }
@@ -357,13 +641,23 @@ function buildInsights<T extends { id: string }>(
   pages: T[],
   degreeByPageId: Map<string, number>,
   communityByPageId: Map<string, string>,
+  edges: Array<{ from: string; to: string }>,
 ): KnowledgeGraphInsights {
+  const bridgeNodeIds = new Set<string>();
+  for (const edge of edges) {
+    const fromCommunity = communityByPageId.get(edge.from);
+    const toCommunity = communityByPageId.get(edge.to);
+    if (fromCommunity && toCommunity && fromCommunity !== toCommunity) {
+      bridgeNodeIds.add(edge.from);
+      bridgeNodeIds.add(edge.to);
+    }
+  }
   return {
     isolatedNodeIds: pages
       .filter((page) => (degreeByPageId.get(page.id) ?? 0) === 0)
       .map((page) => page.id),
     bridgeNodeIds: pages
-      .filter((page) => (degreeByPageId.get(page.id) ?? 0) > 1)
+      .filter((page) => bridgeNodeIds.has(page.id))
       .map((page) => page.id),
     communityCount: new Set(communityByPageId.values()).size,
   };

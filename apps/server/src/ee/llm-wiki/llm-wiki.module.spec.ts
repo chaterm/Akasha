@@ -1,5 +1,5 @@
 import { MODULE_METADATA } from '@nestjs/common/constants';
-import { DocmostKnowledgeCompilerRunner } from './adapters/docmost-knowledge-compiler.runner';
+import { SemanticKnowledgeCompilerRunner } from './adapters/semantic-knowledge-compiler.runner';
 import { KNOWLEDGE_COMPILER_RUNNER } from './llm-wiki.constants';
 import { LlmWikiModule } from './llm-wiki.module';
 
@@ -12,10 +12,10 @@ describe('LlmWikiModule', () => {
 
     expect(providers).toEqual(
       expect.arrayContaining([
-        DocmostKnowledgeCompilerRunner,
+        SemanticKnowledgeCompilerRunner,
         expect.objectContaining({
           provide: KNOWLEDGE_COMPILER_RUNNER,
-          useExisting: DocmostKnowledgeCompilerRunner,
+          useExisting: SemanticKnowledgeCompilerRunner,
         }),
       ]),
     );

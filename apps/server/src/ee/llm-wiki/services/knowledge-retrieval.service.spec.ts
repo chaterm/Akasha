@@ -378,6 +378,166 @@ describe('KnowledgeRetrievalService', () => {
       }),
     );
   });
+
+  it('expands authorized direct hits through two readable graph hops', async () => {
+    const direct = chunkCandidate(
+      'chunk-seed',
+      'kp-seed',
+      ['source-seed'],
+      ['lexical'],
+      null,
+      'Seed result',
+    );
+    const firstNeighbor = chunkCandidate(
+      'chunk-neighbor-1',
+      'kp-neighbor-1',
+      ['source-neighbor-1'],
+      ['graph-neighbor'],
+      null,
+      'First graph neighbor',
+    );
+    const secondNeighbor = chunkCandidate(
+      'chunk-neighbor-2',
+      'kp-neighbor-2',
+      ['source-neighbor-2'],
+      ['graph-neighbor'],
+      null,
+      'Second graph neighbor',
+    );
+    const capsuleRepo = {
+      findDenseChunkCandidates: jest.fn().mockResolvedValue([]),
+      findLexicalChunkCandidates: jest.fn().mockResolvedValue([direct]),
+      findExactTitleChunkCandidates: jest.fn().mockResolvedValue([]),
+      findChunkSourcePageIdsByChunkIds: jest
+        .fn()
+        .mockResolvedValue([
+          { chunkId: 'chunk-seed', sourcePageIds: ['source-seed'] },
+        ]),
+      findGraphTraversalEdges: jest
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            id: 'link-1',
+            fromKnowledgePageId: 'kp-seed',
+            toKnowledgePageId: 'kp-neighbor-1',
+            type: 'link',
+            weight: 3,
+            sourcePageIds: ['source-edge-1'],
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: 'edge-2',
+            fromKnowledgePageId: 'kp-neighbor-1',
+            toKnowledgePageId: 'kp-neighbor-2',
+            type: 'semantic',
+            weight: 2,
+            sourcePageIds: ['source-edge-2'],
+          },
+        ]),
+      findGraphChunkCandidates: jest
+        .fn()
+        .mockResolvedValue([firstNeighbor, secondNeighbor]),
+    };
+    const sourceAuthorization = {
+      filterReadableSources: jest
+        .fn()
+        .mockImplementation(({ sourcePageIds }) =>
+          Promise.resolve(sourcePageIds),
+        ),
+    };
+    const service = createService({ capsuleRepo, sourceAuthorization });
+
+    const result = await service.retrieve({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: 'seed',
+      spaceIds: ['space-1'],
+      candidateLimit: 4,
+    });
+
+    expect(result.chunks).toEqual([
+      expect.objectContaining({
+        chunk: expect.objectContaining({ id: 'chunk-seed' }),
+        rankReasons: ['lexical', 'sidecar-prefiltered'],
+      }),
+      expect.objectContaining({
+        chunk: expect.objectContaining({ id: 'chunk-neighbor-1' }),
+        rankReasons: ['graph-neighbor', 'sidecar-prefiltered'],
+      }),
+      expect.objectContaining({
+        chunk: expect.objectContaining({ id: 'chunk-neighbor-2' }),
+        rankReasons: ['graph-neighbor', 'sidecar-prefiltered'],
+      }),
+    ]);
+    expect(capsuleRepo.findGraphTraversalEdges).toHaveBeenNthCalledWith(2, {
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-1'],
+      knowledgePageIds: ['kp-neighbor-1'],
+      limit: 100,
+    });
+    expect(capsuleRepo.findGraphChunkCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        knowledgePageIds: ['kp-neighbor-1', 'kp-neighbor-2'],
+        principals: [{ principalType: 'user', principalId: 'user-1' }],
+      }),
+    );
+  });
+
+  it('does not traverse a graph edge whose complete lineage is unreadable', async () => {
+    const direct = chunkCandidate(
+      'chunk-seed',
+      'kp-seed',
+      ['source-seed'],
+      ['lexical'],
+      null,
+      'Seed result',
+    );
+    const capsuleRepo = {
+      findDenseChunkCandidates: jest.fn().mockResolvedValue([]),
+      findLexicalChunkCandidates: jest.fn().mockResolvedValue([direct]),
+      findExactTitleChunkCandidates: jest.fn().mockResolvedValue([]),
+      findChunkSourcePageIdsByChunkIds: jest
+        .fn()
+        .mockResolvedValue([
+          { chunkId: 'chunk-seed', sourcePageIds: ['source-seed'] },
+        ]),
+      findGraphTraversalEdges: jest.fn().mockResolvedValue([
+        {
+          id: 'private-edge',
+          fromKnowledgePageId: 'kp-seed',
+          toKnowledgePageId: 'kp-private',
+          type: 'semantic',
+          weight: 2,
+          sourcePageIds: ['source-seed', 'source-private'],
+        },
+      ]),
+      findGraphChunkCandidates: jest.fn(),
+    };
+    const sourceAuthorization = {
+      filterReadableSources: jest
+        .fn()
+        .mockImplementation(({ sourcePageIds }) =>
+          Promise.resolve(
+            sourcePageIds.filter(
+              (sourcePageId: string) => sourcePageId !== 'source-private',
+            ),
+          ),
+        ),
+    };
+    const service = createService({ capsuleRepo, sourceAuthorization });
+
+    const result = await service.retrieve({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: 'seed',
+      spaceIds: ['space-1'],
+      candidateLimit: 4,
+    });
+
+    expect(result.chunks).toHaveLength(1);
+    expect(capsuleRepo.findGraphChunkCandidates).not.toHaveBeenCalled();
+  });
 });
 
 function createService(
@@ -407,6 +567,8 @@ function createService(
     findLexicalChunkCandidates: jest.fn().mockResolvedValue([]),
     findExactTitleChunkCandidates: jest.fn().mockResolvedValue([]),
     findChunkSourcePageIdsByChunkIds: jest.fn().mockResolvedValue([]),
+    findGraphTraversalEdges: jest.fn().mockResolvedValue([]),
+    findGraphChunkCandidates: jest.fn().mockResolvedValue([]),
     ...overrides.capsuleRepo,
   };
   const groupUserRepo = {
@@ -495,7 +657,7 @@ function chunkCandidate(
   chunkId: string,
   knowledgePageId: string,
   sourcePageIds: string[],
-  signals: Array<'semantic' | 'lexical' | 'exact-title'>,
+  signals: Array<'semantic' | 'lexical' | 'exact-title' | 'graph-neighbor'>,
   embedding: number[] | null,
   text: string,
 ) {

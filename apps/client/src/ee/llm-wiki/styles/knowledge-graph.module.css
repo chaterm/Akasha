@@ -84,7 +84,8 @@
     stroke-width 120ms ease;
 }
 
-.sectionNode {
+.sectionNode,
+.sectionMarker {
   fill: light-dark(var(--mantine-color-violet-0), rgba(112, 72, 232, 0.2));
   stroke: light-dark(
     var(--mantine-color-violet-5),
@@ -94,6 +95,12 @@
   transition:
     filter 120ms ease,
     stroke-width 120ms ease;
+}
+
+.sectionMarker {
+  filter: drop-shadow(
+    0 2px 4px light-dark(rgba(90, 55, 180, 0.18), rgba(112, 72, 232, 0.24))
+  );
 }
 
 .nodeSelected {

@@ -132,6 +132,13 @@ function diagnosticsPage(
     lastCompiledAt: null,
     lastAccessPolicyIndexedAt: null,
     staleAccessPolicyCount: 0,
+    compileStatus: 'not_started',
+    compileStage: null,
+    compileAttemptCount: 0,
+    compileErrorCode: null,
+    compileErrorMessage: null,
+    lastSucceededAt: null,
+    servingLastSuccessfulVersion: false,
     ...overrides,
   };
 }

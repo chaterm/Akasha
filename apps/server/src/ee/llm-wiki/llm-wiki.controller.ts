@@ -42,6 +42,8 @@ import { AiKnowledgeChatService } from './services/ai-knowledge-chat.service';
 import { KnowledgeDiagnosticsService } from './services/knowledge-diagnostics.service';
 import { KnowledgeGraphService } from './services/knowledge-graph.service';
 import { KnowledgeImportService } from './services/knowledge-import.service';
+import { KnowledgeSourceExporterService } from './services/knowledge-source-exporter.service';
+import { KnowledgeSpaceCompilationService } from './services/knowledge-space-compilation.service';
 import {
   buildKnowledgeAdminActionJobId,
   buildKnowledgeCompileJobId,
@@ -66,6 +68,8 @@ export class LlmWikiController {
     private readonly queryAuditRepo: KnowledgeQueryAuditRepo,
     @InjectQueue(QueueName.AI_QUEUE) private readonly aiQueue: Queue,
     private readonly pageRepo: PageRepo,
+    private readonly sourceExporter: KnowledgeSourceExporterService,
+    private readonly spaceCompilation: KnowledgeSpaceCompilationService,
   ) {}
 
   @HttpCode(HttpStatus.OK)
@@ -108,6 +112,7 @@ export class LlmWikiController {
       retrievalMode: retrievalDiagnostics.mode,
       authorizedCapsuleCount: retrievalDiagnostics.authorizedChunkCount,
       metadata: {
+        origin: 'knowledge_query',
         spaceIds: dto.spaceIds,
         queryEmbeddingAvailable: retrievalDiagnostics.queryEmbeddingAvailable,
         candidateSourceCount: retrievalDiagnostics.candidateSourceCount,
@@ -261,31 +266,48 @@ export class LlmWikiController {
       );
     }
 
-    const runKey = buildKnowledgeRunKey('retry_compile');
     const jobIds: string[] = [];
+    const pagesBySpace = new Map<string, (typeof pageRefs)[number][]>();
     for (const pageId of pageIds) {
       const page = pageById.get(pageId) as (typeof pageRefs)[number];
-      const jobId = buildKnowledgeCompilePageJobId({
+      const pages = pagesBySpace.get(page.spaceId) ?? [];
+      pages.push(page);
+      pagesBySpace.set(page.spaceId, pages);
+    }
+    const retryGroups = [];
+    for (const [spaceId, pages] of pagesBySpace) {
+      const sources = await this.sourceExporter.exportPageSources({
         workspaceId: workspace.id,
-        spaceId: page.spaceId,
-        sourcePageId: page.id,
-        runKey,
+        spaceId,
+        sourcePageIds: pages.map((page) => page.id),
       });
-      await this.aiQueue.add(
-        QueueJob.KNOWLEDGE_COMPILE_PAGES,
-        {
-          workspaceId: workspace.id,
-          spaceId: page.spaceId,
-          sourcePageIds: [page.id],
-          trigger: 'retry_compile',
-        },
-        {
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 1000 },
-          jobId,
-        },
+      const sourceByPageId = new Map(
+        sources.map((source) => [source.sourcePageId, source] as const),
       );
-      jobIds.push(jobId);
+      if (pages.some((page) => !sourceByPageId.has(page.id))) {
+        throw new BadRequestException(
+          'One or more source pages are unavailable for retry',
+        );
+      }
+      retryGroups.push({ spaceId, pages, sourceByPageId });
+    }
+    for (const { spaceId, pages, sourceByPageId } of retryGroups) {
+      const run = await this.spaceCompilation.startSpaceRun({
+        workspaceId: workspace.id,
+        spaceId,
+        trigger: 'retry_compile',
+        sources: pages.map((page) => sourceByPageId.get(page.id)!),
+      });
+      for (const page of pages) {
+        jobIds.push(
+          buildKnowledgeCompilePageJobId({
+            workspaceId: workspace.id,
+            spaceId,
+            sourcePageId: page.id,
+            runKey: run.id,
+          }),
+        );
+      }
     }
 
     this.auditService.log({

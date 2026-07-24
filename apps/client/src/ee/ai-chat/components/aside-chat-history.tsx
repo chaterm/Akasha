@@ -28,7 +28,7 @@ export default function AsideChatHistory({ activeChatId, onSelect }: Props) {
   return (
     <div>
       <TextInput
-        placeholder={t("Search chats...")}
+        placeholder={t("Search questions...")}
         leftSection={<IconSearch size={14} />}
         size="xs"
         mb="xs"
@@ -42,7 +42,7 @@ export default function AsideChatHistory({ activeChatId, onSelect }: Props) {
         </div>
       ) : chats.length === 0 ? (
         <Text size="sm" c="dimmed" ta="center" py="md">
-          {isSearching ? t("No chats found") : t("No chat history")}
+          {isSearching ? t("No questions found") : t("No question history")}
         </Text>
       ) : (
         <ScrollArea.Autosize mah={300} scrollbars="y">

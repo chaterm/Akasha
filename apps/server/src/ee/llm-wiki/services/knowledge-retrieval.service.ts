@@ -3,6 +3,7 @@ import { GroupUserRepo } from '@akasha/db/repos/group/group-user.repo';
 import {
   KnowledgeCapsuleRepo,
   KnowledgeChunkCandidate,
+  KnowledgeGraphTraversalEdge,
   KnowledgeRetrievalSignal,
 } from '@akasha/db/repos/llm-wiki/knowledge-capsule.repo';
 import { KnowledgeChunk, KnowledgePage } from '@akasha/db/types/entity.types';
@@ -245,15 +246,30 @@ export class KnowledgeRetrievalService {
         });
       }
     }
+    const graphExpansion = await this.expandGraph({
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      readableSpaceIds,
+      principals,
+      seedPageIds: unique(
+        authorizedChunks.map((candidate) => candidate.page.id),
+      ),
+      candidateLimit,
+    });
+    const selectedChunks = blendDirectAndGraph(
+      authorizedChunks,
+      graphExpansion.chunks,
+      candidateLimit,
+    );
     const finalAuthorizedSourceCount = unique(
-      authorizedChunks.flatMap((candidate) => candidate.sourcePageIds),
+      selectedChunks.flatMap((candidate) => candidate.sourcePageIds),
     ).length;
 
     return {
       mode: accessPolicyFallbackUsed
         ? 'high_completeness_fallback'
         : 'high_completeness',
-      chunks: authorizedChunks,
+      chunks: selectedChunks,
       capsules: [],
       completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
       diagnostics: {
@@ -269,13 +285,136 @@ export class KnowledgeRetrievalService {
         titleCandidateCount: uniqueCandidateCount(titleCandidates),
         evidenceCandidateCount,
         memoryCandidateCount,
-        rankedCandidateCount: rankedCandidates.length,
-        authorizedChunkCount: authorizedChunks.length,
-        filteredChunkCount: rankedCandidates.length - authorizedChunks.length,
+        rankedCandidateCount:
+          rankedCandidates.length + graphExpansion.candidateCount,
+        authorizedChunkCount: selectedChunks.length,
+        filteredChunkCount:
+          rankedCandidates.length +
+          graphExpansion.candidateCount -
+          selectedChunks.length,
       },
     };
   }
+
+  private async expandGraph(input: {
+    workspaceId: string;
+    userId: string;
+    readableSpaceIds: string[];
+    principals: Array<{
+      principalType: 'user' | 'group';
+      principalId: string;
+    }>;
+    seedPageIds: string[];
+    candidateLimit: number;
+  }): Promise<GraphExpansionResult> {
+    if (input.seedPageIds.length === 0 || input.candidateLimit <= 1) {
+      return { chunks: [], candidateCount: 0 };
+    }
+
+    const visited = new Set(input.seedPageIds);
+    const hopByPageId = new Map<string, number>();
+    const pathScoreByPageId = new Map<string, number>();
+    let frontier = input.seedPageIds;
+    const edgeLimit = Math.max(input.candidateLimit * 20, 100);
+
+    for (let hop = 1; hop <= 2 && frontier.length > 0; hop += 1) {
+      const edges = await this.capsuleRepo.findGraphTraversalEdges({
+        workspaceId: input.workspaceId,
+        spaceIds: input.readableSpaceIds,
+        knowledgePageIds: frontier,
+        limit: edgeLimit,
+      });
+      if (edges.length === 0) break;
+
+      const readableRelationSourceIds = new Set(
+        await this.sourceAuthorization.filterReadableSources({
+          workspaceId: input.workspaceId,
+          userId: input.userId,
+          sourcePageIds: unique(edges.flatMap((edge) => edge.sourcePageIds)),
+        }),
+      );
+      const readableEdges = edges.filter((edge) =>
+        allSourcesReadable(edge.sourcePageIds, readableRelationSourceIds),
+      );
+      const frontierSet = new Set(frontier);
+      const nextFrontier = new Set<string>();
+      for (const edge of readableEdges) {
+        for (const [currentPageId, neighborPageId] of edgeDirections(edge)) {
+          if (!frontierSet.has(currentPageId) || visited.has(neighborPageId)) {
+            continue;
+          }
+          nextFrontier.add(neighborPageId);
+          hopByPageId.set(neighborPageId, hop);
+          pathScoreByPageId.set(
+            neighborPageId,
+            Math.max(
+              pathScoreByPageId.get(neighborPageId) ?? 0,
+              edge.weight / hop,
+            ),
+          );
+        }
+      }
+      frontier = [...nextFrontier];
+      for (const pageId of frontier) visited.add(pageId);
+    }
+
+    const expandedPageIds = [...hopByPageId.keys()];
+    if (expandedPageIds.length === 0) {
+      return { chunks: [], candidateCount: 0 };
+    }
+    const candidates = await this.capsuleRepo.findGraphChunkCandidates({
+      workspaceId: input.workspaceId,
+      spaceIds: input.readableSpaceIds,
+      principals: input.principals,
+      knowledgePageIds: expandedPageIds,
+      limit: Math.max(input.candidateLimit * 4, input.candidateLimit),
+    });
+    if (candidates.length === 0) {
+      return { chunks: [], candidateCount: 0 };
+    }
+
+    const readableCandidateSourceIds = new Set(
+      await this.sourceAuthorization.filterReadableSources({
+        workspaceId: input.workspaceId,
+        userId: input.userId,
+        sourcePageIds: unique(
+          candidates.flatMap((candidate) => candidate.sourcePageIds),
+        ),
+      }),
+    );
+    const chunks = candidates
+      .filter((candidate) =>
+        allSourcesReadable(candidate.sourcePageIds, readableCandidateSourceIds),
+      )
+      .sort((left, right) => {
+        const leftHop = hopByPageId.get(left.page.id) ?? 3;
+        const rightHop = hopByPageId.get(right.page.id) ?? 3;
+        if (leftHop !== rightHop) return leftHop - rightHop;
+        const scoreDifference =
+          (pathScoreByPageId.get(right.page.id) ?? 0) -
+          (pathScoreByPageId.get(left.page.id) ?? 0);
+        return scoreDifference || left.chunk.id.localeCompare(right.chunk.id);
+      })
+      .map((candidate) => ({
+        chunk: candidate.chunk,
+        page: candidate.page,
+        sourcePageIds: candidate.sourcePageIds,
+        rankReasons: [
+          'graph-neighbor' as const,
+          'sidecar-prefiltered' as const,
+        ],
+        ...(candidate.parentSection
+          ? { parentSection: candidate.parentSection }
+          : {}),
+      }));
+    return { chunks, candidateCount: candidates.length };
+  }
 }
+
+type GraphExpansionResult = {
+  chunks: KnowledgeRetrievalResult['chunks'];
+  candidateCount: number;
+};
 
 function emptyResult(
   diagnostics?: Partial<KnowledgeRetrievalDiagnostics>,
@@ -364,4 +503,56 @@ function uniqueCandidateCount(
   candidates: Array<{ chunk: { id: string } }>,
 ): number {
   return new Set(candidates.map((candidate) => candidate.chunk.id)).size;
+}
+
+function edgeDirections(
+  edge: KnowledgeGraphTraversalEdge,
+): Array<[string, string]> {
+  return [
+    [edge.fromKnowledgePageId, edge.toKnowledgePageId],
+    [edge.toKnowledgePageId, edge.fromKnowledgePageId],
+  ];
+}
+
+function allSourcesReadable(
+  sourcePageIds: string[],
+  readableSourcePageIds: Set<string>,
+): boolean {
+  return (
+    sourcePageIds.length > 0 &&
+    sourcePageIds.every((sourcePageId) =>
+      readableSourcePageIds.has(sourcePageId),
+    )
+  );
+}
+
+function blendDirectAndGraph(
+  direct: KnowledgeRetrievalResult['chunks'],
+  graph: KnowledgeRetrievalResult['chunks'],
+  limit: number,
+): KnowledgeRetrievalResult['chunks'] {
+  if (limit <= 0) return [];
+  if (graph.length === 0 || direct.length === 0 || limit === 1) {
+    return (direct.length > 0 ? direct : graph).slice(0, limit);
+  }
+
+  const graphQuota = Math.min(
+    graph.length,
+    Math.max(1, Math.floor(limit / 4)),
+    limit - 1,
+  );
+  const selected = [
+    ...direct.slice(0, limit - graphQuota),
+    ...graph.slice(0, graphQuota),
+  ];
+  const selectedChunkIds = new Set(
+    selected.map((candidate) => candidate.chunk.id),
+  );
+  for (const candidate of [...direct, ...graph]) {
+    if (selected.length >= limit) break;
+    if (selectedChunkIds.has(candidate.chunk.id)) continue;
+    selected.push(candidate);
+    selectedChunkIds.add(candidate.chunk.id);
+  }
+  return selected;
 }

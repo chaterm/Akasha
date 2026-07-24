@@ -23,6 +23,8 @@ import ChatInput from "./chat-input";
 import AsideChatHistory from "./aside-chat-history";
 import type { ChatAttachment, PageMention } from "../types/ai-chat.types";
 import classes from "../styles/aside-chat-panel.module.css";
+import KnowledgeScopeBar from "./knowledge-scope-bar";
+import { useKnowledgeScope } from "../hooks/use-knowledge-scope";
 
 type QuickAction = {
   icon: React.ReactNode;
@@ -47,6 +49,7 @@ export default function AsideChatPanel() {
     streamingContent,
     streamingToolCalls,
     isStreaming,
+    progressStage,
     error,
     sendMessage,
     stopGeneration,
@@ -56,10 +59,13 @@ export default function AsideChatPanel() {
       setChatId(newChatId);
     },
   });
+  const knowledgeScope = useKnowledgeScope();
 
   useEffect(() => {
     if (page && !chatId) {
-      setContextPages([{ id: page.id, title: page.title || "", slugId: page.slugId }]);
+      setContextPages([
+        { id: page.id, title: page.title || "", slugId: page.slugId },
+      ]);
     }
   }, [page, chatId]);
 
@@ -122,11 +128,22 @@ export default function AsideChatPanel() {
   }, [setAsideState]);
 
   const handleSend = useCallback(
-    (content: string, mentions: PageMention[], attachments: ChatAttachment[]) => {
-      const contextPageId = contextPages.length > 0 ? contextPages[0].id : undefined;
-      sendMessage(content, mentions, attachments, contextPageId);
+    (
+      content: string,
+      mentions: PageMention[],
+      attachments: ChatAttachment[],
+    ) => {
+      const contextPageId =
+        contextPages.length > 0 ? contextPages[0].id : undefined;
+      sendMessage(
+        content,
+        mentions,
+        attachments,
+        contextPageId,
+        knowledgeScope.spaceIds,
+      );
     },
-    [sendMessage, contextPages],
+    [sendMessage, contextPages, knowledgeScope.spaceIds],
   );
 
   const handleQuickAction = useCallback(
@@ -139,9 +156,21 @@ export default function AsideChatPanel() {
   const hasMessages = messages.length > 0 || isStreaming;
 
   const quickActions: QuickAction[] = [
-    { icon: <IconFileText size={16} />, label: t("Summarize this page"), prompt: "Summarize this page" },
-    { icon: <IconLanguage size={16} />, label: t("Translate this page"), prompt: "Translate this page" },
-    { icon: <IconSearch size={16} />, label: t("Analyze for insights"), prompt: "Analyze this page for insights" },
+    {
+      icon: <IconFileText size={16} />,
+      label: t("Summarize this page"),
+      prompt: "Summarize this page",
+    },
+    {
+      icon: <IconLanguage size={16} />,
+      label: t("Translate this page"),
+      prompt: "Translate this page",
+    },
+    {
+      icon: <IconSearch size={16} />,
+      label: t("Analyze for insights"),
+      prompt: "Analyze this page for insights",
+    },
   ];
 
   return (
@@ -160,25 +189,28 @@ export default function AsideChatPanel() {
               onClick={() => setHistoryOpen((o) => !o)}
             >
               <span className={classes.titleText}>
-                {chatInfoQuery.data?.chat?.title || t("New chat")}
+                {chatInfoQuery.data?.chat?.title || t("New question")}
               </span>
               <IconChevronDown size={16} stroke={1.75} />
             </UnstyledButton>
           </Popover.Target>
           <Popover.Dropdown>
-            <AsideChatHistory activeChatId={chatId} onSelect={handleSelectChat} />
+            <AsideChatHistory
+              activeChatId={chatId}
+              onSelect={handleSelectChat}
+            />
           </Popover.Dropdown>
         </Popover>
 
         <div className={classes.toolbarSpacer} />
 
-        <Tooltip label={t("New chat")} openDelay={250}>
+        <Tooltip label={t("New question")} openDelay={250}>
           <ActionIcon
             component="a"
             href="/ai"
             variant="subtle"
             color="dark"
-            aria-label={t("New chat")}
+            aria-label={t("New question")}
             onClick={handleNewChat}
           >
             <IconPlus size={20} stroke={1.75} />
@@ -208,6 +240,14 @@ export default function AsideChatPanel() {
         </Tooltip>
       </div>
 
+      <KnowledgeScopeBar
+        options={knowledgeScope.options}
+        selectedSpaceId={knowledgeScope.selectedSpaceId}
+        onChange={knowledgeScope.setSelectedSpaceId}
+        isLoading={knowledgeScope.isLoading}
+        compact
+      />
+
       {error && (
         <div
           style={{
@@ -228,13 +268,20 @@ export default function AsideChatPanel() {
               isStreaming={isStreaming}
               streamingContent={streamingContent}
               streamingToolCalls={streamingToolCalls}
+              progressStage={progressStage}
             />
           </div>
         </>
       ) : (
         <div className={classes.emptyState}>
-          <IconSparkles size={36} stroke={1.5} className={classes.emptyStateIcon} />
-          <div className={classes.emptyStateTitle}>{t("How can I help you today?")}</div>
+          <IconSparkles
+            size={36}
+            stroke={1.5}
+            className={classes.emptyStateIcon}
+          />
+          <div className={classes.emptyStateTitle}>
+            {t("Ask about this page or the knowledge base")}
+          </div>
           <div className={classes.quickActions}>
             {quickActions.map((action) => (
               <button
@@ -256,7 +303,7 @@ export default function AsideChatPanel() {
           isStreaming={isStreaming}
           onSend={handleSend}
           onStop={stopGeneration}
-          placeholder={t("Ask anything...")}
+          placeholder={t("Ask the knowledge base...")}
           autofocus={false}
           contextPages={contextPages}
           onRemoveContextPage={handleRemoveContextPage}

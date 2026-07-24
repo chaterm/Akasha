@@ -6,6 +6,7 @@ import type {
   AiChatMessage,
   AiChatStreamEvent,
   AiChatToolCall,
+  AiQaProgressStage,
   ChatAttachment,
   PageMention,
 } from "../types/ai-chat.types";
@@ -20,10 +21,13 @@ export function useChatStream(
 ) {
   const [messages, setMessages] = useState<AiChatMessage[]>([]);
   const [streamingContent, setStreamingContent] = useState("");
-  const [streamingToolCalls, setStreamingToolCalls] = useState<AiChatToolCall[]>(
-    [],
-  );
+  const [streamingToolCalls, setStreamingToolCalls] = useState<
+    AiChatToolCall[]
+  >([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [progressStage, setProgressStage] = useState<AiQaProgressStage | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [isRetryable, setIsRetryable] = useState(false);
@@ -32,6 +36,8 @@ export function useChatStream(
   const navigate = useNavigate();
   const currentChatIdRef = useRef(chatId);
   currentChatIdRef.current = chatId;
+  const onChatCreatedRef = useRef(options?.onChatCreated);
+  onChatCreatedRef.current = options?.onChatCreated;
   // Tracks which chatId the local `messages` state currently represents.
   // Set when we seed from a server fetch AND when we optimistically own a
   // freshly-created chat after `chat_created`. This is the single authority
@@ -59,13 +65,20 @@ export function useChatStream(
   }, []);
 
   const sendMessage = useCallback(
-    (content: string, mentions: PageMention[] = [], attachments: ChatAttachment[] = [], contextPageId?: string) => {
+    (
+      content: string,
+      mentions: PageMention[] = [],
+      attachments: ChatAttachment[] = [],
+      contextPageId?: string,
+      spaceIds?: string[],
+    ) => {
       if (isStreaming || (!content.trim() && attachments.length === 0)) return;
 
       setError(null);
       setErrorCode(null);
       setIsRetryable(false);
       setIsStreaming(true);
+      setProgressStage("permissions");
       setStreamingContent("");
       setStreamingToolCalls([]);
 
@@ -79,6 +92,9 @@ export function useChatStream(
           fileName: a.fileName,
           fileExt: a.fileExt,
         }));
+      }
+      if (spaceIds) {
+        metadata.spaceIds = spaceIds;
       }
 
       const userMessage: AiChatMessage = {
@@ -102,6 +118,7 @@ export function useChatStream(
           mentionedPageIds: mentions.map((m) => m.id),
           ...(contextPageId && { contextPageId }),
           ...(attachmentIds.length && { attachmentIds }),
+          ...(spaceIds && { spaceIds }),
         },
         (event: AiChatStreamEvent) => {
           switch (event.type) {
@@ -111,8 +128,8 @@ export function useChatStream(
               // prop catches up via navigation/onChatCreated, the reset effect
               // sees a match and preserves our optimistic messages.
               hydratedChatIdRef.current = event.chatId;
-              if (options?.onChatCreated) {
-                options.onChatCreated(event.chatId);
+              if (onChatCreatedRef.current) {
+                onChatCreatedRef.current(event.chatId);
               } else {
                 navigate(`/ai/chat/${event.chatId}`, { replace: true });
               }
@@ -120,6 +137,9 @@ export function useChatStream(
               break;
             case "content":
               setStreamingContent((prev) => prev + event.text);
+              break;
+            case "progress":
+              setProgressStage(event.stage);
               break;
             case "tool_call":
               setStreamingToolCalls((prev) => [
@@ -149,7 +169,7 @@ export function useChatStream(
                     toolCalls: currentToolCalls.length
                       ? currentToolCalls
                       : null,
-                    metadata: event.usage ? { tokenUsage: event.usage } : null,
+                    metadata: buildAssistantMetadata(event),
                     createdAt: new Date().toISOString(),
                   };
 
@@ -159,6 +179,7 @@ export function useChatStream(
                 return "";
               });
               setIsStreaming(false);
+              setProgressStage(null);
               queryClient.invalidateQueries({
                 queryKey: ["ai-chat", currentChatIdRef.current],
               });
@@ -169,12 +190,14 @@ export function useChatStream(
               setErrorCode(event.code || null);
               setIsRetryable(event.retryable || false);
               setIsStreaming(false);
+              setProgressStage(null);
               break;
           }
         },
         (errorMsg) => {
           setError(errorMsg);
           setIsStreaming(false);
+          setProgressStage(null);
         },
         () => {
           setIsStreaming(false);
@@ -210,6 +233,7 @@ export function useChatStream(
     });
 
     setIsStreaming(false);
+    setProgressStage(null);
   }, []);
 
   return {
@@ -217,6 +241,7 @@ export function useChatStream(
     streamingContent,
     streamingToolCalls,
     isStreaming,
+    progressStage,
     error,
     errorCode,
     isRetryable,
@@ -224,4 +249,26 @@ export function useChatStream(
     stopGeneration,
     hydrateFromServer,
   };
+}
+
+function buildAssistantMetadata(
+  event: Extract<AiChatStreamEvent, { type: "done" }>,
+): Record<string, unknown> | null {
+  const metadata: Record<string, unknown> = {};
+  if (event.usage) metadata.tokenUsage = event.usage;
+  if (event.citations) metadata.citations = event.citations;
+  if (event.citationEvidence)
+    metadata.citationEvidence = event.citationEvidence;
+  if (event.retrievedSources)
+    metadata.retrievedSources = event.retrievedSources;
+  if (event.retrievalDiagnostics) {
+    metadata.retrievalDiagnostics = event.retrievalDiagnostics;
+  }
+  if (event.retrievalReasons)
+    metadata.retrievalReasons = event.retrievalReasons;
+  if (event.completenessNotice) {
+    metadata.completenessNotice = event.completenessNotice;
+  }
+  if (event.answerMode) metadata.answerMode = event.answerMode;
+  return Object.keys(metadata).length ? metadata : null;
 }

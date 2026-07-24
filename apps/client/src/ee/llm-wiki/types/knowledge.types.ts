@@ -123,11 +123,14 @@ export interface KnowledgeDiagnosticsJob {
 
 export interface KnowledgeCompileStatus {
   spaceId: string;
-  status: "queued" | "running" | "succeeded" | "failed";
+  status: "queued" | "running" | "succeeded" | "partial" | "failed";
   jobId: string;
   lastRunId: string;
   durationMs: number | null;
   sourceCount: number;
+  succeededPageCount?: number;
+  failedPageCount?: number;
+  skippedPageCount?: number;
   importedArtifactCount: number;
   quarantinedArtifactCount: number;
   failureReason?: string;

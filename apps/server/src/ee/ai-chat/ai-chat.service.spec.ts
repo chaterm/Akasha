@@ -3,9 +3,10 @@ import { AiChatRepo } from '@akasha/db/repos/ai-chat/ai-chat.repo';
 import { SpaceRepo } from '@akasha/db/repos/space/space.repo';
 import { SpaceMemberRepo } from '@akasha/db/repos/space/space-member.repo';
 import { AiKnowledgeChatService } from '../llm-wiki/services/ai-knowledge-chat.service';
+import { KnowledgeQueryAuditRepo } from '@akasha/db/repos/llm-wiki/knowledge-query-audit.repo';
 
 describe('AiChatService', () => {
-  it('creates a chat, stores both messages, and answers with all workspace spaces for owners', async () => {
+  it('limits selected spaces to readable spaces, stores evidence, and records retrieval audit', async () => {
     const repo = {
       createChat: jest.fn().mockResolvedValue(chat('chat-1')),
       addMessage: jest
@@ -27,17 +28,42 @@ describe('AiChatService', () => {
     const knowledgeChat = {
       chat: jest.fn().mockResolvedValue({
         answer: 'answer',
+        answerMode: 'knowledge',
         citations: [
           { sourcePageId: 'page-1', title: 'Page', url: '/p/page-1' },
         ],
+        citationEvidence: [
+          {
+            sourcePageId: 'page-1',
+            title: 'Page',
+            url: '/p/page-1',
+            excerpts: [
+              {
+                text: 'Verified excerpt',
+                sourceRange: { startOffset: 10, endOffset: 26 },
+                quoteHash: 'sha256:verified',
+              },
+            ],
+          },
+        ],
+        retrievedSources: [
+          { sourcePageId: 'page-1', title: 'Page', url: '/p/page-1' },
+          { sourcePageId: 'page-2', title: 'Other', url: '/p/page-2' },
+        ],
+        retrievalReasons: ['lexical'],
         completenessNotice: 'notice',
+        retrievalDiagnostics: diagnostics(),
       }),
+    };
+    const queryAuditRepo = {
+      recordQuery: jest.fn().mockResolvedValue(undefined),
     };
     const service = new AiChatService(
       repo as unknown as AiChatRepo,
       spaceRepo as unknown as SpaceRepo,
       spaceMemberRepo as unknown as SpaceMemberRepo,
       knowledgeChat as unknown as AiKnowledgeChatService,
+      queryAuditRepo as unknown as KnowledgeQueryAuditRepo,
     );
 
     await expect(
@@ -45,13 +71,35 @@ describe('AiChatService', () => {
         workspace: workspace() as never,
         user: user('owner') as never,
         content: 'hello',
+        spaceIds: ['space-2', 'space-hidden', 'space-2'],
       }),
     ).resolves.toEqual({
       chatId: 'chat-1',
       assistantMessageId: 'message-assistant-1',
       answer: 'answer',
       citations: [{ sourcePageId: 'page-1', title: 'Page', url: '/p/page-1' }],
-      retrievalDiagnostics: undefined,
+      citationEvidence: [
+        {
+          sourcePageId: 'page-1',
+          title: 'Page',
+          url: '/p/page-1',
+          excerpts: [
+            {
+              text: 'Verified excerpt',
+              sourceRange: { startOffset: 10, endOffset: 26 },
+              quoteHash: 'sha256:verified',
+            },
+          ],
+        },
+      ],
+      retrievedSources: [
+        { sourcePageId: 'page-1', title: 'Page', url: '/p/page-1' },
+        { sourcePageId: 'page-2', title: 'Other', url: '/p/page-2' },
+      ],
+      retrievalDiagnostics: diagnostics(),
+      retrievalReasons: ['lexical'],
+      completenessNotice: 'notice',
+      answerMode: 'knowledge',
     });
 
     expect(repo.createChat).toHaveBeenCalledWith({
@@ -63,7 +111,7 @@ describe('AiChatService', () => {
       workspaceId: 'workspace-1',
       userId: 'user-1',
       query: 'hello',
-      spaceIds: ['space-1', 'space-2'],
+      spaceIds: ['space-2'],
       chatContext: [],
       workspace: workspace(),
       mentionedPageIds: undefined,
@@ -79,7 +127,7 @@ describe('AiChatService', () => {
       role: 'user',
       content: 'hello',
       toolCalls: null,
-      metadata: null,
+      metadata: { spaceIds: ['space-2'] },
     });
     expect(repo.addMessage).toHaveBeenNthCalledWith(2, {
       workspaceId: 'workspace-1',
@@ -92,12 +140,66 @@ describe('AiChatService', () => {
         citations: [
           { sourcePageId: 'page-1', title: 'Page', url: '/p/page-1' },
         ],
+        citationEvidence: [
+          {
+            sourcePageId: 'page-1',
+            title: 'Page',
+            url: '/p/page-1',
+            excerpts: [
+              {
+                text: 'Verified excerpt',
+                sourceRange: { startOffset: 10, endOffset: 26 },
+                quoteHash: 'sha256:verified',
+              },
+            ],
+          },
+        ],
+        retrievedSources: [
+          { sourcePageId: 'page-1', title: 'Page', url: '/p/page-1' },
+          { sourcePageId: 'page-2', title: 'Other', url: '/p/page-2' },
+        ],
+        retrievalDiagnostics: diagnostics(),
+        retrievalReasons: ['lexical'],
         completenessNotice: 'notice',
+        answerMode: 'knowledge',
+        spaceIds: ['space-2'],
       },
+    });
+    expect(queryAuditRepo.recordQuery).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      queryHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+      retrievalMode: 'high_completeness',
+      authorizedCapsuleCount: 1,
+      metadata: expect.objectContaining({
+        origin: 'ai_qa',
+        answerMode: 'knowledge',
+        citationCount: 1,
+        retrievedSourceCount: 2,
+        spaceIds: ['space-2'],
+        queryEmbeddingAvailable: true,
+        authorizedChunkCount: 1,
+      }),
     });
     expect(spaceMemberRepo.getUserSpaceIds).not.toHaveBeenCalled();
   });
 });
+
+function diagnostics() {
+  return {
+    mode: 'high_completeness',
+    queryEmbeddingAvailable: true,
+    candidateSourceCount: 2,
+    policyCandidateSourceCount: 2,
+    fallbackCandidateSourceCount: 0,
+    finalAuthorizedSourceCount: 1,
+    accessPolicyFallbackUsed: false,
+    candidateChunkCount: 1,
+    rankedCandidateCount: 1,
+    authorizedChunkCount: 1,
+    filteredChunkCount: 0,
+  };
+}
 
 function workspace() {
   return {

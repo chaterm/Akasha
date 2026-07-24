@@ -61,6 +61,8 @@ const GRAPH_HEIGHT = 680;
 const MIN_ZOOM = 0.35;
 const MAX_ZOOM = 3.2;
 const ZOOM_STEP = 1.2;
+const SECTION_MARKER_SIZE = 18;
+const SECTION_CARD_HEIGHT = 32;
 const ENABLE_GRAPH_ANIMATION = import.meta.env.MODE !== "test";
 const EMPTY_GRAPH: KnowledgeGraphResult = {
   nodes: [],
@@ -98,6 +100,9 @@ type SimulatedNode = GraphPoint & {
   vy: number;
   degree: number;
   kind: KnowledgeGraphNode["kind"];
+  visualHalfWidth: number;
+  visualHalfHeight: number;
+  collisionRadius: number;
 };
 
 export default function KnowledgeGraphPage() {
@@ -153,6 +158,12 @@ export default function KnowledgeGraphPage() {
     () => filterGraph(graph, search, edgeTypes, focusPageId, showIsolated),
     [edgeTypes, focusPageId, graph, search, showIsolated],
   );
+  const visiblePageCount = visibleGraph.nodes.filter(
+    (node) => node.kind !== "section",
+  ).length;
+  const totalPageCount = graph.nodes.filter(
+    (node) => node.kind !== "section",
+  ).length;
   const persistentLabelNodeIds = useMemo(() => {
     if (focusPageId || visibleGraph.nodes.length <= 24) {
       return new Set(visibleGraph.nodes.map((node) => node.id));
@@ -165,14 +176,23 @@ export default function KnowledgeGraphPage() {
     );
   }, [focusPageId, visibleGraph.nodes]);
   const initialLayout = useMemo(
-    () => buildInitialGraphLayout(visibleGraph.nodes, visibleGraph.edges),
-    [visibleGraph.nodes, visibleGraph.edges],
+    () =>
+      buildInitialGraphLayout(
+        visibleGraph.nodes,
+        visibleGraph.edges,
+        Boolean(focusPageId),
+      ),
+    [focusPageId, visibleGraph.nodes, visibleGraph.edges],
   );
   const svgRef = useRef<SVGSVGElement | null>(null);
   const animationRef = useRef<number | null>(null);
   const simulationTickRef = useRef(0);
   const [positions, setPositions] = useState<Map<string, SimulatedNode>>(() =>
-    initializeSimulation(visibleGraph.nodes, initialLayout),
+    initializeSimulation(
+      visibleGraph.nodes,
+      initialLayout,
+      Boolean(focusPageId),
+    ),
   );
   const [transform, setTransform] = useState<GraphTransform>(() =>
     fitGraphTransform(visibleGraph.nodes, initialLayout),
@@ -204,11 +224,12 @@ export default function KnowledgeGraphPage() {
     const nextPositions = initializeSimulation(
       visibleGraph.nodes,
       initialLayout,
+      Boolean(focusPageId),
     );
     setPositions(nextPositions);
     setTransform(fitGraphTransform(visibleGraph.nodes, initialLayout));
     simulationTickRef.current = 0;
-  }, [initialLayout, visibleGraph.nodes]);
+  }, [focusPageId, initialLayout, visibleGraph.nodes]);
 
   useEffect(() => {
     if (!ENABLE_GRAPH_ANIMATION) return;
@@ -368,11 +389,11 @@ export default function KnowledgeGraphPage() {
             <Group gap="sm">
               <Button
                 component={Link}
-                to={spaceSlug ? `/s/${spaceSlug}` : "/knowledge"}
+                to={spaceSlug ? `/s/${spaceSlug}` : "/ai"}
                 variant="default"
                 leftSection={<IconArrowLeft size={16} />}
               >
-                {spaceSlug ? t("Space") : t("Knowledge")}
+                {spaceSlug ? t("Space") : t("AI Q&A")}
               </Button>
               <Button
                 variant="default"
@@ -437,11 +458,8 @@ export default function KnowledgeGraphPage() {
 
           <Group gap="xs">
             <Badge variant="light">
-              {t("Pages")}:{" "}
-              {
-                visibleGraph.nodes.filter((node) => node.kind !== "section")
-                  .length
-              }
+              {t("Pages")}: {visiblePageCount}
+              {visiblePageCount < totalPageCount ? ` / ${totalPageCount}` : ""}
             </Badge>
             <Badge variant="light" color="violet">
               {t("Sections")}:{" "}
@@ -572,6 +590,7 @@ export default function KnowledgeGraphPage() {
                       const from = positions.get(edge.from);
                       const to = positions.get(edge.to);
                       if (!from || !to) return null;
+                      const line = clipEdgeLine(from, to);
                       const isActive =
                         activeEdgeId === edge.id ||
                         activeNodeId === edge.from ||
@@ -585,16 +604,17 @@ export default function KnowledgeGraphPage() {
                           onMouseLeave={() => setActiveEdgeId(null)}
                         >
                           <line
-                            x1={from.x}
-                            y1={from.y}
-                            x2={to.x}
-                            y2={to.y}
+                            data-edge-id={edge.id}
+                            x1={line.x1}
+                            y1={line.y1}
+                            x2={line.x2}
+                            y2={line.y2}
                             className={`${edgeClassName(edge.type)} ${isActive ? classes.edgeActive : classes.edgeInactive}`}
                             markerEnd="url(#knowledge-graph-arrow)"
                           />
                           <text
-                            x={(from.x + to.x) / 2}
-                            y={(from.y + to.y) / 2 - 8}
+                            x={(line.x1 + line.x2) / 2}
+                            y={(line.y1 + line.y2) / 2 - 8}
                             className={`${classes.edgeLabel} ${isActive ? classes.edgeLabelVisible : ""}`}
                             data-visible={isActive ? "true" : "false"}
                           >
@@ -609,6 +629,15 @@ export default function KnowledgeGraphPage() {
                       if (!point) return null;
                       const radius = nodeRadius(node);
                       const selected = selectedNodeId === node.id;
+                      const expandedSection =
+                        node.kind === "section" && Boolean(focusPageId);
+                      const sectionWidth = sectionCardWidth(node.title);
+                      const labelY =
+                        node.kind !== "section"
+                          ? point.y + radius + 18
+                          : expandedSection
+                            ? point.y + 4
+                            : point.y + SECTION_MARKER_SIZE / 2 + 18;
                       const showLabel =
                         persistentLabelNodeIds.has(node.id) ||
                         activeNodeId === node.id ||
@@ -621,6 +650,13 @@ export default function KnowledgeGraphPage() {
                           role="button"
                           tabIndex={0}
                           aria-label={`${t("Graph node")}: ${node.title}`}
+                          data-section-mode={
+                            node.kind === "section"
+                              ? expandedSection
+                                ? "expanded"
+                                : "compact"
+                              : undefined
+                          }
                           onPointerDown={(event) =>
                             handleNodePointerDown(event, node.id)
                           }
@@ -632,14 +668,24 @@ export default function KnowledgeGraphPage() {
                           <title>
                             {`${node.kind === "section" ? "Section" : "Page"}: ${node.headingPath?.join(" / ") || node.title}`}
                           </title>
-                          {node.kind === "section" ? (
+                          {expandedSection ? (
                             <rect
-                              x={point.x - 54}
-                              y={point.y - 16}
-                              width={108}
-                              height={32}
+                              x={point.x - sectionWidth / 2}
+                              y={point.y - SECTION_CARD_HEIGHT / 2}
+                              width={sectionWidth}
+                              height={SECTION_CARD_HEIGHT}
                               rx={9}
                               className={`${classes.sectionNode} ${selected ? classes.nodeSelected : ""}`}
+                            />
+                          ) : node.kind === "section" ? (
+                            <rect
+                              x={point.x - SECTION_MARKER_SIZE / 2}
+                              y={point.y - SECTION_MARKER_SIZE / 2}
+                              width={SECTION_MARKER_SIZE}
+                              height={SECTION_MARKER_SIZE}
+                              rx={4}
+                              transform={`rotate(45 ${point.x} ${point.y})`}
+                              className={`${classes.sectionMarker} ${selected ? classes.nodeSelected : ""}`}
                             />
                           ) : (
                             <circle
@@ -654,11 +700,7 @@ export default function KnowledgeGraphPage() {
                             <a href={`/p/${node.sourcePageId}`}>
                               <text
                                 x={point.x}
-                                y={
-                                  node.kind === "section"
-                                    ? point.y + 4
-                                    : point.y + radius + 18
-                                }
+                                y={labelY}
                                 className={classes.nodeLabel}
                               >
                                 {truncateLabel(node.title)}
@@ -667,11 +709,7 @@ export default function KnowledgeGraphPage() {
                           ) : showLabel ? (
                             <text
                               x={point.x}
-                              y={
-                                node.kind === "section"
-                                  ? point.y + 4
-                                  : point.y + radius + 18
-                              }
+                              y={labelY}
                               className={classes.nodeLabel}
                             >
                               {truncateLabel(node.title)}
@@ -865,6 +903,15 @@ function filterGraph(
       })
       .slice(0, OVERVIEW_NODE_LIMIT)
       .forEach((node) => visibleNodeIds.add(node.id));
+    for (const node of graph.nodes) {
+      if (
+        node.kind === "section" &&
+        node.parentPageId &&
+        visibleNodeIds.has(node.parentPageId)
+      ) {
+        visibleNodeIds.add(node.id);
+      }
+    }
   }
 
   const nodes = graph.nodes.filter((node) => visibleNodeIds.has(node.id));
@@ -950,6 +997,7 @@ function clamp(value: number, min: number, max: number): number {
 function buildInitialGraphLayout(
   nodes: KnowledgeGraphNode[],
   edges: KnowledgeGraphEdge[],
+  expandedSections = false,
 ): Map<string, GraphPoint> {
   const connected = new Set(edges.flatMap((edge) => [edge.from, edge.to]));
   const pageNodes = nodes.filter((node) => node.kind !== "section");
@@ -991,7 +1039,8 @@ function buildInitialGraphLayout(
     const sectionIndex = sectionIndexByPage.get(parentId) ?? 0;
     sectionIndexByPage.set(parentId, sectionIndex + 1);
     const angle = sectionIndex * Math.PI * 0.68 - Math.PI * 0.8;
-    const ring = 92 + Math.floor(sectionIndex / 7) * 70;
+    const ring =
+      (expandedSections ? 138 : 76) + Math.floor(sectionIndex / 7) * 70;
     layout.set(section.id, {
       x: parentPoint.x + Math.cos(angle) * ring,
       y: parentPoint.y + Math.sin(angle) * ring,
@@ -1004,10 +1053,12 @@ function buildInitialGraphLayout(
 function initializeSimulation(
   nodes: KnowledgeGraphNode[],
   layout: Map<string, GraphPoint>,
+  expandedSections = false,
 ): Map<string, SimulatedNode> {
   const positions = new Map<string, SimulatedNode>();
   for (const node of nodes) {
     const point = layout.get(node.id) ?? graphCenter();
+    const dimensions = nodeVisualDimensions(node, expandedSections);
     positions.set(node.id, {
       x: point.x,
       y: point.y,
@@ -1015,6 +1066,10 @@ function initializeSimulation(
       vy: 0,
       degree: node.degree,
       kind: node.kind,
+      visualHalfWidth: dimensions.halfWidth,
+      visualHalfHeight: dimensions.halfHeight,
+      collisionRadius:
+        Math.hypot(dimensions.halfWidth, dimensions.halfHeight) + 10,
     });
   }
   return positions;
@@ -1037,7 +1092,10 @@ function simulateGraphStep(input: {
       const dy = b.y - a.y || 0.01;
       const distance = Math.max(Math.hypot(dx, dy), 1);
       const distanceSq = Math.max(distance * distance, 1600);
-      const force = 5200 / distanceSq;
+      const minimumDistance = a.collisionRadius + b.collisionRadius;
+      const overlapForce =
+        distance < minimumDistance ? (minimumDistance - distance) * 0.065 : 0;
+      const force = 5200 / distanceSq + overlapForce;
       const fx = (dx / distance) * force;
       const fy = (dy / distance) * force;
 
@@ -1057,7 +1115,7 @@ function simulateGraphStep(input: {
     const dy = to.y - from.y;
     const distance = Math.max(Math.hypot(dx, dy), 1);
     const targetDistance =
-      edge.type === "semantic" ? 175 : edge.type === "contains" ? 92 : 125;
+      edge.type === "semantic" ? 175 : edge.type === "contains" ? 110 : 125;
     const force = (distance - targetDistance) * 0.014;
     const fx = (dx / distance) * force;
     const fy = (dy / distance) * force;
@@ -1072,7 +1130,7 @@ function simulateGraphStep(input: {
   for (const [, node] of nodes) {
     node.vx += (center.x - node.x) * 0.002;
     node.vy += (center.y - node.y) * 0.002;
-    const margin = 72;
+    const margin = Math.max(36, node.collisionRadius + 8);
     if (node.x < margin) node.vx += (margin - node.x) * 0.018;
     if (node.x > input.width - margin) {
       node.vx -= (node.x - (input.width - margin)) * 0.018;
@@ -1083,8 +1141,16 @@ function simulateGraphStep(input: {
     }
     node.vx *= 0.78;
     node.vy *= 0.78;
-    node.x = clamp(node.x + node.vx, 36, input.width - 36);
-    node.y = clamp(node.y + node.vy, 36, input.height - 36);
+    node.x = clamp(
+      node.x + node.vx,
+      node.visualHalfWidth + 8,
+      input.width - node.visualHalfWidth - 8,
+    );
+    node.y = clamp(
+      node.y + node.vy,
+      node.visualHalfHeight + 8,
+      input.height - node.visualHalfHeight - 8,
+    );
   }
 
   return next;
@@ -1101,4 +1167,63 @@ function clonePositions(
 function nodeRadius(node: KnowledgeGraphNode): number {
   if (node.kind === "section") return 18;
   return Math.min(22, 9 + node.degree * 2);
+}
+
+function sectionCardWidth(title: string): number {
+  const textWidth = [...title].reduce(
+    (width, character) =>
+      width + (/^[\u0000-\u00ff]$/.test(character) ? 7 : 14),
+    0,
+  );
+  return clamp(textWidth + 28, 108, 220);
+}
+
+function nodeVisualDimensions(
+  node: KnowledgeGraphNode,
+  expandedSections: boolean,
+): { halfWidth: number; halfHeight: number } {
+  if (node.kind !== "section") {
+    const radius = nodeRadius(node);
+    return { halfWidth: radius, halfHeight: radius };
+  }
+  if (expandedSections) {
+    return {
+      halfWidth: sectionCardWidth(node.title) / 2,
+      halfHeight: SECTION_CARD_HEIGHT / 2,
+    };
+  }
+  const markerRadius = (SECTION_MARKER_SIZE * Math.SQRT2) / 2;
+  return { halfWidth: markerRadius, halfHeight: markerRadius };
+}
+
+function clipEdgeLine(
+  from: SimulatedNode,
+  to: SimulatedNode,
+): { x1: number; y1: number; x2: number; y2: number } {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const distance = Math.max(Math.hypot(dx, dy), 1);
+  const unitX = dx / distance;
+  const unitY = dy / distance;
+  const fromOffset = boundaryOffset(from, unitX, unitY) + 2;
+  const toOffset = boundaryOffset(to, unitX, unitY) + 7;
+  if (fromOffset + toOffset >= distance) {
+    return { x1: from.x, y1: from.y, x2: to.x, y2: to.y };
+  }
+  return {
+    x1: from.x + unitX * fromOffset,
+    y1: from.y + unitY * fromOffset,
+    x2: to.x - unitX * toOffset,
+    y2: to.y - unitY * toOffset,
+  };
+}
+
+function boundaryOffset(
+  node: SimulatedNode,
+  unitX: number,
+  unitY: number,
+): number {
+  const horizontal = unitX / Math.max(node.visualHalfWidth, 1);
+  const vertical = unitY / Math.max(node.visualHalfHeight, 1);
+  return 1 / Math.max(Math.hypot(horizontal, vertical), 0.001);
 }

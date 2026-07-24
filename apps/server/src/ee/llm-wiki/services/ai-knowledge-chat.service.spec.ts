@@ -124,7 +124,25 @@ describe('AiKnowledgeChatService', () => {
       }),
     ).resolves.toEqual({
       answer: 'Kafka is used for async events.',
+      answerMode: 'knowledge',
       citations: [{ sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1' }],
+      citationEvidence: [
+        {
+          sourcePageId: 'page-1',
+          title: 'Kafka',
+          url: '/p/page-1',
+          excerpts: [
+            {
+              text: '登记批准日期：2026年06月05日',
+              sourceRange: { startOffset: 0, endOffset: 18 },
+              quoteHash: 'sha256:quote',
+            },
+          ],
+        },
+      ],
+      retrievedSources: [
+        { sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1' },
+      ],
       snippets: [
         {
           id: 'chunk-1',
@@ -219,11 +237,10 @@ describe('AiKnowledgeChatService', () => {
     });
   });
 
-  it('allows knowledge chat when the workspace switch is enabled without requiring an AI license feature', async () => {
+  it('returns a deterministic no-match answer without calling the model', async () => {
+    const answer = jest.fn().mockResolvedValue('must not be used');
     const service = createService({
-      answerProvider: {
-        answer: jest.fn().mockResolvedValue('grounded answer'),
-      },
+      answerProvider: { answer },
     });
 
     await expect(
@@ -235,9 +252,14 @@ describe('AiKnowledgeChatService', () => {
         workspace: workspace({ aiChat: true }),
       }),
     ).resolves.toMatchObject({
-      answer: 'grounded answer',
+      answer:
+        "I couldn't find enough relevant information in the selected knowledge base. Try rephrasing the question or selecting more knowledge spaces.",
+      answerMode: 'no_match',
       citations: [],
+      citationEvidence: [],
+      retrievedSources: [],
     });
+    expect(answer).not.toHaveBeenCalled();
   });
 
   it('returns only citations explicitly used by the generated answer', async () => {
@@ -264,7 +286,24 @@ describe('AiKnowledgeChatService', () => {
             text: '登记批准日期：2026年06月05日',
             citationSourcePageIds: ['page-used', 'page-retrieved-only'],
             retrievalReasons: ['lexical'],
-            sourceWindows: [],
+            sourceWindows: [
+              {
+                sourcePageId: 'page-used',
+                title: 'Chaterm 企业版登记信息',
+                url: '/p/page-used',
+                text: '登记批准日期：2026年06月05日',
+                sourceRange: { startOffset: 12, endOffset: 30 },
+                quoteHash: 'sha256:used',
+              },
+              {
+                sourcePageId: 'page-retrieved-only',
+                title: 'Chaterm KMS 加密架构',
+                url: '/p/page-retrieved-only',
+                text: '这是另一个只参与检索的页面。',
+                sourceRange: { startOffset: 0, endOffset: 14 },
+                quoteHash: 'sha256:retrieved-only',
+              },
+            ],
           },
         ],
         warnings: [],
@@ -304,7 +343,24 @@ describe('AiKnowledgeChatService', () => {
             chunk: chunk('chunk-1', 'kp-1', '登记批准日期：2026年06月05日'),
             pageTitle: 'Chaterm',
             retrievalReasons: ['lexical'],
-            sourceWindows: [],
+            sourceWindows: [
+              {
+                sourcePageId: 'page-used',
+                title: 'Chaterm 企业版登记信息',
+                url: '/p/page-used',
+                text: '登记批准日期：2026年06月05日',
+                sourceRange: { startOffset: 12, endOffset: 30 },
+                quoteHash: 'sha256:used',
+              },
+              {
+                sourcePageId: 'page-retrieved-only',
+                title: 'Chaterm KMS 加密架构',
+                url: '/p/page-retrieved-only',
+                text: '这是另一个只参与检索的页面。',
+                sourceRange: { startOffset: 0, endOffset: 14 },
+                quoteHash: 'sha256:retrieved-only',
+              },
+            ],
             warnings: [],
             citations: [
               {
@@ -342,11 +398,98 @@ describe('AiKnowledgeChatService', () => {
         url: '/p/page-used',
       },
     ]);
+    expect(result.citationEvidence).toEqual([
+      {
+        sourcePageId: 'page-used',
+        title: 'Chaterm 企业版登记信息',
+        url: '/p/page-used',
+        excerpts: [
+          {
+            text: '登记批准日期：2026年06月05日',
+            sourceRange: { startOffset: 12, endOffset: 30 },
+            quoteHash: 'sha256:used',
+          },
+        ],
+      },
+    ]);
+    expect(result.retrievedSources).toEqual([
+      {
+        sourcePageId: 'page-used',
+        title: 'Chaterm 企业版登记信息',
+        url: '/p/page-used',
+      },
+      {
+        sourcePageId: 'page-retrieved-only',
+        title: 'Chaterm KMS 加密架构',
+        url: '/p/page-retrieved-only',
+      },
+    ]);
     expect(answerProvider.answer).toHaveBeenCalledWith(
       expect.objectContaining({
         context: expect.stringContaining('[[cite:page-used]]'),
       }),
     );
+  });
+
+  it('returns a visible diagnostic answer when the configured model produces no text', async () => {
+    const service = createService({
+      retrieval: {
+        retrieve: jest.fn().mockResolvedValue({
+          mode: 'high_completeness',
+          chunks: [chunk('chunk-1', 'kp-1', 'Documented evidence')],
+          capsules: [],
+          diagnostics: {
+            queryEmbeddingAvailable: true,
+            authorizedChunkCount: 1,
+          },
+        }),
+      },
+      citationResolver: {
+        resolveForChunks: jest.fn().mockResolvedValue([]),
+      },
+      contextPack: {
+        buildContextPack: jest.fn().mockReturnValue({
+          context: 'Documented evidence',
+          citations: [],
+          primary: [
+            {
+              id: 'chunk-1',
+              title: 'Evidence',
+              text: 'Documented evidence',
+              retrievalReasons: ['lexical'],
+              sourceWindows: [],
+              citationSourcePageIds: [],
+            },
+          ],
+          warnings: [],
+          retrievalReasons: ['lexical'],
+          budget: {
+            maxContextLength: 12000,
+            usedContextLength: 19,
+            remainingContextLength: 11981,
+            includedItemCount: 1,
+            omittedItemCount: 0,
+            responseReserve: 0,
+            perItemMaxLength: 12000,
+          },
+          completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+        }),
+      },
+      answerProvider: { answer: jest.fn().mockResolvedValue('') },
+    });
+
+    await expect(
+      service.chat({
+        workspaceId: 'workspace-1',
+        userId: 'user-1',
+        query: 'What is documented?',
+        spaceIds: ['space-1'],
+      }),
+    ).resolves.toMatchObject({
+      answer:
+        'Relevant knowledge was retrieved, but the answer model did not produce a response. Try again later or ask an administrator to check the AI model configuration.',
+      answerMode: 'knowledge',
+    });
   });
 
   it('enables chat when workspace ai.chat is enabled', () => {

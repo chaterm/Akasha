@@ -1,6 +1,7 @@
 import {
   parseSemanticAnalysisJson,
   parseSemanticGenerationJson,
+  repairSemanticCompilerOutput,
 } from './semantic-compiler.schema';
 
 describe('semantic compiler schemas', () => {
@@ -48,6 +49,32 @@ describe('semantic compiler schemas', () => {
     expect(() =>
       parseSemanticAnalysisJson(`Here is the JSON: ${JSON.stringify(value)}`),
     ).toThrow('strict JSON object');
+  });
+
+  it('normalizes harmless JSON-mode variations from compatible models', () => {
+    const parsed = parseSemanticAnalysisJson(
+      JSON.stringify({
+        version: 1,
+        synopsis: 'Summary',
+        language: 'zh',
+        entities: [
+          {
+            canonicalKey: 'user_api',
+            name: '用户接口',
+            description: '查询用户信息。',
+            evidenceQuotes: '查询用户信息',
+          },
+        ],
+        concepts: [],
+        claims: [],
+        relations: [],
+        comparisons: [],
+        contradictions: [],
+      }),
+    );
+
+    expect(parsed.version).toBe('1');
+    expect(parsed.entities[0].evidenceQuotes).toEqual(['查询用户信息']);
   });
 
   it('rejects unsafe canonical keys and unknown fields', () => {
@@ -118,6 +145,29 @@ describe('semantic compiler schemas', () => {
     ).toHaveLength(2);
   });
 
+  it('normalizes null optional artifact collections to empty arrays', () => {
+    const parsed = parseSemanticGenerationJson(
+      JSON.stringify({
+        version: '1',
+        artifacts: [
+          {
+            kind: 'source_summary',
+            canonicalKey: 'source-page-1',
+            title: 'Source summary',
+            markdown: 'Source summary body.',
+            claims: null,
+            links: null,
+            tags: null,
+          },
+        ],
+      }),
+    );
+
+    expect(parsed.artifacts[0]).toEqual(
+      expect.objectContaining({ claims: [], links: [], tags: [] }),
+    );
+  });
+
   it('rejects unsupported generated artifact kinds', () => {
     expect(() =>
       parseSemanticGenerationJson(
@@ -137,5 +187,37 @@ describe('semantic compiler schemas', () => {
         }),
       ),
     ).toThrow();
+  });
+
+  it('extracts fenced or prose-wrapped JSON and normalizes field aliases', () => {
+    const repaired = repairSemanticCompilerOutput(
+      'generation',
+      `Here is the result:\n\`\`\`json\n${JSON.stringify({
+        version: 1,
+        pages: [
+          {
+            type: 'summary',
+            canonical_key: 'API Overview',
+            name: 'API overview',
+            body: 'Source-grounded API overview.',
+          },
+        ],
+      })}\n\`\`\``,
+    );
+
+    expect(repaired).toEqual({
+      version: '1',
+      artifacts: [
+        {
+          kind: 'source_summary',
+          canonicalKey: 'api-overview',
+          title: 'API overview',
+          markdown: 'Source-grounded API overview.',
+          claims: [],
+          links: [],
+          tags: [],
+        },
+      ],
+    });
   });
 });

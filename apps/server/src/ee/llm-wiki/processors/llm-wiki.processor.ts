@@ -1,4 +1,4 @@
-import { Inject, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Inject, Logger, OnModuleDestroy, Optional } from '@nestjs/common';
 import {
   InjectQueue,
   OnWorkerEvent,
@@ -25,6 +25,7 @@ import {
 import {
   IKnowledgeCompileSpaceJob,
   IKnowledgeCompilePagesJob,
+  IKnowledgeAggregateSpaceJob,
   IKnowledgeMarkSourcesStaleJob,
   IKnowledgeReindexAccessJob,
   IReviewDiscoverJob,
@@ -40,7 +41,6 @@ import { KnowledgeSourceExporterService } from '../services/knowledge-source-exp
 import {
   buildKnowledgeCompileCoalesceKey,
   buildKnowledgeCompilePageJobId,
-  buildKnowledgeRunKey,
   buildReviewDiscoverJobId,
   buildReviewNegotiateJobId,
   KNOWLEDGE_COMPILE_DELAY_MS,
@@ -54,6 +54,9 @@ import { MockSearchProvider } from '../review/search-provider';
 import { isDeepSearch, ResolvedReview } from '../review/approval';
 import { NegotiationTurn, reviewItemSchema } from '../review/review.schema';
 import { KnowledgeCompilerLlmError } from '../compiler/knowledge-compiler-llm.provider';
+import { KnowledgeArtifactCatalogService } from '../services/knowledge-artifact-catalog.service';
+import { KnowledgeSpaceCompilationService } from '../services/knowledge-space-compilation.service';
+import { KnowledgeSpaceAggregatorService } from '../services/knowledge-space-aggregator.service';
 
 type ReviewProcessorJobResult = {
   type: 'review-discover' | 'review-negotiate';
@@ -69,6 +72,20 @@ class SourceChangedDuringCompilationError extends Error {
   constructor() {
     super('Knowledge source changed during compilation.');
     this.name = 'SourceChangedDuringCompilationError';
+  }
+}
+
+class EmptyKnowledgeSourceError extends Error {
+  constructor() {
+    super('Knowledge source page is empty.');
+    this.name = 'EmptyKnowledgeSourceError';
+  }
+}
+
+class UnavailableKnowledgeSourceError extends Error {
+  constructor() {
+    super('Knowledge source page is unavailable for compilation.');
+    this.name = 'UnavailableKnowledgeSourceError';
   }
 }
 
@@ -91,6 +108,12 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
     @Inject(AUDIT_SERVICE) private readonly auditService: IAuditService,
     private readonly reviewApplicationRepo: KnowledgeReviewApplicationRepo,
     private readonly compilationRepo?: KnowledgeCompilationRepo,
+    @Optional()
+    private readonly artifactCatalog?: KnowledgeArtifactCatalogService,
+    @Optional()
+    private readonly spaceCompilation?: KnowledgeSpaceCompilationService,
+    @Optional()
+    private readonly spaceAggregator?: KnowledgeSpaceAggregatorService,
   ) {
     super();
   }
@@ -106,41 +129,71 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
           workspaceId: data.workspaceId,
           spaceId: data.spaceId,
         });
-        const runKey = buildKnowledgeRunKey(data.trigger ?? 'space_compile');
-        for (const sourcePageId of uniqueValues(
-          sources.map((source) => source.sourcePageId),
-        )) {
-          await this.aiQueue.add(
-            QueueJob.KNOWLEDGE_COMPILE_PAGES,
-            {
-              workspaceId: data.workspaceId,
-              spaceId: data.spaceId,
-              sourcePageIds: [sourcePageId],
-              trigger: data.trigger,
-            },
-            {
-              attempts: 3,
-              backoff: { type: 'exponential', delay: 1000 },
-              jobId: buildKnowledgeCompilePageJobId({
-                workspaceId: data.workspaceId,
-                spaceId: data.spaceId,
-                sourcePageId,
-                runKey,
-              }),
-            },
+        if (!this.spaceCompilation) {
+          throw new UnrecoverableError(
+            'Knowledge Space compilation coordinator is unavailable.',
           );
         }
-        return {
-          type: 'compile-space',
-          status: 'succeeded',
+        const sourceByPageId = new Map(
+          sources.map((source) => [source.sourcePageId, source] as const),
+        );
+        const run = await this.spaceCompilation.startSpaceRun({
           workspaceId: data.workspaceId,
           spaceId: data.spaceId,
-          compilerRunId: String(job.id ?? runKey),
+          trigger: data.trigger ?? 'manual_compile',
+          sources: [...sourceByPageId.values()],
+        });
+        return {
+          type: 'compile-space',
+          status: 'queued',
+          workspaceId: data.workspaceId,
+          spaceId: data.spaceId,
+          compilerRunId: run.id,
           sourceCount: sources.length,
           importedArtifactCount: 0,
           quarantinedArtifactCount: 0,
           durationMs: Math.max(0, Date.now() - startedAt),
         };
+      }
+      case QueueJob.KNOWLEDGE_AGGREGATE_SPACE: {
+        const data = job.data as IKnowledgeAggregateSpaceJob;
+        const startedAt = Date.now();
+        if (!this.spaceAggregator) {
+          throw new UnrecoverableError(
+            'Knowledge Space aggregator is unavailable.',
+          );
+        }
+        try {
+          const result = await this.spaceAggregator.aggregate({
+            runId: data.spaceRunId,
+            workspaceId: data.workspaceId,
+            spaceId: data.spaceId,
+          });
+          return {
+            type: 'compile-space',
+            status: 'succeeded',
+            workspaceId: data.workspaceId,
+            spaceId: data.spaceId,
+            compilerRunId: data.spaceRunId,
+            sourceCount: 0,
+            importedArtifactCount: result.importedArtifactCount,
+            quarantinedArtifactCount: result.quarantinedArtifactCount,
+            durationMs: Math.max(0, Date.now() - startedAt),
+          };
+        } catch (error) {
+          const failure = classifyCompilationFailure(error);
+          const terminal = !failure.retryable || isFinalJobAttempt(job);
+          await this.spaceCompilation?.failAggregation({
+            runId: data.spaceRunId,
+            errorCode: failure.code,
+            errorMessage: failure.message,
+            terminal,
+          });
+          if (!failure.retryable) {
+            throw new UnrecoverableError(failure.message);
+          }
+          throw error;
+        }
       }
       case QueueJob.KNOWLEDGE_COMPILE_PAGES: {
         const data = job.data as IKnowledgeCompilePagesJob;
@@ -151,52 +204,118 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
             'Knowledge page compile requires exactly one source page.',
           );
         }
-        const sources = await this.sourceExporter.exportPageSources({
-          workspaceId: data.workspaceId,
-          spaceId: data.spaceId,
-          sourcePageIds,
-        });
-        if (
-          sources.length !== 1 ||
-          sources[0].sourcePageId !== sourcePageIds[0]
-        ) {
-          throw new UnrecoverableError(
-            'Knowledge source page is unavailable for compilation.',
-          );
-        }
-        const source = sources[0];
+        const sourcePageId = sourcePageIds[0];
         const compileTaskId = String(
           job.id ??
             buildKnowledgeCompilePageJobId({
               workspaceId: data.workspaceId,
               spaceId: data.spaceId,
-              sourcePageId: source.sourcePageId,
+              sourcePageId,
             }),
         );
+        if (data.spaceRunId) {
+          if (!this.spaceCompilation) {
+            throw new UnrecoverableError(
+              'Knowledge Space compilation coordinator is unavailable.',
+            );
+          }
+          await this.spaceCompilation.markPageRunning({
+            runId: data.spaceRunId,
+            sourcePageId,
+          });
+        }
         await this.compilationRepo?.startAttempt({
           workspaceId: data.workspaceId,
           spaceId: data.spaceId,
-          sourcePageId: source.sourcePageId,
-          sourceVersion: source.sourceVersion,
-          sourceContentHash: source.contentHash,
+          sourcePageId,
+          sourceVersion: data.sourceVersion,
+          sourceContentHash: data.sourceContentHash,
           compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
           promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
           compilerRunId: compileTaskId,
           compileTaskId,
         });
-        const compileInput = {
-          workspaceId: data.workspaceId,
-          spaceId: data.spaceId,
-          compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
-          promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
-          compileMode: 'pages' as const,
-          sources,
-        };
         try {
+          const sources = await this.sourceExporter.exportPageSources({
+            workspaceId: data.workspaceId,
+            spaceId: data.spaceId,
+            sourcePageIds,
+          });
+          if (
+            sources.length !== 1 ||
+            sources[0].sourcePageId !== sourcePageId
+          ) {
+            throw new UnavailableKnowledgeSourceError();
+          }
+          const source = sources[0];
+          await this.compilationRepo?.updateSourceSnapshot({
+            workspaceId: data.workspaceId,
+            sourcePageId,
+            sourceVersion: source.sourceVersion,
+            sourceContentHash: source.contentHash,
+          });
+          if (
+            data.spaceRunId &&
+            ((data.sourceVersion &&
+              data.sourceVersion !== source.sourceVersion) ||
+              (data.sourceContentHash &&
+                data.sourceContentHash !== source.contentHash))
+          ) {
+            const errorMessage =
+              'Knowledge source changed after the Space run snapshot.';
+            await this.compilationRepo?.failAttempt({
+              workspaceId: data.workspaceId,
+              sourcePageId,
+              errorCode: 'source_changed',
+              errorMessage,
+            });
+            await this.spaceCompilation!.completePage({
+              runId: data.spaceRunId,
+              sourcePageId,
+              status: 'skipped',
+              errorCode: 'source_changed',
+              errorMessage,
+            });
+            return {
+              type: 'compile-pages',
+              status: 'succeeded',
+              workspaceId: data.workspaceId,
+              spaceId: data.spaceId,
+              compilerRunId: data.spaceRunId,
+              sourceCount: 0,
+              importedArtifactCount: 0,
+              quarantinedArtifactCount: 0,
+              durationMs: Math.max(0, Date.now() - startedAt),
+            };
+          }
+          if (!source.text.trim()) {
+            throw new EmptyKnowledgeSourceError();
+          }
+          const catalogEntries = data.spaceRunId
+            ? await this.spaceCompilation!.catalogForPage({
+                runId: data.spaceRunId,
+                workspaceId: data.workspaceId,
+                spaceId: data.spaceId,
+              })
+            : ((
+                await this.artifactCatalog?.snapshot({
+                  workspaceId: data.workspaceId,
+                  spaceId: data.spaceId,
+                })
+              )?.entries ?? []);
+          const compileInput = {
+            workspaceId: data.workspaceId,
+            spaceId: data.spaceId,
+            compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+            promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+            compileMode: 'pages' as const,
+            catalog: catalogEntries,
+            sources,
+          };
           const compileResult = await this.compiler.compileSpace(compileInput);
           await this.compilationRepo?.updateStage({
             workspaceId: data.workspaceId,
-            sourcePageId: source.sourcePageId,
+            sourcePageId,
             stage: 'validation',
           });
           const latestSources = await this.sourceExporter.exportPageSources({
@@ -207,30 +326,34 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
           if (!isSameSourceSnapshot(source, latestSources[0])) {
             throw new SourceChangedDuringCompilationError();
           }
-          await this.compilationRepo?.updateStage({
-            workspaceId: data.workspaceId,
-            sourcePageId: source.sourcePageId,
-            stage: 'merge',
-          });
           const importResult = await this.importService.importCompileResult({
             input: compileInput,
             artifacts: compileResult.artifacts,
-          });
-          await this.compilationRepo?.updateStage({
-            workspaceId: data.workspaceId,
-            sourcePageId: source.sourcePageId,
-            stage: 'import',
+            onStage: async (stage) => {
+              await this.compilationRepo?.updateStage({
+                workspaceId: data.workspaceId,
+                sourcePageId,
+                stage,
+              });
+            },
           });
           await this.accessIndexer.reindexSourcePages({
             workspaceId: data.workspaceId,
-            sourcePageIds: [source.sourcePageId],
+            sourcePageIds: [sourcePageId],
           });
           await this.compilationRepo?.succeedAttempt({
             workspaceId: data.workspaceId,
-            sourcePageId: source.sourcePageId,
+            sourcePageId,
             sourceVersion: source.sourceVersion,
             sourceContentHash: source.contentHash,
           });
+          if (data.spaceRunId) {
+            await this.spaceCompilation!.completePage({
+              runId: data.spaceRunId,
+              sourcePageId,
+              status: 'succeeded',
+            });
+          }
           return {
             type: 'compile-pages',
             status: 'succeeded',
@@ -246,10 +369,22 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
           const failure = classifyCompilationFailure(error);
           await this.compilationRepo?.failAttempt({
             workspaceId: data.workspaceId,
-            sourcePageId: source.sourcePageId,
+            sourcePageId,
             errorCode: failure.code,
             errorMessage: failure.message,
           });
+          if (
+            data.spaceRunId &&
+            (!failure.retryable || isFinalJobAttempt(job))
+          ) {
+            await this.spaceCompilation!.completePage({
+              runId: data.spaceRunId,
+              sourcePageId,
+              status: 'failed',
+              errorCode: failure.code,
+              errorMessage: failure.message,
+            });
+          }
           if (!failure.retryable) {
             throw new UnrecoverableError(failure.message);
           }
@@ -524,6 +659,23 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
 
     for (const page of pageRefs) {
       if (page.deletedAt) continue;
+      const jobId = buildKnowledgeCompilePageJobId({
+        workspaceId: data.workspaceId,
+        spaceId: page.spaceId,
+        sourcePageId: page.id,
+        runKey: buildKnowledgeCompileCoalesceKey(),
+      });
+      await this.compilationRepo?.queueAttempt({
+        workspaceId: data.workspaceId,
+        spaceId: page.spaceId,
+        sourcePageId: page.id,
+        sourceVersion: undefined,
+        sourceContentHash: undefined,
+        compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+        promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+        compilerRunId: jobId,
+        compileTaskId: jobId,
+      });
       await this.aiQueue.add(
         QueueJob.KNOWLEDGE_COMPILE_PAGES,
         {
@@ -536,12 +688,7 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
           delay: KNOWLEDGE_COMPILE_DELAY_MS,
           attempts: 3,
           backoff: { type: 'exponential', delay: 1000 },
-          jobId: buildKnowledgeCompilePageJobId({
-            workspaceId: data.workspaceId,
-            spaceId: page.spaceId,
-            sourcePageId: page.id,
-            runKey: buildKnowledgeCompileCoalesceKey(),
-          }),
+          jobId,
         },
       );
     }
@@ -620,6 +767,11 @@ function isSameSourceSnapshot(
   );
 }
 
+function isFinalJobAttempt(job: Job): boolean {
+  const maxAttempts = Math.max(Number(job.opts?.attempts ?? 1), 1);
+  return Number(job.attemptsMade ?? 0) + 1 >= maxAttempts;
+}
+
 function classifyCompilationFailure(error: unknown): {
   code: string;
   message: string;
@@ -630,6 +782,20 @@ function classifyCompilationFailure(error: unknown): {
       code: 'source_changed',
       message: 'Knowledge source changed during compilation.',
       retryable: true,
+    };
+  }
+  if (error instanceof EmptyKnowledgeSourceError) {
+    return {
+      code: 'empty_source',
+      message: error.message,
+      retryable: false,
+    };
+  }
+  if (error instanceof UnavailableKnowledgeSourceError) {
+    return {
+      code: 'source_unavailable',
+      message: error.message,
+      retryable: false,
     };
   }
   if (error instanceof KnowledgeCompilerLlmError) {

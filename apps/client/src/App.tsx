@@ -46,7 +46,6 @@ import FavoritesPage from "@/pages/favorites/favorites-page";
 import AiChat from "@/ee/ai-chat/pages/ai-chat.tsx";
 import KnowledgeAdminPage from "@/ee/llm-wiki/pages/knowledge-admin";
 import KnowledgeGraphPage from "@/ee/llm-wiki/pages/knowledge-graph";
-import KnowledgeQueryPage from "@/ee/llm-wiki/pages/knowledge-query";
 import ReviewPage from "@/ee/llm-wiki/pages/review";
 import VerifyEmail from "@/ee/pages/verify-email.tsx";
 import LabelPage from "@/pages/label/label-page";
@@ -95,7 +94,7 @@ export default function App() {
           <Route path={"/home"} element={<Home />} />
           <Route path={"/ai"} element={<AiChat />} />
           <Route path={"/ai/chat/:chatId"} element={<AiChat />} />
-          <Route path={"/knowledge"} element={<KnowledgeQueryPage />} />
+          <Route path={"/knowledge"} element={<Navigate to="/ai" replace />} />
           <Route path={"/knowledge/graph"} element={<KnowledgeGraphPage />} />
           <Route path={"/knowledge/admin"} element={<KnowledgeAdminPage />} />
           <Route path={"/review"} element={<ReviewPage />} />
@@ -103,17 +102,14 @@ export default function App() {
           <Route path={"/favorites"} element={<FavoritesPage />} />
           <Route path={"/labels/:labelName"} element={<LabelPage />} />
           <Route path={"/templates"} element={<TemplateList />} />
-          <Route
-            path={"/templates/:templateId"}
-            element={<TemplateEditor />}
-          />
+          <Route path={"/templates/:templateId"} element={<TemplateEditor />} />
           <Route path={"/s/:spaceSlug"} element={<SpaceHome />} />
-          <Route path={"/s/:spaceSlug/graph"} element={<KnowledgeGraphPage />} />
-          <Route path={"/s/:spaceSlug/trash"} element={<SpaceTrash />} />
           <Route
-            path={"/s/:spaceSlug/p/:pageSlug"}
-            element={<Page />}
+            path={"/s/:spaceSlug/graph"}
+            element={<KnowledgeGraphPage />}
           />
+          <Route path={"/s/:spaceSlug/trash"} element={<SpaceTrash />} />
+          <Route path={"/s/:spaceSlug/p/:pageSlug"} element={<Page />} />
 
           <Route path={"/settings"}>
             <Route path={"account/profile"} element={<AccountSettings />} />

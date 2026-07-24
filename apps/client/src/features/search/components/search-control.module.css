@@ -1,46 +1,63 @@
 .root {
-    height: 34px;
-    padding-left: var(--mantine-spacing-sm);
-    padding-right: 4px;
-    border-radius: var(--mantine-radius-md);
-    color: var(--mantine-color-placeholder);
-    border: 1px solid;
+  height: 34px;
+  padding-left: var(--mantine-spacing-sm);
+  padding-right: 4px;
+  border-radius: var(--mantine-radius-md);
+  color: var(--mantine-color-placeholder);
+  border: 1px solid;
 
-    @mixin light {
-        border-color: var(--mantine-color-gray-3);
-        background-color: var(--mantine-color-white);
-    }
+  @mixin light {
+    border-color: var(--mantine-color-gray-3);
+    background-color: var(--mantine-color-white);
+  }
 
-    @mixin dark {
-        border-color: var(--mantine-color-dark-4);
-        background-color: var(--mantine-color-dark-6);
-    }
+  @mixin dark {
+    border-color: var(--mantine-color-dark-4);
+    background-color: var(--mantine-color-dark-6);
+  }
 
-    @mixin rtl {
-        padding-left: 4px;
-        padding-right: var(--mantine-spacing-sm);
-    }
+  @mixin rtl {
+    padding-left: 4px;
+    padding-right: var(--mantine-spacing-sm);
+  }
+}
+
+.compactRoot {
+  display: block;
+  line-height: 1;
+  padding: rem(8px) rem(12px);
+  border-radius: var(--mantine-radius-sm);
+  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-0));
+  white-space: nowrap;
+  flex-shrink: 0;
+
+  @mixin hover {
+    background-color: light-dark(
+      var(--mantine-color-gray-0),
+      var(--mantine-color-dark-6)
+    );
+  }
 }
 
 .shortcut {
-    font-size: 11px;
-    line-height: 1;
-    padding: 4px 7px;
-    border-radius: var(--mantine-radius-sm);
-    border: 1px solid;
-    font-weight: bold;
-    white-space: nowrap;
-    flex-shrink: 0;
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 7px;
+  border-radius: var(--mantine-radius-sm);
+  border: 1px solid;
+  font-weight: bold;
+  white-space: nowrap;
+  flex-shrink: 0;
 
-    @mixin light {
-        color: var(--mantine-color-gray-7);
-        border-color: var(--mantine-color-gray-2);
-        background-color: var(--mantine-color-gray-0);
-    }
+  @mixin light {
+    color: var(--mantine-color-gray-7);
+    border-color: var(--mantine-color-gray-2);
+    background-color: var(--mantine-color-gray-0);
+  }
 
-    @mixin dark {
-        color: var(--mantine-color-dark-0);
-        border-color: var(--mantine-color-dark-7);
-        background-color: var(--mantine-color-dark-7);
-    }
+  @mixin dark {
+    color: var(--mantine-color-dark-0);
+    border-color: var(--mantine-color-dark-7);
+    background-color: var(--mantine-color-dark-7);
+  }
 }

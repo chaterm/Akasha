@@ -1,9 +1,9 @@
 import {
   IconSparkles,
   IconSearch,
-  IconFilePlus,
-  IconEdit,
   IconFileText,
+  IconArrowsSplit2,
+  IconRoute,
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import ChatInput from "./chat-input";
@@ -19,29 +19,33 @@ type Suggestion = {
 const SUGGESTIONS: Suggestion[] = [
   {
     icon: <IconSearch size={16} />,
-    text: "Search across all pages",
-    prompt: "Search for pages about ",
+    text: "Find answers across the knowledge base",
+    prompt: "What does our knowledge base say about ",
   },
   {
-    icon: <IconFilePlus size={16} />,
-    text: "Create a new page",
-    prompt: "Create a new page titled ",
+    icon: <IconArrowsSplit2 size={16} />,
+    text: "Compare concepts across pages",
+    prompt: "Compare the knowledge base information about ",
   },
   {
     icon: <IconFileText size={16} />,
-    text: "Summarize a page",
-    prompt: "Summarize the page @",
+    text: "Summarize a knowledge topic",
+    prompt: "Summarize what the knowledge base says about ",
   },
   {
-    icon: <IconEdit size={16} />,
-    text: "Update page content",
-    prompt: "Update the page @",
+    icon: <IconRoute size={16} />,
+    text: "Explain a process or procedure",
+    prompt: "Explain the documented process for ",
   },
 ];
 
 type Props = {
   isStreaming: boolean;
-  onSend: (content: string, mentions: PageMention[], attachments: ChatAttachment[]) => void;
+  onSend: (
+    content: string,
+    mentions: PageMention[],
+    attachments: ChatAttachment[],
+  ) => void;
   onStop: () => void;
 };
 
@@ -55,9 +59,9 @@ export default function ChatEmptyState({ isStreaming, onSend, onStop }: Props) {
   return (
     <div className={classes.emptyState}>
       <IconSparkles size={48} stroke={1.5} className={classes.emptyStateIcon} />
-      <div className={classes.emptyStateBrand}>{t("Akasha AI")}</div>
+      <div className={classes.emptyStateBrand}>{t("Akasha Knowledge")}</div>
       <h1 className={classes.emptyStateTitle}>
-        {t("What can I help you with?")}
+        {t("What would you like to know?")}
       </h1>
 
       <div className={classes.emptyStateInput}>
@@ -65,7 +69,7 @@ export default function ChatEmptyState({ isStreaming, onSend, onStop }: Props) {
           isStreaming={isStreaming}
           onSend={onSend}
           onStop={onStop}
-          placeholder={t("Ask anything... Use @ to mention pages")}
+          placeholder={t("Ask the knowledge base... Use @ to mention pages")}
           autofocus
         />
       </div>

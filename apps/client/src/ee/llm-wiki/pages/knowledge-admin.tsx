@@ -202,7 +202,7 @@ export default function KnowledgeAdminPage() {
             <Group gap="sm">
               <Button
                 component={Link}
-                to="/knowledge"
+                to="/ai"
                 variant="default"
                 leftSection={<IconArrowLeft size={16} />}
               >
@@ -864,6 +864,13 @@ function CompileStatusCell({ status }: { status?: KnowledgeCompileStatus }) {
       <Text className={classes.mono} c="dimmed">
         {status?.lastRunId ?? "-"}
       </Text>
+      {status?.succeededPageCount !== undefined && (
+        <Text size="xs" c="dimmed">
+          pages: {status.succeededPageCount} succeeded /{" "}
+          {status.failedPageCount ?? 0} failed / {status.skippedPageCount ?? 0}{" "}
+          skipped
+        </Text>
+      )}
       {status?.failureReason && (
         <Text size="sm" c="red">
           {status.failureReason}
@@ -905,6 +912,7 @@ function jobStateColor(state: string): string {
 
 function compileStatusColor(status?: string): string {
   if (status === "succeeded") return "green";
+  if (status === "partial") return "yellow";
   if (status === "failed") return "red";
   if (status === "running") return "blue";
   if (status === "queued") return "yellow";

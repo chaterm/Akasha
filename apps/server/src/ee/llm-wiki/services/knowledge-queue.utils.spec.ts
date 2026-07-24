@@ -1,5 +1,6 @@
 import {
   buildKnowledgeAdminActionJobId,
+  buildKnowledgeAggregateSpaceJobId,
   buildKnowledgeCompileCoalesceKey,
   buildKnowledgeCompileJobId,
   buildKnowledgeRunKey,
@@ -13,6 +14,7 @@ describe('knowledge queue utils', () => {
         spaceId: 'space-1',
         runKey: buildKnowledgeRunKey('retry_compile', 123),
       }),
+      buildKnowledgeAggregateSpaceJobId({ runId: 'run-1' }),
       buildKnowledgeAdminActionJobId({
         action: 'reindex_access',
         workspaceId: 'workspace-1',
@@ -28,6 +30,7 @@ describe('knowledge queue utils', () => {
 
     expect(ids).toEqual([
       expect.stringMatching(/^knowledge-compile-space__workspace-1__space-1__/),
+      'knowledge-aggregate-space__run-1',
       expect.stringMatching(
         /^knowledge-reindex-access__workspace-1__space-1__/,
       ),

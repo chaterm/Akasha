@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useChatInfoQuery } from "../queries/ai-chat-query";
 import { useChatStream } from "../hooks/use-chat-stream";
@@ -7,6 +7,9 @@ import ChatEmptyState from "./chat-empty-state";
 import ChatInput from "./chat-input";
 import type { HomeAiPromptInitialState } from "@/features/home/components/home-ai-prompt";
 import classes from "../styles/ai-chat.module.css";
+import KnowledgeScopeBar from "./knowledge-scope-bar";
+import { useKnowledgeScope } from "../hooks/use-knowledge-scope";
+import type { ChatAttachment, PageMention } from "../types/ai-chat.types";
 
 export default function AiChatLayout() {
   const { chatId } = useParams<{ chatId: string }>();
@@ -27,11 +30,30 @@ export default function AiChatLayout() {
     streamingContent,
     streamingToolCalls,
     isStreaming,
+    progressStage,
     error,
     sendMessage,
     stopGeneration,
     hydrateFromServer,
   } = useChatStream(chatId);
+  const knowledgeScope = useKnowledgeScope();
+
+  const handleSend = useCallback(
+    (
+      content: string,
+      mentions: PageMention[],
+      attachments: ChatAttachment[],
+    ) => {
+      sendMessage(
+        content,
+        mentions,
+        attachments,
+        undefined,
+        knowledgeScope.spaceIds,
+      );
+    },
+    [knowledgeScope.spaceIds, sendMessage],
+  );
 
   const autoSentRef = useRef(false);
 
@@ -47,13 +69,13 @@ export default function AiChatLayout() {
     if (!state?.initialContent && !state?.initialAttachments?.length) return;
 
     autoSentRef.current = true;
-    sendMessage(
+    handleSend(
       state.initialContent ?? "",
       state.initialMentions ?? [],
       state.initialAttachments ?? [],
     );
     navigate(location.pathname, { replace: true, state: null });
-  }, [chatId, location, navigate, sendMessage]);
+  }, [chatId, handleSend, location, navigate]);
 
   const hasMessages = messages.length > 0 || isStreaming || !!chatId;
 
@@ -65,6 +87,13 @@ export default function AiChatLayout() {
 
   return (
     <div className={classes.main}>
+      <KnowledgeScopeBar
+        options={knowledgeScope.options}
+        selectedSpaceId={knowledgeScope.selectedSpaceId}
+        onChange={knowledgeScope.setSelectedSpaceId}
+        isLoading={knowledgeScope.isLoading}
+        showManagementLinks
+      />
       {hasMessages ? (
         <>
           <ChatMessageList
@@ -72,6 +101,7 @@ export default function AiChatLayout() {
             isStreaming={isStreaming}
             streamingContent={streamingContent}
             streamingToolCalls={streamingToolCalls}
+            progressStage={progressStage}
           />
           {error && (
             <div
@@ -87,7 +117,7 @@ export default function AiChatLayout() {
           <div className={classes.inputArea}>
             <ChatInput
               isStreaming={isStreaming}
-              onSend={sendMessage}
+              onSend={handleSend}
               onStop={stopGeneration}
               chatId={chatId}
             />
@@ -96,7 +126,7 @@ export default function AiChatLayout() {
       ) : (
         <ChatEmptyState
           isStreaming={isStreaming}
-          onSend={sendMessage}
+          onSend={handleSend}
           onStop={stopGeneration}
         />
       )}

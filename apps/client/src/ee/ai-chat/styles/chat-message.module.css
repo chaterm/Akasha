@@ -12,7 +12,10 @@
   max-width: 75%;
   padding: 10px 16px;
   border-radius: 18px;
-  background: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6));
+  background: light-dark(
+    var(--mantine-color-gray-1),
+    var(--mantine-color-dark-6)
+  );
   color: light-dark(var(--mantine-color-gray-9), var(--mantine-color-dark-0));
   font-size: 15px;
   line-height: 1.6;
@@ -21,8 +24,12 @@
 }
 
 [data-aside-chat] .userBubble {
-  background: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
-  border: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+  background: light-dark(
+    var(--mantine-color-white),
+    var(--mantine-color-dark-7)
+  );
+  border: 1px solid
+    light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
 }
 
 .userBubble p {
@@ -42,7 +49,10 @@
   gap: 4px;
   padding: 2px 8px;
   border-radius: 6px;
-  background: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+  background: light-dark(
+    var(--mantine-color-gray-2),
+    var(--mantine-color-dark-5)
+  );
   color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-2));
   font-size: var(--mantine-font-size-xs);
   max-width: 180px;
@@ -102,7 +112,10 @@
 }
 
 .messageContent pre {
-  background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-7));
+  background-color: light-dark(
+    var(--mantine-color-gray-0),
+    var(--mantine-color-dark-7)
+  );
   padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
   border-radius: var(--mantine-radius-md);
   overflow-x: auto;
@@ -111,7 +124,10 @@
 }
 
 .messageContent code {
-  background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6));
+  background-color: light-dark(
+    var(--mantine-color-gray-1),
+    var(--mantine-color-dark-6)
+  );
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 0.88em;
@@ -123,7 +139,8 @@
 }
 
 .messageContent blockquote {
-  border-left: 3px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  border-left: 3px solid
+    light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
   padding-left: var(--mantine-spacing-md);
   margin: 0.75em 0;
   color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-2));
@@ -166,7 +183,8 @@
 
 .messageContent hr {
   border: none;
-  border-top: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+  border-top: 1px solid
+    light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
   margin: 1em 0;
 }
 
@@ -233,7 +251,10 @@
   margin-left: 18px;
   padding: 6px 10px;
   border-radius: var(--mantine-radius-sm);
-  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-7));
+  background: light-dark(
+    var(--mantine-color-gray-0),
+    var(--mantine-color-dark-7)
+  );
   color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1));
   font-size: 11px;
   line-height: 1.5;
@@ -273,10 +294,164 @@
   display: inline-block;
   width: 2px;
   height: 1em;
-  background: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-0));
+  background: light-dark(
+    var(--mantine-color-gray-7),
+    var(--mantine-color-dark-0)
+  );
   animation: blink 1s step-end infinite;
   vertical-align: text-bottom;
   margin-left: 1px;
+}
+
+.evidenceCard {
+  margin-top: var(--mantine-spacing-md);
+  padding: 10px 12px;
+  border: 1px solid
+    light-dark(var(--mantine-color-blue-1), var(--mantine-color-dark-5));
+  border-radius: var(--mantine-radius-md);
+  background: light-dark(var(--mantine-color-blue-0), rgba(34, 139, 230, 0.08));
+  font-size: var(--mantine-font-size-xs);
+}
+
+.evidenceCard[data-answer-mode="no_match"] {
+  border-color: light-dark(
+    var(--mantine-color-yellow-2),
+    var(--mantine-color-yellow-9)
+  );
+  background: light-dark(
+    var(--mantine-color-yellow-0),
+    rgba(250, 176, 5, 0.08)
+  );
+}
+
+.evidenceHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0));
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+  user-select: none;
+}
+
+.evidenceHeader::-webkit-details-marker {
+  display: none;
+}
+
+.evidenceCount {
+  margin-left: auto;
+  color: var(--mantine-color-dimmed);
+  font-weight: 400;
+}
+
+.evidenceChevron {
+  flex-shrink: 0;
+  color: var(--mantine-color-dimmed);
+  transition: transform 140ms ease;
+}
+
+.evidenceCard[open] > .evidenceHeader .evidenceChevron {
+  transform: rotate(90deg);
+}
+
+.citationSources {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.citationSource {
+  padding: 7px 9px;
+  border-radius: var(--mantine-radius-sm);
+  background: light-dark(rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.04));
+}
+
+.citationSourceLink {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  font-weight: 600;
+}
+
+.citationSourceLink:hover {
+  color: light-dark(var(--mantine-color-blue-7), var(--mantine-color-blue-3));
+}
+
+.citationSourceLink > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.citationExcerpt {
+  display: -webkit-box;
+  margin: 6px 0 0 !important;
+  padding-left: 9px !important;
+  overflow: hidden;
+  color: var(--mantine-color-dimmed) !important;
+  font-size: 11px;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.retrievalDetails {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid
+    light-dark(var(--mantine-color-blue-1), var(--mantine-color-dark-5));
+}
+
+.retrievalDetails summary {
+  cursor: pointer;
+  color: var(--mantine-color-dimmed);
+  user-select: none;
+}
+
+.retrievalDiagnostics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px 12px;
+  margin: 7px 0 0;
+}
+
+.retrievalDiagnostics > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.retrievalDiagnostics dt,
+.retrievalDiagnostics dd {
+  margin: 0;
+}
+
+.retrievalDiagnostics dt {
+  color: var(--mantine-color-dimmed);
+}
+
+.retrievalDiagnostics dd {
+  text-align: right;
+  font-weight: 500;
+}
+
+.retrievalWarning {
+  margin-top: 8px;
+  color: light-dark(
+    var(--mantine-color-yellow-8),
+    var(--mantine-color-yellow-4)
+  );
 }
 
 @keyframes blink {

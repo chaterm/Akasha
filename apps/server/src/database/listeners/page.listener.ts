@@ -6,11 +6,16 @@ import { QueueJob, QueueName } from '../../integrations/queue/constants';
 import { Queue } from 'bullmq';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
 import { PageRepo } from '../repos/page/page.repo';
+import { KnowledgeCompilationRepo } from '../repos/llm-wiki/knowledge-compilation.repo';
 import {
   buildKnowledgeCompileCoalesceKey,
   buildKnowledgeCompilePageJobId,
   KNOWLEDGE_COMPILE_DELAY_MS,
 } from '../../ee/llm-wiki/services/knowledge-queue.utils';
+import {
+  DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+  DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+} from '../../ee/llm-wiki/llm-wiki.constants';
 
 export class PageEvent {
   pageIds: string[];
@@ -26,6 +31,7 @@ export class PageListener {
     private readonly pageRepo: PageRepo,
     @InjectQueue(QueueName.SEARCH_QUEUE) private searchQueue: Queue,
     @InjectQueue(QueueName.AI_QUEUE) private aiQueue: Queue,
+    private readonly compilationRepo: KnowledgeCompilationRepo,
   ) {}
 
   @OnEvent(EventName.PAGE_CREATED)
@@ -137,6 +143,23 @@ export class PageListener {
 
     for (const page of pageRefs) {
       if (page.deletedAt) continue;
+      const jobId = buildKnowledgeCompilePageJobId({
+        workspaceId,
+        spaceId: page.spaceId,
+        sourcePageId: page.id,
+        runKey: buildKnowledgeCompileCoalesceKey(),
+      });
+      await this.compilationRepo.queueAttempt({
+        workspaceId,
+        spaceId: page.spaceId,
+        sourcePageId: page.id,
+        sourceVersion: undefined,
+        sourceContentHash: undefined,
+        compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+        promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+        compilerRunId: jobId,
+        compileTaskId: jobId,
+      });
       await this.aiQueue.add(
         QueueJob.KNOWLEDGE_COMPILE_PAGES,
         {
@@ -148,12 +171,7 @@ export class PageListener {
           delay: KNOWLEDGE_COMPILE_DELAY_MS,
           attempts: 3,
           backoff: { type: 'exponential', delay: 1000 },
-          jobId: buildKnowledgeCompilePageJobId({
-            workspaceId,
-            spaceId: page.spaceId,
-            sourcePageId: page.id,
-            runKey: buildKnowledgeCompileCoalesceKey(),
-          }),
+          jobId,
         },
       );
     }

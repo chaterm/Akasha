@@ -12,6 +12,8 @@ import { KnowledgeDiagnosticsService } from './services/knowledge-diagnostics.se
 import { KnowledgeGraphService } from './services/knowledge-graph.service';
 import { KnowledgeQueryAuditRepo } from '@akasha/db/repos/llm-wiki/knowledge-query-audit.repo';
 import { PageRepo } from '@akasha/db/repos/page/page.repo';
+import { KnowledgeSourceExporterService } from './services/knowledge-source-exporter.service';
+import { KnowledgeSpaceCompilationService } from './services/knowledge-space-compilation.service';
 
 describe('LlmWikiController', () => {
   it('rejects queries when workspace AI knowledge chat is disabled', async () => {
@@ -107,6 +109,7 @@ describe('LlmWikiController', () => {
       retrievalMode: 'high_completeness',
       authorizedCapsuleCount: 1,
       metadata: {
+        origin: 'knowledge_query',
         spaceIds: ['space-1'],
         queryEmbeddingAvailable: false,
         candidateSourceCount: 4,
@@ -484,8 +487,7 @@ describe('LlmWikiController', () => {
     });
   });
 
-  it('retries explicit source pages as isolated jobs', async () => {
-    const aiQueue = { add: jest.fn().mockResolvedValue(undefined) };
+  it('retries only selected pages through durable per-Space runs', async () => {
     const pageRepo = {
       findExistingPageRefs: jest.fn().mockResolvedValue([
         {
@@ -502,7 +504,33 @@ describe('LlmWikiController', () => {
         },
       ]),
     };
-    const controller = createController({ aiQueue, pageRepo });
+    const sourceExporter = {
+      exportPageSources: jest
+        .fn()
+        .mockImplementation(({ spaceId, sourcePageIds }) =>
+          sourcePageIds.map((sourcePageId: string) => ({
+            workspaceId: 'workspace-1',
+            spaceId,
+            sourcePageId,
+            sourceVersion: `version-${sourcePageId}`,
+            contentHash: `hash-${sourcePageId}`,
+            title: sourcePageId,
+            text: `content-${sourcePageId}`,
+            references: [],
+          })),
+        ),
+    };
+    const spaceCompilation = {
+      startSpaceRun: jest
+        .fn()
+        .mockResolvedValueOnce({ id: 'retry-run-1' })
+        .mockResolvedValueOnce({ id: 'retry-run-2' }),
+    };
+    const controller = createController({
+      pageRepo,
+      sourceExporter,
+      spaceCompilation,
+    });
 
     await expect(
       controller.retryPages(
@@ -514,27 +542,32 @@ describe('LlmWikiController', () => {
       queuedPageCount: 2,
       jobIds: [
         expect.stringContaining(
-          'knowledge-compile-pages__workspace-1__space-1__page-1__retry_compile-',
+          'knowledge-compile-pages__workspace-1__space-1__page-1__retry-run-1',
         ),
         expect.stringContaining(
-          'knowledge-compile-pages__workspace-1__space-2__page-2__retry_compile-',
+          'knowledge-compile-pages__workspace-1__space-2__page-2__retry-run-2',
         ),
       ],
     });
 
-    expect(aiQueue.add).toHaveBeenCalledWith(
-      QueueJob.KNOWLEDGE_COMPILE_PAGES,
-      {
-        workspaceId: 'workspace-1',
-        spaceId: 'space-1',
-        sourcePageIds: ['page-1'],
-        trigger: 'retry_compile',
-      },
-      expect.objectContaining({
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 1000 },
-      }),
-    );
+    expect(spaceCompilation.startSpaceRun).toHaveBeenNthCalledWith(1, {
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      trigger: 'retry_compile',
+      sources: [
+        expect.objectContaining({
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageId: 'page-1',
+        }),
+      ],
+    });
+    expect(spaceCompilation.startSpaceRun).toHaveBeenNthCalledWith(2, {
+      workspaceId: 'workspace-1',
+      spaceId: 'space-2',
+      trigger: 'retry_compile',
+      sources: [expect.objectContaining({ sourcePageId: 'page-2' })],
+    });
   });
 
   it('rejects knowledge diagnostics from workspace members', async () => {
@@ -561,6 +594,8 @@ function createController(
     queryAuditRepo?: Partial<KnowledgeQueryAuditRepo>;
     aiQueue?: { add: jest.Mock };
     pageRepo?: Partial<PageRepo>;
+    sourceExporter?: Partial<KnowledgeSourceExporterService>;
+    spaceCompilation?: Partial<KnowledgeSpaceCompilationService>;
   } = {},
 ) {
   return new LlmWikiController(
@@ -597,6 +632,14 @@ function createController(
       findExistingPageRefs: jest.fn().mockResolvedValue([]),
       ...overrides.pageRepo,
     } as unknown as PageRepo,
+    {
+      exportPageSources: jest.fn().mockResolvedValue([]),
+      ...overrides.sourceExporter,
+    } as unknown as KnowledgeSourceExporterService,
+    {
+      startSpaceRun: jest.fn(),
+      ...overrides.spaceCompilation,
+    } as unknown as KnowledgeSpaceCompilationService,
   );
 }
 

@@ -32,6 +32,8 @@ export interface KnowledgeImportResult {
   degradedRetrievalProfiles?: string[];
 }
 
+export type KnowledgeImportStage = 'validation' | 'merge' | 'import';
+
 export class KnowledgeCompilationValidationError extends Error {
   readonly code = 'validation_failed';
   readonly retryable = false;
@@ -61,21 +63,11 @@ export class KnowledgeImportService {
   async importCompileResult(input: {
     input: CompileSpaceInput;
     artifacts: CompiledKnowledgeArtifact[];
+    onStage?: (stage: KnowledgeImportStage) => void | Promise<void>;
+    upsertSources?: boolean;
   }): Promise<KnowledgeImportResult> {
+    await input.onStage?.('validation');
     const validation = this.validator.validateCompileResult(input);
-
-    for (const source of input.input.sources) {
-      await this.sourceRepo.upsertPageSource({
-        workspaceId: source.workspaceId,
-        sourcePageId: source.sourcePageId,
-        sourceSpaceId: source.spaceId,
-        sourceType: 'docmost_page',
-        sourceVersion: source.sourceVersion,
-        contentHash: source.contentHash,
-        extractedText: source.text,
-        mimeType: 'text/plain',
-      });
-    }
 
     const quarantineInputs = validation.quarantined.map((quarantined) => ({
       artifactId: quarantined.artifact.artifactId,
@@ -113,6 +105,7 @@ export class KnowledgeImportService {
         }
       | undefined;
     if (isSemanticPagePublication) {
+      await input.onStage?.('merge');
       const source = input.input.sources[0];
       const previousSourceContributions =
         await this.contributionRepo.findBySourcePage({
@@ -166,6 +159,22 @@ export class KnowledgeImportService {
           };
         }),
       };
+    }
+
+    await input.onStage?.('import');
+    if (input.upsertSources !== false) {
+      for (const source of input.input.sources) {
+        await this.sourceRepo.upsertPageSource({
+          workspaceId: source.workspaceId,
+          sourcePageId: source.sourcePageId,
+          sourceSpaceId: source.spaceId,
+          sourceType: 'docmost_page',
+          sourceVersion: source.sourceVersion,
+          contentHash: source.contentHash,
+          extractedText: source.text,
+          mimeType: 'text/plain',
+        });
+      }
     }
 
     const artifactInputs: UpsertCompiledArtifactInput[] = [];
@@ -308,6 +317,8 @@ export class KnowledgeImportService {
           toKnowledgePageId: link.toKnowledgePageId ?? null,
           targetPageId: link.targetPageId ?? null,
           targetSpaceId: link.targetSpaceId ?? null,
+          targetArtifactKind: link.targetArtifactKind ?? null,
+          targetCanonicalKey: link.targetCanonicalKey ?? null,
           linkText: link.linkText ?? '',
           linkType: link.linkType,
           isDangling:
@@ -369,7 +380,7 @@ export class KnowledgeImportService {
           id: artifact.artifactId,
           workspaceId: artifact.workspaceId,
           spaceId: artifact.spaceId,
-          compileScope: 'space',
+          compileScope: input.input.compileMode === 'pages' ? 'page' : 'space',
           title: artifact.title,
           slug: artifact.artifactId,
           body: artifact.contentMarkdown,
@@ -381,6 +392,9 @@ export class KnowledgeImportService {
           compilerVersion: artifact.compilerVersion,
           compilerRunId: artifact.compilerRunId ?? null,
           compileTaskId: artifact.compileTaskId ?? null,
+          generationMode:
+            artifact.generationMode ??
+            (isSemanticPagePublication ? 'semantic' : 'legacy'),
           staleAt: null,
         },
         pageSources: (artifact.inputSourceRefs ?? []).map((source) => ({
@@ -439,6 +453,17 @@ export class KnowledgeImportService {
       await executeTx(this.db, async (trx) => {
         if (artifactInputs.length > 0) {
           if (contributionPublication) {
+            // Semantic artifacts use canonical IDs, so rollout from the older
+            // deterministic compiler can otherwise leave two active summaries
+            // for one source. Stale source-owned summaries and publish the new
+            // canonical summary in the same transaction.
+            await this.capsuleRepo.markSourceArtifactsStaleBySourcePageIds(
+              {
+                workspaceId: input.input.workspaceId,
+                sourcePageIds: [contributionPublication.sourcePageId],
+              },
+              trx,
+            );
             await this.contributionRepo!.replaceSourceContributions(
               {
                 workspaceId: input.input.workspaceId,

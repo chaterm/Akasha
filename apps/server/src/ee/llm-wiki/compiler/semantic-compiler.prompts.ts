@@ -37,7 +37,10 @@ export function buildSemanticAnalysisMessages(input: {
       '<source_document>',
       JSON.stringify({ title: input.sourceTitle, text: input.sourceText }),
       '</source_document>',
-      'Return keys: version, synopsis, language, entities, concepts, claims, relations, comparisons, contradictions.',
+      '<output_contract>',
+      ANALYSIS_OUTPUT_CONTRACT,
+      '</output_contract>',
+      'Follow the output contract exactly. version must be the string "1". Do not replace claim text with subject/predicate/object fields. canonicalKey must start with a letter or number and contain only letters, numbers, dot, underscore, colon, or hyphen; it must not contain spaces.',
     ].join('\n'),
   };
 }
@@ -86,7 +89,92 @@ export function buildSemanticGenerationMessages(input: {
       '<source_document>',
       JSON.stringify({ title: input.sourceTitle, text: input.sourceText }),
       '</source_document>',
-      'Return artifacts with: kind, canonicalKey, title, markdown, claims, links, tags.',
+      '<output_contract>',
+      GENERATION_OUTPUT_CONTRACT,
+      '</output_contract>',
+      'Follow the output contract exactly. version must be the string "1". Every artifact must include claims, links, and tags arrays. canonicalKey must start with a letter or number and contain only letters, numbers, dot, underscore, colon, or hyphen; it must not contain spaces.',
     ].join('\n'),
   };
 }
+
+const ANALYSIS_OUTPUT_CONTRACT = JSON.stringify({
+  version: '1',
+  synopsis: 'non-empty summary string',
+  language: 'source language code or name',
+  entities: [
+    {
+      canonicalKey: 'stable_entity_key',
+      name: 'entity display name',
+      type: 'optional entity type',
+      description: 'non-empty source-grounded description',
+      evidenceQuotes: ['short exact quote copied from source'],
+    },
+  ],
+  concepts: [
+    {
+      canonicalKey: 'stable_concept_key',
+      name: 'concept display name',
+      description: 'non-empty source-grounded description',
+      evidenceQuotes: ['short exact quote copied from source'],
+    },
+  ],
+  claims: [
+    {
+      text: 'complete source-grounded claim sentence',
+      confidence: 0.9,
+      evidenceQuote: 'short exact quote copied from source',
+    },
+  ],
+  relations: [
+    {
+      fromCanonicalKey: 'stable_source_key',
+      toCanonicalKey: 'stable_target_key',
+      relation: 'non-empty relation label',
+      evidenceQuote: 'optional short exact quote copied from source',
+    },
+  ],
+  comparisons: [
+    {
+      canonicalKey: 'stable_comparison_key',
+      title: 'comparison title',
+      subjects: ['first_subject_key', 'second_subject_key'],
+      summary: 'non-empty comparison summary',
+      evidenceQuotes: ['short exact quote copied from source'],
+    },
+  ],
+  contradictions: [
+    {
+      description: 'non-empty contradiction description',
+      relatedCanonicalKeys: ['stable_related_key'],
+      evidenceQuotes: ['short exact quote copied from source'],
+    },
+  ],
+});
+
+const GENERATION_OUTPUT_CONTRACT = JSON.stringify({
+  version: '1',
+  artifacts: [
+    {
+      kind: 'source_summary | concept | entity | comparison',
+      canonicalKey: 'stable_artifact_key',
+      title: 'artifact title',
+      markdown: 'non-empty Markdown body',
+      claims: [
+        {
+          text: 'complete source-grounded claim sentence',
+          confidence: 0.9,
+          evidenceQuote: 'short exact quote copied from source',
+        },
+      ],
+      links: [
+        {
+          targetKind: 'source_summary | concept | entity | comparison',
+          targetCanonicalKey: 'stable_target_key',
+          relation: 'non-empty relation label',
+          evidenceQuote: 'optional short exact quote copied from source',
+        },
+      ],
+      tags: ['short tag'],
+    },
+  ],
+});

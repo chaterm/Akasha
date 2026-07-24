@@ -66,6 +66,7 @@ export enum QueueJob {
 
   KNOWLEDGE_COMPILE_SPACE = 'knowledge-compile-space',
   KNOWLEDGE_COMPILE_PAGES = 'knowledge-compile-pages',
+  KNOWLEDGE_AGGREGATE_SPACE = 'knowledge-aggregate-space',
   KNOWLEDGE_REINDEX_ACCESS = 'knowledge-reindex-access',
   KNOWLEDGE_MARK_SOURCES_STALE = 'knowledge-mark-sources-stale',
   REVIEW_DISCOVER = 'review-discover',

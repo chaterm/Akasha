@@ -35,9 +35,7 @@ import {
 import { NotificationPopover } from "@/features/notification/components/notification-popover.tsx";
 import { workspaceAtom } from "@/features/user/atoms/current-user-atom.ts";
 
-const links = [
-  { link: APP_ROUTE.HOME, label: "Home" },
-];
+const links = [{ link: APP_ROUTE.HOME, label: "Home" }];
 
 export function AppHeader() {
   const { t } = useTranslation();
@@ -108,16 +106,15 @@ export function AppHeader() {
           </Group>
         </Group>
 
-        <div>
-          <Group visibleFrom="sm">
-            <SearchControl onClick={searchSpotlight.open} />
-          </Group>
+        <Group px={"xl"} wrap="nowrap">
+          <SearchControl
+            compact
+            visibleFrom="sm"
+            onClick={searchSpotlight.open}
+          />
           <Group hiddenFrom="sm">
             <SearchMobileControl onSearch={searchSpotlight.open} />
           </Group>
-        </div>
-
-        <Group px={"xl"} wrap="nowrap">
           {aiChatEnabled && (
             <>
               <UnstyledButton
@@ -135,9 +132,9 @@ export function AppHeader() {
                   }
                 }}
               >
-                {t("AI Chat")}
+                {t("AI Q&A")}
               </UnstyledButton>
-              <Tooltip label={t("AI Chat")} openDelay={250} withArrow>
+              <Tooltip label={t("AI Q&A")} openDelay={250} withArrow>
                 <ActionIcon
                   component={Link}
                   to="/ai"
@@ -145,9 +142,14 @@ export function AppHeader() {
                   color="dark"
                   size="sm"
                   hiddenFrom="sm"
-                  aria-label={t("AI Chat")}
+                  aria-label={t("AI Q&A")}
                   onClick={(e: React.MouseEvent) => {
-                    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) {
+                    if (
+                      e.metaKey ||
+                      e.ctrlKey ||
+                      e.shiftKey ||
+                      e.button === 1
+                    ) {
                       return;
                     }
                     if (isPageRoute) {

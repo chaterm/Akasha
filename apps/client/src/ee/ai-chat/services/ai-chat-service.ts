@@ -64,6 +64,7 @@ export function sendChatMessage(
     mentionedPageIds?: string[];
     contextPageId?: string;
     attachmentIds?: string[];
+    spaceIds?: string[];
   },
   onEvent: (event: AiChatStreamEvent) => void,
   onError?: (error: string) => void,

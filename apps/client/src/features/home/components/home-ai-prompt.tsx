@@ -43,7 +43,7 @@ export default function HomeAiPrompt() {
         {t("Welcome to {{name}}", { name: workspace?.name ?? "Akasha" })}
       </h1>
       <div className={classes.subtitle}>
-        {t("Ask anything or search your workspace")}
+        {t("Ask your workspace knowledge base")}
       </div>
 
       <div className={classes.inputContainer}>
@@ -51,7 +51,7 @@ export default function HomeAiPrompt() {
           isStreaming={false}
           onSend={handleSend}
           onStop={() => {}}
-          placeholder={t("Ask anything... Use @ to mention pages")}
+          placeholder={t("Ask the knowledge base... Use @ to mention pages")}
           autofocus={false}
         />
       </div>

@@ -4,6 +4,10 @@ import { JsonValue } from '@akasha/db/types/db';
 import { KyselyDB } from '@akasha/db/types/kysely.types';
 
 export type KnowledgeQueryAuditMetadata = {
+  origin?: 'knowledge_query' | 'ai_qa';
+  answerMode?: 'knowledge' | 'no_match';
+  citationCount?: number;
+  retrievedSourceCount?: number;
   spaceIds: string[];
   queryEmbeddingAvailable: boolean;
   candidateSourceCount: number;

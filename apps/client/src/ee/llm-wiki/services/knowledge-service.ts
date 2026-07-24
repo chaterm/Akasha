@@ -423,6 +423,15 @@ function normalizeCompileStatus(
     lastRunId: readString(value.lastRunId),
     durationMs: typeof value.durationMs === "number" ? value.durationMs : null,
     sourceCount: readNumber(value.sourceCount),
+    ...(typeof value.succeededPageCount === "number"
+      ? { succeededPageCount: value.succeededPageCount }
+      : {}),
+    ...(typeof value.failedPageCount === "number"
+      ? { failedPageCount: value.failedPageCount }
+      : {}),
+    ...(typeof value.skippedPageCount === "number"
+      ? { skippedPageCount: value.skippedPageCount }
+      : {}),
     importedArtifactCount: readNumber(value.importedArtifactCount),
     quarantinedArtifactCount: readNumber(value.quarantinedArtifactCount),
     failureReason:
@@ -438,6 +447,7 @@ function normalizeCompileStatusValue(
     value === "queued" ||
     value === "running" ||
     value === "succeeded" ||
+    value === "partial" ||
     value === "failed"
   ) {
     return value;

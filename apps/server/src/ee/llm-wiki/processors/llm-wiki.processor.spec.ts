@@ -7,6 +7,9 @@ import { PageRepo } from '@akasha/db/repos/page/page.repo';
 import { QueueJob } from '../../../integrations/queue/constants';
 import { KnowledgeCompilerAdapter } from '../adapters/knowledge-compiler.adapter';
 import { KnowledgeAccessIndexerService } from '../services/knowledge-access-indexer.service';
+import { KnowledgeArtifactCatalogService } from '../services/knowledge-artifact-catalog.service';
+import { KnowledgeSpaceCompilationService } from '../services/knowledge-space-compilation.service';
+import { KnowledgeSpaceAggregatorService } from '../services/knowledge-space-aggregator.service';
 import { KnowledgeImportService } from '../services/knowledge-import.service';
 import { KnowledgeSourceExporterService } from '../services/knowledge-source-exporter.service';
 import { IAuditService } from '../../../integrations/audit/audit.service';
@@ -15,7 +18,7 @@ import { ReviewSnapshotService } from '../review/review-snapshot.service';
 import { LlmWikiProcessor } from './llm-wiki.processor';
 
 describe('LlmWikiProcessor', () => {
-  it('fans a space compile out to one retryable job per source page', async () => {
+  it('creates a durable Space run instead of reporting fan-out as complete', async () => {
     const exporter = {
       exportSpaceSources: jest.fn().mockResolvedValue([
         {
@@ -39,6 +42,10 @@ describe('LlmWikiProcessor', () => {
     };
     const accessIndexer = createAccessIndexer();
     const aiQueue = createAiQueue();
+    const compilationRepo = createCompilationRepo();
+    const spaceCompilation = {
+      startSpaceRun: jest.fn().mockResolvedValue({ id: 'space-run-1' }),
+    };
     const processor = new LlmWikiProcessor(
       exporter as unknown as KnowledgeSourceExporterService,
       compiler as unknown as KnowledgeCompilerAdapter,
@@ -52,6 +59,9 @@ describe('LlmWikiProcessor', () => {
       createReviewSnapshotService(),
       createAuditService(),
       createReviewApplicationRepo(),
+      compilationRepo as never,
+      undefined,
+      spaceCompilation as unknown as KnowledgeSpaceCompilationService,
     );
 
     const result = await processor.process({
@@ -63,26 +73,28 @@ describe('LlmWikiProcessor', () => {
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
     });
-    expect(aiQueue.add).toHaveBeenCalledWith(
-      QueueJob.KNOWLEDGE_COMPILE_PAGES,
-      expect.objectContaining({
-        workspaceId: 'workspace-1',
-        spaceId: 'space-1',
-        sourcePageIds: ['page-1'],
-      }),
-      expect.objectContaining({
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 1000 },
-        jobId: expect.stringContaining(
-          'knowledge-compile-pages__workspace-1__space-1__page-1__',
-        ),
-      }),
-    );
+    expect(spaceCompilation.startSpaceRun).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      trigger: 'manual_compile',
+      sources: [
+        expect.objectContaining({
+          sourcePageId: 'page-1',
+        }),
+      ],
+    });
+    expect(aiQueue.add).not.toHaveBeenCalled();
+    expect(compilationRepo.queueAttempt).not.toHaveBeenCalled();
     expect(compiler.compileSpace).not.toHaveBeenCalled();
     expect(importer.importCompileResult).not.toHaveBeenCalled();
     expect(accessIndexer.reindexSourcePages).not.toHaveBeenCalled();
     expect(result).toEqual(
-      expect.objectContaining({ type: 'compile-space', sourceCount: 1 }),
+      expect.objectContaining({
+        type: 'compile-space',
+        status: 'queued',
+        compilerRunId: 'space-run-1',
+        sourceCount: 1,
+      }),
     );
   });
 
@@ -146,6 +158,7 @@ describe('LlmWikiProcessor', () => {
     expect(importer.importCompileResult).toHaveBeenCalledWith({
       input: jest.mocked(compiler.compileSpace).mock.calls[0][0],
       artifacts: [],
+      onStage: expect.any(Function),
     });
     expect(accessIndexer.reindexSourcePages).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
@@ -156,6 +169,158 @@ describe('LlmWikiProcessor', () => {
         type: 'compile-pages',
         sourceCount: 1,
       }),
+    );
+  });
+
+  it('passes the active Space artifact catalog into page compilation', async () => {
+    const source = sourceSnapshot();
+    const exporter = {
+      exportSpaceSources: jest.fn(),
+      exportPageSources: jest.fn().mockResolvedValue([source]),
+    };
+    const compiler = createCompiler();
+    const catalogService = {
+      snapshot: jest.fn().mockResolvedValue({
+        entries: [
+          {
+            artifactId: '22222222-2222-4222-8222-222222222222',
+            artifactKind: 'concept',
+            canonicalKey: 'event-sourcing',
+            title: 'Event sourcing',
+            summary: 'Append-only changes.',
+          },
+        ],
+        hash: 'sha256:catalog',
+      }),
+    };
+    const processor = createProcessor({
+      exporter,
+      compiler,
+      catalogService,
+    });
+
+    await processor.process({
+      name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+      data: {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageIds: ['page-1'],
+      },
+    } as Job);
+
+    expect(catalogService.snapshot).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+    });
+    expect(jest.mocked(compiler.compileSpace).mock.calls[0][0].catalog).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ canonicalKey: 'event-sourcing' }),
+      ]),
+    );
+  });
+
+  it('uses the immutable run catalog for a Space fan-out page job', async () => {
+    const source = sourceSnapshot();
+    const exporter = {
+      exportSpaceSources: jest.fn(),
+      exportPageSources: jest.fn().mockResolvedValue([source]),
+    };
+    const compiler = createCompiler();
+    const catalogService = { snapshot: jest.fn() };
+    const runEntries = [
+      {
+        artifactId: '33333333-3333-4333-8333-333333333333',
+        artifactKind: 'concept',
+        canonicalKey: 'snapshot-concept',
+        title: 'Snapshot concept',
+        summary: 'Frozen at run creation.',
+      },
+    ];
+    const spaceCompilation = {
+      markPageRunning: jest.fn(),
+      completePage: jest.fn(),
+      catalogForPage: jest.fn().mockResolvedValue(runEntries),
+    };
+    const processor = createProcessor({
+      exporter,
+      compiler,
+      catalogService,
+      spaceCompilation,
+    });
+
+    await processor.process({
+      name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+      data: {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageIds: ['page-1'],
+        spaceRunId: 'space-run-1',
+      },
+    } as Job);
+
+    expect(spaceCompilation.catalogForPage).toHaveBeenCalledWith({
+      runId: 'space-run-1',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+    });
+    expect(catalogService.snapshot).not.toHaveBeenCalled();
+    expect(jest.mocked(compiler.compileSpace).mock.calls[0][0].catalog).toEqual(
+      runEntries,
+    );
+  });
+
+  it('skips a Space run page whose source changed after the run snapshot', async () => {
+    const source = sourceSnapshot({
+      sourceVersion: 'v2',
+      contentHash: 'hash-2',
+    });
+    const exporter = {
+      exportSpaceSources: jest.fn(),
+      exportPageSources: jest.fn().mockResolvedValue([source]),
+    };
+    const compiler = createCompiler();
+    const compilationRepo = createCompilationRepo();
+    const spaceCompilation = {
+      markPageRunning: jest.fn(),
+      completePage: jest.fn(),
+      catalogForPage: jest.fn(),
+    };
+    const processor = createProcessor({
+      exporter,
+      compiler,
+      compilationRepo,
+      spaceCompilation,
+    });
+
+    const result = await processor.process({
+      name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+      data: {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageIds: ['page-1'],
+        sourceVersion: 'v1',
+        sourceContentHash: 'hash-1',
+        spaceRunId: 'space-run-1',
+      },
+    } as Job);
+
+    expect(compiler.compileSpace).not.toHaveBeenCalled();
+    expect(spaceCompilation.catalogForPage).not.toHaveBeenCalled();
+    expect(compilationRepo.failAttempt).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-1',
+      errorCode: 'source_changed',
+      errorMessage: 'Knowledge source changed after the Space run snapshot.',
+    });
+    expect(spaceCompilation.completePage).toHaveBeenCalledWith({
+      runId: 'space-run-1',
+      sourcePageId: 'page-1',
+      status: 'skipped',
+      errorCode: 'source_changed',
+      errorMessage: 'Knowledge source changed after the Space run snapshot.',
+    });
+    expect(result).toEqual(
+      expect.objectContaining({ status: 'succeeded', sourceCount: 0 }),
     );
   });
 
@@ -184,7 +349,20 @@ describe('LlmWikiProcessor', () => {
       exportPageSources: jest.fn().mockResolvedValue([source]),
     };
     const compilationRepo = createCompilationRepo();
-    const processor = createProcessor({ exporter, compilationRepo });
+    const importer = createImporter();
+    jest
+      .mocked(importer.importCompileResult)
+      .mockImplementation(async (input) => {
+        await input.onStage?.('validation');
+        await input.onStage?.('merge');
+        await input.onStage?.('import');
+        return { importedArtifactCount: 0, quarantinedArtifactCount: 0 };
+      });
+    const processor = createProcessor({
+      exporter,
+      importer,
+      compilationRepo,
+    });
 
     await processor.process({
       id: 'page-job-1',
@@ -200,20 +378,237 @@ describe('LlmWikiProcessor', () => {
       expect.objectContaining({
         workspaceId: 'workspace-1',
         sourcePageId: 'page-1',
-        sourceVersion: 'v2',
         compileTaskId: 'page-job-1',
       }),
     );
+    expect(compilationRepo.updateSourceSnapshot).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-1',
+      sourceVersion: 'v2',
+      sourceContentHash: source.contentHash,
+    });
     expect(compilationRepo.updateStage).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       sourcePageId: 'page-1',
       stage: 'validation',
     });
+    expect(compilationRepo.updateStage.mock.calls.slice(-3)).toEqual([
+      [
+        {
+          workspaceId: 'workspace-1',
+          sourcePageId: 'page-1',
+          stage: 'validation',
+        },
+      ],
+      [
+        {
+          workspaceId: 'workspace-1',
+          sourcePageId: 'page-1',
+          stage: 'merge',
+        },
+      ],
+      [
+        {
+          workspaceId: 'workspace-1',
+          sourcePageId: 'page-1',
+          stage: 'import',
+        },
+      ],
+    ]);
     expect(compilationRepo.succeedAttempt).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       sourcePageId: 'page-1',
       sourceVersion: 'v2',
       sourceContentHash: source.contentHash,
+    });
+  });
+
+  it('advances a durable Space run page through running and succeeded', async () => {
+    const source = sourceSnapshot();
+    const exporter = {
+      exportSpaceSources: jest.fn(),
+      exportPageSources: jest.fn().mockResolvedValue([source]),
+    };
+    const spaceCompilation = {
+      markPageRunning: jest.fn().mockResolvedValue(undefined),
+      completePage: jest.fn().mockResolvedValue(undefined),
+      catalogForPage: jest.fn().mockResolvedValue([]),
+    };
+    const processor = createProcessor({ exporter, spaceCompilation });
+
+    await processor.process({
+      id: 'page-job-1',
+      name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+      data: {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageIds: ['page-1'],
+        spaceRunId: 'space-run-1',
+      },
+    } as Job);
+
+    expect(spaceCompilation.markPageRunning).toHaveBeenCalledWith({
+      runId: 'space-run-1',
+      sourcePageId: 'page-1',
+    });
+    expect(spaceCompilation.completePage).toHaveBeenCalledWith({
+      runId: 'space-run-1',
+      sourcePageId: 'page-1',
+      status: 'succeeded',
+    });
+  });
+
+  it('runs the durable Space aggregation job after the page barrier opens', async () => {
+    const spaceAggregator = {
+      aggregate: jest.fn().mockResolvedValue({
+        importedArtifactCount: 1,
+        quarantinedArtifactCount: 0,
+      }),
+    };
+    const processor = createProcessor({ spaceAggregator });
+
+    const result = await processor.process({
+      id: 'knowledge-aggregate-space__space-run-1',
+      name: QueueJob.KNOWLEDGE_AGGREGATE_SPACE,
+      data: {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        spaceRunId: 'space-run-1',
+      },
+    } as Job);
+
+    expect(spaceAggregator.aggregate).toHaveBeenCalledWith({
+      runId: 'space-run-1',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        type: 'compile-space',
+        status: 'succeeded',
+        compilerRunId: 'space-run-1',
+        importedArtifactCount: 1,
+      }),
+    );
+  });
+
+  it('records export failures after starting the queued page attempt', async () => {
+    const exporter = {
+      exportSpaceSources: jest.fn(),
+      exportPageSources: jest
+        .fn()
+        .mockRejectedValue(new Error('source storage unavailable')),
+    };
+    const compilationRepo = createCompilationRepo();
+    const processor = createProcessor({ exporter, compilationRepo });
+
+    await expect(
+      processor.process({
+        id: 'page-job-1',
+        name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+        data: {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageIds: ['page-1'],
+        },
+      } as Job),
+    ).rejects.toThrow('source storage unavailable');
+
+    expect(compilationRepo.startAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageId: 'page-1',
+        compileTaskId: 'page-job-1',
+      }),
+    );
+    expect(compilationRepo.failAttempt).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-1',
+      errorCode: 'compile_failed',
+      errorMessage: 'Knowledge compilation failed.',
+    });
+  });
+
+  it('finishes a Space run page when its source is no longer available', async () => {
+    const exporter = {
+      exportSpaceSources: jest.fn(),
+      exportPageSources: jest.fn().mockResolvedValue([]),
+    };
+    const compilationRepo = createCompilationRepo();
+    const spaceCompilation = {
+      markPageRunning: jest.fn(),
+      completePage: jest.fn(),
+      catalogForPage: jest.fn(),
+    };
+    const processor = createProcessor({
+      exporter,
+      compilationRepo,
+      spaceCompilation,
+    });
+
+    await expect(
+      processor.process({
+        id: 'page-job-missing',
+        name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+        data: {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageIds: ['page-1'],
+          spaceRunId: 'space-run-1',
+        },
+        opts: { attempts: 3 },
+        attemptsMade: 0,
+      } as Job),
+    ).rejects.toThrow('Knowledge source page is unavailable for compilation.');
+
+    expect(compilationRepo.failAttempt).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-1',
+      errorCode: 'source_unavailable',
+      errorMessage: 'Knowledge source page is unavailable for compilation.',
+    });
+    expect(spaceCompilation.completePage).toHaveBeenCalledWith({
+      runId: 'space-run-1',
+      sourcePageId: 'page-1',
+      status: 'failed',
+      errorCode: 'source_unavailable',
+      errorMessage: 'Knowledge source page is unavailable for compilation.',
+    });
+  });
+
+  it('records an empty source as non-retryable without invoking the compiler', async () => {
+    const source = sourceSnapshot({ text: '   ' });
+    const exporter = {
+      exportSpaceSources: jest.fn(),
+      exportPageSources: jest.fn().mockResolvedValue([source]),
+    };
+    const compiler = createCompiler();
+    const compilationRepo = createCompilationRepo();
+    const processor = createProcessor({
+      exporter,
+      compiler,
+      compilationRepo,
+    });
+
+    await expect(
+      processor.process({
+        id: 'page-job-empty',
+        name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+        data: {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageIds: ['page-1'],
+        },
+      } as Job),
+    ).rejects.toThrow('Knowledge source page is empty.');
+
+    expect(compiler.compileSpace).not.toHaveBeenCalled();
+    expect(compilationRepo.failAttempt).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-1',
+      errorCode: 'empty_source',
+      errorMessage: 'Knowledge source page is empty.',
     });
   });
 
@@ -648,6 +1043,7 @@ describe('LlmWikiProcessor', () => {
     const accessIndexer = createAccessIndexer();
     const pageRepo = createPageRepo();
     const aiQueue = createAiQueue();
+    const compilationRepo = createCompilationRepo();
     jest.mocked(pageRepo.findExistingPageRefs).mockResolvedValue([
       {
         id: 'page-1',
@@ -675,6 +1071,7 @@ describe('LlmWikiProcessor', () => {
       createReviewSnapshotService(),
       createAuditService(),
       createReviewApplicationRepo(),
+      compilationRepo as never,
     );
 
     await processor.process({
@@ -711,6 +1108,19 @@ describe('LlmWikiProcessor', () => {
         ),
       },
     );
+    expect(compilationRepo.queueAttempt).toHaveBeenCalledTimes(2);
+    expect(compilationRepo.queueAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageId: 'page-1',
+        sourceVersion: undefined,
+        sourceContentHash: undefined,
+      }),
+    );
+    expect(
+      compilationRepo.queueAttempt.mock.invocationCallOrder[0],
+    ).toBeLessThan(aiQueue.add.mock.invocationCallOrder[1]);
     expect(aiQueue.add).toHaveBeenCalledWith(
       QueueJob.KNOWLEDGE_COMPILE_PAGES,
       {
@@ -741,13 +1151,17 @@ function createExporter(): KnowledgeSourceExporterService {
 function createProcessor(
   overrides: {
     exporter?: unknown;
+    compiler?: KnowledgeCompilerAdapter;
+    catalogService?: Partial<KnowledgeArtifactCatalogService>;
+    spaceCompilation?: Partial<KnowledgeSpaceCompilationService>;
+    spaceAggregator?: Partial<KnowledgeSpaceAggregatorService>;
     importer?: KnowledgeImportService;
     compilationRepo?: ReturnType<typeof createCompilationRepo>;
   } = {},
 ): LlmWikiProcessor {
   return new LlmWikiProcessor(
     (overrides.exporter ?? createExporter()) as KnowledgeSourceExporterService,
-    createCompiler(),
+    overrides.compiler ?? createCompiler(),
     overrides.importer ?? createImporter(),
     createAccessIndexer(),
     createSourceRepo(),
@@ -759,12 +1173,17 @@ function createProcessor(
     createAuditService(),
     createReviewApplicationRepo(),
     overrides.compilationRepo as never,
+    overrides.catalogService as KnowledgeArtifactCatalogService,
+    overrides.spaceCompilation as KnowledgeSpaceCompilationService,
+    overrides.spaceAggregator as KnowledgeSpaceAggregatorService,
   );
 }
 
 function createCompilationRepo() {
   return {
+    queueAttempt: jest.fn().mockResolvedValue(undefined),
     startAttempt: jest.fn().mockResolvedValue(undefined),
+    updateSourceSnapshot: jest.fn().mockResolvedValue(undefined),
     updateStage: jest.fn().mockResolvedValue(undefined),
     failAttempt: jest.fn().mockResolvedValue(undefined),
     succeedAttempt: jest.fn().mockResolvedValue(undefined),
@@ -775,6 +1194,7 @@ function sourceSnapshot(
   overrides: Partial<{
     sourceVersion: string;
     contentHash: string;
+    text: string;
   }> = {},
 ) {
   return {

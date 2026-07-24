@@ -128,6 +128,9 @@ export interface IKnowledgeCompilePagesJob {
   workspaceId: string;
   spaceId: string;
   sourcePageIds: string[];
+  sourceVersion?: string;
+  sourceContentHash?: string;
+  spaceRunId?: string;
   trigger?:
     | 'manual_compile'
     | 'retry_compile'
@@ -135,6 +138,12 @@ export interface IKnowledgeCompilePagesJob {
     | 'page_update'
     | 'page_created'
     | 'page_restored';
+}
+
+export interface IKnowledgeAggregateSpaceJob {
+  workspaceId: string;
+  spaceId: string;
+  spaceRunId: string;
 }
 
 export interface IKnowledgeReindexAccessJob {

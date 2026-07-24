@@ -82,11 +82,27 @@ class FakeKyselyQuery {
 
   onConflict(...args: unknown[]) {
     this.calls.push({ method: 'onConflict', args });
+    const callback = args[0];
+    if (typeof callback === 'function') {
+      callback({
+        column: () => ({
+          doUpdateSet: (values: unknown) => {
+            this.calls.push({ method: 'doUpdateSet', args: [values] });
+            return this;
+          },
+        }),
+      });
+    }
     return this;
   }
 
   returningAll(...args: unknown[]) {
     this.calls.push({ method: 'returningAll', args });
+    return this;
+  }
+
+  returning(...args: unknown[]) {
+    this.calls.push({ method: 'returning', args });
     return this;
   }
 
@@ -149,6 +165,43 @@ function basePageSource(knowledgePageId: string, sourcePageId: string) {
 }
 
 describe('KnowledgeCapsuleRepo', () => {
+  it('returns only active canonical page artifacts for a Space catalog', async () => {
+    const row = {
+      artifactId: 'knowledge-page-1',
+      artifactKind: 'concept',
+      canonicalKey: 'event-sourcing',
+      title: 'Event sourcing',
+      body: 'Append-only changes.',
+    };
+    const query = new FakeKyselyQuery({ knowledgePages: [row] });
+    const repo = createRepo(query);
+
+    await expect(
+      repo.findActiveArtifactCatalog({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+      }),
+    ).resolves.toEqual([row]);
+
+    expect(query.calls).toEqual(
+      expect.arrayContaining([
+        { method: 'selectFrom', args: ['knowledgePages'] },
+        { method: 'where', args: ['workspaceId', '=', 'workspace-1'] },
+        { method: 'where', args: ['spaceId', '=', 'space-1'] },
+        { method: 'where', args: ['staleAt', 'is', null] },
+        { method: 'where', args: ['canonicalKey', 'is not', null] },
+        {
+          method: 'where',
+          args: [
+            'pageType',
+            'in',
+            ['source_summary', 'concept', 'entity', 'comparison'],
+          ],
+        },
+      ]),
+    );
+  });
+
   it('applies complete-source authorization before dense candidate limits', async () => {
     const { repo, queries } = createSqlRepo();
 
@@ -290,6 +343,54 @@ describe('KnowledgeCapsuleRepo', () => {
     expect(sql).toContain('lower');
     expect(sql).toContain('not exists ( select');
     expect(sql.indexOf('not exists')).toBeLessThan(sql.indexOf('limit'));
+  });
+
+  it('selects one policy-authorized graph expansion chunk per page', async () => {
+    const { repo, queries } = createSqlRepo();
+
+    await repo.findGraphChunkCandidates({
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-1'],
+      principals: [{ principalType: 'user', principalId: 'user-visible' }],
+      knowledgePageIds: ['knowledge-page-1', 'knowledge-page-2'],
+      limit: 8,
+    });
+
+    const sql = queries[0].sql.toLowerCase().replace(/\s+/g, ' ');
+    expect(sql).toContain('select distinct on');
+    expect(sql).toContain('"knowledge_chunks"."knowledge_page_id" in');
+    expect(sql).toContain('knowledge_source_access_policy');
+    expect(sql.indexOf('knowledge_source_access_policy')).toBeLessThan(
+      sql.indexOf('limit'),
+    );
+  });
+
+  it('bounds graph traversal to active pages in readable spaces', async () => {
+    const { repo, queries } = createSqlRepo();
+
+    await repo.findGraphTraversalEdges({
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-1'],
+      knowledgePageIds: ['knowledge-page-1'],
+      limit: 40,
+    });
+
+    const statements = queries.map((query) =>
+      query.sql.toLowerCase().replace(/\s+/g, ' '),
+    );
+    expect(statements).toHaveLength(3);
+    expect(statements).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('from "knowledge_links"'),
+        expect.stringContaining('from "knowledge_graph_edges"'),
+        expect.stringContaining('from "knowledge_page_sources"'),
+      ]),
+    );
+    for (const sql of statements) {
+      expect(sql).toContain('inner join "knowledge_pages"');
+      expect(sql).toContain('"stale_at" is null');
+      expect(sql).toContain('limit');
+    }
   });
 
   it('batch upserts pages before relationship rows so new pages can link each other', async () => {
@@ -501,8 +602,35 @@ describe('KnowledgeCapsuleRepo', () => {
     );
   });
 
-  it('marks all online capsule tables stale for a compile scope', async () => {
-    const query = new FakeKyselyQuery();
+  it('updates compilation scope and generation mode when a stable artifact is republished', async () => {
+    const query = new FakeKyselyQuery({
+      knowledgePages: [{ id: 'knowledge-page-1' }],
+    });
+    const repo = createRepo(query);
+
+    await repo.upsertCompiledArtifact({
+      page: {
+        ...basePage('knowledge-page-1'),
+        compileScope: 'page',
+        generationMode: 'semantic',
+      },
+    });
+
+    expect(query.calls).toContainEqual({
+      method: 'doUpdateSet',
+      args: [
+        expect.objectContaining({
+          compileScope: 'page',
+          generationMode: 'semantic',
+        }),
+      ],
+    });
+  });
+
+  it('marks only Space-scope artifacts and their children stale', async () => {
+    const query = new FakeKyselyQuery({
+      knowledgePages: [{ id: 'space-artifact-1' }],
+    });
     const repo = createRepo(query);
 
     await repo.markCompileScopeStale({
@@ -516,10 +644,20 @@ describe('KnowledgeCapsuleRepo', () => {
         { method: 'where', args: ['workspaceId', '=', 'workspace-1'] },
         { method: 'where', args: ['spaceId', '=', 'space-1'] },
         { method: 'where', args: ['compileScope', '=', 'space'] },
+        { method: 'returning', args: ['id'] },
+        { method: 'updateTable', args: ['knowledgeParentSections'] },
         { method: 'updateTable', args: ['knowledgeClaims'] },
         { method: 'updateTable', args: ['knowledgeChunks'] },
         { method: 'updateTable', args: ['knowledgeLinks'] },
         { method: 'updateTable', args: ['knowledgeGraphEdges'] },
+        {
+          method: 'where',
+          args: ['knowledgePageId', 'in', ['space-artifact-1']],
+        },
+        {
+          method: 'where',
+          args: ['fromKnowledgePageId', 'in', ['space-artifact-1']],
+        },
       ]),
     );
   });

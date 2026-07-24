@@ -6,7 +6,7 @@ export type KnowledgeCompileTrigger =
 
 export type KnowledgeCompileJobResult = {
   type: 'compile-space' | 'compile-pages';
-  status: 'succeeded';
+  status: 'queued' | 'succeeded';
   workspaceId: string;
   spaceId: string;
   compilerRunId: string;

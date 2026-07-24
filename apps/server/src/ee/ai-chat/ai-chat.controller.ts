@@ -125,6 +125,7 @@ export class AiChatController {
         mentionedPageIds: dto.mentionedPageIds,
         contextPageId: dto.contextPageId,
         attachmentIds: dto.attachmentIds,
+        spaceIds: dto.spaceIds,
         onEvent: (event) => {
           if (event.type === 'chat_created') chatCreatedEmitted = true;
           if (event.type === 'content') contentEmitted = true;
@@ -142,7 +143,12 @@ export class AiChatController {
         type: 'done',
         messageId: result.assistantMessageId,
         citations: result.citations,
+        citationEvidence: result.citationEvidence,
+        retrievedSources: result.retrievedSources,
         retrievalDiagnostics: result.retrievalDiagnostics,
+        retrievalReasons: result.retrievalReasons,
+        completenessNotice: result.completenessNotice,
+        answerMode: result.answerMode,
       });
       writeRaw(res, 'data: [DONE]\n\n');
     } catch (error) {

@@ -31,6 +31,10 @@ import { ReviewModule } from './review/review.module';
 import { KnowledgeVectorIndexService } from './services/knowledge-vector-index.service';
 import { ConfiguredKnowledgeCompilerLlmProvider } from './compiler/knowledge-compiler-llm.provider';
 import { KnowledgeArtifactMaterializerService } from './services/knowledge-artifact-materializer.service';
+import { KnowledgeArtifactCatalogService } from './services/knowledge-artifact-catalog.service';
+import { KnowledgeSpaceCompilationService } from './services/knowledge-space-compilation.service';
+import { KnowledgeSpaceAggregatorService } from './services/knowledge-space-aggregator.service';
+import { KnowledgeLinkResolverService } from './services/knowledge-link-resolver.service';
 
 @Module({
   imports: [NoopAuditModule, ReviewModule],
@@ -56,6 +60,10 @@ import { KnowledgeArtifactMaterializerService } from './services/knowledge-artif
     ConfiguredKnowledgeAnswerProvider,
     ConfiguredKnowledgeCompilerLlmProvider,
     KnowledgeArtifactMaterializerService,
+    KnowledgeArtifactCatalogService,
+    KnowledgeSpaceCompilationService,
+    KnowledgeSpaceAggregatorService,
+    KnowledgeLinkResolverService,
     {
       provide: KNOWLEDGE_ANSWER_PROVIDER,
       useExisting: ConfiguredKnowledgeAnswerProvider,

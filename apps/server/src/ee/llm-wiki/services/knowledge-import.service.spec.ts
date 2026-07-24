@@ -17,6 +17,7 @@ describe('KnowledgeImportService', () => {
       contentMarkdown: '# Compiled',
       sourcePageIds: ['source-1'],
       artifactKind: 'source_summary' as const,
+      generationMode: 'semantic' as const,
       compilerVersion: 'compiler@1',
       promptVersion: 'prompt@1',
       inputSourceRefs: [
@@ -114,6 +115,7 @@ describe('KnowledgeImportService', () => {
       contentMarkdown: '# Compiled',
       sourcePageIds: ['source-1'],
       artifactKind: 'source_summary' as const,
+      generationMode: 'semantic' as const,
       compilerVersion: 'compiler@1',
       promptVersion: 'prompt@1',
       inputSourceRefs: [
@@ -207,6 +209,8 @@ describe('KnowledgeImportService', () => {
         {
           linkType: 'cross_space_reference',
           targetSpaceId: 'space-2',
+          targetArtifactKind: 'concept' as const,
+          targetCanonicalKey: 'external-page',
           linkText: 'External page',
           isOpaque: true,
         },
@@ -362,6 +366,8 @@ describe('KnowledgeImportService', () => {
               toKnowledgePageId: null,
               targetPageId: null,
               targetSpaceId: 'space-2',
+              targetArtifactKind: 'concept',
+              targetCanonicalKey: 'external-page',
               linkText: 'External page',
               linkType: 'cross_space_reference',
               isDangling: true,
@@ -669,15 +675,23 @@ describe('KnowledgeImportService', () => {
       markArtifactsStaleByIds: jest.fn().mockResolvedValue(undefined),
       upsertCompiledArtifacts: jest.fn().mockResolvedValue([]),
     };
+    const sourceRepo = {
+      upsertPageSource: jest.fn().mockResolvedValue({}),
+    };
+    const stages: string[] = [];
+    const onStage = jest.fn(async (stage: string) => {
+      stages.push(stage);
+    });
+    const validator = {
+      validateCompileResult: jest.fn().mockReturnValue({
+        accepted: [artifact],
+        quarantined: [],
+      }),
+    };
     const service = new KnowledgeImportService(
-      { upsertPageSource: jest.fn().mockResolvedValue({}) } as never,
+      sourceRepo as never,
       capsuleRepo as never,
-      {
-        validateCompileResult: jest.fn().mockReturnValue({
-          accepted: [artifact],
-          quarantined: [],
-        }),
-      } as never,
+      validator as never,
       { embedQuery: jest.fn() } as never,
       { recordQuarantinedArtifacts: jest.fn() } as never,
       createTransactionDb(trx) as never,
@@ -699,7 +713,19 @@ describe('KnowledgeImportService', () => {
         ],
       },
       artifacts: [artifact],
+      onStage,
     });
+
+    expect(stages).toEqual(['validation', 'merge', 'import']);
+    expect(onStage.mock.invocationCallOrder[0]).toBeLessThan(
+      validator.validateCompileResult.mock.invocationCallOrder[0],
+    );
+    expect(onStage.mock.invocationCallOrder[1]).toBeLessThan(
+      materializer.materializeSourceUpdate.mock.invocationCallOrder[0],
+    );
+    expect(onStage.mock.invocationCallOrder[2]).toBeLessThan(
+      sourceRepo.upsertPageSource.mock.invocationCallOrder[0],
+    );
 
     expect(materializer.materializeSourceUpdate).toHaveBeenCalledWith({
       sourcePageId: 'source-1',
@@ -709,7 +735,10 @@ describe('KnowledgeImportService', () => {
     });
     expect(
       capsuleRepo.markSourceArtifactsStaleBySourcePageIds,
-    ).not.toHaveBeenCalled();
+    ).toHaveBeenCalledWith(
+      { workspaceId: 'workspace-1', sourcePageIds: ['source-1'] },
+      trx,
+    );
     expect(contributionRepo.replaceSourceContributions).toHaveBeenCalledWith(
       expect.objectContaining({
         workspaceId: 'workspace-1',
@@ -736,6 +765,8 @@ describe('KnowledgeImportService', () => {
           page: expect.objectContaining({
             id: artifact.artifactId,
             canonicalKey: 'event-sourcing',
+            compileScope: 'page',
+            generationMode: 'semantic',
           }),
         }),
       ],
@@ -912,6 +943,7 @@ describe('KnowledgeImportService', () => {
       contentMarkdown: '# Compiled',
       sourcePageIds: ['source-1'],
       artifactKind: 'source_summary' as const,
+      generationMode: 'semantic' as const,
       compilerVersion: 'compiler@1',
       promptVersion: 'prompt@1',
       inputSourceRefs: [
@@ -996,7 +1028,10 @@ describe('KnowledgeImportService', () => {
     expect(capsuleRepo.upsertCompiledArtifacts).toHaveBeenCalledWith(
       [
         expect.objectContaining({
-          page: expect.objectContaining({ id: 'artifact-1' }),
+          page: expect.objectContaining({
+            id: 'artifact-1',
+            generationMode: 'semantic',
+          }),
         }),
       ],
       trx,
