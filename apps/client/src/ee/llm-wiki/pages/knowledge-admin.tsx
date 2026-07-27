@@ -53,6 +53,7 @@ const COMPILE_STATUS_OPTIONS: Array<{
   { value: "running", label: "running" },
   { value: "queued", label: "queued" },
   { value: "succeeded", label: "succeeded" },
+  { value: "skipped", label: "skipped" },
   { value: "not_started", label: "not started" },
 ];
 const COMPILE_STAGE_OPTIONS: Array<{
@@ -584,7 +585,7 @@ export default function KnowledgeAdminPage() {
                     <Table.Th>{t("Source")}</Table.Th>
                     <Table.Th>{t("Capsule")}</Table.Th>
                     <Table.Th>{t("Chunk")}</Table.Th>
-                    <Table.Th>{t("Embedding")}</Table.Th>
+                    <Table.Th>{t("Missing embeddings")}</Table.Th>
                     <Table.Th>{t("Compiled")}</Table.Th>
                     <Table.Th>{t("Access")}</Table.Th>
                     <Table.Th>{t("State")}</Table.Th>
@@ -913,6 +914,7 @@ function jobStateColor(state: string): string {
 function compileStatusColor(status?: string): string {
   if (status === "succeeded") return "green";
   if (status === "partial") return "yellow";
+  if (status === "superseded" || status === "skipped") return "gray";
   if (status === "failed") return "red";
   if (status === "running") return "blue";
   if (status === "queued") return "yellow";

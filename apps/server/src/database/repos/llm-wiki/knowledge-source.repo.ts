@@ -4,7 +4,9 @@ import { KyselyDB, KyselyTransaction } from '@akasha/db/types/kysely.types';
 import { dbOrTx } from '@akasha/db/utils';
 import {
   InsertableKnowledgeSource,
+  InsertableKnowledgeSourceChunk,
   KnowledgeSource,
+  KnowledgeSourceChunk,
 } from '@akasha/db/types/entity.types';
 
 type UpsertPageSourceInput = Pick<
@@ -22,6 +24,18 @@ type UpsertPageSourceInput = Pick<
       'attachmentId' | 'extractedText' | 'mimeType'
     >
   >;
+
+type ReplaceSourceChunksInput = {
+  workspaceId: string;
+  sourceId: string;
+  sourcePageId: string;
+  chunks: Array<
+    Pick<
+      InsertableKnowledgeSourceChunk,
+      'id' | 'text' | 'contentHash' | 'sourceRange' | 'quoteHash'
+    >
+  >;
+};
 
 @Injectable()
 export class KnowledgeSourceRepo {
@@ -60,6 +74,49 @@ export class KnowledgeSourceRepo {
       )
       .returningAll()
       .executeTakeFirstOrThrow();
+  }
+
+  async replaceSourceChunks(
+    input: ReplaceSourceChunksInput,
+    trx: KyselyTransaction,
+  ): Promise<void> {
+    const db = dbOrTx(this.db, trx);
+    await db
+      .deleteFrom('knowledgeSourceChunks')
+      .where('workspaceId', '=', input.workspaceId)
+      .where('sourcePageId', '=', input.sourcePageId)
+      .execute();
+
+    if (input.chunks.length === 0) return;
+
+    await db
+      .insertInto('knowledgeSourceChunks')
+      .values(
+        input.chunks.map((chunk) => ({
+          ...chunk,
+          workspaceId: input.workspaceId,
+          sourceId: input.sourceId,
+          sourcePageId: input.sourcePageId,
+        })),
+      )
+      .execute();
+  }
+
+  async findSourceChunksByPageIds(input: {
+    workspaceId: string;
+    sourcePageIds: string[];
+    limit?: number;
+  }): Promise<KnowledgeSourceChunk[]> {
+    if (input.sourcePageIds.length === 0) return [];
+
+    return this.db
+      .selectFrom('knowledgeSourceChunks')
+      .selectAll()
+      .where('workspaceId', '=', input.workspaceId)
+      .where('sourcePageId', 'in', input.sourcePageIds)
+      .orderBy('createdAt', 'desc')
+      .limit(Math.min(Math.max(input.limit ?? 200, 1), 500))
+      .execute();
   }
 
   async markSourcesStale(

@@ -68,6 +68,7 @@ export type KnowledgePageCompileStatus =
   | "queued"
   | "running"
   | "succeeded"
+  | "skipped"
   | "failed";
 
 export type KnowledgePageCompileStage =
@@ -123,7 +124,13 @@ export interface KnowledgeDiagnosticsJob {
 
 export interface KnowledgeCompileStatus {
   spaceId: string;
-  status: "queued" | "running" | "succeeded" | "partial" | "failed";
+  status:
+    | "queued"
+    | "running"
+    | "succeeded"
+    | "partial"
+    | "failed"
+    | "superseded";
   jobId: string;
   lastRunId: string;
   durationMs: number | null;

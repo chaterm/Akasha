@@ -363,6 +363,7 @@ function normalizePageCompileStatus(
     value === "queued" ||
     value === "running" ||
     value === "succeeded" ||
+    value === "skipped" ||
     value === "failed"
   ) {
     return value;
@@ -448,6 +449,7 @@ function normalizeCompileStatusValue(
     value === "running" ||
     value === "succeeded" ||
     value === "partial" ||
+    value === "superseded" ||
     value === "failed"
   ) {
     return value;

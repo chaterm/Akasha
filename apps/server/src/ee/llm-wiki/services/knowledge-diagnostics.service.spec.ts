@@ -113,6 +113,36 @@ describe('buildCompileStatusesFromRuns', () => {
       },
     ]);
   });
+
+  it('reports a superseded run as superseded instead of running', () => {
+    expect(
+      buildCompileStatusesFromRuns([
+        {
+          id: 'run-old',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          status: 'superseded',
+          expectedPageCount: 10,
+          succeededPageCount: 2,
+          failedPageCount: 0,
+          skippedPageCount: 8,
+          importedArtifactCount: 0,
+          quarantinedArtifactCount: 0,
+          aggregateJobId: null,
+          errorCode: null,
+          queuedAt: new Date('2026-07-24T01:00:00.000Z'),
+          startedAt: new Date('2026-07-24T01:00:01.000Z'),
+          finishedAt: new Date('2026-07-24T01:00:02.000Z'),
+          updatedAt: new Date('2026-07-24T01:00:02.000Z'),
+        },
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        spaceId: 'space-1',
+        status: 'superseded',
+      }),
+    ]);
+  });
 });
 
 describe('buildPageCompilationDiagnostics', () => {
@@ -163,6 +193,27 @@ describe('buildPageCompilationDiagnostics', () => {
     expect(
       buildPageCompilationDiagnostics(legacyInput).servingLastSuccessfulVersion,
     ).toBe(true);
+  });
+
+  it('reports intentionally skipped pages without treating them as failed', () => {
+    expect(
+      buildPageCompilationDiagnostics({
+        status: 'skipped',
+        stage: 'completed',
+        attemptCount: 1,
+        errorCode: 'empty_source',
+        lastSuccessfulSourceVersion: 'v1',
+        lastSucceededAt: new Date('2026-07-20T10:00:00.000Z'),
+      }),
+    ).toEqual({
+      compileStatus: 'skipped',
+      compileStage: 'completed',
+      compileAttemptCount: 1,
+      compileErrorCode: 'empty_source',
+      compileErrorMessage: 'Knowledge source is empty.',
+      lastSucceededAt: new Date('2026-07-20T10:00:00.000Z'),
+      servingLastSuccessfulVersion: false,
+    });
   });
 });
 

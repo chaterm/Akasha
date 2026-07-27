@@ -65,6 +65,33 @@ const generation = {
 };
 
 describe('SemanticKnowledgeCompilerRunner', () => {
+  it('uses the queue task identity when updating fenced compilation stages', async () => {
+    const provider = createProvider();
+    const compilationRepo = createCompilationRepo();
+    const runner = new TestSemanticKnowledgeCompilerRunner(
+      provider,
+      compilationRepo,
+    );
+
+    await runner.compileSpace({
+      ...compileInput(),
+      compileTaskId: 'knowledge-page-job-1',
+    });
+
+    expect(compilationRepo.updateStage).toHaveBeenNthCalledWith(1, {
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-1',
+      compileTaskId: 'knowledge-page-job-1',
+      stage: 'analysis',
+    });
+    expect(compilationRepo.updateStage).toHaveBeenNthCalledWith(2, {
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-1',
+      compileTaskId: 'knowledge-page-job-1',
+      stage: 'generation',
+    });
+  });
+
   it('runs analysis then generation and emits stable typed artifacts', async () => {
     const provider = createProvider();
     const compilationRepo = createCompilationRepo();
@@ -177,6 +204,49 @@ describe('SemanticKnowledgeCompilerRunner', () => {
         source!.sourceRange!.endOffset,
       ),
     ).toBe('records changes as an append-only log');
+  });
+
+  it('carries Stage 1 claims into the source summary when generation omits them', async () => {
+    const provider = createProvider();
+    provider.analyze.mockResolvedValueOnce({
+      ...analysis,
+      claims: [
+        {
+          text: 'Event sourcing records changes as an append-only log.',
+          confidence: 0.92,
+          evidenceQuote: 'records changes as an append-only log',
+        },
+      ],
+    });
+    provider.generate.mockResolvedValueOnce({
+      ...generation,
+      artifacts: generation.artifacts.map((artifact) => ({
+        ...artifact,
+        claims: [],
+      })),
+    });
+    const runner = new TestSemanticKnowledgeCompilerRunner(
+      provider,
+      createCompilationRepo(),
+    );
+
+    const result = await runner.compileSpace(compileInput());
+    const summary = result.artifacts.find(
+      (artifact) => artifact.artifactKind === 'source_summary',
+    );
+
+    expect(summary?.claims).toEqual([
+      expect.objectContaining({
+        text: 'Event sourcing records changes as an append-only log.',
+        confidence: 0.92,
+        inputSourceRefs: [
+          expect.objectContaining({
+            sourceRange: { startOffset: 15, endOffset: 52 },
+            quoteHash: expect.stringMatching(/^sha256:/),
+          }),
+        ],
+      }),
+    ]);
   });
 
   it('keeps generated direct links separate from semantic graph edges', async () => {

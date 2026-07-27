@@ -44,12 +44,14 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
     }
 
     const compilerRunId = `${input.workspaceId}:${input.spaceId}:${this.now().toISOString()}`;
-    const compileTaskId = `akasha-page:${source.sourcePageId}`;
+    const compileTaskId =
+      input.compileTaskId ?? `akasha-page:${source.sourcePageId}`;
     const warnings: CompileDiagnostic[] = [];
 
     await this.compilationRepo.updateStage({
       workspaceId: input.workspaceId,
       sourcePageId: source.sourcePageId,
+      compileTaskId,
       stage: 'analysis',
     });
     const analysis = await this.loadOrAnalyze(input, source);
@@ -57,6 +59,7 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
     await this.compilationRepo.updateStage({
       workspaceId: input.workspaceId,
       sourcePageId: source.sourcePageId,
+      compileTaskId,
       stage: 'generation',
     });
     const generation = await this.provider.generate(
@@ -96,13 +99,16 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
       throw new Error('generation must contain exactly one source_summary');
     }
 
-    const normalizedDrafts = generation.artifacts.map((artifact) => ({
-      ...artifact,
-      canonicalKey:
-        artifact.kind === 'source_summary'
-          ? source.sourcePageId
-          : normalizeCanonicalKey(artifact.canonicalKey),
-    }));
+    const normalizedDrafts = carryAnalysisClaimsIntoSummary(
+      generation.artifacts.map((artifact) => ({
+        ...artifact,
+        canonicalKey:
+          artifact.kind === 'source_summary'
+            ? source.sourcePageId
+            : normalizeCanonicalKey(artifact.canonicalKey),
+      })),
+      analysis,
+    );
     assertUniqueArtifacts(normalizedDrafts);
     const idByKey = new Map<string, string>();
     for (const entry of input.catalog ?? []) {
@@ -189,6 +195,34 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
     });
     return analysis;
   }
+}
+
+function carryAnalysisClaimsIntoSummary(
+  artifacts: SemanticGeneratedArtifact[],
+  analysis: SemanticAnalysis,
+): SemanticGeneratedArtifact[] {
+  if (analysis.claims.length === 0) return artifacts;
+
+  return artifacts.map((artifact) => {
+    if (artifact.kind !== 'source_summary') return artifact;
+    const seen = new Set(
+      artifact.claims.map((claim) => normalizeClaimText(claim.text)),
+    );
+    const recovered = analysis.claims.filter((claim) => {
+      const key = normalizeClaimText(claim.text);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return {
+      ...artifact,
+      claims: [...artifact.claims, ...recovered].slice(0, 200),
+    };
+  });
+}
+
+function normalizeClaimText(value: string): string {
+  return value.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 function toCompiledArtifact(input: {
@@ -491,10 +525,14 @@ function containsExactTitle(haystack: string, title: string): boolean {
   const needle = title.trim();
   if (needle.length < 2) return false;
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const boundary = /^[\x00-\x7f]+$/.test(needle)
+  const boundary = isAscii(needle)
     ? `(?:^|[^\\p{L}\\p{N}])${escaped}(?:$|[^\\p{L}\\p{N}])`
     : escaped;
   return new RegExp(boundary, 'iu').test(haystack);
+}
+
+function isAscii(value: string): boolean {
+  return [...value].every((character) => character.codePointAt(0)! <= 0x7f);
 }
 
 function sourceRefForEvidence(

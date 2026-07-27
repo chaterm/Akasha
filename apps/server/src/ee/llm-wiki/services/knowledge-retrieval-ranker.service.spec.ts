@@ -222,6 +222,45 @@ describe('KnowledgeRetrievalRankerService', () => {
     ]);
     expect(ranked[0].signals).toEqual(['semantic', 'lexical', 'exact-title']);
   });
+
+  it('rejects a weak semantic-only candidate with no textual query overlap', () => {
+    const ranker = new KnowledgeRetrievalRankerService();
+    const ranked = ranker.fuseRecallLists({
+      recallLists: [
+        {
+          signal: 'semantic',
+          candidates: [
+            {
+              chunk: chunk(
+                'chunk-unrelated',
+                'kp-unrelated',
+                [0, 1],
+                'Database backup retention settings',
+              ),
+              page: page('kp-unrelated', 'Backup operations'),
+              sourcePageIds: ['source-unrelated'],
+              signals: ['semantic'],
+              signalScore: 0.91,
+            },
+          ],
+        },
+      ],
+      limit: 10,
+    });
+
+    expect('isCandidateRelevant' in ranker).toBe(true);
+    if (!('isCandidateRelevant' in ranker)) return;
+    expect(
+      (
+        ranker as KnowledgeRetrievalRankerService & {
+          isCandidateRelevant(input: unknown): boolean;
+        }
+      ).isCandidateRelevant({
+        query: 'employee vacation policy',
+        candidate: ranked[0],
+      }),
+    ).toBe(false);
+  });
 });
 
 function page(id: string, title = `Title ${id}`) {

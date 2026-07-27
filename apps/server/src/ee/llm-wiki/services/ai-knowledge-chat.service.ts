@@ -112,6 +112,7 @@ export class AiKnowledgeChatService {
     const chunkCitations = retrieval.chunks.length
       ? await this.citationResolver.resolveForChunks({
           workspaceId: input.workspaceId,
+          query: input.query,
           chunks: retrieval.chunks,
         })
       : undefined;
@@ -137,7 +138,8 @@ export class AiKnowledgeChatService {
       ...retrieval.diagnostics,
     };
     const hasKnowledgeEvidence =
-      explicit.context.trim().length > 0 || pack.primary.length > 0;
+      explicit.context.trim().length > 0 ||
+      pack.primary.some((entry) => entry.sourceWindows.length > 0);
 
     if (!hasKnowledgeEvidence) {
       const noMatchAnswer = buildNoMatchAnswer(input.query);
@@ -184,9 +186,16 @@ export class AiKnowledgeChatService {
       input.onToken?.(cleanAnswer);
     }
     const citedSourceIds = extractCitedSourceIds(rawAnswer);
+    const evidenceBackedSourceIds = new Set([
+      ...explicit.citations.map((citation) => citation.sourcePageId),
+      ...pack.primary.flatMap((entry) =>
+        entry.sourceWindows.map((window) => window.sourcePageId),
+      ),
+    ]);
     const citations = filterCitationsByUsedSourceIds(
       allCitations,
       citedSourceIds,
+      evidenceBackedSourceIds,
     );
 
     return {
@@ -320,13 +329,19 @@ function buildAnswerContext(pack: KnowledgeContextPack): string {
   }
 
   return pack.primary
-    .map((entry) =>
-      [
+    .map((entry) => {
+      const sourceEvidence = entry.sourceWindows.flatMap((window, index) => [
+        `## Verified source evidence ${index + 1}: ${window.title}`,
+        `Citation ID: [[cite:${window.sourcePageId}]]`,
+        window.text,
+      ]);
+      return [
         `# ${entry.title}`,
         `Citation IDs: ${formatCitationIds(entry.citationSourcePageIds)}`,
         entry.text,
-      ].join('\n'),
-    )
+        ...sourceEvidence,
+      ].join('\n');
+    })
     .join('\n\n');
 }
 
@@ -357,13 +372,16 @@ function stripCitationMarkers(answer: string): string {
 function filterCitationsByUsedSourceIds(
   citations: KnowledgeCitation[],
   citedSourceIds: Set<string>,
+  evidenceBackedSourceIds: Set<string>,
 ): KnowledgeCitation[] {
   if (citedSourceIds.size === 0) {
     return [];
   }
 
-  return citations.filter((citation) =>
-    citedSourceIds.has(citation.sourcePageId),
+  return citations.filter(
+    (citation) =>
+      citedSourceIds.has(citation.sourcePageId) &&
+      evidenceBackedSourceIds.has(citation.sourcePageId),
   );
 }
 

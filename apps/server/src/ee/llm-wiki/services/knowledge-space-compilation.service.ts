@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Interval } from '@nestjs/schedule';
 import { Queue } from 'bullmq';
 import { JsonValue } from '@akasha/db/types/db';
+import { KyselyTransaction } from '@akasha/db/types/kysely.types';
 import { KnowledgeCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-compilation.repo';
 import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
 import { QueueJob, QueueName } from '../../../integrations/queue/constants';
@@ -14,6 +15,7 @@ import { KnowledgeSourceSnapshot } from '../types/source-snapshot.types';
 import {
   buildKnowledgeAggregateSpaceJobId,
   buildKnowledgeCompilePageJobId,
+  buildKnowledgeRetryPageJobId,
 } from './knowledge-queue.utils';
 import { KnowledgeArtifactCatalogService } from './knowledge-artifact-catalog.service';
 import { KnowledgeArtifactCatalogEntry } from '../types/compiler-artifact.types';
@@ -44,13 +46,14 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     workspaceId: string;
     spaceId: string;
     trigger: string;
+    requestedAt?: Date;
     sources: KnowledgeSourceSnapshot[];
   }) {
     const catalog = await this.catalogService.snapshot({
       workspaceId: input.workspaceId,
       spaceId: input.spaceId,
     });
-    const run = await this.runRepo.createRun({
+    const { created, run, supersededJobIds } = await this.runRepo.createRun({
       workspaceId: input.workspaceId,
       spaceId: input.spaceId,
       trigger: input.trigger,
@@ -58,14 +61,80 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
       catalogSnapshot: catalog.entries as unknown as JsonValue,
       catalogHash: catalog.hash,
+      requestedAt: input.requestedAt,
       sources: input.sources.map((source) => ({
         sourcePageId: source.sourcePageId,
         sourceVersion: source.sourceVersion,
         sourceContentHash: source.contentHash,
       })),
     });
+    if (created === false) {
+      return null;
+    }
+    await this.removeSupersededJobs(supersededJobIds);
     await this.dispatchPending();
     return run;
+  }
+
+  async hasActiveRun(input: {
+    workspaceId: string;
+    spaceId: string;
+  }): Promise<boolean> {
+    return this.runRepo.hasActiveRun(input);
+  }
+
+  async isRunActive(input: {
+    runId: string;
+    workspaceId: string;
+    spaceId: string;
+  }): Promise<boolean> {
+    return this.runRepo.isRunActive(input);
+  }
+
+  async isRunActiveForPublication(
+    input: { runId: string; workspaceId: string; spaceId: string },
+    trx: KyselyTransaction,
+  ): Promise<boolean> {
+    return this.runRepo.isRunActiveForPublication(input, trx);
+  }
+
+  async queuePageRetry(source: KnowledgeSourceSnapshot): Promise<string> {
+    const jobId = buildKnowledgeRetryPageJobId({
+      workspaceId: source.workspaceId,
+      spaceId: source.spaceId,
+      sourcePageId: source.sourcePageId,
+      sourceContentHash: source.contentHash,
+    });
+    await this.compilationRepo.queueAttempt({
+      workspaceId: source.workspaceId,
+      spaceId: source.spaceId,
+      sourcePageId: source.sourcePageId,
+      sourceVersion: source.sourceVersion,
+      sourceContentHash: source.contentHash,
+      compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+      promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+      compilerRunId: jobId,
+      compileTaskId: jobId,
+    });
+    await this.aiQueue.add(
+      QueueJob.KNOWLEDGE_COMPILE_PAGES,
+      {
+        workspaceId: source.workspaceId,
+        spaceId: source.spaceId,
+        sourcePageIds: [source.sourcePageId],
+        sourceVersion: source.sourceVersion,
+        sourceContentHash: source.contentHash,
+        trigger: 'retry_compile',
+      },
+      {
+        jobId,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 1_000 },
+        removeOnComplete: true,
+        removeOnFail: true,
+      },
+    );
+    return jobId;
   }
 
   async markPageRunning(input: {
@@ -159,11 +228,22 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
               backoff: { type: 'exponential', delay: 1_000 },
             },
           );
-          await this.runRepo.markPageQueued({
+          const accepted = await this.runRepo.markPageQueued({
             runId: page.runId,
             sourcePageId: page.sourcePageId,
             jobId,
           });
+          if (!accepted) {
+            await this.removeRejectedOutboxJob(jobId);
+            await this.compilationRepo.skipAttempt({
+              workspaceId: page.workspaceId,
+              sourcePageId: page.sourcePageId,
+              compileTaskId: jobId,
+              reasonCode: 'run_superseded',
+              reasonMessage:
+                'Knowledge Space run was superseded before dispatch.',
+            });
+          }
         } catch (error) {
           this.logger.warn(
             `Knowledge page outbox dispatch will retry for run ${page.runId}.`,
@@ -188,7 +268,13 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
               backoff: { type: 'exponential', delay: 1_000 },
             },
           );
-          await this.runRepo.markAggregationQueued({ runId: run.id, jobId });
+          const accepted = await this.runRepo.markAggregationQueued({
+            runId: run.id,
+            jobId,
+          });
+          if (!accepted) {
+            await this.removeRejectedOutboxJob(jobId);
+          }
         } catch (error) {
           this.logger.warn(
             `Knowledge aggregate outbox dispatch will retry for run ${run.id}.`,
@@ -199,6 +285,42 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       this.dispatching = false;
     }
   }
+
+  private async removeSupersededJobs(jobIds: string[]): Promise<void> {
+    for (const jobId of [...new Set(jobIds)]) {
+      try {
+        const job = await this.aiQueue.getJob(jobId);
+        if (!job) continue;
+        const state = await job.getState();
+        if (isRemovableSupersededJobState(state)) {
+          await job.remove();
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Unable to cancel superseded knowledge job ${jobId}; worker fencing will prevent publication.`,
+        );
+      }
+    }
+  }
+
+  private async removeRejectedOutboxJob(jobId: string): Promise<void> {
+    try {
+      const job = await this.aiQueue.getJob(jobId);
+      if (!job) return;
+      const state = await job.getState();
+      if (isRemovableSupersededJobState(state)) {
+        await job.remove();
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Unable to cancel rejected knowledge outbox job ${jobId}; worker fencing will prevent publication.`,
+      );
+    }
+  }
+}
+
+function isRemovableSupersededJobState(state: string): boolean {
+  return state === 'waiting' || state === 'delayed' || state === 'paused';
 }
 
 function isCatalogEntry(

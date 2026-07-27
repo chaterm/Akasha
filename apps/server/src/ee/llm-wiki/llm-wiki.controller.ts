@@ -1,6 +1,7 @@
 import {
   Body,
   BadRequestException,
+  ConflictException,
   Controller,
   ForbiddenException,
   Get,
@@ -47,7 +48,6 @@ import { KnowledgeSpaceCompilationService } from './services/knowledge-space-com
 import {
   buildKnowledgeAdminActionJobId,
   buildKnowledgeCompileJobId,
-  buildKnowledgeCompilePageJobId,
   buildKnowledgeRunKey,
   uniqueValues,
 } from './services/knowledge-queue.utils';
@@ -274,6 +274,20 @@ export class LlmWikiController {
       pages.push(page);
       pagesBySpace.set(page.spaceId, pages);
     }
+    const activeRuns = await Promise.all(
+      [...pagesBySpace.keys()].map((spaceId) =>
+        this.spaceCompilation.hasActiveRun({
+          workspaceId: workspace.id,
+          spaceId,
+        }),
+      ),
+    );
+    if (activeRuns.some(Boolean)) {
+      throw new ConflictException(
+        'Space knowledge compilation is currently running.',
+      );
+    }
+
     const retryGroups = [];
     for (const [spaceId, pages] of pagesBySpace) {
       const sources = await this.sourceExporter.exportPageSources({
@@ -291,21 +305,12 @@ export class LlmWikiController {
       }
       retryGroups.push({ spaceId, pages, sourceByPageId });
     }
-    for (const { spaceId, pages, sourceByPageId } of retryGroups) {
-      const run = await this.spaceCompilation.startSpaceRun({
-        workspaceId: workspace.id,
-        spaceId,
-        trigger: 'retry_compile',
-        sources: pages.map((page) => sourceByPageId.get(page.id)!),
-      });
+    for (const { pages, sourceByPageId } of retryGroups) {
       for (const page of pages) {
         jobIds.push(
-          buildKnowledgeCompilePageJobId({
-            workspaceId: workspace.id,
-            spaceId,
-            sourcePageId: page.id,
-            runKey: run.id,
-          }),
+          await this.spaceCompilation.queuePageRetry(
+            sourceByPageId.get(page.id)!,
+          ),
         );
       }
     }

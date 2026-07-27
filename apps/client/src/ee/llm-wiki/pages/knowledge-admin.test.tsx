@@ -250,6 +250,12 @@ describe("KnowledgeAdminPage", () => {
 
     expect(await screen.findByText("Last successful version")).toBeTruthy();
     expect(
+      screen.getByRole("columnheader", { name: "Missing embeddings" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("columnheader", { name: "Embedding" }),
+    ).toBeNull();
+    expect(
       screen
         .getAllByLabelText("Compile status")
         .some((element) => element.tagName === "INPUT"),

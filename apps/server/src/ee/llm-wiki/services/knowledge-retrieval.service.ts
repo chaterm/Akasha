@@ -140,29 +140,31 @@ export class KnowledgeRetrievalService {
     let selectedRecall = policyRecall;
     let accessPolicyFallbackUsed = false;
 
-    let rankedCandidates = fuseRecall(
-      this.ranker,
-      selectedRecall,
-      candidateLimit,
-    );
+    const rankRelevantRecall = (recallResult: typeof selectedRecall) =>
+      fuseRecall(this.ranker, recallResult, candidateLimit).filter(
+        (candidate) =>
+          this.ranker.isCandidateRelevant({
+            query: input.query,
+            candidate,
+          }),
+      );
+    let rankedCandidates = rankRelevantRecall(selectedRecall);
     let fallbackRecall: Awaited<ReturnType<typeof recall>> | null = null;
     if (rankedCandidates.length === 0) {
       accessPolicyFallbackUsed = true;
       fallbackRecall = await recall('final-authorization-fallback');
       selectedRecall = fallbackRecall;
-      rankedCandidates = fuseRecall(
-        this.ranker,
-        selectedRecall,
-        candidateLimit,
-      ).map((candidate) => ({
-        ...candidate,
-        rankReasons: [
-          ...candidate.rankReasons.filter(
-            (reason) => reason !== 'sidecar-prefiltered',
-          ),
-          'final-authorization-fallback' as const,
-        ],
-      }));
+      rankedCandidates = rankRelevantRecall(selectedRecall).map(
+        (candidate) => ({
+          ...candidate,
+          rankReasons: [
+            ...candidate.rankReasons.filter(
+              (reason) => reason !== 'sidecar-prefiltered',
+            ),
+            'final-authorization-fallback' as const,
+          ],
+        }),
+      );
     }
 
     const [evidenceRecall, memoryRecall] = selectedRecall;

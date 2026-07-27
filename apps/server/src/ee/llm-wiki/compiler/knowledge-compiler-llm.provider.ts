@@ -183,6 +183,9 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
         system: input.messages.system,
         prompt: input.messages.prompt,
         temperature: 0.1,
+        abortSignal: AbortSignal.timeout(
+          this.environmentService.getKnowledgeCompilerTimeoutMs(),
+        ),
         output: Output.json({
           name: input.name,
           description: `Akasha knowledge compiler ${input.stage} output`,
@@ -396,8 +399,10 @@ function classifyProviderError(error: unknown): KnowledgeCompilerLlmError {
   const code = readStringProperty(error, 'code');
   if (
     name === 'AbortError' ||
+    name === 'TimeoutError' ||
     code === 'ETIMEDOUT' ||
-    code === 'ECONNABORTED'
+    code === 'ECONNABORTED' ||
+    code === 'UND_ERR_CONNECT_TIMEOUT'
   ) {
     return new KnowledgeCompilerLlmError(
       'timeout',

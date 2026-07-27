@@ -50,6 +50,24 @@ describe('AiChatService', () => {
           { sourcePageId: 'page-1', title: 'Page', url: '/p/page-1' },
           { sourcePageId: 'page-2', title: 'Other', url: '/p/page-2' },
         ],
+        snippets: [
+          {
+            id: 'chunk-1',
+            title: 'Page',
+            text: 'Verified excerpt',
+            retrievalReasons: ['lexical'],
+            sourceWindows: [
+              {
+                sourcePageId: 'page-1',
+                title: 'Page',
+                url: '/p/page-1',
+                text: 'Verified excerpt',
+                sourceRange: { startOffset: 10, endOffset: 26 },
+                quoteHash: 'sha256:verified',
+              },
+            ],
+          },
+        ],
         retrievalReasons: ['lexical'],
         completenessNotice: 'notice',
         retrievalDiagnostics: diagnostics(),
@@ -179,9 +197,72 @@ describe('AiChatService', () => {
         spaceIds: ['space-2'],
         queryEmbeddingAvailable: true,
         authorizedChunkCount: 1,
+        finalChunkIds: ['chunk-1'],
+        finalSourcePageIds: ['page-1'],
+        trustedCitationIds: ['page-1'],
+        rankReasonsByChunk: {
+          'chunk-1': ['lexical'],
+        },
+        evidenceRefs: [
+          {
+            sourcePageId: 'page-1',
+            sourceRange: { startOffset: 10, endOffset: 26 },
+            quoteHash: 'sha256:verified',
+          },
+        ],
       }),
     });
     expect(spaceMemberRepo.getUserSpaceIds).not.toHaveBeenCalled();
+  });
+
+  it('loads every owner-readable space page when the scope is all spaces', async () => {
+    const spaceRepo = {
+      getSpacesInWorkspace: jest
+        .fn()
+        .mockResolvedValueOnce({
+          items: [{ id: 'space-1' }, { id: 'space-2' }],
+          meta: {
+            hasNextPage: true,
+            nextCursor: 'cursor-2',
+          },
+        })
+        .mockResolvedValueOnce({
+          items: [{ id: 'space-3' }],
+          meta: {
+            hasNextPage: false,
+            nextCursor: null,
+          },
+        }),
+    };
+    const service = new AiChatService(
+      {} as AiChatRepo,
+      spaceRepo as unknown as SpaceRepo,
+      {} as SpaceMemberRepo,
+      {} as AiKnowledgeChatService,
+      {} as KnowledgeQueryAuditRepo,
+    );
+
+    await expect(
+      (
+        service as unknown as {
+          getDefaultReadableSpaceIds(input: unknown): Promise<string[]>;
+        }
+      ).getDefaultReadableSpaceIds({
+        workspaceId: 'workspace-1',
+        user: user('owner'),
+      }),
+    ).resolves.toEqual(['space-1', 'space-2', 'space-3']);
+
+    expect(spaceRepo.getSpacesInWorkspace).toHaveBeenNthCalledWith(
+      1,
+      'workspace-1',
+      { limit: 100 },
+    );
+    expect(spaceRepo.getSpacesInWorkspace).toHaveBeenNthCalledWith(
+      2,
+      'workspace-1',
+      { limit: 100, cursor: 'cursor-2' },
+    );
   });
 });
 

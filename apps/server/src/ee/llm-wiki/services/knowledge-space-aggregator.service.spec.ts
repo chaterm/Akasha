@@ -35,6 +35,7 @@ describe('KnowledgeSpaceAggregatorService', () => {
         compilerVersion: 'compiler-v1',
         promptVersion: 'prompt-v1',
       }),
+      findRun: jest.fn().mockResolvedValue({ status: 'aggregating' }),
       completeAggregation: jest.fn().mockResolvedValue(undefined),
     };
     const capsuleRepo = {
@@ -135,6 +136,91 @@ describe('KnowledgeSpaceAggregatorService', () => {
     });
   });
 
+  it('completes an obsolete aggregate job as a no-op', async () => {
+    const runRepo = {
+      startAggregation: jest.fn().mockResolvedValue(undefined),
+      completeAggregation: jest.fn(),
+    };
+    const capsuleRepo = { findGraphCandidatesForSpace: jest.fn() };
+    const provider = { completeMerge: jest.fn() };
+    const importer = { importCompileResult: jest.fn() };
+    const linkResolver = { resolveSpace: jest.fn() };
+    const service = new KnowledgeSpaceAggregatorService(
+      runRepo as unknown as KnowledgeSpaceCompilationRepo,
+      capsuleRepo as unknown as KnowledgeCapsuleRepo,
+      provider as unknown as KnowledgeCompilerLlmProvider,
+      importer as unknown as KnowledgeImportService,
+      linkResolver as unknown as KnowledgeLinkResolverService,
+    );
+
+    await expect(
+      service.aggregate({
+        runId: 'superseded-run',
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+      }),
+    ).resolves.toEqual({
+      importedArtifactCount: 0,
+      quarantinedArtifactCount: 0,
+    });
+
+    expect(capsuleRepo.findGraphCandidatesForSpace).not.toHaveBeenCalled();
+    expect(provider.completeMerge).not.toHaveBeenCalled();
+    expect(importer.importCompileResult).not.toHaveBeenCalled();
+    expect(linkResolver.resolveSpace).not.toHaveBeenCalled();
+    expect(runRepo.completeAggregation).not.toHaveBeenCalled();
+  });
+
+  it('does not publish an overview when the run is superseded during the LLM call', async () => {
+    const runRepo = {
+      startAggregation: jest.fn().mockResolvedValue({
+        id: 'run-1',
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+      }),
+      findRun: jest.fn().mockResolvedValue({ status: 'superseded' }),
+      completeAggregation: jest.fn(),
+    };
+    const capsuleRepo = {
+      findGraphCandidatesForSpace: jest.fn().mockResolvedValue({
+        pages: [page('artifact-a', 'concept', 'alpha', 'Alpha', 'Body')],
+        pageSources: [pageSource('artifact-a', 'page-1', 'v1', 'hash-1')],
+      }),
+    };
+    const provider = {
+      completeMerge: jest
+        .fn()
+        .mockResolvedValue(
+          JSON.stringify({ title: 'Overview', markdown: 'Overview body' }),
+        ),
+    };
+    const importer = { importCompileResult: jest.fn() };
+    const linkResolver = { resolveSpace: jest.fn() };
+    const service = new KnowledgeSpaceAggregatorService(
+      runRepo as unknown as KnowledgeSpaceCompilationRepo,
+      capsuleRepo as unknown as KnowledgeCapsuleRepo,
+      provider as unknown as KnowledgeCompilerLlmProvider,
+      importer as unknown as KnowledgeImportService,
+      linkResolver as unknown as KnowledgeLinkResolverService,
+    );
+
+    await expect(
+      service.aggregate({
+        runId: 'run-1',
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+      }),
+    ).resolves.toEqual({
+      importedArtifactCount: 0,
+      quarantinedArtifactCount: 0,
+    });
+
+    expect(provider.completeMerge).toHaveBeenCalledTimes(1);
+    expect(importer.importCompileResult).not.toHaveBeenCalled();
+    expect(linkResolver.resolveSpace).not.toHaveBeenCalled();
+    expect(runRepo.completeAggregation).not.toHaveBeenCalled();
+  });
+
   it('classifies an invalid aggregate contract as non-retryable output', async () => {
     const runRepo = {
       startAggregation: jest.fn().mockResolvedValue({
@@ -182,12 +268,15 @@ describe('KnowledgeSpaceAggregatorService', () => {
   });
 
   it('retires the previous Space package when no active page artifacts remain', async () => {
+    const publicationTrx = { id: 'empty-space-publication-trx' };
     const runRepo = {
       startAggregation: jest.fn().mockResolvedValue({
         id: 'run-empty',
         compilerVersion: 'compiler-v1',
         promptVersion: 'prompt-v1',
       }),
+      findRun: jest.fn().mockResolvedValue({ status: 'aggregating' }),
+      isRunActiveForPublication: jest.fn().mockResolvedValue(true),
       completeAggregation: jest.fn().mockResolvedValue(undefined),
     };
     const capsuleRepo = {
@@ -201,10 +290,14 @@ describe('KnowledgeSpaceAggregatorService', () => {
         graphEdges: [],
         graphEdgeSources: [],
       }),
-      markCompileScopeStale: jest.fn().mockResolvedValue(undefined),
     };
     const provider = { completeMerge: jest.fn() };
-    const importer = { importCompileResult: jest.fn() };
+    const importer = {
+      importCompileResult: jest.fn().mockImplementation(async (input) => {
+        await input.publicationGuard(publicationTrx);
+        return { importedArtifactCount: 0, quarantinedArtifactCount: 0 };
+      }),
+    };
     const service = new KnowledgeSpaceAggregatorService(
       runRepo as unknown as KnowledgeSpaceCompilationRepo,
       capsuleRepo as unknown as KnowledgeCapsuleRepo,
@@ -224,12 +317,68 @@ describe('KnowledgeSpaceAggregatorService', () => {
       quarantinedArtifactCount: 0,
     });
 
-    expect(capsuleRepo.markCompileScopeStale).toHaveBeenCalledWith({
-      workspaceId: 'workspace-1',
-      spaceId: 'space-1',
-    });
+    expect(importer.importCompileResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        artifacts: [],
+        upsertSources: false,
+        retireCompileScope: true,
+      }),
+    );
+    expect(runRepo.isRunActiveForPublication).toHaveBeenCalledWith(
+      {
+        runId: 'run-empty',
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+      },
+      publicationTrx,
+    );
     expect(provider.completeMerge).not.toHaveBeenCalled();
-    expect(importer.importCompileResult).not.toHaveBeenCalled();
+  });
+
+  it('does not complete an empty aggregation rejected by the publication fence', async () => {
+    const runRepo = {
+      startAggregation: jest.fn().mockResolvedValue({
+        id: 'run-empty',
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+      }),
+      findRun: jest.fn().mockResolvedValue({ status: 'aggregating' }),
+      completeAggregation: jest.fn(),
+    };
+    const capsuleRepo = {
+      findGraphCandidatesForSpace: jest.fn().mockResolvedValue({
+        pages: [],
+        pageSources: [],
+      }),
+      markCompileScopeStale: jest.fn().mockResolvedValue(undefined),
+    };
+    const importer = {
+      importCompileResult: jest.fn().mockResolvedValue({
+        importedArtifactCount: 0,
+        quarantinedArtifactCount: 0,
+        skippedReason: 'run_superseded',
+      }),
+    };
+    const service = new KnowledgeSpaceAggregatorService(
+      runRepo as unknown as KnowledgeSpaceCompilationRepo,
+      capsuleRepo as unknown as KnowledgeCapsuleRepo,
+      { completeMerge: jest.fn() } as unknown as KnowledgeCompilerLlmProvider,
+      importer as unknown as KnowledgeImportService,
+      { resolveSpace: jest.fn() } as unknown as KnowledgeLinkResolverService,
+    );
+
+    await expect(
+      service.aggregate({
+        runId: 'run-empty',
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+      }),
+    ).resolves.toEqual({
+      importedArtifactCount: 0,
+      quarantinedArtifactCount: 0,
+    });
+
+    expect(runRepo.completeAggregation).not.toHaveBeenCalled();
   });
 });
 

@@ -95,6 +95,7 @@ export type KnowledgePageCompileStatus =
   | 'queued'
   | 'running'
   | 'succeeded'
+  | 'skipped'
   | 'failed';
 
 export type KnowledgePageCompileStage =
@@ -123,7 +124,13 @@ export type KnowledgeDiagnosticsJob = {
 
 export type KnowledgeCompileStatus = {
   spaceId: string;
-  status: 'queued' | 'running' | 'succeeded' | 'partial' | 'failed';
+  status:
+    | 'queued'
+    | 'running'
+    | 'succeeded'
+    | 'partial'
+    | 'failed'
+    | 'superseded';
   jobId: string;
   lastRunId: string;
   durationMs: number | null;
@@ -603,6 +610,7 @@ export function buildPageCompilationDiagnostics(input?: {
     lastSucceededAt: input?.lastSucceededAt ?? null,
     servingLastSuccessfulVersion:
       status !== 'succeeded' &&
+      status !== 'skipped' &&
       (Boolean(input?.lastSuccessfulSourceVersion) ||
         Boolean(input?.hasActiveArtifact)),
   };
@@ -615,6 +623,7 @@ function toPageCompileStatus(
     value === 'queued' ||
     value === 'running' ||
     value === 'succeeded' ||
+    value === 'skipped' ||
     value === 'failed'
   ) {
     return value;
@@ -735,6 +744,7 @@ function toDurableCompileStatus(
   if (status === 'succeeded' || status === 'partial' || status === 'failed') {
     return status;
   }
+  if (status === 'superseded') return 'superseded';
   if (status === 'queued') return 'queued';
   return 'running';
 }

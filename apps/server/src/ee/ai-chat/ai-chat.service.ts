@@ -217,6 +217,10 @@ export class AiChatService {
       citationCount: answer.citations.length,
       retrievedSourceCount: answer.retrievedSources.length,
       retrievalDiagnostics: answer.retrievalDiagnostics,
+      snippets: answer.snippets ?? [],
+      trustedCitationIds: answer.citations.map(
+        (citation) => citation.sourcePageId,
+      ),
     });
 
     return {
@@ -251,13 +255,32 @@ export class AiChatService {
     user: User;
   }): Promise<string[]> {
     if (input.user.role === UserRole.OWNER) {
-      const spaces = await this.spaceRepo.getSpacesInWorkspace(
-        input.workspaceId,
-        {
-          limit: 100,
-        } as PaginationOptions,
-      );
-      return spaces.items.map((space) => space.id);
+      const spaceIds: string[] = [];
+      const seenCursors = new Set<string>();
+      let cursor: string | undefined;
+
+      while (true) {
+        const spaces = await this.spaceRepo.getSpacesInWorkspace(
+          input.workspaceId,
+          {
+            limit: 100,
+            ...(cursor ? { cursor } : {}),
+          } as PaginationOptions,
+        );
+        spaceIds.push(...spaces.items.map((space) => space.id));
+        const nextCursor = spaces.meta?.nextCursor ?? null;
+        if (!spaces.meta?.hasNextPage || !nextCursor) break;
+        if (seenCursors.has(nextCursor)) {
+          this.logger.warn(
+            'Stopped owner space pagination because the cursor repeated.',
+          );
+          break;
+        }
+        seenCursors.add(nextCursor);
+        cursor = nextCursor;
+      }
+
+      return [...new Set(spaceIds)];
     }
 
     return this.spaceMemberRepo.getUserSpaceIds(input.user.id);
@@ -271,6 +294,16 @@ export class AiChatService {
     answerMode: 'knowledge' | 'no_match';
     citationCount: number;
     retrievedSourceCount: number;
+    snippets: Array<{
+      id: string;
+      retrievalReasons: string[];
+      sourceWindows: Array<{
+        sourcePageId: string;
+        sourceRange: { startOffset: number; endOffset: number };
+        quoteHash: string;
+      }>;
+    }>;
+    trustedCitationIds: string[];
     retrievalDiagnostics: {
       mode: string;
       queryEmbeddingAvailable: boolean;
@@ -312,6 +345,28 @@ export class AiChatService {
           rankedCandidateCount: diagnostics.rankedCandidateCount,
           authorizedChunkCount: diagnostics.authorizedChunkCount,
           filteredChunkCount: diagnostics.filteredChunkCount,
+          finalChunkIds: input.snippets.map((snippet) => snippet.id),
+          finalSourcePageIds: [
+            ...new Set(
+              input.snippets.flatMap((snippet) =>
+                snippet.sourceWindows.map((window) => window.sourcePageId),
+              ),
+            ),
+          ],
+          trustedCitationIds: [...new Set(input.trustedCitationIds)],
+          rankReasonsByChunk: Object.fromEntries(
+            input.snippets.map((snippet) => [
+              snippet.id,
+              snippet.retrievalReasons,
+            ]),
+          ),
+          evidenceRefs: input.snippets.flatMap((snippet) =>
+            snippet.sourceWindows.map((window) => ({
+              sourcePageId: window.sourcePageId,
+              sourceRange: window.sourceRange,
+              quoteHash: window.quoteHash,
+            })),
+          ),
         },
       });
     } catch (error) {
