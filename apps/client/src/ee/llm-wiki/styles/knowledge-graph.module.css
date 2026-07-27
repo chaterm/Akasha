@@ -48,7 +48,8 @@
   backdrop-filter: blur(8px);
 }
 
-.graphSvg {
+.graphSvg,
+.graphCanvas {
   display: block;
   flex: 1 1 auto;
   width: 100%;
@@ -59,7 +60,8 @@
   user-select: none;
 }
 
-.graphSvg:active {
+.graphSvg:active,
+.graphCanvas:active {
   cursor: grabbing;
 }
 

@@ -7,17 +7,17 @@ describe('KnowledgeGraphDto', () => {
   it('accepts the graph page request limit used by the client', async () => {
     const dto = plainToInstance(KnowledgeGraphDto, {
       spaceId: 'space-1',
-      limit: '3000',
+      limit: '10000',
     });
 
     await expect(validate(dto)).resolves.toEqual([]);
-    expect(dto.limit).toBe(3000);
+    expect(dto.limit).toBe(10000);
   });
 
   it('rejects limits above the graph service hard limit', async () => {
     const dto = plainToInstance(KnowledgeGraphDto, {
       spaceId: 'space-1',
-      limit: '5001',
+      limit: '10001',
     });
 
     const errors = await validate(dto);

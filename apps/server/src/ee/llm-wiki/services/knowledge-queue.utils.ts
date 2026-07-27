@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { KnowledgeAdminSpaceAction } from '../types/knowledge-queue.types';
 
 export const KNOWLEDGE_COMPILE_DELAY_MS = 5000;
@@ -30,6 +31,24 @@ export function buildKnowledgeCompilePageJobId(input: {
     input.spaceId,
     input.sourcePageId,
     input.runKey ?? buildKnowledgeRunKey('run', input.now),
+  ].join('__');
+}
+
+export function buildKnowledgeRetryPageJobId(input: {
+  workspaceId: string;
+  spaceId: string;
+  sourcePageId: string;
+  sourceContentHash: string;
+}): string {
+  const contentKey = createHash('sha256')
+    .update(input.sourceContentHash)
+    .digest('hex');
+  return [
+    'knowledge-retry-page',
+    input.workspaceId,
+    input.spaceId,
+    input.sourcePageId,
+    contentKey,
   ].join('__');
 }
 

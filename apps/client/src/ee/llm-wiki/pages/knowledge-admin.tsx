@@ -45,6 +45,16 @@ import type {
 } from "../types/knowledge.types";
 
 const DIAGNOSTICS_LIMIT = 50;
+const EMPTY_QUEUE_COUNTS = {
+  waiting: 0,
+  active: 0,
+  delayed: 0,
+  prioritized: 0,
+  waitingChildren: 0,
+  paused: 0,
+  failed: 0,
+  completed: 0,
+};
 const COMPILE_STATUS_OPTIONS: Array<{
   value: KnowledgePageCompileStatus;
   label: string;
@@ -53,6 +63,7 @@ const COMPILE_STATUS_OPTIONS: Array<{
   { value: "running", label: "running" },
   { value: "queued", label: "queued" },
   { value: "succeeded", label: "succeeded" },
+  { value: "skipped", label: "skipped" },
   { value: "not_started", label: "not started" },
 ];
 const COMPILE_STAGE_OPTIONS: Array<{
@@ -162,6 +173,7 @@ export default function KnowledgeAdminPage() {
 
   const pages = diagnosticsQuery.data?.pages ?? [];
   const jobs = diagnosticsQuery.data?.jobs ?? [];
+  const queueCounts = diagnosticsQuery.data?.queueCounts ?? EMPTY_QUEUE_COUNTS;
   const quarantines = diagnosticsQuery.data?.quarantines ?? [];
   const retrieval = diagnosticsQuery.data?.retrieval;
   const compileStatusBySpaceId = useMemo(
@@ -584,7 +596,7 @@ export default function KnowledgeAdminPage() {
                     <Table.Th>{t("Source")}</Table.Th>
                     <Table.Th>{t("Capsule")}</Table.Th>
                     <Table.Th>{t("Chunk")}</Table.Th>
-                    <Table.Th>{t("Embedding")}</Table.Th>
+                    <Table.Th>{t("Missing embeddings")}</Table.Th>
                     <Table.Th>{t("Compiled")}</Table.Th>
                     <Table.Th>{t("Access")}</Table.Th>
                     <Table.Th>{t("State")}</Table.Th>
@@ -737,12 +749,45 @@ export default function KnowledgeAdminPage() {
           </section>
 
           <section className={classes.panel}>
-            <Group justify="space-between" mb="md">
-              <Title order={2} size="h4">
-                {t("AI queue")}
-              </Title>
-              <Badge variant="light">{jobs.length}</Badge>
-            </Group>
+            <Stack gap="sm" mb="md">
+              <Group justify="space-between">
+                <Title order={2} size="h4">
+                  {t("AI queue")}
+                </Title>
+                <Group gap="xs">
+                  <Badge color="yellow" variant="light">
+                    {t("Waiting")}:{" "}
+                    {queueCounts.waiting +
+                      queueCounts.prioritized +
+                      queueCounts.waitingChildren}
+                  </Badge>
+                  <Badge color="blue" variant="light">
+                    {t("Active")}: {queueCounts.active}
+                  </Badge>
+                  <Badge color="orange" variant="light">
+                    {t("Delayed")}: {queueCounts.delayed}
+                  </Badge>
+                  <Badge color="gray" variant="light">
+                    {t("Paused")}: {queueCounts.paused}
+                  </Badge>
+                  <Badge color="red" variant="light">
+                    {t("Failed")}: {queueCounts.failed}
+                  </Badge>
+                  <Badge color="green" variant="light">
+                    {t("Completed")}: {queueCounts.completed}
+                  </Badge>
+                </Group>
+              </Group>
+              <Group justify="space-between">
+                <Text fw={600}>{t("Recent AI jobs")}</Text>
+                <Group gap="xs">
+                  <Text size="sm" c="dimmed">
+                    {t("Recent records")}
+                  </Text>
+                  <Badge variant="light">{jobs.length}</Badge>
+                </Group>
+              </Group>
+            </Stack>
 
             <Table.ScrollContainer minWidth={900}>
               <Table highlightOnHover verticalSpacing="sm">
@@ -913,6 +958,7 @@ function jobStateColor(state: string): string {
 function compileStatusColor(status?: string): string {
   if (status === "succeeded") return "green";
   if (status === "partial") return "yellow";
+  if (status === "superseded" || status === "skipped") return "gray";
   if (status === "failed") return "red";
   if (status === "running") return "blue";
   if (status === "queued") return "yellow";

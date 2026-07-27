@@ -84,6 +84,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
         system: 'system',
         prompt: 'prompt',
         temperature: 0.1,
+        abortSignal: expect.any(AbortSignal),
         output: expect.objectContaining({
           name: 'knowledge_compiler_analysis_v1',
           type: 'json',
@@ -91,6 +92,51 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
       }),
     );
     expect(Output.json).toHaveBeenCalled();
+  });
+
+  it('uses the configured hard timeout for every model request', async () => {
+    (createOpenAI as jest.Mock).mockReturnValue(
+      jest.fn().mockReturnValue('compiler-model'),
+    );
+    (generateText as jest.Mock).mockResolvedValue({
+      output: JSON.parse(analysisJson),
+    });
+    const timeoutSpy = jest
+      .spyOn(AbortSignal, 'timeout')
+      .mockReturnValue(new AbortController().signal);
+
+    await createProvider({
+      aiDriver: 'openai',
+      compilerTimeoutMs: 45_000,
+    }).analyze({ system: 'system', prompt: 'prompt' });
+
+    expect(timeoutSpy).toHaveBeenCalledWith(45_000);
+    expect(generateText).toHaveBeenCalledWith(
+      expect.objectContaining({ abortSignal: expect.any(AbortSignal) }),
+    );
+    timeoutSpy.mockRestore();
+  });
+
+  it('classifies TimeoutError as a retryable timeout', async () => {
+    (createOpenAI as jest.Mock).mockReturnValue(
+      jest.fn().mockReturnValue('compiler-model'),
+    );
+    (generateText as jest.Mock).mockRejectedValue(
+      Object.assign(new Error('private timeout detail'), {
+        name: 'TimeoutError',
+      }),
+    );
+
+    await expect(
+      createProvider({ aiDriver: 'openai' }).analyze({
+        system: 'system',
+        prompt: 'prompt',
+      }),
+    ).rejects.toMatchObject({
+      code: 'timeout',
+      retryable: true,
+      message: 'Knowledge compiler provider timed out.',
+    });
   });
 
   it('parses Stage 2 output with the generation schema', async () => {
@@ -354,6 +400,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
 function createProvider(input: {
   aiDriver: string;
   completionModel?: string;
+  compilerTimeoutMs?: number;
 }): ConfiguredKnowledgeCompilerLlmProvider {
   return new ConfiguredKnowledgeCompilerLlmProvider({
     getAiDriver: jest.fn(() => input.aiDriver),
@@ -364,6 +411,9 @@ function createProvider(input: {
     getOpenAiApiUrl: jest.fn(() => 'https://openai.example/v1'),
     getGeminiApiKey: jest.fn(() => 'gemini-key'),
     getOllamaApiUrl: jest.fn(() => 'http://ollama.example'),
+    getKnowledgeCompilerTimeoutMs: jest.fn(
+      () => input.compilerTimeoutMs ?? 120_000,
+    ),
   } as never);
 }
 

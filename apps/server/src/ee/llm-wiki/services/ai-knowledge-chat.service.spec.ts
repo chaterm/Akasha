@@ -219,6 +219,7 @@ describe('AiKnowledgeChatService', () => {
     });
     expect(citationResolver.resolveForChunks).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
+      query: 'Chaterm 登记批准日期',
       chunks: [
         {
           chunk: chunk('chunk-1', 'kp-1', '登记批准日期：2026年06月05日'),
@@ -232,7 +233,7 @@ describe('AiKnowledgeChatService', () => {
     expect(answerProvider.answer).toHaveBeenCalledWith({
       query: 'Chaterm 登记批准日期',
       context:
-        '# Chaterm\nCitation IDs: [[cite:page-1]]\n登记批准日期：2026年06月05日',
+        '# Chaterm\nCitation IDs: [[cite:page-1]]\n登记批准日期：2026年06月05日\n## Verified source evidence 1: Kafka\nCitation ID: [[cite:page-1]]\n登记批准日期：2026年06月05日',
       chatContext: ['Previous turn'],
     });
   });
@@ -260,6 +261,104 @@ describe('AiKnowledgeChatService', () => {
       retrievedSources: [],
     });
     expect(answer).not.toHaveBeenCalled();
+  });
+
+  it('adds verified raw source evidence when the compiled summary omitted the requested URL', async () => {
+    const sourceWindow = {
+      sourcePageId: 'page-dms',
+      title: 'DMS 接口原文',
+      url: '/p/dms-api',
+      text: 'URL：/customized_query_sql\n请求方法：POST',
+      sourceRange: { startOffset: 18, endOffset: 58 },
+      quoteHash: 'sha256:dms-evidence',
+    };
+    const answerProvider = {
+      answer: jest
+        .fn()
+        .mockResolvedValue(
+          '接口 URL 是 /customized_query_sql，方法是 POST。 [[cite:page-dms]]',
+        ),
+    };
+    const service = createService({
+      retrieval: {
+        retrieve: jest.fn().mockResolvedValue({
+          mode: 'high_completeness',
+          chunks: [chunk('chunk-dms', 'kp-dms', '该接口用于定制 SQL 查询。')],
+          capsules: [],
+          diagnostics: {},
+        }),
+      },
+      citationResolver: {
+        resolveForChunks: jest.fn().mockResolvedValue([
+          {
+            chunk: chunk('chunk-dms', 'kp-dms', '该接口用于定制 SQL 查询。'),
+            pageTitle: 'DMS 定制查询SQL返回接口',
+            retrievalReasons: ['semantic'],
+            sourceWindows: [sourceWindow],
+            warnings: [],
+            citations: [
+              {
+                sourcePageId: 'page-dms',
+                title: 'DMS 接口原文',
+                url: '/p/dms-api',
+              },
+            ],
+          },
+        ]),
+      },
+      contextPack: {
+        buildContextPack: jest.fn().mockReturnValue({
+          context: '# DMS 定制查询SQL返回接口\n该接口用于定制 SQL 查询。',
+          citations: [
+            {
+              sourcePageId: 'page-dms',
+              title: 'DMS 接口原文',
+              url: '/p/dms-api',
+            },
+          ],
+          primary: [
+            {
+              id: 'chunk-dms',
+              kind: 'chunk',
+              title: 'DMS 定制查询SQL返回接口',
+              text: '该接口用于定制 SQL 查询。',
+              citationSourcePageIds: ['page-dms'],
+              retrievalReasons: ['semantic'],
+              sourceWindows: [sourceWindow],
+            },
+          ],
+          warnings: [],
+          retrievalReasons: ['semantic'],
+          budget: {
+            maxContextLength: 12000,
+            usedContextLength: 30,
+            remainingContextLength: 11970,
+            includedItemCount: 1,
+            omittedItemCount: 0,
+            responseReserve: 0,
+            perItemMaxLength: 12000,
+          },
+          completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+        }),
+      },
+      answerProvider,
+    });
+
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: 'DMS 定制查询SQL返回接口的 URL 和请求方法是什么？',
+      spaceIds: ['space-1'],
+    });
+
+    expect(result.answer).toContain('/customized_query_sql');
+    expect(answerProvider.answer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.stringContaining(
+          'URL：/customized_query_sql\n请求方法：POST',
+        ),
+      }),
+    );
   });
 
   it('returns only citations explicitly used by the generated answer', async () => {
@@ -431,6 +530,86 @@ describe('AiKnowledgeChatService', () => {
     );
   });
 
+  it('does not promote a cited retrieval result without verified source excerpts to trusted evidence', async () => {
+    const citation = {
+      sourcePageId: 'page-summary-only',
+      title: 'Compiled summary only',
+      url: '/p/summary-only',
+    };
+    const answer = jest
+      .fn()
+      .mockResolvedValue('Unsupported answer. [[cite:page-summary-only]]');
+    const service = createService({
+      retrieval: {
+        retrieve: jest.fn().mockResolvedValue({
+          mode: 'high_completeness',
+          chunks: [chunk('chunk-1', 'kp-1', 'A compressed statement.')],
+          capsules: [],
+          diagnostics: {},
+        }),
+      },
+      citationResolver: {
+        resolveForChunks: jest.fn().mockResolvedValue([
+          {
+            chunk: chunk('chunk-1', 'kp-1', 'A compressed statement.'),
+            pageTitle: 'Summary',
+            retrievalReasons: ['semantic'],
+            sourceWindows: [],
+            warnings: [],
+            citations: [citation],
+          },
+        ]),
+      },
+      contextPack: {
+        buildContextPack: jest.fn().mockReturnValue({
+          context: '# Summary\nA compressed statement.',
+          citations: [citation],
+          primary: [
+            {
+              id: 'chunk-1',
+              kind: 'chunk',
+              title: 'Summary',
+              text: 'A compressed statement.',
+              citationSourcePageIds: ['page-summary-only'],
+              retrievalReasons: ['semantic'],
+              sourceWindows: [],
+            },
+          ],
+          warnings: [],
+          retrievalReasons: ['semantic'],
+          budget: {
+            maxContextLength: 12000,
+            usedContextLength: 31,
+            remainingContextLength: 11969,
+            includedItemCount: 1,
+            omittedItemCount: 0,
+            responseReserve: 0,
+            perItemMaxLength: 12000,
+          },
+          completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+        }),
+      },
+      answerProvider: {
+        answer,
+      },
+    });
+
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: 'What is the exact fact?',
+      spaceIds: ['space-1'],
+    });
+
+    expect(result).toMatchObject({
+      answerMode: 'no_match',
+      citations: [],
+      citationEvidence: [],
+      retrievedSources: [],
+    });
+    expect(answer).not.toHaveBeenCalled();
+  });
+
   it('returns a visible diagnostic answer when the configured model produces no text', async () => {
     const service = createService({
       retrieval: {
@@ -457,8 +636,17 @@ describe('AiKnowledgeChatService', () => {
               title: 'Evidence',
               text: 'Documented evidence',
               retrievalReasons: ['lexical'],
-              sourceWindows: [],
-              citationSourcePageIds: [],
+              sourceWindows: [
+                {
+                  sourcePageId: 'page-evidence',
+                  title: 'Evidence source',
+                  url: '/p/evidence',
+                  text: 'Documented evidence',
+                  sourceRange: { startOffset: 0, endOffset: 19 },
+                  quoteHash: 'sha256:evidence',
+                },
+              ],
+              citationSourcePageIds: ['page-evidence'],
             },
           ],
           warnings: [],

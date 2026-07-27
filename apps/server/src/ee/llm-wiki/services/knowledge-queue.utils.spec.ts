@@ -3,6 +3,7 @@ import {
   buildKnowledgeAggregateSpaceJobId,
   buildKnowledgeCompileCoalesceKey,
   buildKnowledgeCompileJobId,
+  buildKnowledgeRetryPageJobId,
   buildKnowledgeRunKey,
 } from './knowledge-queue.utils';
 
@@ -39,5 +40,33 @@ describe('knowledge queue utils', () => {
     for (const id of ids) {
       expect(id).not.toContain(':');
     }
+  });
+
+  it('builds a stable retry job id from the page content hash', () => {
+    const first = buildKnowledgeRetryPageJobId({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageId: 'page-1',
+      sourceContentHash: 'sha256:content-1',
+    });
+    const duplicate = buildKnowledgeRetryPageJobId({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageId: 'page-1',
+      sourceContentHash: 'sha256:content-1',
+    });
+    const changed = buildKnowledgeRetryPageJobId({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageId: 'page-1',
+      sourceContentHash: 'sha256:content-2',
+    });
+
+    expect(first).toBe(duplicate);
+    expect(changed).not.toBe(first);
+    expect(first).toMatch(
+      /^knowledge-retry-page__workspace-1__space-1__page-1__[a-f0-9]{64}$/,
+    );
+    expect(first).not.toContain(':');
   });
 });

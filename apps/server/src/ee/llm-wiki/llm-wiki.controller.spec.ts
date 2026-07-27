@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { User, Workspace } from '@akasha/db/types/entity.types';
 import { AuditEvent, AuditResource } from '../../common/events/audit-events';
 import { UserRole } from '../../common/helpers/types/permission';
@@ -311,7 +311,10 @@ describe('LlmWikiController', () => {
     const auditService = {
       log: jest.fn(),
     };
-    const controller = createController({ aiQueue, auditService });
+    const controller = createController({
+      aiQueue,
+      auditService,
+    });
 
     await expect(
       controller.compileSpaces(
@@ -487,7 +490,7 @@ describe('LlmWikiController', () => {
     });
   });
 
-  it('retries only selected pages through durable per-Space runs', async () => {
+  it('retries only selected pages without creating Space runs', async () => {
     const pageRepo = {
       findExistingPageRefs: jest.fn().mockResolvedValue([
         {
@@ -521,10 +524,11 @@ describe('LlmWikiController', () => {
         ),
     };
     const spaceCompilation = {
-      startSpaceRun: jest
+      hasActiveRun: jest.fn().mockResolvedValue(false),
+      queuePageRetry: jest
         .fn()
-        .mockResolvedValueOnce({ id: 'retry-run-1' })
-        .mockResolvedValueOnce({ id: 'retry-run-2' }),
+        .mockImplementation(({ sourcePageId }) => `retry-${sourcePageId}`),
+      startSpaceRun: jest.fn(),
     };
     const controller = createController({
       pageRepo,
@@ -540,34 +544,75 @@ describe('LlmWikiController', () => {
       ),
     ).resolves.toEqual({
       queuedPageCount: 2,
-      jobIds: [
-        expect.stringContaining(
-          'knowledge-compile-pages__workspace-1__space-1__page-1__retry-run-1',
-        ),
-        expect.stringContaining(
-          'knowledge-compile-pages__workspace-1__space-2__page-2__retry-run-2',
-        ),
-      ],
+      jobIds: ['retry-page-1', 'retry-page-2'],
     });
 
-    expect(spaceCompilation.startSpaceRun).toHaveBeenNthCalledWith(1, {
-      workspaceId: 'workspace-1',
-      spaceId: 'space-1',
-      trigger: 'retry_compile',
-      sources: [
-        expect.objectContaining({
+    expect(spaceCompilation.hasActiveRun).toHaveBeenCalledTimes(2);
+    expect(spaceCompilation.queuePageRetry).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageId: 'page-1',
+        contentHash: 'hash-page-1',
+      }),
+    );
+    expect(spaceCompilation.queuePageRetry).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-2',
+        sourcePageId: 'page-2',
+        contentHash: 'hash-page-2',
+      }),
+    );
+    expect(spaceCompilation.startSpaceRun).not.toHaveBeenCalled();
+  });
+
+  it('rejects all selected retries before exporting or dispatching when any Space run is active', async () => {
+    const pageRepo = {
+      findExistingPageRefs: jest.fn().mockResolvedValue([
+        {
+          id: 'page-1',
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
-          sourcePageId: 'page-1',
-        }),
-      ],
+          deletedAt: null,
+        },
+        {
+          id: 'page-2',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-2',
+          deletedAt: null,
+        },
+      ]),
+    };
+    const sourceExporter = { exportPageSources: jest.fn() };
+    const spaceCompilation = {
+      hasActiveRun: jest
+        .fn()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true),
+      queuePageRetry: jest.fn(),
+      startSpaceRun: jest.fn(),
+    };
+    const controller = createController({
+      pageRepo,
+      sourceExporter,
+      spaceCompilation,
     });
-    expect(spaceCompilation.startSpaceRun).toHaveBeenNthCalledWith(2, {
-      workspaceId: 'workspace-1',
-      spaceId: 'space-2',
-      trigger: 'retry_compile',
-      sources: [expect.objectContaining({ sourcePageId: 'page-2' })],
-    });
+
+    await expect(
+      controller.retryPages(
+        { pageIds: ['page-1', 'page-2'] },
+        adminUser(),
+        workspace(),
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(spaceCompilation.hasActiveRun).toHaveBeenCalledTimes(2);
+    expect(sourceExporter.exportPageSources).not.toHaveBeenCalled();
+    expect(spaceCompilation.queuePageRetry).not.toHaveBeenCalled();
+    expect(spaceCompilation.startSpaceRun).not.toHaveBeenCalled();
   });
 
   it('rejects knowledge diagnostics from workspace members', async () => {
@@ -638,6 +683,8 @@ function createController(
     } as unknown as KnowledgeSourceExporterService,
     {
       startSpaceRun: jest.fn(),
+      hasActiveRun: jest.fn().mockResolvedValue(false),
+      queuePageRetry: jest.fn(),
       ...overrides.spaceCompilation,
     } as unknown as KnowledgeSpaceCompilationService,
   );

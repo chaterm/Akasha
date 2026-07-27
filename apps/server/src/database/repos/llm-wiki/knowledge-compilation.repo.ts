@@ -13,7 +13,8 @@ export type KnowledgeCompilationStatus =
   | 'queued'
   | 'running'
   | 'succeeded'
-  | 'failed';
+  | 'failed'
+  | 'skipped';
 
 export type KnowledgeCompilationStage =
   | 'queued'
@@ -28,6 +29,10 @@ export type KnowledgeCompilationStage =
 type CompilationIdentity = {
   workspaceId: string;
   sourcePageId: string;
+};
+
+type FencedCompilationIdentity = CompilationIdentity & {
+  compileTaskId: string;
 };
 
 type CompilationAttemptInput = CompilationIdentity & {
@@ -117,29 +122,36 @@ export class KnowledgeCompilationRepo {
         updatedAt: now,
       })
       .onConflict((oc) =>
-        oc.columns(['workspaceId', 'sourcePageId']).doUpdateSet({
-          spaceId: input.spaceId,
-          sourceVersion: input.sourceVersion ?? null,
-          sourceContentHash: input.sourceContentHash ?? null,
-          compilerVersion: input.compilerVersion,
-          promptVersion: input.promptVersion,
-          compilerRunId: input.compilerRunId,
-          compileTaskId: input.compileTaskId,
-          status: 'running',
-          stage: 'read_source',
-          attemptCount: sql<number>`knowledge_compilation_attempts.attempt_count + 1`,
-          errorCode: null,
-          errorMessage: null,
-          startedAt: now,
-          finishedAt: null,
-          updatedAt: now,
-        }),
+        oc
+          .columns(['workspaceId', 'sourcePageId'])
+          .doUpdateSet({
+            spaceId: input.spaceId,
+            sourceVersion: input.sourceVersion ?? null,
+            sourceContentHash: input.sourceContentHash ?? null,
+            compilerVersion: input.compilerVersion,
+            promptVersion: input.promptVersion,
+            compilerRunId: input.compilerRunId,
+            compileTaskId: input.compileTaskId,
+            status: 'running',
+            stage: 'read_source',
+            attemptCount: sql<number>`knowledge_compilation_attempts.attempt_count + 1`,
+            errorCode: null,
+            errorMessage: null,
+            startedAt: now,
+            finishedAt: null,
+            updatedAt: now,
+          })
+          .where(
+            'knowledgeCompilationAttempts.compileTaskId',
+            '=',
+            input.compileTaskId,
+          ),
       )
       .execute();
   }
 
   async updateSourceSnapshot(
-    input: CompilationIdentity & {
+    input: FencedCompilationIdentity & {
       sourceVersion: string;
       sourceContentHash: string;
     },
@@ -154,11 +166,12 @@ export class KnowledgeCompilationRepo {
       })
       .where('workspaceId', '=', input.workspaceId)
       .where('sourcePageId', '=', input.sourcePageId)
+      .where('compileTaskId', '=', input.compileTaskId)
       .execute();
   }
 
   async updateStage(
-    input: CompilationIdentity & { stage: KnowledgeCompilationStage },
+    input: FencedCompilationIdentity & { stage: KnowledgeCompilationStage },
     trx?: KyselyTransaction,
   ): Promise<void> {
     await dbOrTx(this.db, trx)
@@ -166,11 +179,12 @@ export class KnowledgeCompilationRepo {
       .set({ stage: input.stage, updatedAt: new Date() })
       .where('workspaceId', '=', input.workspaceId)
       .where('sourcePageId', '=', input.sourcePageId)
+      .where('compileTaskId', '=', input.compileTaskId)
       .execute();
   }
 
   async failAttempt(
-    input: CompilationIdentity & {
+    input: FencedCompilationIdentity & {
       stage?: KnowledgeCompilationStage;
       errorCode: string;
       errorMessage: string;
@@ -190,11 +204,37 @@ export class KnowledgeCompilationRepo {
       })
       .where('workspaceId', '=', input.workspaceId)
       .where('sourcePageId', '=', input.sourcePageId)
+      .where('compileTaskId', '=', input.compileTaskId)
+      .execute();
+  }
+
+  async skipAttempt(
+    input: FencedCompilationIdentity & {
+      stage?: KnowledgeCompilationStage;
+      reasonCode: string;
+      reasonMessage: string;
+    },
+    trx?: KyselyTransaction,
+  ): Promise<void> {
+    const now = new Date();
+    await dbOrTx(this.db, trx)
+      .updateTable('knowledgeCompilationAttempts')
+      .set({
+        status: 'skipped',
+        ...(input.stage ? { stage: input.stage } : {}),
+        errorCode: sanitizeErrorCode(input.reasonCode),
+        errorMessage: sanitizeErrorMessage(input.reasonMessage),
+        finishedAt: now,
+        updatedAt: now,
+      })
+      .where('workspaceId', '=', input.workspaceId)
+      .where('sourcePageId', '=', input.sourcePageId)
+      .where('compileTaskId', '=', input.compileTaskId)
       .execute();
   }
 
   async succeedAttempt(
-    input: CompilationIdentity & {
+    input: FencedCompilationIdentity & {
       sourceVersion: string;
       sourceContentHash: string;
     },
@@ -216,6 +256,7 @@ export class KnowledgeCompilationRepo {
       })
       .where('workspaceId', '=', input.workspaceId)
       .where('sourcePageId', '=', input.sourcePageId)
+      .where('compileTaskId', '=', input.compileTaskId)
       .execute();
   }
 
@@ -296,8 +337,22 @@ function sanitizeErrorCode(value: string): string {
 }
 
 function sanitizeErrorMessage(value: string): string {
-  return value
-    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
-    .trim()
-    .slice(0, 500);
+  return replaceControlCharacters(value).trim().slice(0, 500);
+}
+
+function replaceControlCharacters(value: string): string {
+  let normalized = '';
+  let replacingControlSequence = false;
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    const isControl = code <= 0x1f || code === 0x7f;
+    if (isControl) {
+      if (!replacingControlSequence) normalized += ' ';
+      replacingControlSequence = true;
+    } else {
+      normalized += character;
+      replacingControlSequence = false;
+    }
+  }
+  return normalized;
 }

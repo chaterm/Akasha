@@ -286,6 +286,150 @@ describe('KnowledgeCitationResolverService', () => {
       'source-not-in-final-result',
     );
   });
+
+  it('reads a query-relevant raw source window when the compiled summary omitted an exact URL', async () => {
+    const sourceText = [
+      '# DMS 定制查询SQL返回接口',
+      'URL：/customized_query_sql',
+      '请求方法：POST',
+      '主要用途：执行定制 SQL 查询并返回结果。',
+    ].join('\n');
+    const evidenceText = [
+      'URL：/customized_query_sql',
+      '请求方法：POST',
+      '主要用途：执行定制 SQL 查询并返回结果。',
+    ].join('\n');
+    const startOffset = sourceText.indexOf(evidenceText);
+    const sourceRepo = {
+      findSourceChunksByPageIds: jest.fn().mockResolvedValue([
+        {
+          id: 'source-chunk-1',
+          workspaceId: 'workspace-1',
+          sourceId: 'source-row-1',
+          sourcePageId: 'source-dms',
+          text: evidenceText,
+          contentHash: quoteHash(evidenceText),
+          sourceRange: {
+            startOffset,
+            endOffset: startOffset + evidenceText.length,
+          },
+          quoteHash: quoteHash(evidenceText),
+          createdAt: new Date('2026-07-27T00:00:00.000Z'),
+        },
+      ]),
+    };
+    const Resolver = KnowledgeCitationResolverService as unknown as new (
+      ...args: unknown[]
+    ) => KnowledgeCitationResolverService;
+    const service = new Resolver(
+      {
+        findChunkSourceRefsByChunkIds: jest.fn().mockResolvedValue([
+          {
+            chunkId: 'chunk-dms',
+            sources: [
+              {
+                sourcePageId: 'source-dms',
+                sourceVersion: 'v1',
+                contentHash: quoteHash(sourceText),
+                sourceRange: null,
+                quoteHash: null,
+              },
+            ],
+          },
+        ]),
+      },
+      { filterReadableSources: jest.fn() },
+      {
+        findManyByIds: jest
+          .fn()
+          .mockResolvedValue([
+            page('source-dms', 'DMS 接口', 'dms-api', sourceText),
+          ]),
+      },
+      sourceRepo,
+    );
+
+    const result = await service.resolveForChunks({
+      workspaceId: 'workspace-1',
+      query: 'DMS 定制查询SQL返回接口的 URL 和请求方法是什么？',
+      chunks: [
+        {
+          chunk: chunk('chunk-dms', 'kp-dms'),
+          page: capsule('kp-dms', 'DMS 定制查询SQL返回接口'),
+          sourcePageIds: ['source-dms'],
+          rankReasons: ['semantic', 'sidecar-prefiltered'],
+        },
+      ],
+    } as never);
+
+    expect(result[0].sourceWindows).toEqual([
+      {
+        sourcePageId: 'source-dms',
+        title: 'DMS 接口',
+        url: '/p/dms-api',
+        text: evidenceText,
+        sourceRange: {
+          startOffset,
+          endOffset: startOffset + evidenceText.length,
+        },
+        quoteHash: quoteHash(evidenceText),
+      },
+    ]);
+    expect(sourceRepo.findSourceChunksByPageIds).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['source-dms'],
+      limit: 200,
+    });
+  });
+
+  it('does not treat one generic Chinese bigram as relevant raw evidence', async () => {
+    const sourceText = '这是页面上的查询条件，与知识库使用说明有关。';
+    const service = new KnowledgeCitationResolverService(
+      {
+        findChunkSourceRefsByChunkIds: jest.fn().mockResolvedValue([]),
+      } as unknown as KnowledgeCapsuleRepo,
+      {
+        filterReadableSources: jest.fn(),
+      } as unknown as KnowledgeSourceAuthorizationService,
+      {
+        findManyByIds: jest
+          .fn()
+          .mockResolvedValue([
+            page('source-generic', '查询条件', 'query', sourceText),
+          ]),
+      } as unknown as PageRepo,
+      {
+        findSourceChunksByPageIds: jest.fn().mockResolvedValue([
+          {
+            id: 'source-chunk-generic',
+            workspaceId: 'workspace-1',
+            sourceId: 'source-row-generic',
+            sourcePageId: 'source-generic',
+            text: sourceText,
+            contentHash: quoteHash(sourceText),
+            sourceRange: { startOffset: 0, endOffset: sourceText.length },
+            quoteHash: quoteHash(sourceText),
+            createdAt: new Date('2026-07-27T00:00:00.000Z'),
+          },
+        ]),
+      } as never,
+    );
+
+    const result = await service.resolveForChunks({
+      workspaceId: 'workspace-1',
+      query: '火星上的奥林帕斯山今天温度是多少？',
+      chunks: [
+        {
+          chunk: chunk('chunk-generic', 'kp-generic'),
+          page: capsule('kp-generic', '查询条件'),
+          sourcePageIds: ['source-generic'],
+          rankReasons: ['semantic', 'sidecar-prefiltered'],
+        },
+      ],
+    });
+
+    expect(result[0].sourceWindows).toEqual([]);
+  });
 });
 
 function capsule(id: string, title = `Title ${id}`) {

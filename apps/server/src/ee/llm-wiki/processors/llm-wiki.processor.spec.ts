@@ -64,9 +64,12 @@ describe('LlmWikiProcessor', () => {
       spaceCompilation as unknown as KnowledgeSpaceCompilationService,
     );
 
+    const requestedAt = Date.parse('2026-07-27T03:00:00.000Z');
     const result = await processor.process({
+      id: 'compile-space-job-1',
       name: QueueJob.KNOWLEDGE_COMPILE_SPACE,
       data: { workspaceId: 'workspace-1', spaceId: 'space-1' },
+      timestamp: requestedAt,
     } as Job);
 
     expect(exporter.exportSpaceSources).toHaveBeenCalledWith({
@@ -77,6 +80,7 @@ describe('LlmWikiProcessor', () => {
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
       trigger: 'manual_compile',
+      requestedAt: new Date(requestedAt),
       sources: [
         expect.objectContaining({
           sourcePageId: 'page-1',
@@ -95,6 +99,53 @@ describe('LlmWikiProcessor', () => {
         compilerRunId: 'space-run-1',
         sourceCount: 1,
       }),
+    );
+  });
+
+  it('completes an older cross-queue full-space command as a no-op', async () => {
+    const exporter = {
+      exportSpaceSources: jest.fn().mockResolvedValue([]),
+    };
+    const spaceCompilation = {
+      startSpaceRun: jest.fn().mockResolvedValue(null),
+    };
+    const processor = new LlmWikiProcessor(
+      exporter as unknown as KnowledgeSourceExporterService,
+      createCompiler() as unknown as KnowledgeCompilerAdapter,
+      createImporter() as unknown as KnowledgeImportService,
+      createAccessIndexer(),
+      createSourceRepo(),
+      createCapsuleRepo(),
+      createPageRepo(),
+      createAiQueue(),
+      createReviewService(),
+      createReviewSnapshotService(),
+      createAuditService(),
+      createReviewApplicationRepo(),
+      createCompilationRepo() as never,
+      undefined,
+      spaceCompilation as unknown as KnowledgeSpaceCompilationService,
+    );
+    const requestedAt = Date.parse('2026-07-27T03:00:00.000Z');
+
+    await expect(
+      processor.process({
+        id: 'legacy-compile-space-job',
+        name: QueueJob.KNOWLEDGE_COMPILE_SPACE,
+        data: { workspaceId: 'workspace-1', spaceId: 'space-1' },
+        timestamp: requestedAt,
+      } as Job),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        type: 'compile-space',
+        status: 'succeeded',
+        compilerRunId: 'legacy-compile-space-job',
+        sourceCount: 0,
+      }),
+    );
+
+    expect(spaceCompilation.startSpaceRun).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedAt: new Date(requestedAt) }),
     );
   });
 
@@ -152,6 +203,7 @@ describe('LlmWikiProcessor', () => {
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
         compileMode: 'pages',
+        compileTaskId: expect.any(String),
         sources,
       }),
     );
@@ -237,6 +289,7 @@ describe('LlmWikiProcessor', () => {
       },
     ];
     const spaceCompilation = {
+      isRunActive: jest.fn().mockResolvedValue(true),
       markPageRunning: jest.fn(),
       completePage: jest.fn(),
       catalogForPage: jest.fn().mockResolvedValue(runEntries),
@@ -279,8 +332,10 @@ describe('LlmWikiProcessor', () => {
       exportPageSources: jest.fn().mockResolvedValue([source]),
     };
     const compiler = createCompiler();
+    const importer = createImporter();
     const compilationRepo = createCompilationRepo();
     const spaceCompilation = {
+      isRunActive: jest.fn().mockResolvedValue(true),
       markPageRunning: jest.fn(),
       completePage: jest.fn(),
       catalogForPage: jest.fn(),
@@ -288,6 +343,7 @@ describe('LlmWikiProcessor', () => {
     const processor = createProcessor({
       exporter,
       compiler,
+      importer,
       compilationRepo,
       spaceCompilation,
     });
@@ -306,11 +362,12 @@ describe('LlmWikiProcessor', () => {
 
     expect(compiler.compileSpace).not.toHaveBeenCalled();
     expect(spaceCompilation.catalogForPage).not.toHaveBeenCalled();
-    expect(compilationRepo.failAttempt).toHaveBeenCalledWith({
+    expect(compilationRepo.skipAttempt).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       sourcePageId: 'page-1',
-      errorCode: 'source_changed',
-      errorMessage: 'Knowledge source changed after the Space run snapshot.',
+      compileTaskId: expect.any(String),
+      reasonCode: 'source_changed',
+      reasonMessage: 'Knowledge source changed after the Space run snapshot.',
     });
     expect(spaceCompilation.completePage).toHaveBeenCalledWith({
       runId: 'space-run-1',
@@ -384,12 +441,14 @@ describe('LlmWikiProcessor', () => {
     expect(compilationRepo.updateSourceSnapshot).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       sourcePageId: 'page-1',
+      compileTaskId: 'page-job-1',
       sourceVersion: 'v2',
       sourceContentHash: source.contentHash,
     });
     expect(compilationRepo.updateStage).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       sourcePageId: 'page-1',
+      compileTaskId: 'page-job-1',
       stage: 'validation',
     });
     expect(compilationRepo.updateStage.mock.calls.slice(-3)).toEqual([
@@ -397,6 +456,7 @@ describe('LlmWikiProcessor', () => {
         {
           workspaceId: 'workspace-1',
           sourcePageId: 'page-1',
+          compileTaskId: 'page-job-1',
           stage: 'validation',
         },
       ],
@@ -404,6 +464,7 @@ describe('LlmWikiProcessor', () => {
         {
           workspaceId: 'workspace-1',
           sourcePageId: 'page-1',
+          compileTaskId: 'page-job-1',
           stage: 'merge',
         },
       ],
@@ -411,6 +472,7 @@ describe('LlmWikiProcessor', () => {
         {
           workspaceId: 'workspace-1',
           sourcePageId: 'page-1',
+          compileTaskId: 'page-job-1',
           stage: 'import',
         },
       ],
@@ -418,6 +480,7 @@ describe('LlmWikiProcessor', () => {
     expect(compilationRepo.succeedAttempt).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       sourcePageId: 'page-1',
+      compileTaskId: 'page-job-1',
       sourceVersion: 'v2',
       sourceContentHash: source.contentHash,
     });
@@ -430,6 +493,7 @@ describe('LlmWikiProcessor', () => {
       exportPageSources: jest.fn().mockResolvedValue([source]),
     };
     const spaceCompilation = {
+      isRunActive: jest.fn().mockResolvedValue(true),
       markPageRunning: jest.fn().mockResolvedValue(undefined),
       completePage: jest.fn().mockResolvedValue(undefined),
       catalogForPage: jest.fn().mockResolvedValue([]),
@@ -525,6 +589,7 @@ describe('LlmWikiProcessor', () => {
     expect(compilationRepo.failAttempt).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       sourcePageId: 'page-1',
+      compileTaskId: 'page-job-1',
       errorCode: 'compile_failed',
       errorMessage: 'Knowledge compilation failed.',
     });
@@ -537,6 +602,7 @@ describe('LlmWikiProcessor', () => {
     };
     const compilationRepo = createCompilationRepo();
     const spaceCompilation = {
+      isRunActive: jest.fn().mockResolvedValue(true),
       markPageRunning: jest.fn(),
       completePage: jest.fn(),
       catalogForPage: jest.fn(),
@@ -565,6 +631,7 @@ describe('LlmWikiProcessor', () => {
     expect(compilationRepo.failAttempt).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       sourcePageId: 'page-1',
+      compileTaskId: 'page-job-missing',
       errorCode: 'source_unavailable',
       errorMessage: 'Knowledge source page is unavailable for compilation.',
     });
@@ -577,20 +644,25 @@ describe('LlmWikiProcessor', () => {
     });
   });
 
-  it('records an empty source as non-retryable without invoking the compiler', async () => {
+  it('skips an empty source, retires its prior knowledge, and does not invoke the compiler', async () => {
     const source = sourceSnapshot({ text: '   ' });
     const exporter = {
       exportSpaceSources: jest.fn(),
       exportPageSources: jest.fn().mockResolvedValue([source]),
     };
     const compiler = createCompiler();
+    const importer = createImporter();
     const compilationRepo = createCompilationRepo();
+    const sourceRepo = createSourceRepo();
+    const capsuleRepo = createCapsuleRepo();
     const processor = createProcessor({
       exporter,
       compiler,
+      importer,
       compilationRepo,
+      sourceRepo,
+      capsuleRepo,
     });
-
     await expect(
       processor.process({
         id: 'page-job-empty',
@@ -601,15 +673,448 @@ describe('LlmWikiProcessor', () => {
           sourcePageIds: ['page-1'],
         },
       } as Job),
-    ).rejects.toThrow('Knowledge source page is empty.');
+    ).resolves.toEqual(
+      expect.objectContaining({ status: 'succeeded', sourceCount: 0 }),
+    );
 
     expect(compiler.compileSpace).not.toHaveBeenCalled();
-    expect(compilationRepo.failAttempt).toHaveBeenCalledWith({
+    expect(exporter.exportPageSources).toHaveBeenCalledTimes(2);
+    expect(importer.importCompileResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        artifacts: [],
+        upsertSources: false,
+        retireSources: true,
+      }),
+    );
+    expect(sourceRepo.markSourcesStale).not.toHaveBeenCalled();
+    expect(
+      capsuleRepo.markSourceArtifactsStaleBySourcePageIds,
+    ).not.toHaveBeenCalled();
+    expect(compilationRepo.skipAttempt).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       sourcePageId: 'page-1',
+      compileTaskId: 'page-job-empty',
+      reasonCode: 'empty_source',
+      reasonMessage: 'Knowledge source page is empty.',
+    });
+    expect(compilationRepo.failAttempt).not.toHaveBeenCalled();
+  });
+
+  it('does not withdraw knowledge when an empty source changes before publication', async () => {
+    const empty = sourceSnapshot({
+      text: '',
+      sourceVersion: 'v1',
+      contentHash: 'sha256:empty-v1',
+    });
+    const changed = sourceSnapshot({
+      text: 'new content',
+      sourceVersion: 'v2',
+      contentHash: 'sha256:content-v2',
+    });
+    const exporter = {
+      exportSpaceSources: jest.fn(),
+      exportPageSources: jest
+        .fn()
+        .mockResolvedValueOnce([empty])
+        .mockResolvedValueOnce([changed]),
+    };
+    const importer = createImporter();
+    const compilationRepo = createCompilationRepo();
+    const processor = createProcessor({
+      exporter,
+      importer,
+      compilationRepo,
+    });
+
+    await expect(
+      processor.process({
+        id: 'page-job-empty-changed',
+        name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+        data: {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageIds: ['page-1'],
+        },
+      } as Job),
+    ).resolves.toEqual(
+      expect.objectContaining({ status: 'succeeded', sourceCount: 0 }),
+    );
+
+    expect(importer.importCompileResult).not.toHaveBeenCalled();
+    expect(compilationRepo.skipAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        compileTaskId: 'page-job-empty-changed',
+        reasonCode: 'source_changed',
+      }),
+    );
+    expect(compilationRepo.failAttempt).not.toHaveBeenCalled();
+  });
+
+  it('counts an empty source as skipped in its active Space run', async () => {
+    const source = sourceSnapshot({ text: '\n\t' });
+    const exporter = {
+      exportSpaceSources: jest.fn(),
+      exportPageSources: jest.fn().mockResolvedValue([source]),
+    };
+    const compiler = createCompiler();
+    const publicationTrx = { id: 'empty-source-publication-trx' };
+    const importer = {
+      importCompileResult: jest.fn().mockImplementation(async (input) => {
+        await input.publicationGuard(publicationTrx);
+        return {
+          importedArtifactCount: 0,
+          quarantinedArtifactCount: 0,
+        };
+      }),
+    };
+    const compilationRepo = createCompilationRepo();
+    const spaceCompilation = {
+      isRunActive: jest.fn().mockResolvedValue(true),
+      isRunActiveForPublication: jest.fn().mockResolvedValue(true),
+      markPageRunning: jest.fn(),
+      completePage: jest.fn(),
+      catalogForPage: jest.fn(),
+    };
+    const processor = createProcessor({
+      exporter,
+      compiler,
+      importer: importer as unknown as KnowledgeImportService,
+      compilationRepo,
+      spaceCompilation,
+    });
+
+    await expect(
+      processor.process({
+        id: 'space-page-job-empty',
+        name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+        data: {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageIds: ['page-1'],
+          spaceRunId: 'space-run-1',
+        },
+      } as Job),
+    ).resolves.toEqual(
+      expect.objectContaining({ status: 'succeeded', sourceCount: 0 }),
+    );
+
+    expect(spaceCompilation.completePage).toHaveBeenCalledWith({
+      runId: 'space-run-1',
+      sourcePageId: 'page-1',
+      status: 'skipped',
       errorCode: 'empty_source',
       errorMessage: 'Knowledge source page is empty.',
     });
+    expect(compilationRepo.skipAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        compileTaskId: 'space-page-job-empty',
+        reasonCode: 'empty_source',
+      }),
+    );
+    expect(compiler.compileSpace).not.toHaveBeenCalled();
+    expect(spaceCompilation.catalogForPage).not.toHaveBeenCalled();
+    expect(spaceCompilation.isRunActiveForPublication).toHaveBeenCalledWith(
+      {
+        runId: 'space-run-1',
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+      },
+      publicationTrx,
+    );
+  });
+
+  it('completes a superseded Space page as a no-op before exporting', async () => {
+    const exporter = {
+      exportSpaceSources: jest.fn(),
+      exportPageSources: jest.fn(),
+    };
+    const compiler = createCompiler();
+    const importer = createImporter();
+    const compilationRepo = createCompilationRepo();
+    const spaceCompilation = {
+      isRunActive: jest.fn().mockResolvedValue(false),
+      markPageRunning: jest.fn(),
+      completePage: jest.fn(),
+      catalogForPage: jest.fn(),
+    };
+    const processor = createProcessor({
+      exporter,
+      compiler,
+      importer,
+      compilationRepo,
+      spaceCompilation,
+    });
+
+    await expect(
+      processor.process({
+        id: 'old-page-job',
+        name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+        data: {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageIds: ['page-1'],
+          spaceRunId: 'old-run',
+        },
+      } as Job),
+    ).resolves.toEqual(
+      expect.objectContaining({ status: 'succeeded', sourceCount: 0 }),
+    );
+
+    expect(spaceCompilation.isRunActive).toHaveBeenCalledWith({
+      runId: 'old-run',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+    });
+    expect(spaceCompilation.markPageRunning).not.toHaveBeenCalled();
+    expect(compilationRepo.startAttempt).not.toHaveBeenCalled();
+    expect(compilationRepo.skipAttempt).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-1',
+      compileTaskId: 'old-page-job',
+      reasonCode: 'run_superseded',
+      reasonMessage: 'Knowledge Space run was superseded.',
+    });
+    expect(exporter.exportPageSources).not.toHaveBeenCalled();
+    expect(compiler.compileSpace).not.toHaveBeenCalled();
+    expect(importer.importCompileResult).not.toHaveBeenCalled();
+    expect(compilationRepo.failAttempt).not.toHaveBeenCalled();
+  });
+
+  it('completes a retry as a no-op when a full Space run starts before the LLM call', async () => {
+    const source = sourceSnapshot();
+    const exporter = {
+      exportSpaceSources: jest.fn(),
+      exportPageSources: jest.fn().mockResolvedValue([source]),
+    };
+    const compiler = createCompiler();
+    const importer = createImporter();
+    const compilationRepo = createCompilationRepo();
+    const spaceCompilation = {
+      hasActiveRun: jest
+        .fn()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true),
+      markPageRunning: jest.fn(),
+      completePage: jest.fn(),
+      catalogForPage: jest.fn(),
+    };
+    const processor = createProcessor({
+      exporter,
+      compiler,
+      importer,
+      compilationRepo,
+      spaceCompilation,
+    });
+
+    await expect(
+      processor.process({
+        id: 'retry-page-job',
+        name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+        data: {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageIds: ['page-1'],
+          trigger: 'retry_compile',
+        },
+      } as Job),
+    ).resolves.toEqual(
+      expect.objectContaining({ status: 'succeeded', sourceCount: 0 }),
+    );
+
+    expect(spaceCompilation.hasActiveRun).toHaveBeenCalledTimes(2);
+    expect(exporter.exportPageSources).toHaveBeenCalledTimes(1);
+    expect(compiler.compileSpace).not.toHaveBeenCalled();
+    expect(importer.importCompileResult).not.toHaveBeenCalled();
+    expect(compilationRepo.failAttempt).not.toHaveBeenCalled();
+    expect(compilationRepo.skipAttempt).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-1',
+      compileTaskId: 'retry-page-job',
+      reasonCode: 'space_run_active',
+      reasonMessage: 'Knowledge Space compilation is currently running.',
+    });
+  });
+
+  it('terminalizes a queued retry when a full Space run is already active', async () => {
+    const exporter = {
+      exportSpaceSources: jest.fn(),
+      exportPageSources: jest.fn(),
+    };
+    const compilationRepo = createCompilationRepo();
+    const spaceCompilation = {
+      hasActiveRun: jest.fn().mockResolvedValue(true),
+      markPageRunning: jest.fn(),
+      completePage: jest.fn(),
+      catalogForPage: jest.fn(),
+    };
+    const processor = createProcessor({
+      exporter,
+      compilationRepo,
+      spaceCompilation,
+    });
+
+    await processor.process({
+      id: 'retry-page-job-blocked',
+      name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+      data: {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageIds: ['page-1'],
+        trigger: 'retry_compile',
+      },
+    } as Job);
+
+    expect(compilationRepo.startAttempt).not.toHaveBeenCalled();
+    expect(compilationRepo.skipAttempt).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-1',
+      compileTaskId: 'retry-page-job-blocked',
+      reasonCode: 'space_run_active',
+      reasonMessage: 'Knowledge Space compilation is currently running.',
+    });
+    expect(exporter.exportPageSources).not.toHaveBeenCalled();
+  });
+
+  it('does not import when a Space run is superseded while the LLM is running', async () => {
+    const source = sourceSnapshot();
+    const exporter = {
+      exportSpaceSources: jest.fn(),
+      exportPageSources: jest.fn().mockResolvedValue([source]),
+    };
+    const compiler = createCompiler();
+    const importer = createImporter();
+    const compilationRepo = createCompilationRepo();
+    const spaceCompilation = {
+      isRunActive: jest
+        .fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false),
+      markPageRunning: jest.fn(),
+      completePage: jest.fn(),
+      catalogForPage: jest.fn().mockResolvedValue([]),
+    };
+    const processor = createProcessor({
+      exporter,
+      compiler,
+      importer,
+      compilationRepo,
+      spaceCompilation,
+    });
+
+    await expect(
+      processor.process({
+        id: 'old-page-job',
+        name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+        data: {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageIds: ['page-1'],
+          spaceRunId: 'old-run',
+        },
+      } as Job),
+    ).resolves.toEqual(
+      expect.objectContaining({ status: 'succeeded', sourceCount: 0 }),
+    );
+
+    expect(spaceCompilation.isRunActive).toHaveBeenCalledTimes(3);
+    expect(compiler.compileSpace).toHaveBeenCalledTimes(1);
+    expect(importer.importCompileResult).not.toHaveBeenCalled();
+    expect(compilationRepo.failAttempt).not.toHaveBeenCalled();
+    expect(compilationRepo.skipAttempt).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-1',
+      compileTaskId: 'old-page-job',
+      reasonCode: 'run_superseded',
+      reasonMessage: 'Knowledge Space run was superseded.',
+    });
+  });
+
+  it('turns a retryable page error into no-op when the Run was superseded', async () => {
+    const source = sourceSnapshot();
+    const exporter = {
+      exportSpaceSources: jest.fn(),
+      exportPageSources: jest.fn().mockResolvedValue([source]),
+    };
+    const compiler = createCompiler();
+    (compiler.compileSpace as jest.Mock).mockRejectedValue(
+      new Error('provider timeout'),
+    );
+    const compilationRepo = createCompilationRepo();
+    const spaceCompilation = {
+      isRunActive: jest
+        .fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false),
+      markPageRunning: jest.fn(),
+      catalogForPage: jest.fn().mockResolvedValue([]),
+      completePage: jest.fn(),
+    };
+    const processor = createProcessor({
+      exporter,
+      compiler,
+      compilationRepo,
+      spaceCompilation,
+    });
+
+    await expect(
+      processor.process({
+        id: 'superseded-error-page-job',
+        name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+        data: {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageIds: ['page-1'],
+          spaceRunId: 'old-run',
+        },
+      } as Job),
+    ).resolves.toEqual(
+      expect.objectContaining({ status: 'succeeded', sourceCount: 0 }),
+    );
+
+    expect(compilationRepo.failAttempt).not.toHaveBeenCalled();
+    expect(compilationRepo.skipAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        compileTaskId: 'superseded-error-page-job',
+        reasonCode: 'run_superseded',
+      }),
+    );
+    expect(spaceCompilation.completePage).not.toHaveBeenCalled();
+  });
+
+  it('turns an aggregate error into no-op when the Run was superseded', async () => {
+    const spaceAggregator = {
+      aggregate: jest.fn().mockRejectedValue(new Error('provider timeout')),
+    };
+    const spaceCompilation = {
+      isRunActive: jest.fn().mockResolvedValue(false),
+      failAggregation: jest.fn(),
+    };
+    const processor = createProcessor({
+      spaceAggregator,
+      spaceCompilation,
+    });
+
+    await expect(
+      processor.process({
+        id: 'superseded-aggregate-job',
+        name: QueueJob.KNOWLEDGE_AGGREGATE_SPACE,
+        data: {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          spaceRunId: 'old-run',
+        },
+      } as Job),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        type: 'compile-space',
+        status: 'succeeded',
+        compilerRunId: 'old-run',
+      }),
+    );
+
+    expect(spaceCompilation.failAggregation).not.toHaveBeenCalled();
   });
 
   it('discards a compile result when the source changes before import', async () => {
@@ -1157,6 +1662,8 @@ function createProcessor(
     spaceAggregator?: Partial<KnowledgeSpaceAggregatorService>;
     importer?: KnowledgeImportService;
     compilationRepo?: ReturnType<typeof createCompilationRepo>;
+    sourceRepo?: KnowledgeSourceRepo;
+    capsuleRepo?: KnowledgeCapsuleRepo;
   } = {},
 ): LlmWikiProcessor {
   return new LlmWikiProcessor(
@@ -1164,8 +1671,8 @@ function createProcessor(
     overrides.compiler ?? createCompiler(),
     overrides.importer ?? createImporter(),
     createAccessIndexer(),
-    createSourceRepo(),
-    createCapsuleRepo(),
+    overrides.sourceRepo ?? createSourceRepo(),
+    overrides.capsuleRepo ?? createCapsuleRepo(),
     createPageRepo(),
     createAiQueue(),
     createReviewService(),
@@ -1186,6 +1693,7 @@ function createCompilationRepo() {
     updateSourceSnapshot: jest.fn().mockResolvedValue(undefined),
     updateStage: jest.fn().mockResolvedValue(undefined),
     failAttempt: jest.fn().mockResolvedValue(undefined),
+    skipAttempt: jest.fn().mockResolvedValue(undefined),
     succeedAttempt: jest.fn().mockResolvedValue(undefined),
   };
 }

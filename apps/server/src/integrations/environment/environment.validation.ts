@@ -1,15 +1,18 @@
 import {
+  IsInt,
   IsIn,
   IsNotEmpty,
   IsNotIn,
   IsOptional,
   IsString,
   IsUrl,
+  Max,
+  Min,
   MinLength,
   ValidateIf,
   validateSync,
 } from 'class-validator';
-import { plainToInstance } from 'class-transformer';
+import { plainToInstance, Type } from 'class-transformer';
 import { IsISO6391 } from '../../common/validators/is-iso6391';
 
 export class EnvironmentVariables {
@@ -127,6 +130,13 @@ export class EnvironmentVariables {
   @IsString()
   @IsNotEmpty()
   AI_COMPLETION_MODEL: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(10_000)
+  @Max(600_000)
+  KNOWLEDGE_COMPILER_TIMEOUT_MS: number;
 
   @IsOptional()
   @ValidateIf(

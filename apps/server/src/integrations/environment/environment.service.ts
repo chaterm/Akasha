@@ -297,6 +297,15 @@ export class EnvironmentService {
     );
   }
 
+  getKnowledgeCompilerTimeoutMs(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_COMPILER_TIMEOUT_MS',
+        120_000,
+      ),
+    );
+  }
+
   getAiEmbeddingDimension(): number {
     return parseInt(
       this.configService.get<string>('AI_EMBEDDING_DIMENSION'),

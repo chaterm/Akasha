@@ -196,7 +196,6 @@ function KnowledgeEvidence({
   answerMode?: "knowledge" | "no_match";
 }) {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const evidenceBySourceId = new Map(
     citationEvidence.map((evidence) => [evidence.sourcePageId, evidence]),
   );
@@ -232,14 +231,15 @@ function KnowledgeEvidence({
             const evidence = evidenceBySourceId.get(source.sourcePageId);
             return (
               <div key={source.sourcePageId} className={classes.citationSource}>
-                <button
-                  type="button"
+                <a
+                  href={source.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className={classes.citationSourceLink}
-                  onClick={() => navigate(source.url)}
                 >
                   <span>{source.title}</span>
                   <IconExternalLink size={13} />
-                </button>
+                </a>
                 {evidence?.excerpts.map((excerpt) => (
                   <blockquote
                     key={`${excerpt.quoteHash}:${excerpt.sourceRange.startOffset}:${excerpt.sourceRange.endOffset}`}

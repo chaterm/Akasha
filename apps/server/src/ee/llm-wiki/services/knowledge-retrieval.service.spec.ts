@@ -379,6 +379,49 @@ describe('KnowledgeRetrievalService', () => {
     );
   });
 
+  it('drops a weak semantic-only candidate before authorization and graph expansion', async () => {
+    const weakCandidate = {
+      ...chunkCandidate(
+        'chunk-unrelated',
+        'kp-unrelated',
+        ['source-unrelated'],
+        ['semantic'],
+        [0, 1],
+        'Database backup retention settings',
+      ),
+      signalScore: 0.91,
+      page: {
+        ...candidate('kp-unrelated', 'space-1'),
+        title: 'Backup operations',
+      },
+    };
+    const capsuleRepo = {
+      findDenseChunkCandidates: jest.fn().mockResolvedValue([weakCandidate]),
+      findLexicalChunkCandidates: jest.fn().mockResolvedValue([]),
+      findExactTitleChunkCandidates: jest.fn().mockResolvedValue([]),
+      findChunkSourcePageIdsByChunkIds: jest.fn().mockResolvedValue([
+        {
+          chunkId: 'chunk-unrelated',
+          sourcePageIds: ['source-unrelated'],
+        },
+      ]),
+      findGraphTraversalEdges: jest.fn(),
+      findGraphChunkCandidates: jest.fn(),
+    };
+    const service = createService({ capsuleRepo });
+
+    const result = await service.retrieve({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: 'employee vacation policy',
+      spaceIds: ['space-1'],
+    });
+
+    expect(result.chunks).toEqual([]);
+    expect(capsuleRepo.findChunkSourcePageIdsByChunkIds).not.toHaveBeenCalled();
+    expect(capsuleRepo.findGraphTraversalEdges).not.toHaveBeenCalled();
+  });
+
   it('expands authorized direct hits through two readable graph hops', async () => {
     const direct = chunkCandidate(
       'chunk-seed',

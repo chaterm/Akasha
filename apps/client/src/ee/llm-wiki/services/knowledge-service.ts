@@ -347,12 +347,27 @@ function normalizeKnowledgeDiagnostics(
       failedReason:
         typeof job.failedReason === "string" ? job.failedReason : undefined,
     })),
+    queueCounts: normalizeKnowledgeQueueCounts(record.queueCounts),
     compileStatuses: compileStatuses
       .filter(isRecord)
       .map(normalizeCompileStatus),
     retrieval: normalizeRetrievalDiagnostics(record.retrieval),
     quarantines: quarantines.filter(isRecord).map(normalizeQuarantinedArtifact),
     quality: normalizeKnowledgeQuality(record.quality),
+  };
+}
+
+function normalizeKnowledgeQueueCounts(value: unknown) {
+  const counts = isRecord(value) ? value : {};
+  return {
+    waiting: readNumber(counts.waiting),
+    active: readNumber(counts.active),
+    delayed: readNumber(counts.delayed),
+    prioritized: readNumber(counts.prioritized),
+    waitingChildren: readNumber(counts.waitingChildren),
+    paused: readNumber(counts.paused),
+    failed: readNumber(counts.failed),
+    completed: readNumber(counts.completed),
   };
 }
 
@@ -363,6 +378,7 @@ function normalizePageCompileStatus(
     value === "queued" ||
     value === "running" ||
     value === "succeeded" ||
+    value === "skipped" ||
     value === "failed"
   ) {
     return value;
@@ -448,6 +464,7 @@ function normalizeCompileStatusValue(
     value === "running" ||
     value === "succeeded" ||
     value === "partial" ||
+    value === "superseded" ||
     value === "failed"
   ) {
     return value;

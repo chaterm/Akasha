@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { createHash } from 'crypto';
 import {
   KnowledgeCapsuleRepo,
@@ -13,6 +13,11 @@ import {
 import { KnowledgeSourceRange } from '../types/knowledge.types';
 import { KnowledgeRetrievalResult } from './knowledge-retrieval.service';
 import { KnowledgeSourceAuthorizationService } from './knowledge-source-authorization.service';
+import { KnowledgeSourceRepo } from '@akasha/db/repos/llm-wiki/knowledge-source.repo';
+import { KnowledgeSourceChunk } from '@akasha/db/types/entity.types';
+import { chunkKnowledgeSource } from '../chunking/knowledge-structural-chunker';
+
+const MIN_RAW_EVIDENCE_SCORE = 2;
 
 type CapsuleCitationEntry = {
   capsule: KnowledgePage;
@@ -41,6 +46,7 @@ export class KnowledgeCitationResolverService {
     private readonly capsuleRepo: KnowledgeCapsuleRepo,
     private readonly sourceAuthorization: KnowledgeSourceAuthorizationService,
     private readonly pageRepo: PageRepo,
+    @Optional() private readonly sourceRepo?: KnowledgeSourceRepo,
   ) {}
 
   async resolveForCapsules(input: {
@@ -90,6 +96,7 @@ export class KnowledgeCitationResolverService {
 
   async resolveForChunks(input: {
     workspaceId: string;
+    query?: string;
     chunks: KnowledgeRetrievalResult['chunks'];
   }): Promise<ChunkCitationEntry[]> {
     const allSourcePageIds = unique(
@@ -105,6 +112,12 @@ export class KnowledgeCitationResolverService {
       chunks: input.chunks,
       readableSourcePageIds: allSourcePageIds,
     });
+    const rawSourceWindowsByPageId = await this.findRawSourceWindows({
+      workspaceId: input.workspaceId,
+      query: input.query ?? '',
+      sourcePageIds: allSourcePageIds,
+      pagesById,
+    });
 
     return input.chunks.map((entry) => ({
       chunk: entry.parentSection
@@ -117,11 +130,70 @@ export class KnowledgeCitationResolverService {
         .map((sourcePageId) => pagesById.get(sourcePageId))
         .filter(Boolean)
         .map((page) => citationForPage(page)),
-      sourceWindows: buildSourceWindows(
-        sourceRefsByChunkId.get(entry.chunk.id) ?? [],
-        pagesById,
-      ),
+      sourceWindows: mergeSourceWindows([
+        ...buildSourceWindows(
+          sourceRefsByChunkId.get(entry.chunk.id) ?? [],
+          pagesById,
+        ),
+        ...entry.sourcePageIds.flatMap(
+          (sourcePageId) => rawSourceWindowsByPageId.get(sourcePageId) ?? [],
+        ),
+      ]),
     }));
+  }
+
+  private async findRawSourceWindows(input: {
+    workspaceId: string;
+    query: string;
+    sourcePageIds: string[];
+    pagesById: Map<string, ReadableSourcePage>;
+  }): Promise<Map<string, KnowledgeSourceWindow[]>> {
+    if (!input.query.trim() || input.sourcePageIds.length === 0) {
+      return new Map();
+    }
+
+    const storedChunks = this.sourceRepo
+      ? await this.sourceRepo.findSourceChunksByPageIds({
+          workspaceId: input.workspaceId,
+          sourcePageIds: input.sourcePageIds,
+          limit: 200,
+        })
+      : [];
+    const storedPageIds = new Set(
+      storedChunks.map((chunk) => chunk.sourcePageId),
+    );
+    const fallbackChunks = input.sourcePageIds.flatMap((sourcePageId) => {
+      if (storedPageIds.has(sourcePageId)) return [];
+      const page = input.pagesById.get(sourcePageId);
+      if (!page || typeof page.textContent !== 'string') return [];
+      return chunkKnowledgeSource({
+        pageTitle: page.title,
+        text: page.textContent,
+      }).flatMap((parent) =>
+        parent.children.map(
+          (child): KnowledgeSourceChunk => ({
+            id: `${sourcePageId}:${child.stableKey}`,
+            workspaceId: input.workspaceId,
+            sourceId: sourcePageId,
+            sourcePageId,
+            text: child.text,
+            contentHash: child.quoteHash,
+            sourceRange: {
+              startOffset: child.startOffset,
+              endOffset: child.endOffset,
+            },
+            quoteHash: child.quoteHash,
+            createdAt: new Date(0),
+          }),
+        ),
+      );
+    });
+
+    return rankRawSourceWindows(
+      input.query,
+      [...storedChunks, ...fallbackChunks],
+      input.pagesById,
+    );
   }
 
   private async findChunkSourceRefsByChunkId(input: {
@@ -223,6 +295,126 @@ function buildSourceWindows(
   }
 
   return windows;
+}
+
+function rankRawSourceWindows(
+  query: string,
+  chunks: KnowledgeSourceChunk[],
+  pagesById: Map<string, ReadableSourcePage>,
+): Map<string, KnowledgeSourceWindow[]> {
+  const queryTerms = extractSearchTerms(query);
+  const ranked = chunks
+    .flatMap((chunk) => {
+      const page = pagesById.get(chunk.sourcePageId);
+      const sourceRange = parseSourceRange(chunk.sourceRange);
+      if (
+        !page ||
+        !sourceRange ||
+        !chunk.quoteHash ||
+        typeof page.textContent !== 'string' ||
+        !isValidSourceRange(sourceRange, page.textContent)
+      ) {
+        return [];
+      }
+      const text = page.textContent.slice(
+        sourceRange.startOffset,
+        sourceRange.endOffset,
+      );
+      if (hashQuote(text) !== chunk.quoteHash) return [];
+      const score = scoreSearchText(queryTerms, text);
+      if (score < MIN_RAW_EVIDENCE_SCORE) return [];
+
+      return [
+        {
+          score,
+          window: {
+            ...citationForPage(page),
+            text,
+            sourceRange,
+            quoteHash: chunk.quoteHash,
+          },
+        },
+      ];
+    })
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        left.window.sourceRange.startOffset -
+          right.window.sourceRange.startOffset,
+    );
+  const result = new Map<string, KnowledgeSourceWindow[]>();
+  for (const entry of ranked) {
+    const windows = result.get(entry.window.sourcePageId) ?? [];
+    if (windows.length >= 2) continue;
+    windows.push(entry.window);
+    result.set(entry.window.sourcePageId, windows);
+  }
+  return result;
+}
+
+function extractSearchTerms(query: string): string[] {
+  const normalized = normalizeSearchText(query);
+  const asciiStopWords = new Set([
+    'and',
+    'are',
+    'for',
+    'how',
+    'is',
+    'the',
+    'what',
+    'when',
+    'where',
+    'which',
+    'who',
+    'why',
+  ]);
+  const ascii = (normalized.match(/[a-z0-9_./:-]{2,}/g) ?? []).filter(
+    (term) => !asciiStopWords.has(term),
+  );
+  const hanSegments = normalized.match(/[\p{Script=Han}]{2,}/gu) ?? [];
+  const hanStopWords = new Set([
+    '上的',
+    '的是',
+    '什么',
+    '如何',
+    '多少',
+    '时候',
+    '一下',
+    '今天',
+    '是多',
+  ]);
+  const hanBigrams = hanSegments.flatMap((segment) =>
+    Array.from({ length: Math.max(0, segment.length - 1) }, (_, index) =>
+      segment.slice(index, index + 2),
+    ).filter((term) => !hanStopWords.has(term)),
+  );
+  return unique([...ascii, ...hanBigrams]);
+}
+
+function scoreSearchText(queryTerms: string[], text: string): number {
+  if (queryTerms.length === 0) return 0;
+  const normalized = normalizeSearchText(text);
+  return queryTerms.reduce((score, term) => {
+    if (!normalized.includes(term)) return score;
+    const exactIdentifier = /[/_.:-]/.test(term) || /[a-z]+\d*/.test(term);
+    return score + (exactIdentifier ? 4 : 1);
+  }, 0);
+}
+
+function normalizeSearchText(value: string): string {
+  return value.normalize('NFKC').toLocaleLowerCase('en-US');
+}
+
+function mergeSourceWindows(
+  windows: KnowledgeSourceWindow[],
+): KnowledgeSourceWindow[] {
+  const seen = new Set<string>();
+  return windows.filter((window) => {
+    const key = `${window.sourcePageId}:${window.sourceRange.startOffset}:${window.sourceRange.endOffset}:${window.quoteHash}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function citationForPage(page: ReadableSourcePage): KnowledgeCitation {

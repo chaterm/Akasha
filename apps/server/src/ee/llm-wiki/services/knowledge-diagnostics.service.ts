@@ -95,6 +95,7 @@ export type KnowledgePageCompileStatus =
   | 'queued'
   | 'running'
   | 'succeeded'
+  | 'skipped'
   | 'failed';
 
 export type KnowledgePageCompileStage =
@@ -121,9 +122,26 @@ export type KnowledgeDiagnosticsJob = {
   returnValue?: KnowledgeCompileJobResult;
 };
 
+export type KnowledgeQueueCounts = {
+  waiting: number;
+  active: number;
+  delayed: number;
+  prioritized: number;
+  waitingChildren: number;
+  paused: number;
+  failed: number;
+  completed: number;
+};
+
 export type KnowledgeCompileStatus = {
   spaceId: string;
-  status: 'queued' | 'running' | 'succeeded' | 'partial' | 'failed';
+  status:
+    | 'queued'
+    | 'running'
+    | 'succeeded'
+    | 'partial'
+    | 'failed'
+    | 'superseded';
   jobId: string;
   lastRunId: string;
   durationMs: number | null;
@@ -176,6 +194,7 @@ export class KnowledgeDiagnosticsService {
   }): Promise<{
     pages: KnowledgeDiagnosticsPage[];
     jobs: KnowledgeDiagnosticsJob[];
+    queueCounts: KnowledgeQueueCounts;
     compileStatuses: KnowledgeCompileStatus[];
     retrieval: KnowledgeRetrievalAuditSummary;
     quarantines: KnowledgeQuarantinedArtifactDiagnostic[];
@@ -199,6 +218,7 @@ export class KnowledgeDiagnosticsService {
       missingEmbeddingCounts,
       lastCompiledAts,
       accessPolicyStats,
+      queueCounts,
       jobs,
       durableRuns,
     ] = await Promise.all([
@@ -218,6 +238,7 @@ export class KnowledgeDiagnosticsService {
       this.countMissingEmbeddingsBySourcePage(input.workspaceId, pageIds),
       this.findLastCompiledAtBySourcePage(input.workspaceId, pageIds),
       this.findAccessPolicyStatsBySourcePage(input.workspaceId, pageIds),
+      this.findKnowledgeQueueCounts(),
       this.findKnowledgeJobs(input.workspaceId, limit),
       this.spaceRunRepo.findRecentRuns({
         workspaceId: input.workspaceId,
@@ -259,6 +280,7 @@ export class KnowledgeDiagnosticsService {
     return {
       pages: diagnosticPages,
       jobs,
+      queueCounts,
       compileStatuses: [...durableStatuses, ...legacyJobStatuses].sort(
         (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0),
       ),
@@ -543,6 +565,29 @@ export class KnowledgeDiagnosticsService {
     return rows;
   }
 
+  private async findKnowledgeQueueCounts(): Promise<KnowledgeQueueCounts> {
+    const counts = await this.aiQueue.getJobCounts(
+      'waiting',
+      'active',
+      'delayed',
+      'prioritized',
+      'waiting-children',
+      'paused',
+      'failed',
+      'completed',
+    );
+    return {
+      waiting: Number(counts.waiting ?? 0),
+      active: Number(counts.active ?? 0),
+      delayed: Number(counts.delayed ?? 0),
+      prioritized: Number(counts.prioritized ?? 0),
+      waitingChildren: Number(counts['waiting-children'] ?? 0),
+      paused: Number(counts.paused ?? 0),
+      failed: Number(counts.failed ?? 0),
+      completed: Number(counts.completed ?? 0),
+    };
+  }
+
   private async toDiagnosticsJob(job: Job): Promise<KnowledgeDiagnosticsJob> {
     const state = await job.getState();
     return {
@@ -603,6 +648,7 @@ export function buildPageCompilationDiagnostics(input?: {
     lastSucceededAt: input?.lastSucceededAt ?? null,
     servingLastSuccessfulVersion:
       status !== 'succeeded' &&
+      status !== 'skipped' &&
       (Boolean(input?.lastSuccessfulSourceVersion) ||
         Boolean(input?.hasActiveArtifact)),
   };
@@ -615,6 +661,7 @@ function toPageCompileStatus(
     value === 'queued' ||
     value === 'running' ||
     value === 'succeeded' ||
+    value === 'skipped' ||
     value === 'failed'
   ) {
     return value;
@@ -735,6 +782,7 @@ function toDurableCompileStatus(
   if (status === 'succeeded' || status === 'partial' || status === 'failed') {
     return status;
   }
+  if (status === 'superseded') return 'superseded';
   if (status === 'queued') return 'queued';
   return 'running';
 }

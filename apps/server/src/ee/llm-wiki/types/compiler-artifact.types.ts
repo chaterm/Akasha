@@ -6,6 +6,7 @@ export interface CompileSpaceInput extends KnowledgeScope {
   sources: KnowledgeSourceSnapshot[];
   compilerVersion: string;
   promptVersion: string;
+  compileTaskId?: string;
   compileMode?: 'space' | 'pages';
   purpose?: string;
   schema?: string;

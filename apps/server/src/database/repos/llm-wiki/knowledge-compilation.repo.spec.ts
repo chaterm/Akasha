@@ -1,4 +1,13 @@
 import { KnowledgeCompilationRepo } from './knowledge-compilation.repo';
+import {
+  CamelCasePlugin,
+  CompiledQuery,
+  DummyDriver,
+  Kysely,
+  PostgresAdapter,
+  PostgresIntrospector,
+  PostgresQueryCompiler,
+} from 'kysely';
 
 type QueryCall = { method: string; args: unknown[] };
 
@@ -140,6 +149,46 @@ describe('KnowledgeCompilationRepo', () => {
       method: 'onConflict',
       args: [expect.any(Function)],
     });
+    expect(query.calls).toContainEqual({
+      method: 'where',
+      args: ['knowledgeCompilationAttempts.compileTaskId', '=', 'task-page-1'],
+    });
+  });
+
+  it('qualifies the compile task fence in the PostgreSQL conflict update', async () => {
+    const queries: CompiledQuery[] = [];
+    const dialect = {
+      createAdapter: () => new PostgresAdapter(),
+      createDriver: () => new DummyDriver(),
+      createIntrospector: (db: Kysely<unknown>) => new PostgresIntrospector(db),
+      createQueryCompiler: () => new PostgresQueryCompiler(),
+    };
+    const db = new Kysely<Record<string, never>>({
+      dialect,
+      plugins: [new CamelCasePlugin()],
+      log: (event) => {
+        if (event.level === 'query') queries.push(event.query);
+      },
+    });
+    const repo = new KnowledgeCompilationRepo(db as never);
+
+    await repo.startAttempt({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageId: 'page-1',
+      sourceVersion: 'v2',
+      sourceContentHash: 'hash-2',
+      compilerVersion: 'compiler-v2',
+      promptVersion: 'prompt-v2',
+      compilerRunId: 'run-2',
+      compileTaskId: 'task-page-1',
+    });
+
+    expect(queries[0]?.sql).toContain(
+      'where "knowledge_compilation_attempts"."compile_task_id" = $',
+    );
+    expect(queries[0]?.sql).not.toContain('where "compile_task_id" = $');
+    await db.destroy();
   });
 
   it('starts before source export and fills the source snapshot afterward', async () => {
@@ -155,12 +204,14 @@ describe('KnowledgeCompilationRepo', () => {
       compilerRunId: 'run-2',
       compileTaskId: 'task-page-1',
     });
-    await repo.updateSourceSnapshot({
+    const snapshotUpdate = {
       workspaceId: 'workspace-1',
       sourcePageId: 'page-1',
+      compileTaskId: 'task-page-1',
       sourceVersion: 'v2',
       sourceContentHash: 'hash-2',
-    });
+    };
+    await repo.updateSourceSnapshot(snapshotUpdate);
 
     expect(
       query.calls.find((call) => call.method === 'values')?.args[0],
@@ -180,19 +231,25 @@ describe('KnowledgeCompilationRepo', () => {
         sourceContentHash: 'hash-2',
       }),
     );
+    expect(query.calls).toContainEqual({
+      method: 'where',
+      args: ['compileTaskId', '=', 'task-page-1'],
+    });
   });
 
   it('records a sanitized failure without overwriting last-success fields', async () => {
     const query = new FakeKyselyQuery();
     const repo = new KnowledgeCompilationRepo(query as never);
 
-    await repo.failAttempt({
+    const failure = {
       workspaceId: 'workspace-1',
       sourcePageId: 'page-1',
+      compileTaskId: 'task-page-1',
       stage: 'generation',
       errorCode: 'invalid_output',
       errorMessage: 'Generated JSON did not match the schema.',
-    });
+    } as const;
+    await repo.failAttempt(failure);
 
     const setCall = query.calls.find((call) => call.method === 'set');
     expect(setCall?.args[0]).toEqual(
@@ -206,18 +263,57 @@ describe('KnowledgeCompilationRepo', () => {
     );
     expect(setCall?.args[0]).not.toHaveProperty('lastSuccessfulSourceVersion');
     expect(JSON.stringify(setCall)).not.toContain('private source text');
+    expect(query.calls).toContainEqual({
+      method: 'where',
+      args: ['compileTaskId', '=', 'task-page-1'],
+    });
+  });
+
+  it('records a fenced skipped attempt with a sanitized reason', async () => {
+    const query = new FakeKyselyQuery();
+    const repo = new KnowledgeCompilationRepo(query as never);
+    const skipAttempt = (
+      repo as unknown as {
+        skipAttempt(input: Record<string, unknown>): Promise<void>;
+      }
+    ).skipAttempt.bind(repo);
+
+    await skipAttempt({
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-1',
+      compileTaskId: 'task-page-1',
+      stage: 'read_source',
+      reasonCode: 'EMPTY SOURCE',
+      reasonMessage: 'Knowledge source page is empty.\u0000',
+    });
+
+    expect(query.calls.find((call) => call.method === 'set')?.args[0]).toEqual(
+      expect.objectContaining({
+        status: 'skipped',
+        stage: 'read_source',
+        errorCode: 'empty_source',
+        errorMessage: 'Knowledge source page is empty.',
+        finishedAt: expect.any(Date),
+      }),
+    );
+    expect(query.calls).toContainEqual({
+      method: 'where',
+      args: ['compileTaskId', '=', 'task-page-1'],
+    });
   });
 
   it('records the current source as the last successful version', async () => {
     const query = new FakeKyselyQuery();
     const repo = new KnowledgeCompilationRepo(query as never);
 
-    await repo.succeedAttempt({
+    const success = {
       workspaceId: 'workspace-1',
       sourcePageId: 'page-1',
+      compileTaskId: 'task-page-1',
       sourceVersion: 'v2',
       sourceContentHash: 'hash-2',
-    });
+    };
+    await repo.succeedAttempt(success);
 
     expect(query.calls.find((call) => call.method === 'set')?.args[0]).toEqual(
       expect.objectContaining({
@@ -228,6 +324,28 @@ describe('KnowledgeCompilationRepo', () => {
         lastSucceededAt: expect.any(Date),
       }),
     );
+    expect(query.calls).toContainEqual({
+      method: 'where',
+      args: ['compileTaskId', '=', 'task-page-1'],
+    });
+  });
+
+  it('fences stage updates by compile task id', async () => {
+    const query = new FakeKyselyQuery();
+    const repo = new KnowledgeCompilationRepo(query as never);
+    const stageUpdate = {
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-1',
+      compileTaskId: 'task-page-1',
+      stage: 'generation' as const,
+    };
+
+    await repo.updateStage(stageUpdate);
+
+    expect(query.calls).toContainEqual({
+      method: 'where',
+      args: ['compileTaskId', '=', 'task-page-1'],
+    });
   });
 
   it('looks up Stage 1 analysis by the complete cache key', async () => {

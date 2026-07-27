@@ -27,11 +27,13 @@ export type KnowledgeRetrievalRankReason =
 export type KnowledgeRankedChunkCandidate = KnowledgeChunkCandidate & {
   score: number;
   rankReasons: KnowledgeRetrievalRankReason[];
+  signalScores: Partial<Record<KnowledgeRetrievalSignal, number>>;
 };
 
 const BASE_SCORE_WEIGHT = 0.5;
 const BM25_K1 = 1.5;
 const BM25_B = 0.75;
+const MAX_RELEVANT_COSINE_DISTANCE = 0.45;
 
 @Injectable()
 export class KnowledgeRetrievalRankerService {
@@ -96,6 +98,7 @@ export class KnowledgeRetrievalRankerService {
         ...candidatesByChunkId.get(chunkId)!,
         score,
         rankReasons: rankReasons(candidatesByChunkId.get(chunkId)!.signals),
+        signalScores: candidateSignalScores(candidatesByChunkId.get(chunkId)!),
       }))
       .sort((left, right) => {
         if (right.score !== left.score) return right.score - left.score;
@@ -116,6 +119,10 @@ export class KnowledgeRetrievalRankerService {
     const rrfK = input.rrfK ?? 60;
     const scores = new Map<string, number>();
     const merged = new Map<string, KnowledgeChunkCandidate>();
+    const signalScoresByChunkId = new Map<
+      string,
+      Partial<Record<KnowledgeRetrievalSignal, number>>
+    >();
 
     for (const list of input.recallLists) {
       const weight = input.weights?.[list.signal] ?? 1;
@@ -125,6 +132,12 @@ export class KnowledgeRetrievalRankerService {
           chunkId,
           (scores.get(chunkId) ?? 0) + weight / (rrfK + rank + 1),
         );
+        if (typeof candidate.signalScore === 'number') {
+          signalScoresByChunkId.set(chunkId, {
+            ...(signalScoresByChunkId.get(chunkId) ?? {}),
+            [list.signal]: candidate.signalScore,
+          });
+        }
         const previous = merged.get(chunkId);
         merged.set(chunkId, {
           ...(previous ?? candidate),
@@ -146,6 +159,7 @@ export class KnowledgeRetrievalRankerService {
         ...candidate,
         score: scores.get(candidate.chunk.id) ?? 0,
         rankReasons: rankReasons(candidate.signals),
+        signalScores: signalScoresByChunkId.get(candidate.chunk.id) ?? {},
       }))
       .sort((left, right) => {
         if (right.score !== left.score) return right.score - left.score;
@@ -156,6 +170,89 @@ export class KnowledgeRetrievalRankerService {
       })
       .slice(0, input.limit);
   }
+
+  isCandidateRelevant(input: {
+    query: string;
+    candidate: KnowledgeRankedChunkCandidate;
+  }): boolean {
+    const { candidate } = input;
+    if (candidate.signals.includes('exact-title')) return true;
+    if (
+      candidate.signals.includes('lexical') &&
+      (candidate.signalScores.lexical ?? candidate.lexicalScore ?? 0) > 0
+    ) {
+      return true;
+    }
+    if (!candidate.signals.includes('semantic')) return false;
+    if (
+      hasInformativeTextOverlap(
+        input.query,
+        `${candidate.page.title}\n${candidate.chunk.text}`,
+      )
+    ) {
+      return true;
+    }
+    const semanticDistance = candidate.signalScores.semantic;
+    return (
+      semanticDistance === undefined ||
+      semanticDistance <= MAX_RELEVANT_COSINE_DISTANCE
+    );
+  }
+}
+
+function candidateSignalScores(
+  candidate: KnowledgeChunkCandidate,
+): Partial<Record<KnowledgeRetrievalSignal, number>> {
+  if (typeof candidate.signalScore !== 'number') return {};
+  return Object.fromEntries(
+    candidate.signals.map((signal) => [signal, candidate.signalScore]),
+  );
+}
+
+function hasInformativeTextOverlap(query: string, text: string): boolean {
+  const queryTerms = informativeTerms(query);
+  if (queryTerms.length === 0) return false;
+  const normalizedText = normalizeSearchText(text);
+  return queryTerms.some((term) => normalizedText.includes(term));
+}
+
+function informativeTerms(value: string): string[] {
+  const normalized = normalizeSearchText(value);
+  const asciiStopWords = new Set([
+    'and',
+    'are',
+    'for',
+    'how',
+    'the',
+    'what',
+    'when',
+    'where',
+    'which',
+    'who',
+    'why',
+  ]);
+  const ascii = (normalized.match(/[a-z0-9_./:-]{2,}/g) ?? []).filter(
+    (term) => !asciiStopWords.has(term),
+  );
+  const hanStopWords = new Set([
+    '什么',
+    '如何',
+    '多少',
+    '时候',
+    '的是',
+    '一下',
+  ]);
+  const han = (normalized.match(/[\p{Script=Han}]{2,}/gu) ?? []).flatMap(
+    (segment) =>
+      Array.from({ length: Math.max(0, segment.length - 1) }, (_, index) =>
+        segment.slice(index, index + 2),
+      ).filter((term) => !hanStopWords.has(term)),
+  );
+  return [...new Set([...ascii, ...han])];
+}
+
+function normalizeSearchText(value: string): string {
+  return value.normalize('NFKC').toLocaleLowerCase('en-US');
 }
 
 function rankSemanticCandidates(input: {

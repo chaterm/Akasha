@@ -40,11 +40,7 @@ export class KnowledgeSpaceAggregatorService {
   }) {
     const run = await this.runRepo.startAggregation(input.runId);
     if (!run) {
-      throw new KnowledgeCompilerLlmError(
-        'configuration_error',
-        'Knowledge Space run is not ready for aggregation.',
-        false,
-      );
+      return emptyAggregateResult();
     }
     const candidates = await this.capsuleRepo.findGraphCandidatesForSpace({
       workspaceId: input.workspaceId,
@@ -81,10 +77,31 @@ export class KnowledgeSpaceAggregatorService {
     );
 
     if (pages.length === 0 || allSourceRefs.length === 0) {
-      await this.capsuleRepo.markCompileScopeStale({
-        workspaceId: input.workspaceId,
-        spaceId: input.spaceId,
+      const retirement = await this.importService.importCompileResult({
+        input: {
+          workspaceId: input.workspaceId,
+          spaceId: input.spaceId,
+          compilerVersion: run.compilerVersion,
+          promptVersion: run.promptVersion,
+          compileMode: 'space',
+          sources: [],
+        },
+        artifacts: [],
+        upsertSources: false,
+        retireCompileScope: true,
+        publicationGuard: (trx) =>
+          this.runRepo.isRunActiveForPublication(
+            {
+              runId: input.runId,
+              workspaceId: input.workspaceId,
+              spaceId: input.spaceId,
+            },
+            trx,
+          ),
       });
+      if (retirement.skippedReason === 'run_superseded') {
+        return emptyAggregateResult();
+      }
       await this.runRepo.completeAggregation({
         runId: input.runId,
         importedArtifactCount: 0,
@@ -119,6 +136,9 @@ export class KnowledgeSpaceAggregatorService {
         error,
       );
     }
+    if (!(await this.isRunActive(input.runId))) {
+      return emptyAggregateResult();
+    }
     const overview = buildOverviewArtifact({
       workspaceId: input.workspaceId,
       spaceId: input.spaceId,
@@ -152,7 +172,19 @@ export class KnowledgeSpaceAggregatorService {
       input: compileInput,
       artifacts: [overview],
       upsertSources: false,
+      publicationGuard: (trx) =>
+        this.runRepo.isRunActiveForPublication(
+          {
+            runId: input.runId,
+            workspaceId: input.workspaceId,
+            spaceId: input.spaceId,
+          },
+          trx,
+        ),
     });
+    if (result.skippedReason === 'run_superseded') {
+      return emptyAggregateResult();
+    }
     await this.linkResolver.resolveSpace({
       workspaceId: input.workspaceId,
       spaceId: input.spaceId,
@@ -164,6 +196,15 @@ export class KnowledgeSpaceAggregatorService {
     });
     return result;
   }
+
+  private async isRunActive(runId: string): Promise<boolean> {
+    const run = await this.runRepo.findRun(runId);
+    return run?.status === 'aggregating';
+  }
+}
+
+function emptyAggregateResult() {
+  return { importedArtifactCount: 0, quarantinedArtifactCount: 0 };
 }
 
 function buildAggregateSystemPrompt(): string {

@@ -68,6 +68,7 @@ export type KnowledgePageCompileStatus =
   | "queued"
   | "running"
   | "succeeded"
+  | "skipped"
   | "failed";
 
 export type KnowledgePageCompileStage =
@@ -123,7 +124,13 @@ export interface KnowledgeDiagnosticsJob {
 
 export interface KnowledgeCompileStatus {
   spaceId: string;
-  status: "queued" | "running" | "succeeded" | "partial" | "failed";
+  status:
+    | "queued"
+    | "running"
+    | "succeeded"
+    | "partial"
+    | "failed"
+    | "superseded";
   jobId: string;
   lastRunId: string;
   durationMs: number | null;
@@ -135,6 +142,17 @@ export interface KnowledgeCompileStatus {
   quarantinedArtifactCount: number;
   failureReason?: string;
   updatedAt?: number;
+}
+
+export interface KnowledgeQueueCounts {
+  waiting: number;
+  active: number;
+  delayed: number;
+  prioritized: number;
+  waitingChildren: number;
+  paused: number;
+  failed: number;
+  completed: number;
 }
 
 export interface KnowledgeQuarantinedArtifact {
@@ -152,6 +170,7 @@ export interface KnowledgeQuarantinedArtifact {
 export interface KnowledgeDiagnosticsResult {
   pages: KnowledgeDiagnosticsPage[];
   jobs: KnowledgeDiagnosticsJob[];
+  queueCounts: KnowledgeQueueCounts;
   compileStatuses: KnowledgeCompileStatus[];
   retrieval?: KnowledgeRetrievalDiagnosticsSummary;
   quarantines: KnowledgeQuarantinedArtifact[];

@@ -1,10 +1,63 @@
 import { QueueJob } from '../../../integrations/queue/constants';
 import {
   KnowledgeDiagnosticsJob,
+  KnowledgeDiagnosticsService,
   buildPageCompilationDiagnostics,
   buildCompileStatusesFromJobs,
   buildCompileStatusesFromRuns,
 } from './knowledge-diagnostics.service';
+
+describe('KnowledgeDiagnosticsService queue counts', () => {
+  it('returns current BullMQ counts separately from recent job history', async () => {
+    const aiQueue = {
+      getJobCounts: jest.fn().mockResolvedValue({
+        waiting: 3,
+        active: 2,
+        delayed: 1,
+        prioritized: 4,
+        'waiting-children': 5,
+        paused: 6,
+        failed: 7,
+        completed: 8,
+      }),
+    };
+    const service = new KnowledgeDiagnosticsService(
+      {} as never,
+      aiQueue as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+
+    await expect(
+      (
+        service as unknown as {
+          findKnowledgeQueueCounts(): Promise<Record<string, number>>;
+        }
+      ).findKnowledgeQueueCounts(),
+    ).resolves.toEqual({
+      waiting: 3,
+      active: 2,
+      delayed: 1,
+      prioritized: 4,
+      waitingChildren: 5,
+      paused: 6,
+      failed: 7,
+      completed: 8,
+    });
+    expect(aiQueue.getJobCounts).toHaveBeenCalledWith(
+      'waiting',
+      'active',
+      'delayed',
+      'prioritized',
+      'waiting-children',
+      'paused',
+      'failed',
+      'completed',
+    );
+  });
+});
 
 describe('buildCompileStatusesFromJobs', () => {
   it('summarizes the latest compile job per space without exposing private failure text', () => {
@@ -113,6 +166,36 @@ describe('buildCompileStatusesFromRuns', () => {
       },
     ]);
   });
+
+  it('reports a superseded run as superseded instead of running', () => {
+    expect(
+      buildCompileStatusesFromRuns([
+        {
+          id: 'run-old',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          status: 'superseded',
+          expectedPageCount: 10,
+          succeededPageCount: 2,
+          failedPageCount: 0,
+          skippedPageCount: 8,
+          importedArtifactCount: 0,
+          quarantinedArtifactCount: 0,
+          aggregateJobId: null,
+          errorCode: null,
+          queuedAt: new Date('2026-07-24T01:00:00.000Z'),
+          startedAt: new Date('2026-07-24T01:00:01.000Z'),
+          finishedAt: new Date('2026-07-24T01:00:02.000Z'),
+          updatedAt: new Date('2026-07-24T01:00:02.000Z'),
+        },
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        spaceId: 'space-1',
+        status: 'superseded',
+      }),
+    ]);
+  });
 });
 
 describe('buildPageCompilationDiagnostics', () => {
@@ -163,6 +246,27 @@ describe('buildPageCompilationDiagnostics', () => {
     expect(
       buildPageCompilationDiagnostics(legacyInput).servingLastSuccessfulVersion,
     ).toBe(true);
+  });
+
+  it('reports intentionally skipped pages without treating them as failed', () => {
+    expect(
+      buildPageCompilationDiagnostics({
+        status: 'skipped',
+        stage: 'completed',
+        attemptCount: 1,
+        errorCode: 'empty_source',
+        lastSuccessfulSourceVersion: 'v1',
+        lastSucceededAt: new Date('2026-07-20T10:00:00.000Z'),
+      }),
+    ).toEqual({
+      compileStatus: 'skipped',
+      compileStage: 'completed',
+      compileAttemptCount: 1,
+      compileErrorCode: 'empty_source',
+      compileErrorMessage: 'Knowledge source is empty.',
+      lastSucceededAt: new Date('2026-07-20T10:00:00.000Z'),
+      servingLastSuccessfulVersion: false,
+    });
   });
 });
 

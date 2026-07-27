@@ -19,6 +19,15 @@ export type KnowledgeQueryAuditMetadata = {
   rankedCandidateCount: number;
   authorizedChunkCount: number;
   filteredChunkCount: number;
+  finalChunkIds?: string[];
+  finalSourcePageIds?: string[];
+  trustedCitationIds?: string[];
+  rankReasonsByChunk?: Record<string, string[]>;
+  evidenceRefs?: Array<{
+    sourcePageId: string;
+    sourceRange: { startOffset: number; endOffset: number };
+    quoteHash: string;
+  }>;
 };
 
 export type KnowledgeRetrievalAuditSummary = {

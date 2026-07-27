@@ -55,6 +55,16 @@ vi.mock("../services/knowledge-service", () => ({
   getKnowledgeDiagnostics: vi.fn().mockResolvedValue({
     pages: [],
     jobs: [],
+    queueCounts: {
+      waiting: 3,
+      active: 2,
+      delayed: 1,
+      prioritized: 4,
+      waitingChildren: 5,
+      paused: 6,
+      failed: 7,
+      completed: 8,
+    },
     compileStatuses: [
       {
         spaceId: "space-1",
@@ -173,6 +183,15 @@ describe("KnowledgeAdminPage", () => {
     expect(screen.getByText("artifact_source_range_invalid")).toBeTruthy();
     expect(screen.getByText("artifact-1")).toBeTruthy();
     expect(screen.getByLabelText("Stale column help")).toBeTruthy();
+    expect(screen.getByText("Recent AI jobs")).toBeTruthy();
+    expect(screen.getByText("Recent records")).toBeTruthy();
+    expect(screen.getByText("Waiting: 12")).toBeTruthy();
+    expect(screen.getByText("Active: 2")).toBeTruthy();
+    expect(screen.getByText("Delayed: 1")).toBeTruthy();
+    expect(screen.getByText("Paused: 6")).toBeTruthy();
+    expect(screen.getByText("Failed: 7")).toBeTruthy();
+    expect(screen.getByText("Completed: 8")).toBeTruthy();
+    expect(screen.getByText("AI queue")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Retry compile" }));
 
@@ -232,6 +251,7 @@ describe("KnowledgeAdminPage", () => {
         },
       ],
       jobs: [],
+      queueCounts: EMPTY_TEST_QUEUE_COUNTS,
       compileStatuses: [],
       quarantines: [],
     });
@@ -249,6 +269,12 @@ describe("KnowledgeAdminPage", () => {
     );
 
     expect(await screen.findByText("Last successful version")).toBeTruthy();
+    expect(
+      screen.getByRole("columnheader", { name: "Missing embeddings" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("columnheader", { name: "Embedding" }),
+    ).toBeNull();
     expect(
       screen
         .getAllByLabelText("Compile status")
@@ -285,3 +311,14 @@ describe("KnowledgeAdminPage", () => {
     });
   });
 });
+
+const EMPTY_TEST_QUEUE_COUNTS = {
+  waiting: 0,
+  active: 0,
+  delayed: 0,
+  prioritized: 0,
+  waitingChildren: 0,
+  paused: 0,
+  failed: 0,
+  completed: 0,
+};

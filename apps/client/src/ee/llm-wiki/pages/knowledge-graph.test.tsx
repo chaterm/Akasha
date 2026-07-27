@@ -16,6 +16,21 @@ const graphCss = readFileSync(
   resolve(currentDir, "../styles/knowledge-graph.module.css"),
   "utf8",
 );
+const canvasContext = {
+  clearRect: vi.fn(),
+  save: vi.fn(),
+  translate: vi.fn(),
+  scale: vi.fn(),
+  beginPath: vi.fn(),
+  moveTo: vi.fn(),
+  lineTo: vi.fn(),
+  stroke: vi.fn(),
+  arc: vi.fn(),
+  fill: vi.fn(),
+  closePath: vi.fn(),
+  fillText: vi.fn(),
+  restore: vi.fn(),
+} as unknown as CanvasRenderingContext2D;
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -136,6 +151,10 @@ describe("KnowledgeGraphPage", () => {
         disconnect = vi.fn();
       },
     });
+    Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+      writable: true,
+      value: vi.fn(() => canvasContext),
+    });
   });
 
   it("renders the selected space graph and links single-source nodes to pages", async () => {
@@ -160,7 +179,7 @@ describe("KnowledgeGraphPage", () => {
     await waitFor(() => {
       expect(getKnowledgeGraph).toHaveBeenCalledWith({
         spaceId: "space-1",
-        limit: 3000,
+        limit: 10000,
       });
     });
   });
@@ -196,7 +215,7 @@ describe("KnowledgeGraphPage", () => {
     await waitFor(() => {
       expect(getKnowledgeGraph).toHaveBeenCalledWith({
         spaceId: "space-current",
-        limit: 3000,
+        limit: 10000,
       });
     });
   });
@@ -238,7 +257,7 @@ describe("KnowledgeGraphPage", () => {
       /\.graphPanel\s*{[^}]*flex:\s*1 1 0;[^}]*min-height:\s*0;[^}]*}/s,
     );
     expect(graphCss).toMatch(
-      /\.graphSvg\s*{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*}/s,
+      /\.graphSvg,\s*\.graphCanvas\s*{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*}/s,
     );
   });
 
@@ -368,7 +387,7 @@ describe("KnowledgeGraphPage", () => {
     expect(edgeLabel.getAttribute("data-visible")).toBe("true");
   });
 
-  it("shows visible and total page counts when the overview is capped", async () => {
+  it("shows more than 80 pages in the overview", async () => {
     vi.mocked(getKnowledgeGraph).mockResolvedValueOnce({
       nodes: Array.from({ length: 81 }, (_, index) => ({
         id: `kp-${index + 1}`,
@@ -398,6 +417,41 @@ describe("KnowledgeGraphPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("Pages: 80 / 81")).toBeTruthy();
+    expect(await screen.findByText("Pages: 81")).toBeTruthy();
+  });
+
+  it("uses the high-density canvas renderer for large graphs", async () => {
+    vi.mocked(getKnowledgeGraph).mockResolvedValueOnce({
+      nodes: Array.from({ length: 501 }, (_, index) => ({
+        id: `kp-${index + 1}`,
+        title: `Page ${index + 1}`,
+        spaceId: "space-1",
+        kind: "page" as const,
+        degree: 0,
+        communityId: `community-${index % 8}`,
+      })),
+      edges: [],
+      insights: {
+        isolatedNodeIds: [],
+        bridgeNodeIds: [],
+        communityCount: 8,
+      },
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <HelmetProvider>
+          <MantineProvider>
+            <BrowserRouter>
+              <KnowledgeGraphPage />
+            </BrowserRouter>
+          </MantineProvider>
+        </HelmetProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByTestId("knowledge-graph-canvas")).toBeTruthy();
+    expect(screen.queryByTestId("knowledge-graph-viewport")).toBeNull();
+    await waitFor(() => expect(canvasContext.clearRect).toHaveBeenCalled());
   });
 });

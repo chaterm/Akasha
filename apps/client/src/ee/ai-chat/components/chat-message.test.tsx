@@ -114,7 +114,10 @@ describe("ChatMessage knowledge evidence", () => {
     fireEvent.click(answerSourcesSummary!);
 
     expect(answerSourcesDetails?.open).toBe(true);
-    expect(screen.getByText("Used page")).toBeTruthy();
+    const sourceLink = screen.getByRole("link", { name: "Used page" });
+    expect(sourceLink.getAttribute("href")).toBe("/p/used");
+    expect(sourceLink.getAttribute("target")).toBe("_blank");
+    expect(sourceLink.getAttribute("rel")).toBe("noopener noreferrer");
     expect(
       screen.getByText("This excerpt directly supports the answer."),
     ).toBeTruthy();
