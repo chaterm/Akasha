@@ -27,7 +27,7 @@ describe('PageListener knowledge jobs', () => {
       {
         delay: 5000,
         attempts: 3,
-        backoff: { type: 'exponential', delay: 1000 },
+        backoff: { type: 'exponential', delay: 31000 },
         jobId: expect.stringMatching(
           /^knowledge-compile-pages__workspace-1__space-1__page-1__/,
         ),
@@ -83,7 +83,7 @@ describe('PageListener knowledge jobs', () => {
       {
         delay: 5000,
         attempts: 3,
-        backoff: { type: 'exponential', delay: 1000 },
+        backoff: { type: 'exponential', delay: 31000 },
         jobId: expect.stringMatching(
           /^knowledge-compile-pages__workspace-1__space-1__page-1__/,
         ),
@@ -145,7 +145,7 @@ describe('PageListener knowledge jobs', () => {
       {
         delay: 5000,
         attempts: 3,
-        backoff: { type: 'exponential', delay: 1000 },
+        backoff: { type: 'exponential', delay: 31000 },
         jobId: expect.stringMatching(
           /^knowledge-compile-pages__workspace-1__space-2__page-2__/,
         ),

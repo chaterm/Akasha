@@ -34,6 +34,37 @@ describe('ReviewController', () => {
     expect(auditService.log).not.toHaveBeenCalled();
   });
 
+  it('allows a direct space admin to load enabled compilation review', async () => {
+    const controller = createController();
+    setReviewAccess(controller, { canManageSettings: true, enabled: true });
+
+    await expect(
+      controller.load(
+        { spaceId: 'space-1' },
+        memberUser(),
+        workspace(),
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it('rejects a workspace admin who is not a space admin', async () => {
+    const controller = createController();
+    setReviewAccess(controller, { canManageSettings: false, enabled: true });
+
+    await expect(
+      controller.load({ spaceId: 'space-1' }, adminUser(), workspace()),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('rejects review access when compilation review is disabled', async () => {
+    const controller = createController();
+    setReviewAccess(controller, { canManageSettings: true, enabled: false });
+
+    await expect(
+      controller.load({ spaceId: 'space-1' }, ownerUser(), workspace()),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
   it('loads the saved snapshot for a space', async () => {
     const snapshotService = {
       loadSnapshot: jest.fn().mockResolvedValue({
@@ -490,6 +521,25 @@ function createController(
     snapshotService,
     aiQueue,
     auditService,
+    {
+      createForUser: jest.fn().mockResolvedValue({
+        can: jest.fn().mockReturnValue(true),
+        cannot: jest.fn().mockReturnValue(false),
+      }),
+    } as any,
+    {
+      findById: jest.fn().mockResolvedValue({
+        id: 'space-1',
+        settings: { knowledge: { compilationReviewEnabled: true } },
+      }),
+    } as any,
+    {
+      findById: jest.fn().mockResolvedValue({
+        id: 'app-1',
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+      }),
+    } as any,
   );
 }
 
@@ -505,6 +555,42 @@ function adminUser(): User {
     id: 'user-1',
     role: UserRole.ADMIN,
   } as User;
+}
+
+function ownerUser(): User {
+  return {
+    id: 'owner-1',
+    role: UserRole.OWNER,
+  } as User;
+}
+
+function memberUser(): User {
+  return {
+    id: 'space-admin-1',
+    role: UserRole.MEMBER,
+  } as User;
+}
+
+function setReviewAccess(
+  controller: ReviewController,
+  input: { canManageSettings: boolean; enabled: boolean },
+) {
+  Object.assign(controller as any, {
+    spaceAbility: {
+      createForUser: jest.fn().mockResolvedValue({
+        can: jest.fn().mockReturnValue(input.canManageSettings),
+        cannot: jest.fn().mockReturnValue(!input.canManageSettings),
+      }),
+    },
+    spaceRepo: {
+      findById: jest.fn().mockResolvedValue({
+        id: 'space-1',
+        settings: {
+          knowledge: { compilationReviewEnabled: input.enabled },
+        },
+      }),
+    },
+  });
 }
 
 function createAiQueue(): Queue & { add: jest.Mock } {

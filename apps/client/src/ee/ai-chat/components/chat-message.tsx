@@ -23,18 +23,40 @@ import ChatToolGroup from "./chat-tool-group";
 import classes from "../styles/chat-message.module.css";
 import CopyTextButton from "@/components/common/copy.tsx";
 
-const PAGE_PATH_RE = /\/s\/[^/?#]+\/p\/[^/?#]+/;
+const DIRECT_PAGE_HREF_RE =
+  /^\/(?:s\/[^/?#\s]+\/p\/[^/?#\s]+|p\/[^/?#\s]+)(?:[?#][^\s]*)?$/;
+
+function normalizeInternalPageHref(href: string): string | null {
+  if (DIRECT_PAGE_HREF_RE.test(href)) return href;
+
+  // Models occasionally wrap an internal path in a fabricated host. Recover
+  // the app-local route without dropping a query string or section anchor.
+  if (/^(?:https?:)?\/\//i.test(href)) {
+    try {
+      const url = new URL(href, "https://akasha.invalid");
+      const path = `${url.pathname}${url.search}${url.hash}`;
+      if (DIRECT_PAGE_HREF_RE.test(path)) return path;
+    } catch {
+      return null;
+    }
+
+    // Also recover the common malformed form `https://s/{slug}/p/{page}`,
+    // where `s` was interpreted as a host instead of the first path segment.
+    const hostless = `/${href.replace(/^(?:https?:)?\/\//i, "")}`;
+    if (DIRECT_PAGE_HREF_RE.test(hostless)) return hostless;
+  }
+
+  return null;
+}
 
 const chatSanitizer = DOMPurify();
 chatSanitizer.addHook("afterSanitizeAttributes", (node) => {
   if (node.tagName !== "A") return;
   const href = node.getAttribute("href") || "";
 
-  // Recover the canonical /s/{slug}/p/{slugId} path if the model wrapped it
-  // in a fabricated host (https://s/..., https://yoursite.com/s/..., //s/...).
-  const m = href.match(PAGE_PATH_RE);
-  if (m) {
-    node.setAttribute("href", m[0]);
+  const internalPageHref = normalizeInternalPageHref(href);
+  if (internalPageHref) {
+    node.setAttribute("href", internalPageHref);
     node.removeAttribute("target");
     node.removeAttribute("rel");
     return;
@@ -142,15 +164,25 @@ export default function ChatMessage({
           <ChatToolGroup toolCalls={toolCalls} isStreaming={isStreaming} />
         )}
         {content && (
-          <div
-            onClick={handleContentClick}
-            dangerouslySetInnerHTML={{
-              __html: chatSanitizer.sanitize(
-                markdownToHtml(content) as string,
-                { ADD_ATTR: ["target", "rel"] },
-              ),
-            }}
-          />
+          <div className={classes.answerContent}>
+            <div
+              onClick={handleContentClick}
+              dangerouslySetInnerHTML={{
+                __html: chatSanitizer.sanitize(
+                  markdownToHtml(content) as string,
+                  { ADD_ATTR: ["target", "rel"] },
+                ),
+              }}
+            />
+            {!isStreaming && (
+              <div className={classes.messageActions}>
+                <CopyTextButton
+                  text={message.content}
+                  label={t("Copy assistant response")}
+                />
+              </div>
+            )}
+          </div>
         )}
         {isStreaming && (
           <>
@@ -172,14 +204,6 @@ export default function ChatMessage({
           />
         )}
       </div>
-      {!isStreaming && message.content && (
-        <div className={classes.messageActions}>
-          <CopyTextButton
-            text={message?.content}
-            label={t("Copy assistant response")}
-          />
-        </div>
-      )}
     </div>
   );
 }
@@ -318,11 +342,16 @@ function readCitationEvidence(value: unknown): AiQaCitationEvidence[] {
   if (!Array.isArray(value)) return [];
 
   return value.flatMap((item) => {
+    const url =
+      isRecord(item) && typeof item.url === "string"
+        ? normalizeInternalPageHref(item.url)
+        : null;
     if (
       !isRecord(item) ||
       typeof item.sourcePageId !== "string" ||
       typeof item.title !== "string" ||
       typeof item.url !== "string" ||
+      !url ||
       !Array.isArray(item.excerpts)
     ) {
       return [];
@@ -342,7 +371,7 @@ function readCitationEvidence(value: unknown): AiQaCitationEvidence[] {
       {
         sourcePageId: item.sourcePageId,
         title: item.title,
-        url: item.url,
+        url,
         excerpts,
       },
     ];
@@ -351,13 +380,27 @@ function readCitationEvidence(value: unknown): AiQaCitationEvidence[] {
 
 function readCitations(value: unknown): AiQaCitation[] {
   if (!Array.isArray(value)) return [];
-  return value.filter(
-    (item): item is AiQaCitation =>
-      isRecord(item) &&
-      typeof item.sourcePageId === "string" &&
-      typeof item.title === "string" &&
-      typeof item.url === "string",
-  );
+  return value.flatMap((item) => {
+    if (
+      !isRecord(item) ||
+      typeof item.sourcePageId !== "string" ||
+      typeof item.title !== "string" ||
+      typeof item.url !== "string"
+    ) {
+      return [];
+    }
+
+    const url = normalizeInternalPageHref(item.url);
+    return url
+      ? [
+          {
+            sourcePageId: item.sourcePageId,
+            title: item.title,
+            url,
+          },
+        ]
+      : [];
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

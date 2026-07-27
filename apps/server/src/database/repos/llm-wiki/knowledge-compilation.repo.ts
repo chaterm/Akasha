@@ -19,6 +19,7 @@ export type KnowledgeCompilationStatus =
 export type KnowledgeCompilationStage =
   | 'queued'
   | 'read_source'
+  | 'image_enrichment'
   | 'analysis'
   | 'generation'
   | 'merge'

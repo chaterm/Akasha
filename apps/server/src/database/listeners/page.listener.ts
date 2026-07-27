@@ -11,6 +11,7 @@ import {
   buildKnowledgeCompileCoalesceKey,
   buildKnowledgeCompilePageJobId,
   KNOWLEDGE_COMPILE_DELAY_MS,
+  KNOWLEDGE_COMPILE_RETRY_BACKOFF_MS,
 } from '../../ee/llm-wiki/services/knowledge-queue.utils';
 import {
   DEFAULT_KNOWLEDGE_COMPILER_VERSION,
@@ -170,7 +171,10 @@ export class PageListener {
         {
           delay: KNOWLEDGE_COMPILE_DELAY_MS,
           attempts: 3,
-          backoff: { type: 'exponential', delay: 1000 },
+          backoff: {
+            type: 'exponential',
+            delay: KNOWLEDGE_COMPILE_RETRY_BACKOFF_MS,
+          },
           jobId,
         },
       );

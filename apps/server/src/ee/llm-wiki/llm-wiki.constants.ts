@@ -5,6 +5,10 @@ export const KNOWLEDGE_COMPILER_RUNNER = Symbol('KNOWLEDGE_COMPILER_RUNNER');
 export const KNOWLEDGE_COMPILER_LLM_PROVIDER = Symbol(
   'KNOWLEDGE_COMPILER_LLM_PROVIDER',
 );
-export const DEFAULT_KNOWLEDGE_COMPILER_VERSION =
-  'akasha-semantic-compiler-v1';
+export const KNOWLEDGE_IMAGE_UNDERSTANDING_PROVIDER = Symbol(
+  'KNOWLEDGE_IMAGE_UNDERSTANDING_PROVIDER',
+);
+export const DEFAULT_KNOWLEDGE_COMPILER_VERSION = 'akasha-semantic-compiler-v1';
 export const DEFAULT_KNOWLEDGE_PROMPT_VERSION = 'akasha-llm-wiki-v2';
+export const DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION =
+  'akasha-page-image-understanding-v1';

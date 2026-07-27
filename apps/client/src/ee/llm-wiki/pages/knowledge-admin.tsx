@@ -72,6 +72,7 @@ const COMPILE_STAGE_OPTIONS: Array<{
 }> = [
   "queued",
   "read_source",
+  "image_enrichment",
   "analysis",
   "generation",
   "merge",

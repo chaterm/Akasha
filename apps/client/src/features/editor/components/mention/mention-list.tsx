@@ -62,7 +62,7 @@ const MentionList = forwardRef<any, MentionListProps>((props, ref) => {
 
   const { data: suggestion, isLoading } = useSearchSuggestionsQuery({
     query: props.query,
-    includeUsers: true,
+    includeUsers: !props.pageOnly,
     includePages: true,
     spaceId: space?.id,
     limit: props.query ? 10 : 5,
@@ -84,7 +84,7 @@ const MentionList = forwardRef<any, MentionListProps>((props, ref) => {
     if (suggestion && !isLoading) {
       let items: MentionSuggestionItem[] = [];
 
-      if (suggestion?.users?.length > 0) {
+      if (!props.pageOnly && suggestion?.users?.length > 0) {
         items.push({ entityType: "header", label: t("People") });
 
         items = items.concat(
@@ -122,7 +122,7 @@ const MentionList = forwardRef<any, MentionListProps>((props, ref) => {
       //@ts-ignore
       props.editor.storage.mentionItems = items;
     }
-  }, [suggestion, isLoading]);
+  }, [suggestion, isLoading, props.pageOnly]);
 
   const selectItem = useCallback(
     (index: number) => {

@@ -3,6 +3,12 @@ import { KnowledgeAdminSpaceAction } from '../types/knowledge-queue.types';
 
 export const KNOWLEDGE_COMPILE_DELAY_MS = 5000;
 
+// Image extraction persists a 30-second first retryAfter. A slightly longer
+// BullMQ base delay guarantees that each page retry can actually reclaim the
+// image cache lease and make another VLM attempt. Exponential 31s/62s delays
+// remain bounded enough for an interactive manual retry.
+export const KNOWLEDGE_COMPILE_RETRY_BACKOFF_MS = 31_000;
+
 export function buildKnowledgeCompileJobId(input: {
   workspaceId: string;
   spaceId: string;

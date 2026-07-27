@@ -73,6 +73,11 @@
   overflow-wrap: break-word;
 }
 
+.answerContent {
+  position: relative;
+  padding-right: 36px;
+}
+
 .messageContent p {
   margin: 0 0 0.75em 0;
 }
@@ -265,7 +270,9 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-top: 4px;
+  position: absolute;
+  top: 0;
+  right: 0;
   color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
 }
 

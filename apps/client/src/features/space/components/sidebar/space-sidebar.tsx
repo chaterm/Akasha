@@ -8,6 +8,7 @@ import {
 } from "@mantine/core";
 import {
   IconArrowDown,
+  IconChecklist,
   IconDots,
   IconEye,
   IconEyeOff,
@@ -78,6 +79,13 @@ export function SpaceSidebar() {
     return <></>;
   }
 
+  const canManageSettings = spaceAbility.can(
+    SpaceCaslAction.Manage,
+    SpaceCaslSubject.Settings,
+  );
+  const compilationReviewEnabled =
+    space.settings?.knowledge?.compilationReviewEnabled === true;
+
   function handleCreatePage() {
     handleCreate(null);
   }
@@ -142,6 +150,34 @@ export function SpaceSidebar() {
                 <span>{t("Search")}</span>
               </div>
             </UnstyledButton>
+
+            {canManageSettings && compilationReviewEnabled && (
+              <UnstyledButton
+                component={Link}
+                to={`/s/${spaceSlug}/review`}
+                className={clsx(
+                  classes.menu,
+                  location.pathname.toLowerCase() ===
+                    `/s/${spaceSlug}/review`.toLowerCase()
+                    ? classes.activeButton
+                    : "",
+                )}
+                onClick={() => {
+                  if (mobileSidebarOpened) {
+                    toggleMobileSidebar();
+                  }
+                }}
+              >
+                <div className={classes.menuItemInner}>
+                  <IconChecklist
+                    size={18}
+                    className={classes.menuItemIcon}
+                    stroke={2}
+                  />
+                  <span>{t("Compilation content review")}</span>
+                </div>
+              </UnstyledButton>
+            )}
 
             <UnstyledButton className={classes.menu} onClick={openSettings}>
               <div className={classes.menuItemInner}>

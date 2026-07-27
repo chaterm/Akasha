@@ -45,8 +45,30 @@ class FakeKyselyQuery {
     return this;
   }
 
+  innerJoin(
+    ...args: [
+      unknown,
+      (join: { onRef: (...args: unknown[]) => unknown }) => unknown,
+    ]
+  ) {
+    this.calls.push({ method: 'innerJoin', args });
+    const join = {
+      onRef: (...onArgs: unknown[]) => {
+        this.calls.push({ method: 'onRef', args: onArgs });
+        return join;
+      },
+    };
+    args[1](join);
+    return this;
+  }
+
   selectAll(...args: unknown[]) {
     this.calls.push({ method: 'selectAll', args });
+    return this;
+  }
+
+  select(...args: unknown[]) {
+    this.calls.push({ method: 'select', args });
     return this;
   }
 
@@ -77,6 +99,11 @@ class FakeKyselyQuery {
 
   async executeTakeFirstOrThrow() {
     this.calls.push({ method: 'executeTakeFirstOrThrow', args: [] });
+    return this.result[0];
+  }
+
+  async executeTakeFirst() {
+    this.calls.push({ method: 'executeTakeFirst', args: [] });
     return this.result[0];
   }
 }
@@ -184,7 +211,7 @@ describe('KnowledgeSourceRepo', () => {
     ]);
   });
 
-  it('loads bounded source chunks only for requested pages', async () => {
+  it('loads bounded source chunks only from active requested-page sources', async () => {
     const rows = [{ id: 'chunk-1', sourcePageId: 'page-1' }];
     const query = new FakeKyselyQuery(rows);
     const repo = createRepo(query);
@@ -205,11 +232,25 @@ describe('KnowledgeSourceRepo', () => {
     ).resolves.toEqual(rows);
 
     expect(query.calls).toEqual([
-      { method: 'selectFrom', args: ['knowledgeSourceChunks'] },
-      { method: 'selectAll', args: [] },
-      { method: 'where', args: ['workspaceId', '=', 'workspace-1'] },
-      { method: 'where', args: ['sourcePageId', 'in', ['page-1', 'page-2']] },
-      { method: 'orderBy', args: ['createdAt', 'desc'] },
+      { method: 'selectFrom', args: ['knowledgeSourceChunks as chunk'] },
+      {
+        method: 'innerJoin',
+        args: ['knowledgeSources as source', expect.any(Function)],
+      },
+      { method: 'onRef', args: ['source.id', '=', 'chunk.sourceId'] },
+      {
+        method: 'onRef',
+        args: ['source.workspaceId', '=', 'chunk.workspaceId'],
+      },
+      { method: 'selectAll', args: ['chunk'] },
+      { method: 'where', args: ['chunk.workspaceId', '=', 'workspace-1'] },
+      {
+        method: 'where',
+        args: ['chunk.sourcePageId', 'in', ['page-1', 'page-2']],
+      },
+      { method: 'where', args: ['source.staleAt', 'is', null] },
+      { method: 'where', args: ['source.deletedAt', 'is', null] },
+      { method: 'orderBy', args: ['chunk.createdAt', 'desc'] },
       { method: 'limit', args: [40] },
       { method: 'execute', args: [] },
     ]);
@@ -225,6 +266,75 @@ describe('KnowledgeSourceRepo', () => {
     });
 
     expect(query.calls).toEqual([]);
+  });
+
+  it('loads the newest active extracted source text per requested page', async () => {
+    const query = new FakeKyselyQuery([
+      {
+        sourcePageId: 'page-1',
+        extractedText: 'new source',
+        updatedAt: new Date('2026-07-27T01:00:00.000Z'),
+      },
+      {
+        sourcePageId: 'page-1',
+        extractedText: 'old source',
+        updatedAt: new Date('2026-07-27T00:00:00.000Z'),
+      },
+    ]);
+    const repo = createRepo(query);
+
+    await expect(
+      repo.findActiveSourceTextsByPageIds({
+        workspaceId: 'workspace-1',
+        sourcePageIds: ['page-1'],
+      }),
+    ).resolves.toEqual([
+      { sourcePageId: 'page-1', extractedText: 'new source' },
+    ]);
+
+    expect(query.calls).toEqual([
+      { method: 'selectFrom', args: ['knowledgeSources'] },
+      {
+        method: 'select',
+        args: [['sourcePageId', 'extractedText', 'updatedAt']],
+      },
+      { method: 'where', args: ['workspaceId', '=', 'workspace-1'] },
+      { method: 'where', args: ['sourcePageId', 'in', ['page-1']] },
+      { method: 'where', args: ['staleAt', 'is', null] },
+      { method: 'where', args: ['deletedAt', 'is', null] },
+      { method: 'where', args: ['extractedText', 'is not', null] },
+      { method: 'orderBy', args: ['updatedAt', 'desc'] },
+      { method: 'execute', args: [] },
+    ]);
+  });
+
+  it('loads the latest active source snapshot for last-known-good fencing', async () => {
+    const row = {
+      id: 'source-1',
+      sourcePageId: 'page-1',
+      contentHash: 'sha256:current',
+    };
+    const query = new FakeKyselyQuery([row]);
+    const repo = createRepo(query);
+
+    await expect(
+      repo.findLatestActiveSourceByPageId({
+        workspaceId: 'workspace-1',
+        sourcePageId: 'page-1',
+      }),
+    ).resolves.toEqual(row);
+
+    expect(query.calls).toEqual([
+      { method: 'selectFrom', args: ['knowledgeSources'] },
+      { method: 'selectAll', args: [] },
+      { method: 'where', args: ['workspaceId', '=', 'workspace-1'] },
+      { method: 'where', args: ['sourcePageId', '=', 'page-1'] },
+      { method: 'where', args: ['staleAt', 'is', null] },
+      { method: 'where', args: ['deletedAt', 'is', null] },
+      { method: 'orderBy', args: ['updatedAt', 'desc'] },
+      { method: 'orderBy', args: ['createdAt', 'desc'] },
+      { method: 'executeTakeFirst', args: [] },
+    ]);
   });
 
   it('marks sources stale within the requested workspace', async () => {

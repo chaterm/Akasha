@@ -5,9 +5,15 @@ import {
   buildKnowledgeCompileJobId,
   buildKnowledgeRetryPageJobId,
   buildKnowledgeRunKey,
+  KNOWLEDGE_COMPILE_RETRY_BACKOFF_MS,
 } from './knowledge-queue.utils';
 
 describe('knowledge queue utils', () => {
+  it('keeps page retries beyond the image extraction retry window', () => {
+    expect(KNOWLEDGE_COMPILE_RETRY_BACKOFF_MS).toBeGreaterThan(30_000);
+    expect(KNOWLEDGE_COMPILE_RETRY_BACKOFF_MS * 2).toBeGreaterThan(60_000);
+  });
+
   it('builds BullMQ-safe custom job ids without colon separators', () => {
     const ids = [
       buildKnowledgeCompileJobId({

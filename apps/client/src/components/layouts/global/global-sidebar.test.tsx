@@ -80,5 +80,6 @@ describe("GlobalSidebar", () => {
 
     expect(screen.getByRole("link", { name: "Home" })).toBeTruthy();
     expect(screen.queryByText("Templates")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Review" })).toBeNull();
   });
 });

@@ -107,6 +107,21 @@ export class KnowledgeCitationResolverService {
       input.workspaceId,
       true,
     );
+    const sourceTexts = this.sourceRepo?.findActiveSourceTextsByPageIds
+      ? await this.sourceRepo.findActiveSourceTextsByPageIds({
+          workspaceId: input.workspaceId,
+          sourcePageIds: allSourcePageIds,
+        })
+      : [];
+    const evidenceTextByPageId = new Map(
+      allSourcePageIds.map((sourcePageId) => [
+        sourcePageId,
+        sourceTexts.find((source) => source.sourcePageId === sourcePageId)
+          ?.extractedText ??
+          pagesById.get(sourcePageId)?.textContent ??
+          '',
+      ]),
+    );
     const sourceRefsByChunkId = await this.findChunkSourceRefsByChunkId({
       workspaceId: input.workspaceId,
       chunks: input.chunks,
@@ -117,6 +132,7 @@ export class KnowledgeCitationResolverService {
       query: input.query ?? '',
       sourcePageIds: allSourcePageIds,
       pagesById,
+      evidenceTextByPageId,
     });
 
     return input.chunks.map((entry) => ({
@@ -134,6 +150,7 @@ export class KnowledgeCitationResolverService {
         ...buildSourceWindows(
           sourceRefsByChunkId.get(entry.chunk.id) ?? [],
           pagesById,
+          evidenceTextByPageId,
         ),
         ...entry.sourcePageIds.flatMap(
           (sourcePageId) => rawSourceWindowsByPageId.get(sourcePageId) ?? [],
@@ -147,6 +164,7 @@ export class KnowledgeCitationResolverService {
     query: string;
     sourcePageIds: string[];
     pagesById: Map<string, ReadableSourcePage>;
+    evidenceTextByPageId: Map<string, string>;
   }): Promise<Map<string, KnowledgeSourceWindow[]>> {
     if (!input.query.trim() || input.sourcePageIds.length === 0) {
       return new Map();
@@ -165,10 +183,11 @@ export class KnowledgeCitationResolverService {
     const fallbackChunks = input.sourcePageIds.flatMap((sourcePageId) => {
       if (storedPageIds.has(sourcePageId)) return [];
       const page = input.pagesById.get(sourcePageId);
-      if (!page || typeof page.textContent !== 'string') return [];
+      const evidenceText = input.evidenceTextByPageId.get(sourcePageId);
+      if (!page || typeof evidenceText !== 'string') return [];
       return chunkKnowledgeSource({
         pageTitle: page.title,
-        text: page.textContent,
+        text: evidenceText,
       }).flatMap((parent) =>
         parent.children.map(
           (child): KnowledgeSourceChunk => ({
@@ -193,6 +212,7 @@ export class KnowledgeCitationResolverService {
       input.query,
       [...storedChunks, ...fallbackChunks],
       input.pagesById,
+      input.evidenceTextByPageId,
     );
   }
 
@@ -258,24 +278,26 @@ function unique(values: string[]): string[] {
 function buildSourceWindows(
   sourceRefs: KnowledgeChunkSourceRef[],
   pagesById: Map<string, ReadableSourcePage>,
+  evidenceTextByPageId: Map<string, string>,
 ): KnowledgeSourceWindow[] {
   const windows: KnowledgeSourceWindow[] = [];
   const seen = new Set<string>();
 
   for (const sourceRef of sourceRefs) {
     const page = pagesById.get(sourceRef.sourcePageId);
+    const evidenceText = evidenceTextByPageId.get(sourceRef.sourcePageId);
     const sourceRange = parseSourceRange(sourceRef.sourceRange);
     if (
       !page ||
       !sourceRange ||
       !sourceRef.quoteHash ||
-      typeof page.textContent !== 'string' ||
-      !isValidSourceRange(sourceRange, page.textContent)
+      typeof evidenceText !== 'string' ||
+      !isValidSourceRange(sourceRange, evidenceText)
     ) {
       continue;
     }
 
-    const text = page.textContent.slice(
+    const text = evidenceText.slice(
       sourceRange.startOffset,
       sourceRange.endOffset,
     );
@@ -301,22 +323,24 @@ function rankRawSourceWindows(
   query: string,
   chunks: KnowledgeSourceChunk[],
   pagesById: Map<string, ReadableSourcePage>,
+  evidenceTextByPageId: Map<string, string>,
 ): Map<string, KnowledgeSourceWindow[]> {
   const queryTerms = extractSearchTerms(query);
   const ranked = chunks
     .flatMap((chunk) => {
       const page = pagesById.get(chunk.sourcePageId);
+      const evidenceText = evidenceTextByPageId.get(chunk.sourcePageId);
       const sourceRange = parseSourceRange(chunk.sourceRange);
       if (
         !page ||
         !sourceRange ||
         !chunk.quoteHash ||
-        typeof page.textContent !== 'string' ||
-        !isValidSourceRange(sourceRange, page.textContent)
+        typeof evidenceText !== 'string' ||
+        !isValidSourceRange(sourceRange, evidenceText)
       ) {
         return [];
       }
-      const text = page.textContent.slice(
+      const text = evidenceText.slice(
         sourceRange.startOffset,
         sourceRange.endOffset,
       );

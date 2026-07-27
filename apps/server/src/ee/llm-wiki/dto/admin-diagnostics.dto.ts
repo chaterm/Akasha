@@ -17,11 +17,14 @@ export class AdminKnowledgeDiagnosticsDto {
 
   @IsOptional()
   @IsArray()
-  @IsIn(['not_started', 'queued', 'running', 'succeeded', 'failed'], {
-    each: true,
-  })
+  @IsIn(
+    ['not_started', 'queued', 'running', 'succeeded', 'skipped', 'failed'],
+    {
+      each: true,
+    },
+  )
   statuses?: Array<
-    'not_started' | 'queued' | 'running' | 'succeeded' | 'failed'
+    'not_started' | 'queued' | 'running' | 'succeeded' | 'skipped' | 'failed'
   >;
 
   @IsOptional()
@@ -30,6 +33,7 @@ export class AdminKnowledgeDiagnosticsDto {
     [
       'queued',
       'read_source',
+      'image_enrichment',
       'analysis',
       'generation',
       'merge',
@@ -42,6 +46,7 @@ export class AdminKnowledgeDiagnosticsDto {
   stages?: Array<
     | 'queued'
     | 'read_source'
+    | 'image_enrichment'
     | 'analysis'
     | 'generation'
     | 'merge'

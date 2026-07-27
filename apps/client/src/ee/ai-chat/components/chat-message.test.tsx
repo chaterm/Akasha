@@ -1,6 +1,6 @@
 import { MantineProvider } from "@mantine/core";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation } from "react-router";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import ChatMessage from "./chat-message";
 
@@ -16,7 +16,7 @@ vi.mock("@docmost/editor-ext", () => ({
 }));
 
 vi.mock("@/components/common/copy.tsx", () => ({
-  default: () => null,
+  default: ({ label }: { label: string }) => <button>{label}</button>,
 }));
 
 describe("ChatMessage knowledge evidence", () => {
@@ -34,6 +34,34 @@ describe("ChatMessage knowledge evidence", () => {
         dispatchEvent: vi.fn(),
       })),
     });
+  });
+
+  it("keeps the copy action inside the assistant answer content", () => {
+    render(
+      <MantineProvider>
+        <MemoryRouter>
+          <ChatMessage
+            message={{
+              id: "message-copy",
+              chatId: "chat-1",
+              role: "assistant",
+              content: "Answer to copy",
+              toolCalls: null,
+              metadata: null,
+              createdAt: "2026-07-27T00:00:00.000Z",
+            }}
+          />
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+
+    const answerContent =
+      screen.getByText("Answer to copy").parentElement?.parentElement;
+    const copyAction = screen.getByRole("button", {
+      name: "Copy assistant response",
+    });
+
+    expect(answerContent?.contains(copyAction)).toBe(true);
   });
 
   it("shows only verifiable answer sources and keeps retrieval counts in diagnostics", () => {
@@ -154,5 +182,82 @@ describe("ChatMessage knowledge evidence", () => {
     );
 
     expect(screen.getByText("No matching knowledge found")).toBeTruthy();
+  });
+
+  it("keeps internal answer links in the app and preserves their location", () => {
+    function LocationProbe() {
+      const location = useLocation();
+      return (
+        <output data-testid="location">
+          {location.pathname + location.search + location.hash}
+        </output>
+      );
+    }
+
+    render(
+      <MantineProvider>
+        <MemoryRouter initialEntries={["/ai"]}>
+          <ChatMessage
+            message={{
+              id: "message-link",
+              chatId: "chat-1",
+              role: "assistant",
+              content:
+                '<a href="https://fabricated.example/s/aim/p/roadmap?view=compact#rollout">Roadmap</a>',
+              toolCalls: null,
+              metadata: null,
+              createdAt: "2026-07-27T00:00:00.000Z",
+            }}
+          />
+          <LocationProbe />
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+
+    const link = screen.getByRole("link", { name: "Roadmap" });
+    expect(link.getAttribute("href")).toBe(
+      "/s/aim/p/roadmap?view=compact#rollout",
+    );
+    expect(link.getAttribute("target")).toBeNull();
+
+    fireEvent.click(link);
+
+    expect(screen.getByTestId("location").textContent).toBe(
+      "/s/aim/p/roadmap?view=compact#rollout",
+    );
+  });
+
+  it("does not render non-page metadata as a trusted source link", () => {
+    render(
+      <MantineProvider>
+        <MemoryRouter>
+          <ChatMessage
+            message={{
+              id: "message-untrusted-link",
+              chatId: "chat-1",
+              role: "assistant",
+              content: "Answer",
+              toolCalls: null,
+              metadata: {
+                answerMode: "knowledge",
+                citations: [
+                  {
+                    sourcePageId: "page-1",
+                    title: "Unexpected external source",
+                    url: "https://example.com/reference?next=/p/forged",
+                  },
+                ],
+              },
+              createdAt: "2026-07-27T00:00:00.000Z",
+            }}
+          />
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+
+    expect(screen.queryByText("Unexpected external source")).toBeNull();
+    expect(
+      screen.getByText("No verifiable citation was generated"),
+    ).toBeTruthy();
   });
 });

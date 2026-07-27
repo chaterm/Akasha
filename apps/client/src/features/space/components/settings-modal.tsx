@@ -12,6 +12,7 @@ import {
 } from "@/features/space/permissions/permissions.type.ts";
 import { useTranslation } from "react-i18next";
 import useUserRole from "@/hooks/use-user-role.tsx";
+import SpaceCompilationReviewToggle from "@/ee/llm-wiki/components/space-compilation-review-toggle";
 
 interface SpaceSettingsModalProps {
   spaceId: string;
@@ -30,6 +31,10 @@ export default function SpaceSettingsModal({
   const spaceRules = space?.membership?.permissions;
   const spaceAbility = useSpaceAbility(spaceRules);
   const { isOwner } = useUserRole();
+  const canManageSettings = spaceAbility.can(
+    SpaceCaslAction.Manage,
+    SpaceCaslSubject.Settings,
+  );
 
   return (
     <>
@@ -62,10 +67,7 @@ export default function SpaceSettingsModal({
                   <Tabs.Tab fw={500} value="members">
                     {t("Members")}
                   </Tabs.Tab>
-                  {spaceAbility.can(
-                    SpaceCaslAction.Manage,
-                    SpaceCaslSubject.Settings,
-                  ) && (
+                  {canManageSettings && (
                     <Tabs.Tab fw={500} value="security">
                       {t("Security")}
                     </Tabs.Tab>
@@ -76,6 +78,9 @@ export default function SpaceSettingsModal({
                   <ScrollArea h={580} scrollbarSize={5} pr={8}>
                     <div style={{ paddingBottom: "100px" }}>
                       <SpaceDetails spaceId={space?.id} readOnly={!isOwner} />
+                      {canManageSettings && space && (
+                        <SpaceCompilationReviewToggle space={space} />
+                      )}
                     </div>
                   </ScrollArea>
                 </Tabs.Panel>

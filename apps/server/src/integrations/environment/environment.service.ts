@@ -297,10 +297,23 @@ export class EnvironmentService {
     );
   }
 
+  getAiVisionModel(): string {
+    return this.configService.get<string>('AI_VISION_MODEL', 'qwen3.7-plus');
+  }
+
   getKnowledgeCompilerTimeoutMs(): number {
     return Number(
       this.configService.get<string | number>(
         'KNOWLEDGE_COMPILER_TIMEOUT_MS',
+        120_000,
+      ),
+    );
+  }
+
+  getKnowledgeImageTimeoutMs(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_IMAGE_TIMEOUT_MS',
         120_000,
       ),
     );

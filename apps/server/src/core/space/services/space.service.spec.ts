@@ -2,6 +2,11 @@ import { BadRequestException } from '@nestjs/common';
 import { SpaceRole } from '../../../common/helpers/types/permission';
 import { SpaceService } from './space.service';
 
+jest.mock('@akasha/db/utils', () => ({
+  executeTx: async (_db: unknown, callback: (trx: unknown) => unknown) =>
+    callback({}),
+}));
+
 describe('SpaceService personal spaces', () => {
   const workspaceId = 'workspace-1';
   const user = {
@@ -91,5 +96,37 @@ describe('SpaceService personal spaces', () => {
     await expect(
       service.deleteSpace('personal-1', workspaceId),
     ).rejects.toThrow(BadRequestException);
+  });
+});
+
+describe('SpaceService compilation review settings', () => {
+  it('persists the space compilation review opt-in under knowledge settings', async () => {
+    const service = Object.create(SpaceService.prototype) as any;
+    service.db = {};
+    service.spaceRepo = {
+      findById: jest.fn().mockResolvedValue({
+        id: 'space-1',
+        settings: {},
+      }),
+      updateKnowledgeSettings: jest.fn().mockResolvedValue(undefined),
+      updateSpace: jest.fn().mockResolvedValue({
+        id: 'space-1',
+        settings: { knowledge: { compilationReviewEnabled: true } },
+      }),
+    };
+    service.auditService = { log: jest.fn() };
+
+    await service.updateSpace(
+      { spaceId: 'space-1', enableCompilationReview: true },
+      'workspace-1',
+    );
+
+    expect(service.spaceRepo.updateKnowledgeSettings).toHaveBeenCalledWith(
+      'space-1',
+      'workspace-1',
+      'compilationReviewEnabled',
+      true,
+      {},
+    );
   });
 });

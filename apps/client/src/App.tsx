@@ -97,7 +97,6 @@ export default function App() {
           <Route path={"/knowledge"} element={<Navigate to="/ai" replace />} />
           <Route path={"/knowledge/graph"} element={<KnowledgeGraphPage />} />
           <Route path={"/knowledge/admin"} element={<KnowledgeAdminPage />} />
-          <Route path={"/review"} element={<ReviewPage />} />
           <Route path={"/spaces"} element={<SpacesPage />} />
           <Route path={"/favorites"} element={<FavoritesPage />} />
           <Route path={"/labels/:labelName"} element={<LabelPage />} />
@@ -108,6 +107,7 @@ export default function App() {
             path={"/s/:spaceSlug/graph"}
             element={<KnowledgeGraphPage />}
           />
+          <Route path={"/s/:spaceSlug/review"} element={<ReviewPage />} />
           <Route path={"/s/:spaceSlug/trash"} element={<SpaceTrash />} />
           <Route path={"/s/:spaceSlug/p/:pageSlug"} element={<Page />} />
 

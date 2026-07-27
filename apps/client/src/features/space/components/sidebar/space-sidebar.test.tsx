@@ -1,10 +1,14 @@
 import { MantineProvider } from "@mantine/core";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { SpaceSidebar } from "./space-sidebar";
 
 const featureAccess = vi.hoisted(() => ({ enabled: true }));
+const reviewAccess = vi.hoisted(() => ({
+  enabled: false,
+  canManageSettings: true,
+}));
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -36,6 +40,11 @@ vi.mock("@/features/space/queries/space-query.ts", () => ({
       name: "AIM",
       slug: "aim",
       logo: null,
+      settings: {
+        knowledge: {
+          compilationReviewEnabled: reviewAccess.enabled,
+        },
+      },
       membership: { permissions: [] },
     },
   }),
@@ -43,8 +52,8 @@ vi.mock("@/features/space/queries/space-query.ts", () => ({
 
 vi.mock("@/features/space/permissions/use-space-ability.ts", () => ({
   useSpaceAbility: () => ({
-    can: () => true,
-    cannot: () => false,
+    can: () => reviewAccess.canManageSettings,
+    cannot: () => !reviewAccess.canManageSettings,
   }),
 }));
 
@@ -124,6 +133,67 @@ describe("SpaceSidebar", () => {
         dispatchEvent: vi.fn(),
       })),
     });
+  });
+
+  beforeEach(() => {
+    featureAccess.enabled = true;
+    reviewAccess.enabled = false;
+    reviewAccess.canManageSettings = true;
+  });
+
+  it("hides compilation review until it is enabled for the space", () => {
+    render(
+      <MantineProvider>
+        <MemoryRouter initialEntries={["/s/aim"]}>
+          <Routes>
+            <Route path="/s/:spaceSlug" element={<SpaceSidebar />} />
+          </Routes>
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+
+    expect(
+      screen.queryByRole("link", { name: "Compilation content review" }),
+    ).toBeNull();
+  });
+
+  it("shows compilation review to space settings managers when enabled", () => {
+    reviewAccess.enabled = true;
+
+    render(
+      <MantineProvider>
+        <MemoryRouter initialEntries={["/s/aim"]}>
+          <Routes>
+            <Route path="/s/:spaceSlug" element={<SpaceSidebar />} />
+          </Routes>
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+
+    expect(
+      screen
+        .getByRole("link", { name: "Compilation content review" })
+        .getAttribute("href"),
+    ).toBe("/s/aim/review");
+  });
+
+  it("hides compilation review from non-admin space members", () => {
+    reviewAccess.enabled = true;
+    reviewAccess.canManageSettings = false;
+
+    render(
+      <MantineProvider>
+        <MemoryRouter initialEntries={["/s/aim"]}>
+          <Routes>
+            <Route path="/s/:spaceSlug" element={<SpaceSidebar />} />
+          </Routes>
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+
+    expect(
+      screen.queryByRole("link", { name: "Compilation content review" }),
+    ).toBeNull();
   });
 
   it("does not show the relationship graph entry in the space navigation", () => {

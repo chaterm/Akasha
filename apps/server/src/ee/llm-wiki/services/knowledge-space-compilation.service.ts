@@ -16,6 +16,7 @@ import {
   buildKnowledgeAggregateSpaceJobId,
   buildKnowledgeCompilePageJobId,
   buildKnowledgeRetryPageJobId,
+  KNOWLEDGE_COMPILE_RETRY_BACKOFF_MS,
 } from './knowledge-queue.utils';
 import { KnowledgeArtifactCatalogService } from './knowledge-artifact-catalog.service';
 import { KnowledgeArtifactCatalogEntry } from '../types/compiler-artifact.types';
@@ -129,7 +130,10 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       {
         jobId,
         attempts: 3,
-        backoff: { type: 'exponential', delay: 1_000 },
+        backoff: {
+          type: 'exponential',
+          delay: KNOWLEDGE_COMPILE_RETRY_BACKOFF_MS,
+        },
         removeOnComplete: true,
         removeOnFail: true,
       },
@@ -225,7 +229,10 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
             {
               jobId,
               attempts: 3,
-              backoff: { type: 'exponential', delay: 1_000 },
+              backoff: {
+                type: 'exponential',
+                delay: KNOWLEDGE_COMPILE_RETRY_BACKOFF_MS,
+              },
             },
           );
           const accepted = await this.runRepo.markPageQueued({

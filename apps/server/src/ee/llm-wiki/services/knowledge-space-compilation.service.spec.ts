@@ -50,7 +50,11 @@ describe('KnowledgeSpaceCompilationService', () => {
         sourceVersion: 'v1',
         sourceContentHash: 'hash-1',
       }),
-      expect.objectContaining({ jobId, attempts: 3 }),
+      expect.objectContaining({
+        jobId,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 31_000 },
+      }),
     );
     expect(repo.markPageQueued).toHaveBeenCalledWith({
       runId: 'run-1',
@@ -204,6 +208,7 @@ describe('KnowledgeSpaceCompilationService', () => {
       expect.objectContaining({
         jobId,
         attempts: 3,
+        backoff: { type: 'exponential', delay: 31_000 },
         removeOnComplete: true,
         removeOnFail: true,
       }),

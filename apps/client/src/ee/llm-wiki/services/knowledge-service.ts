@@ -392,6 +392,7 @@ function normalizePageCompileStage(
   if (
     value === "queued" ||
     value === "read_source" ||
+    value === "image_enrichment" ||
     value === "analysis" ||
     value === "generation" ||
     value === "merge" ||

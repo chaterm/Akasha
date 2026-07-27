@@ -13,7 +13,11 @@ function getWhitespaceCount(query: string) {
   return matches?.length || 0;
 }
 
-const mentionRenderItems = () => {
+type MentionRenderOptions = {
+  pageOnly?: boolean;
+};
+
+const mentionRenderItems = (options: MentionRenderOptions = {}) => {
   let component: ReactRenderer | null = null;
   let activeClientRect: (() => DOMRect) | null = null;
   let updatePositionCleanup: (() => void) | null = null;
@@ -57,7 +61,11 @@ const mentionRenderItems = () => {
       const isInCommentContext = !!(asideEl || dialogEl || chatInput);
 
       component = new ReactRenderer(MentionList, {
-        props: { ...props, isInCommentContext },
+        props: {
+          ...props,
+          isInCommentContext,
+          pageOnly: options.pageOnly,
+        },
         editor: props.editor,
       });
 
