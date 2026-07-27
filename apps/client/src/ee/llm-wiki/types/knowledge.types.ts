@@ -144,6 +144,17 @@ export interface KnowledgeCompileStatus {
   updatedAt?: number;
 }
 
+export interface KnowledgeQueueCounts {
+  waiting: number;
+  active: number;
+  delayed: number;
+  prioritized: number;
+  waitingChildren: number;
+  paused: number;
+  failed: number;
+  completed: number;
+}
+
 export interface KnowledgeQuarantinedArtifact {
   id: string;
   workspaceId: string;
@@ -159,6 +170,7 @@ export interface KnowledgeQuarantinedArtifact {
 export interface KnowledgeDiagnosticsResult {
   pages: KnowledgeDiagnosticsPage[];
   jobs: KnowledgeDiagnosticsJob[];
+  queueCounts: KnowledgeQueueCounts;
   compileStatuses: KnowledgeCompileStatus[];
   retrieval?: KnowledgeRetrievalDiagnosticsSummary;
   quarantines: KnowledgeQuarantinedArtifact[];

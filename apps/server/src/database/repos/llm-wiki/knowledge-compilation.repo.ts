@@ -141,7 +141,11 @@ export class KnowledgeCompilationRepo {
             finishedAt: null,
             updatedAt: now,
           })
-          .where('compileTaskId', '=', input.compileTaskId),
+          .where(
+            'knowledgeCompilationAttempts.compileTaskId',
+            '=',
+            input.compileTaskId,
+          ),
       )
       .execute();
   }

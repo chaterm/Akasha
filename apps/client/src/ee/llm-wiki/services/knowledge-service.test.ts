@@ -187,6 +187,16 @@ describe("queryKnowledge", () => {
               updatedAt: 1000,
             },
           ],
+          queueCounts: {
+            waiting: 3,
+            active: 2,
+            delayed: 1,
+            prioritized: 4,
+            waitingChildren: 5,
+            paused: 6,
+            failed: 7,
+            completed: 8,
+          },
           retrieval: {
             sampleCount: 2,
             zeroHitRate: 0.5,
@@ -251,6 +261,16 @@ describe("queryKnowledge", () => {
         },
       ],
       jobs: [],
+      queueCounts: {
+        waiting: 3,
+        active: 2,
+        delayed: 1,
+        prioritized: 4,
+        waitingChildren: 5,
+        paused: 6,
+        failed: 7,
+        completed: 8,
+      },
       compileStatuses: [
         {
           spaceId: "space-1",

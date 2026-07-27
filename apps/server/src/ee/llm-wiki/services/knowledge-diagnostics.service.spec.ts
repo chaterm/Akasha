@@ -1,10 +1,63 @@
 import { QueueJob } from '../../../integrations/queue/constants';
 import {
   KnowledgeDiagnosticsJob,
+  KnowledgeDiagnosticsService,
   buildPageCompilationDiagnostics,
   buildCompileStatusesFromJobs,
   buildCompileStatusesFromRuns,
 } from './knowledge-diagnostics.service';
+
+describe('KnowledgeDiagnosticsService queue counts', () => {
+  it('returns current BullMQ counts separately from recent job history', async () => {
+    const aiQueue = {
+      getJobCounts: jest.fn().mockResolvedValue({
+        waiting: 3,
+        active: 2,
+        delayed: 1,
+        prioritized: 4,
+        'waiting-children': 5,
+        paused: 6,
+        failed: 7,
+        completed: 8,
+      }),
+    };
+    const service = new KnowledgeDiagnosticsService(
+      {} as never,
+      aiQueue as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+
+    await expect(
+      (
+        service as unknown as {
+          findKnowledgeQueueCounts(): Promise<Record<string, number>>;
+        }
+      ).findKnowledgeQueueCounts(),
+    ).resolves.toEqual({
+      waiting: 3,
+      active: 2,
+      delayed: 1,
+      prioritized: 4,
+      waitingChildren: 5,
+      paused: 6,
+      failed: 7,
+      completed: 8,
+    });
+    expect(aiQueue.getJobCounts).toHaveBeenCalledWith(
+      'waiting',
+      'active',
+      'delayed',
+      'prioritized',
+      'waiting-children',
+      'paused',
+      'failed',
+      'completed',
+    );
+  });
+});
 
 describe('buildCompileStatusesFromJobs', () => {
   it('summarizes the latest compile job per space without exposing private failure text', () => {

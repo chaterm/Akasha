@@ -1,4 +1,13 @@
 import { KnowledgeCompilationRepo } from './knowledge-compilation.repo';
+import {
+  CamelCasePlugin,
+  CompiledQuery,
+  DummyDriver,
+  Kysely,
+  PostgresAdapter,
+  PostgresIntrospector,
+  PostgresQueryCompiler,
+} from 'kysely';
 
 type QueryCall = { method: string; args: unknown[] };
 
@@ -142,8 +151,44 @@ describe('KnowledgeCompilationRepo', () => {
     });
     expect(query.calls).toContainEqual({
       method: 'where',
-      args: ['compileTaskId', '=', 'task-page-1'],
+      args: ['knowledgeCompilationAttempts.compileTaskId', '=', 'task-page-1'],
     });
+  });
+
+  it('qualifies the compile task fence in the PostgreSQL conflict update', async () => {
+    const queries: CompiledQuery[] = [];
+    const dialect = {
+      createAdapter: () => new PostgresAdapter(),
+      createDriver: () => new DummyDriver(),
+      createIntrospector: (db: Kysely<unknown>) => new PostgresIntrospector(db),
+      createQueryCompiler: () => new PostgresQueryCompiler(),
+    };
+    const db = new Kysely<Record<string, never>>({
+      dialect,
+      plugins: [new CamelCasePlugin()],
+      log: (event) => {
+        if (event.level === 'query') queries.push(event.query);
+      },
+    });
+    const repo = new KnowledgeCompilationRepo(db as never);
+
+    await repo.startAttempt({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageId: 'page-1',
+      sourceVersion: 'v2',
+      sourceContentHash: 'hash-2',
+      compilerVersion: 'compiler-v2',
+      promptVersion: 'prompt-v2',
+      compilerRunId: 'run-2',
+      compileTaskId: 'task-page-1',
+    });
+
+    expect(queries[0]?.sql).toContain(
+      'where "knowledge_compilation_attempts"."compile_task_id" = $',
+    );
+    expect(queries[0]?.sql).not.toContain('where "compile_task_id" = $');
+    await db.destroy();
   });
 
   it('starts before source export and fills the source snapshot afterward', async () => {
