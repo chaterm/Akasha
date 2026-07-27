@@ -380,6 +380,7 @@
   color: inherit;
   cursor: pointer;
   text-align: left;
+  text-decoration: none;
   font: inherit;
   font-weight: 600;
 }
