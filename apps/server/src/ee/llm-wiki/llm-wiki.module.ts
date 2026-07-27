@@ -22,6 +22,7 @@ import {
   KNOWLEDGE_COMPILER_ADAPTER,
   KNOWLEDGE_COMPILER_LLM_PROVIDER,
   KNOWLEDGE_COMPILER_RUNNER,
+  KNOWLEDGE_IMAGE_UNDERSTANDING_PROVIDER,
 } from './llm-wiki.constants';
 import { LlmWikiController } from './llm-wiki.controller';
 import { NoopAuditModule } from '../../integrations/audit/audit.module';
@@ -35,6 +36,8 @@ import { KnowledgeArtifactCatalogService } from './services/knowledge-artifact-c
 import { KnowledgeSpaceCompilationService } from './services/knowledge-space-compilation.service';
 import { KnowledgeSpaceAggregatorService } from './services/knowledge-space-aggregator.service';
 import { KnowledgeLinkResolverService } from './services/knowledge-link-resolver.service';
+import { ConfiguredKnowledgeImageUnderstandingProvider } from './services/knowledge-image-understanding-provider.service';
+import { KnowledgeImageEnrichmentService } from './services/knowledge-image-enrichment.service';
 
 @Module({
   imports: [NoopAuditModule, ReviewModule],
@@ -59,6 +62,8 @@ import { KnowledgeLinkResolverService } from './services/knowledge-link-resolver
     KnowledgeVectorIndexService,
     ConfiguredKnowledgeAnswerProvider,
     ConfiguredKnowledgeCompilerLlmProvider,
+    ConfiguredKnowledgeImageUnderstandingProvider,
+    KnowledgeImageEnrichmentService,
     KnowledgeArtifactMaterializerService,
     KnowledgeArtifactCatalogService,
     KnowledgeSpaceCompilationService,
@@ -71,6 +76,10 @@ import { KnowledgeLinkResolverService } from './services/knowledge-link-resolver
     {
       provide: KNOWLEDGE_COMPILER_LLM_PROVIDER,
       useExisting: ConfiguredKnowledgeCompilerLlmProvider,
+    },
+    {
+      provide: KNOWLEDGE_IMAGE_UNDERSTANDING_PROVIDER,
+      useExisting: ConfiguredKnowledgeImageUnderstandingProvider,
     },
     SemanticKnowledgeCompilerRunner,
     {

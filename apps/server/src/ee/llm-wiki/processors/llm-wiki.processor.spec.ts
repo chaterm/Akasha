@@ -16,6 +16,7 @@ import { IAuditService } from '../../../integrations/audit/audit.service';
 import { ReviewService } from '../review/review.service';
 import { ReviewSnapshotService } from '../review/review-snapshot.service';
 import { LlmWikiProcessor } from './llm-wiki.processor';
+import { KnowledgeImageEnrichmentService } from '../services/knowledge-image-enrichment.service';
 
 describe('LlmWikiProcessor', () => {
   it('creates a durable Space run instead of reporting fan-out as complete', async () => {
@@ -222,6 +223,321 @@ describe('LlmWikiProcessor', () => {
         sourceCount: 1,
       }),
     );
+  });
+
+  it('enriches a page image before the empty-source decision', async () => {
+    const imageOnlySource = {
+      ...sourceSnapshot({ text: '' }),
+      images: [
+        {
+          attachmentId: 'image-1',
+          fileName: 'diagram.png',
+          mimeType: 'image/png' as const,
+          fileSize: 1024,
+          attachmentVersion: 'v1',
+        },
+      ],
+    };
+    const exporter = {
+      exportPageSources: jest.fn().mockResolvedValue([imageOnlySource]),
+    };
+    const compiler = createCompiler();
+    const importer = createImporter();
+    const imageEnrichment = {
+      enrichSource: jest.fn().mockResolvedValue({
+        source: {
+          ...imageOnlySource,
+          text: '## 页面图片识别内容\n\n图片说明: 系统架构图',
+        },
+        imageCount: 1,
+        succeededCount: 1,
+        failedCount: 0,
+        cacheHitCount: 0,
+        warnings: [],
+      }),
+    };
+    const processor = createProcessor({
+      exporter,
+      compiler,
+      importer,
+      imageEnrichment,
+    });
+
+    await processor.process({
+      name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+      data: {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageIds: ['page-1'],
+      },
+    } as Job);
+
+    expect(imageEnrichment.enrichSource).toHaveBeenCalledWith(imageOnlySource);
+    expect(compiler.compileSpace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sources: [
+          expect.objectContaining({
+            text: expect.stringContaining('系统架构图'),
+          }),
+        ],
+      }),
+    );
+    expect(importer.importCompileResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          sources: [
+            expect.objectContaining({
+              text: expect.stringContaining('系统架构图'),
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
+  it('preserves prior knowledge when an image-only page cannot be enriched', async () => {
+    const imageOnlySource = {
+      ...sourceSnapshot({ text: '' }),
+      images: [
+        {
+          attachmentId: 'image-1',
+          fileName: 'diagram.webp',
+          mimeType: 'image/webp' as const,
+          fileSize: 1024,
+          attachmentVersion: 'v1',
+        },
+      ],
+    };
+    const exporter = {
+      exportPageSources: jest.fn().mockResolvedValue([imageOnlySource]),
+    };
+    const compiler = createCompiler();
+    const importer = createImporter();
+    const compilationRepo = createCompilationRepo();
+    const sourceRepo = {
+      ...createSourceRepo(),
+      findLatestActiveSourceByPageId: jest.fn().mockResolvedValue({
+        contentHash: imageOnlySource.contentHash,
+      }),
+    };
+    const imageEnrichment = {
+      enrichSource: jest.fn().mockResolvedValue({
+        source: imageOnlySource,
+        imageCount: 1,
+        succeededCount: 0,
+        failedCount: 1,
+        cacheHitCount: 0,
+        warnings: [
+          {
+            attachmentId: 'image-1',
+            code: 'provider_error',
+            message: 'Image processing failed.',
+          },
+        ],
+      }),
+    };
+    const processor = createProcessor({
+      exporter,
+      compiler,
+      importer,
+      compilationRepo,
+      sourceRepo: sourceRepo as unknown as KnowledgeSourceRepo,
+      imageEnrichment,
+    });
+
+    await expect(
+      processor.process({
+        id: 'image-only-failed-job',
+        name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+        data: {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageIds: ['page-1'],
+        },
+      } as Job),
+    ).rejects.toThrow(
+      'unchanged last-known-good knowledge is still being served',
+    );
+
+    expect(compiler.compileSpace).not.toHaveBeenCalled();
+    expect(importer.importCompileResult).not.toHaveBeenCalled();
+    expect(exporter.exportPageSources).toHaveBeenCalledTimes(1);
+    expect(compilationRepo.failAttempt).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-1',
+      compileTaskId: 'image-only-failed-job',
+      stage: 'image_enrichment',
+      errorCode: 'image_enrichment_unavailable',
+      errorMessage:
+        'Page images did not produce searchable content; unchanged last-known-good knowledge is still being served.',
+    });
+  });
+
+  it('retires outdated knowledge when a changed image-only page cannot be enriched', async () => {
+    const imageOnlySource = {
+      ...sourceSnapshot({ text: '', contentHash: 'sha256:new-image' }),
+      images: [
+        {
+          attachmentId: 'image-2',
+          fileName: 'new-diagram.gif',
+          mimeType: 'image/gif' as const,
+          fileSize: 1024,
+          attachmentVersion: 'v2',
+        },
+      ],
+    };
+    const exporter = {
+      exportPageSources: jest.fn().mockResolvedValue([imageOnlySource]),
+    };
+    const importer = createImporter();
+    const compilationRepo = createCompilationRepo();
+    const sourceRepo = {
+      ...createSourceRepo(),
+      findLatestActiveSourceByPageId: jest.fn().mockResolvedValue({
+        contentHash: 'sha256:old-image',
+      }),
+    };
+    const imageEnrichment = {
+      enrichSource: jest.fn().mockResolvedValue({
+        source: imageOnlySource,
+        imageCount: 1,
+        succeededCount: 0,
+        failedCount: 1,
+        cacheHitCount: 0,
+        warnings: [],
+      }),
+    };
+    const processor = createProcessor({
+      exporter,
+      importer,
+      compilationRepo,
+      sourceRepo: sourceRepo as unknown as KnowledgeSourceRepo,
+      imageEnrichment,
+    });
+
+    await expect(
+      processor.process({
+        id: 'changed-image-failed-job',
+        name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+        data: {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageIds: ['page-1'],
+        },
+      } as Job),
+    ).rejects.toThrow('outdated knowledge was retired');
+
+    expect(exporter.exportPageSources).toHaveBeenCalledTimes(2);
+    expect(importer.importCompileResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        artifacts: [],
+        upsertSources: false,
+        retireSources: true,
+      }),
+    );
+    expect(compilationRepo.failAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        compileTaskId: 'changed-image-failed-job',
+        stage: 'image_enrichment',
+        errorCode: 'image_enrichment_unavailable',
+        errorMessage:
+          'Page images did not produce searchable content; outdated knowledge was retired.',
+      }),
+    );
+  });
+
+  it('retries atomically instead of importing text when any page image is incomplete', async () => {
+    const mixedSource = {
+      ...sourceSnapshot({ text: 'The body is otherwise compilable.' }),
+      images: [
+        {
+          attachmentId: 'image-ready',
+          fileName: 'ready.png',
+          mimeType: 'image/png' as const,
+          fileSize: 1024,
+          attachmentVersion: 'v1',
+        },
+        {
+          attachmentId: 'image-busy',
+          fileName: 'busy.webp',
+          mimeType: 'image/webp' as const,
+          fileSize: 1024,
+          attachmentVersion: 'v1',
+        },
+      ],
+    };
+    const exporter = {
+      exportPageSources: jest.fn().mockResolvedValue([mixedSource]),
+    };
+    const compiler = createCompiler();
+    const importer = createImporter();
+    const compilationRepo = createCompilationRepo();
+    const sourceRepo = {
+      ...createSourceRepo(),
+      findLatestActiveSourceByPageId: jest.fn(),
+    };
+    const imageEnrichment = {
+      enrichSource: jest.fn().mockResolvedValue({
+        source: {
+          ...mixedSource,
+          text: `${mixedSource.text}\n\n## 页面图片识别内容\n\nready`,
+        },
+        imageCount: 2,
+        succeededCount: 1,
+        failedCount: 1,
+        cacheHitCount: 1,
+        warnings: [
+          {
+            attachmentId: 'image-busy',
+            code: 'image_processing_in_progress',
+            message: 'Image processing is in progress.',
+          },
+        ],
+      }),
+    };
+    const spaceCompilation = {
+      isRunActive: jest.fn().mockResolvedValue(true),
+      markPageRunning: jest.fn(),
+      completePage: jest.fn(),
+      catalogForPage: jest.fn(),
+    };
+    const processor = createProcessor({
+      exporter,
+      compiler,
+      importer,
+      compilationRepo,
+      sourceRepo: sourceRepo as unknown as KnowledgeSourceRepo,
+      imageEnrichment,
+      spaceCompilation,
+    });
+
+    await expect(
+      processor.process({
+        id: 'mixed-image-retry-job',
+        name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+        data: {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageIds: ['page-1'],
+          spaceRunId: 'space-run-1',
+        },
+        opts: { attempts: 3 },
+        attemptsMade: 0,
+      } as Job),
+    ).rejects.toThrow('will be retried');
+
+    expect(compiler.compileSpace).not.toHaveBeenCalled();
+    expect(importer.importCompileResult).not.toHaveBeenCalled();
+    expect(sourceRepo.findLatestActiveSourceByPageId).not.toHaveBeenCalled();
+    expect(compilationRepo.failAttempt).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-1',
+      compileTaskId: 'mixed-image-retry-job',
+      stage: 'image_enrichment',
+      errorCode: 'image_enrichment_unavailable',
+      errorMessage: 'Page image enrichment is incomplete and will be retried.',
+    });
+    expect(spaceCompilation.completePage).not.toHaveBeenCalled();
   });
 
   it('passes the active Space artifact catalog into page compilation', async () => {
@@ -590,6 +906,53 @@ describe('LlmWikiProcessor', () => {
       workspaceId: 'workspace-1',
       sourcePageId: 'page-1',
       compileTaskId: 'page-job-1',
+      errorCode: 'compile_failed',
+      errorMessage: 'Knowledge compilation failed.',
+    });
+  });
+
+  it('settles a Space run page when attempt startup fails on its final retry', async () => {
+    const compilationRepo = createCompilationRepo();
+    compilationRepo.startAttempt.mockRejectedValue(
+      new Error('diagnostic write failed'),
+    );
+    const spaceCompilation = {
+      isRunActive: jest.fn().mockResolvedValue(true),
+      markPageRunning: jest.fn(),
+      completePage: jest.fn(),
+      catalogForPage: jest.fn(),
+    };
+    const processor = createProcessor({
+      compilationRepo,
+      spaceCompilation,
+    });
+
+    await expect(
+      processor.process({
+        id: 'page-job-start-failed',
+        name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+        data: {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageIds: ['page-1'],
+          spaceRunId: 'space-run-1',
+        },
+        opts: { attempts: 3 },
+        attemptsMade: 2,
+      } as Job),
+    ).rejects.toThrow('diagnostic write failed');
+
+    expect(compilationRepo.failAttempt).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-1',
+      compileTaskId: 'page-job-start-failed',
+      errorCode: 'compile_failed',
+      errorMessage: 'Knowledge compilation failed.',
+    });
+    expect(spaceCompilation.completePage).toHaveBeenCalledWith({
+      runId: 'space-run-1',
+      sourcePageId: 'page-1',
+      status: 'failed',
       errorCode: 'compile_failed',
       errorMessage: 'Knowledge compilation failed.',
     });
@@ -1607,7 +1970,7 @@ describe('LlmWikiProcessor', () => {
       {
         delay: 5000,
         attempts: 3,
-        backoff: { type: 'exponential', delay: 1000 },
+        backoff: { type: 'exponential', delay: 31000 },
         jobId: expect.stringMatching(
           /^knowledge-compile-pages__workspace-1__space-1__page-1__/,
         ),
@@ -1637,7 +2000,7 @@ describe('LlmWikiProcessor', () => {
       {
         delay: 5000,
         attempts: 3,
-        backoff: { type: 'exponential', delay: 1000 },
+        backoff: { type: 'exponential', delay: 31000 },
         jobId: expect.stringMatching(
           /^knowledge-compile-pages__workspace-1__space-2__page-2__/,
         ),
@@ -1664,6 +2027,7 @@ function createProcessor(
     compilationRepo?: ReturnType<typeof createCompilationRepo>;
     sourceRepo?: KnowledgeSourceRepo;
     capsuleRepo?: KnowledgeCapsuleRepo;
+    imageEnrichment?: Partial<KnowledgeImageEnrichmentService>;
   } = {},
 ): LlmWikiProcessor {
   return new LlmWikiProcessor(
@@ -1683,6 +2047,7 @@ function createProcessor(
     overrides.catalogService as KnowledgeArtifactCatalogService,
     overrides.spaceCompilation as KnowledgeSpaceCompilationService,
     overrides.spaceAggregator as KnowledgeSpaceAggregatorService,
+    overrides.imageEnrichment as KnowledgeImageEnrichmentService,
   );
 }
 
@@ -1753,6 +2118,7 @@ function createSourceRepo(): KnowledgeSourceRepo {
   return {
     markSourcesStale: jest.fn().mockResolvedValue(undefined),
     findSourcesBySpace: jest.fn().mockResolvedValue([]),
+    findLatestActiveSourceByPageId: jest.fn().mockResolvedValue(undefined),
   } as unknown as KnowledgeSourceRepo;
 }
 

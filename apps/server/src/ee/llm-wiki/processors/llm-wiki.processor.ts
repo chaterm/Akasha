@@ -44,6 +44,7 @@ import {
   buildReviewDiscoverJobId,
   buildReviewNegotiateJobId,
   KNOWLEDGE_COMPILE_DELAY_MS,
+  KNOWLEDGE_COMPILE_RETRY_BACKOFF_MS,
   uniqueValues,
 } from '../services/knowledge-queue.utils';
 import { KnowledgeCompileJobResult } from '../types/knowledge-queue.types';
@@ -57,6 +58,7 @@ import { KnowledgeCompilerLlmError } from '../compiler/knowledge-compiler-llm.pr
 import { KnowledgeArtifactCatalogService } from '../services/knowledge-artifact-catalog.service';
 import { KnowledgeSpaceCompilationService } from '../services/knowledge-space-compilation.service';
 import { KnowledgeSpaceAggregatorService } from '../services/knowledge-space-aggregator.service';
+import { KnowledgeImageEnrichmentService } from '../services/knowledge-image-enrichment.service';
 
 type ReviewProcessorJobResult = {
   type: 'review-discover' | 'review-negotiate';
@@ -79,6 +81,13 @@ class UnavailableKnowledgeSourceError extends Error {
   constructor() {
     super('Knowledge source page is unavailable for compilation.');
     this.name = 'UnavailableKnowledgeSourceError';
+  }
+}
+
+class ImageEnrichmentIncompleteError extends Error {
+  constructor(message = 'Page image enrichment is incomplete.') {
+    super(message);
+    this.name = 'ImageEnrichmentIncompleteError';
   }
 }
 
@@ -107,6 +116,8 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
     private readonly spaceCompilation?: KnowledgeSpaceCompilationService,
     @Optional()
     private readonly spaceAggregator?: KnowledgeSpaceAggregatorService,
+    @Optional()
+    private readonly imageEnrichment?: KnowledgeImageEnrichmentService,
   ) {
     super();
   }
@@ -258,10 +269,6 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
             });
             return noOpPageResult(data, startedAt);
           }
-          await this.spaceCompilation.markPageRunning({
-            runId: data.spaceRunId,
-            sourcePageId,
-          });
         } else if (!(await this.isPageCompilationAllowed(data))) {
           await this.skipCancelledAttempt({
             data,
@@ -270,18 +277,24 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
           });
           return noOpPageResult(data, startedAt);
         }
-        await this.compilationRepo?.startAttempt({
-          workspaceId: data.workspaceId,
-          spaceId: data.spaceId,
-          sourcePageId,
-          sourceVersion: data.sourceVersion,
-          sourceContentHash: data.sourceContentHash,
-          compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
-          promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
-          compilerRunId: compileTaskId,
-          compileTaskId,
-        });
         try {
+          if (data.spaceRunId) {
+            await this.spaceCompilation!.markPageRunning({
+              runId: data.spaceRunId,
+              sourcePageId,
+            });
+          }
+          await this.compilationRepo?.startAttempt({
+            workspaceId: data.workspaceId,
+            spaceId: data.spaceId,
+            sourcePageId,
+            sourceVersion: data.sourceVersion,
+            sourceContentHash: data.sourceContentHash,
+            compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+            promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+            compilerRunId: compileTaskId,
+            compileTaskId,
+          });
           const sources = await this.sourceExporter.exportPageSources({
             workspaceId: data.workspaceId,
             spaceId: data.spaceId,
@@ -293,20 +306,48 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
           ) {
             throw new UnavailableKnowledgeSourceError();
           }
-          const source = sources[0];
+          const exportedSource = sources[0];
+          let source = exportedSource;
+          let imageEnrichmentIncomplete = false;
+          if ((source.images?.length ?? 0) > 0) {
+            await this.compilationRepo?.updateStage({
+              workspaceId: data.workspaceId,
+              sourcePageId,
+              compileTaskId,
+              stage: 'image_enrichment',
+            });
+            if (this.imageEnrichment) {
+              const enrichment =
+                await this.imageEnrichment.enrichSource(source);
+              source = enrichment.source;
+              sources[0] = source;
+              imageEnrichmentIncomplete =
+                enrichment.failedCount > 0 ||
+                enrichment.succeededCount < enrichment.imageCount ||
+                enrichment.imageCount < (exportedSource.images?.length ?? 0);
+              if (enrichment.warnings.length > 0) {
+                this.logger.warn(
+                  `Page image enrichment completed with warnings for page ${sourcePageId}: ` +
+                    `${enrichment.succeededCount}/${enrichment.imageCount} images produced searchable content.`,
+                );
+              }
+            } else {
+              imageEnrichmentIncomplete = true;
+            }
+          }
           await this.compilationRepo?.updateSourceSnapshot({
             workspaceId: data.workspaceId,
             sourcePageId,
             compileTaskId,
-            sourceVersion: source.sourceVersion,
-            sourceContentHash: source.contentHash,
+            sourceVersion: exportedSource.sourceVersion,
+            sourceContentHash: exportedSource.contentHash,
           });
           if (
             data.spaceRunId &&
             ((data.sourceVersion &&
-              data.sourceVersion !== source.sourceVersion) ||
+              data.sourceVersion !== exportedSource.sourceVersion) ||
               (data.sourceContentHash &&
-                data.sourceContentHash !== source.contentHash))
+                data.sourceContentHash !== exportedSource.contentHash))
           ) {
             const errorMessage =
               'Knowledge source changed after the Space run snapshot.';
@@ -336,6 +377,98 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
               durationMs: Math.max(0, Date.now() - startedAt),
             };
           }
+          if (imageEnrichmentIncomplete) {
+            if (!isFinalJobAttempt(job)) {
+              throw new ImageEnrichmentIncompleteError(
+                'Page image enrichment is incomplete and will be retried.',
+              );
+            }
+            const activeSource =
+              await this.sourceRepo.findLatestActiveSourceByPageId({
+                workspaceId: data.workspaceId,
+                sourcePageId,
+              });
+            const preservingLastKnownGood =
+              activeSource?.contentHash === exportedSource.contentHash;
+            if (!preservingLastKnownGood) {
+              const latestSources = await this.sourceExporter.exportPageSources(
+                {
+                  workspaceId: data.workspaceId,
+                  spaceId: data.spaceId,
+                  sourcePageIds,
+                },
+              );
+              if (!isSameSourceSnapshot(exportedSource, latestSources[0])) {
+                const sourceChangedMessage =
+                  'Knowledge source changed before failed-image retirement.';
+                await this.compilationRepo?.skipAttempt({
+                  workspaceId: data.workspaceId,
+                  sourcePageId,
+                  compileTaskId,
+                  stage: 'image_enrichment',
+                  reasonCode: 'source_changed',
+                  reasonMessage: sourceChangedMessage,
+                });
+                if (data.spaceRunId) {
+                  await this.spaceCompilation!.completePage({
+                    runId: data.spaceRunId,
+                    sourcePageId,
+                    status: 'skipped',
+                    errorCode: 'source_changed',
+                    errorMessage: sourceChangedMessage,
+                  });
+                }
+                return noOpPageResult(data, startedAt);
+              }
+              if (!(await this.isPageCompilationAllowed(data))) {
+                await this.skipCancelledAttempt({
+                  data,
+                  sourcePageId,
+                  compileTaskId,
+                });
+                return noOpPageResult(data, startedAt);
+              }
+              const retirement = await this.importService.importCompileResult({
+                input: {
+                  workspaceId: data.workspaceId,
+                  spaceId: data.spaceId,
+                  compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+                  promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+                  compileTaskId,
+                  compileMode: 'pages',
+                  sources,
+                },
+                artifacts: [],
+                upsertSources: false,
+                retireSources: true,
+                ...(data.spaceRunId
+                  ? {
+                      publicationGuard: (trx) =>
+                        this.spaceCompilation!.isRunActiveForPublication(
+                          {
+                            runId: data.spaceRunId!,
+                            workspaceId: data.workspaceId,
+                            spaceId: data.spaceId,
+                          },
+                          trx,
+                        ),
+                    }
+                  : {}),
+              });
+              if (retirement.skippedReason === 'run_superseded') {
+                await this.skipCancelledAttempt({
+                  data,
+                  sourcePageId,
+                  compileTaskId,
+                });
+                return noOpPageResult(data, startedAt);
+              }
+            }
+            const errorMessage = preservingLastKnownGood
+              ? 'Page images did not produce searchable content; unchanged last-known-good knowledge is still being served.'
+              : 'Page images did not produce searchable content; outdated knowledge was retired.';
+            throw new ImageEnrichmentIncompleteError(errorMessage);
+          }
           if (!source.text.trim()) {
             const errorMessage = 'Knowledge source page is empty.';
             const latestSources = await this.sourceExporter.exportPageSources({
@@ -343,7 +476,7 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
               spaceId: data.spaceId,
               sourcePageIds,
             });
-            if (!isSameSourceSnapshot(source, latestSources[0])) {
+            if (!isSameSourceSnapshot(exportedSource, latestSources[0])) {
               const sourceChangedMessage =
                 'Knowledge source changed before empty-source retirement.';
               await this.compilationRepo?.skipAttempt({
@@ -467,7 +600,7 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
             spaceId: data.spaceId,
             sourcePageIds,
           });
-          if (!isSameSourceSnapshot(source, latestSources[0])) {
+          if (!isSameSourceSnapshot(exportedSource, latestSources[0])) {
             throw new SourceChangedDuringCompilationError();
           }
           if (!(await this.isPageCompilationAllowed(data))) {
@@ -519,8 +652,8 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
             workspaceId: data.workspaceId,
             sourcePageId,
             compileTaskId,
-            sourceVersion: source.sourceVersion,
-            sourceContentHash: source.contentHash,
+            sourceVersion: exportedSource.sourceVersion,
+            sourceContentHash: exportedSource.contentHash,
           });
           if (data.spaceRunId) {
             await this.spaceCompilation!.completePage({
@@ -554,6 +687,7 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
             workspaceId: data.workspaceId,
             sourcePageId,
             compileTaskId,
+            ...(failure.stage ? { stage: failure.stage } : {}),
             errorCode: failure.code,
             errorMessage: failure.message,
           });
@@ -871,7 +1005,10 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
         {
           delay: KNOWLEDGE_COMPILE_DELAY_MS,
           attempts: 3,
-          backoff: { type: 'exponential', delay: 1000 },
+          backoff: {
+            type: 'exponential',
+            delay: KNOWLEDGE_COMPILE_RETRY_BACKOFF_MS,
+          },
           jobId,
         },
       );
@@ -999,6 +1136,7 @@ function classifyCompilationFailure(error: unknown): {
   code: string;
   message: string;
   retryable: boolean;
+  stage?: 'image_enrichment';
 } {
   if (error instanceof SourceChangedDuringCompilationError) {
     return {
@@ -1012,6 +1150,14 @@ function classifyCompilationFailure(error: unknown): {
       code: 'source_unavailable',
       message: error.message,
       retryable: false,
+    };
+  }
+  if (error instanceof ImageEnrichmentIncompleteError) {
+    return {
+      code: 'image_enrichment_unavailable',
+      message: error.message,
+      retryable: true,
+      stage: 'image_enrichment',
     };
   }
   if (error instanceof KnowledgeCompilerLlmError) {

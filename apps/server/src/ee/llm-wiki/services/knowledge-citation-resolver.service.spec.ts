@@ -287,6 +287,78 @@ describe('KnowledgeCitationResolverService', () => {
     );
   });
 
+  it('validates image-derived evidence against the active enriched source text', async () => {
+    const pageText = '正文内容';
+    const imageQuote = '图片内文字：Error rate 8%';
+    const enrichedText = `${pageText}\n\n## 页面图片识别内容\n\n${imageQuote}`;
+    const startOffset = enrichedText.indexOf(imageQuote);
+    const service = new KnowledgeCitationResolverService(
+      {
+        findChunkSourceRefsByChunkIds: jest.fn().mockResolvedValue([
+          {
+            chunkId: 'chunk-image',
+            sources: [
+              {
+                sourcePageId: 'source-image',
+                sourceVersion: 'v1',
+                contentHash: 'sha256:page-image',
+                sourceRange: {
+                  startOffset,
+                  endOffset: startOffset + imageQuote.length,
+                },
+                quoteHash: quoteHash(imageQuote),
+              },
+            ],
+          },
+        ]),
+      } as unknown as KnowledgeCapsuleRepo,
+      {
+        filterReadableSources: jest.fn(),
+      } as unknown as KnowledgeSourceAuthorizationService,
+      {
+        findManyByIds: jest
+          .fn()
+          .mockResolvedValue([
+            page('source-image', 'Dashboard', 'dashboard', pageText),
+          ]),
+      } as unknown as PageRepo,
+      {
+        findActiveSourceTextsByPageIds: jest
+          .fn()
+          .mockResolvedValue([
+            { sourcePageId: 'source-image', extractedText: enrichedText },
+          ]),
+        findSourceChunksByPageIds: jest.fn().mockResolvedValue([]),
+      } as never,
+    );
+
+    const [resolved] = await service.resolveForChunks({
+      workspaceId: 'workspace-1',
+      chunks: [
+        {
+          chunk: chunk('chunk-image', 'kp-image'),
+          page: capsule('kp-image', 'Dashboard'),
+          sourcePageIds: ['source-image'],
+          rankReasons: ['semantic'],
+        },
+      ],
+    });
+
+    expect(resolved.sourceWindows).toEqual([
+      {
+        sourcePageId: 'source-image',
+        title: 'Dashboard',
+        url: '/p/dashboard',
+        text: imageQuote,
+        sourceRange: {
+          startOffset,
+          endOffset: startOffset + imageQuote.length,
+        },
+        quoteHash: quoteHash(imageQuote),
+      },
+    ]);
+  });
+
   it('reads a query-relevant raw source window when the compiled summary omitted an exact URL', async () => {
     const sourceText = [
       '# DMS 定制查询SQL返回接口',

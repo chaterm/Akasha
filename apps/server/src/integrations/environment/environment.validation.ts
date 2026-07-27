@@ -132,11 +132,23 @@ export class EnvironmentVariables {
   AI_COMPLETION_MODEL: string;
 
   @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  AI_VISION_MODEL: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(10_000)
   @Max(600_000)
   KNOWLEDGE_COMPILER_TIMEOUT_MS: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(10_000)
+  @Max(600_000)
+  KNOWLEDGE_IMAGE_TIMEOUT_MS: number;
 
   @IsOptional()
   @ValidateIf(

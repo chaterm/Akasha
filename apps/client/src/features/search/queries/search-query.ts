@@ -1,17 +1,21 @@
-import { keepPreviousData, useQuery, UseQueryResult } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  UseQueryResult,
+} from "@tanstack/react-query";
 import {
   searchAttachments,
   searchPage,
   searchShare,
   searchSuggestions,
-} from '@/features/search/services/search-service';
+} from "@/features/search/services/search-service";
 import {
   IAttachmentSearch,
   IPageSearch,
   IPageSearchParams,
   ISuggestionResult,
   SearchSuggestionParams,
-} from '@/features/search/types/search.types';
+} from "@/features/search/types/search.types";
 
 export function usePageSearchQuery(
   params: IPageSearchParams,
@@ -28,7 +32,7 @@ export function useSearchSuggestionsQuery(
 ): UseQueryResult<ISuggestionResult, Error> {
   const { preload, ...queryParams } = params;
   return useQuery({
-    queryKey: ["search-suggestion", params.query],
+    queryKey: ["search-suggestion", queryParams],
     staleTime: 60 * 1000, // 1min
     queryFn: () => searchSuggestions(queryParams),
     enabled: preload || !!params.query,

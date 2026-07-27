@@ -376,6 +376,30 @@ export interface KnowledgeGraphEdges {
   workspaceId: string;
 }
 
+export interface KnowledgeImageExtractions {
+  attachmentId: string;
+  attemptCount: Generated<number>;
+  cacheFingerprint: string;
+  caption: string | null;
+  contentHash: string;
+  createdAt: Generated<Timestamp>;
+  errorCode: string | null;
+  errorMessage: string | null;
+  fileName: string | null;
+  id: Generated<string>;
+  leaseExpiresAt: Timestamp | null;
+  leaseToken: string | null;
+  mimeType: string | null;
+  model: string;
+  ocrText: string | null;
+  promptVersion: string;
+  retryAfter: Timestamp | null;
+  retryable: boolean | null;
+  status: string;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
 export interface KnowledgeGraphEdgeSources {
   attachmentId: string | null;
   contentHash: string;
@@ -1023,6 +1047,7 @@ export interface DB {
   knowledgeCompilationAttempts: KnowledgeCompilationAttempts;
   knowledgeGraphEdges: KnowledgeGraphEdges;
   knowledgeGraphEdgeSources: KnowledgeGraphEdgeSources;
+  knowledgeImageExtractions: KnowledgeImageExtractions;
   knowledgeLinks: KnowledgeLinks;
   knowledgeLinkSources: KnowledgeLinkSources;
   knowledgePages: KnowledgePages;

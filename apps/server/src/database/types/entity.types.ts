@@ -38,6 +38,7 @@ import {
   KnowledgeClaimSources,
   KnowledgeGraphEdges,
   KnowledgeGraphEdgeSources,
+  KnowledgeImageExtractions,
   KnowledgeLinks,
   KnowledgeLinkSources,
   KnowledgePages,
@@ -93,6 +94,13 @@ export type UpdatableKnowledgeCompilationAttempt = Updateable<
 export type KnowledgeSourceAnalysis = Selectable<KnowledgeSourceAnalyses>;
 export type InsertableKnowledgeSourceAnalysis =
   Insertable<KnowledgeSourceAnalyses>;
+
+export type KnowledgeImageExtraction = Selectable<KnowledgeImageExtractions>;
+export type InsertableKnowledgeImageExtraction =
+  Insertable<KnowledgeImageExtractions>;
+export type UpdatableKnowledgeImageExtraction = Updateable<
+  Omit<KnowledgeImageExtractions, 'id'>
+>;
 
 export type KnowledgeArtifactContribution =
   Selectable<KnowledgeArtifactContributions>;

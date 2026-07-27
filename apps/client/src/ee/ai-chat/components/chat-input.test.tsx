@@ -1,7 +1,14 @@
 import { MantineProvider } from "@mantine/core";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatInput from "./chat-input";
+
+const mentionMocks = vi.hoisted(() => ({
+  configure: vi.fn((_config: any) => ({
+    extend: () => ({}),
+  })),
+  renderItems: vi.fn((_options?: { pageOnly?: boolean }) => ({})),
+}));
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -38,9 +45,7 @@ vi.mock("@tiptap/starter-kit", () => ({
 vi.mock("@docmost/editor-ext", () => ({
   LinkExtension: {},
   Mention: {
-    configure: () => ({
-      extend: () => ({}),
-    }),
+    configure: mentionMocks.configure,
   },
 }));
 
@@ -49,7 +54,7 @@ vi.mock("@/features/editor/extensions/emoji-command", () => ({
 }));
 
 vi.mock("@/features/editor/components/mention/mention-suggestion", () => ({
-  default: vi.fn(),
+  default: mentionMocks.renderItems,
 }));
 
 vi.mock("@/features/editor/components/mention/mention-view", () => ({
@@ -71,6 +76,24 @@ describe("ChatInput", () => {
         dispatchEvent: vi.fn(),
       })),
     });
+  });
+
+  beforeEach(() => {
+    mentionMocks.configure.mockClear();
+    mentionMocks.renderItems.mockClear();
+  });
+
+  it("configures mention suggestions for pages only", () => {
+    render(
+      <MantineProvider>
+        <ChatInput isStreaming={false} onSend={vi.fn()} onStop={vi.fn()} />
+      </MantineProvider>,
+    );
+
+    const mentionConfig = mentionMocks.configure.mock.calls[0][0];
+    mentionConfig.suggestion.render();
+
+    expect(mentionMocks.renderItems).toHaveBeenCalledWith({ pageOnly: true });
   });
 
   it("disables file attachments while they are under active development", async () => {

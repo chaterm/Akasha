@@ -41,4 +41,47 @@ describe('environment validation', () => {
       consoleSpy.mockRestore();
     },
   );
+
+  it.each(['10000', '120000', '600000'])(
+    'accepts knowledge image timeout %s',
+    (timeout) => {
+      expect(
+        validate({
+          ...baseEnvironment,
+          KNOWLEDGE_IMAGE_TIMEOUT_MS: timeout,
+        }).KNOWLEDGE_IMAGE_TIMEOUT_MS,
+      ).toBe(Number(timeout));
+    },
+  );
+
+  it.each(['9999', '600001', 'not-a-number'])(
+    'rejects invalid knowledge image timeout %s',
+    (timeout) => {
+      const consoleSpy = jest
+        .spyOn(console, 'error')
+        .mockImplementation(() => undefined);
+      const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {
+        throw new Error('invalid environment');
+      });
+
+      expect(() =>
+        validate({
+          ...baseEnvironment,
+          KNOWLEDGE_IMAGE_TIMEOUT_MS: timeout,
+        }),
+      ).toThrow('invalid environment');
+
+      exitSpy.mockRestore();
+      consoleSpy.mockRestore();
+    },
+  );
+
+  it('accepts an optional vision model override', () => {
+    expect(
+      validate({
+        ...baseEnvironment,
+        AI_VISION_MODEL: 'custom-vision-model',
+      }).AI_VISION_MODEL,
+    ).toBe('custom-vision-model');
+  });
 });

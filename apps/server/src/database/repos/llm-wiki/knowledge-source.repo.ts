@@ -110,13 +110,66 @@ export class KnowledgeSourceRepo {
     if (input.sourcePageIds.length === 0) return [];
 
     return this.db
-      .selectFrom('knowledgeSourceChunks')
-      .selectAll()
-      .where('workspaceId', '=', input.workspaceId)
-      .where('sourcePageId', 'in', input.sourcePageIds)
-      .orderBy('createdAt', 'desc')
+      .selectFrom('knowledgeSourceChunks as chunk')
+      .innerJoin('knowledgeSources as source', (join) =>
+        join
+          .onRef('source.id', '=', 'chunk.sourceId')
+          .onRef('source.workspaceId', '=', 'chunk.workspaceId'),
+      )
+      .selectAll('chunk')
+      .where('chunk.workspaceId', '=', input.workspaceId)
+      .where('chunk.sourcePageId', 'in', input.sourcePageIds)
+      .where('source.staleAt', 'is', null)
+      .where('source.deletedAt', 'is', null)
+      .orderBy('chunk.createdAt', 'desc')
       .limit(Math.min(Math.max(input.limit ?? 200, 1), 500))
       .execute();
+  }
+
+  async findActiveSourceTextsByPageIds(input: {
+    workspaceId: string;
+    sourcePageIds: string[];
+  }): Promise<Array<{ sourcePageId: string; extractedText: string }>> {
+    if (input.sourcePageIds.length === 0) return [];
+
+    const rows = await this.db
+      .selectFrom('knowledgeSources')
+      .select(['sourcePageId', 'extractedText', 'updatedAt'])
+      .where('workspaceId', '=', input.workspaceId)
+      .where('sourcePageId', 'in', input.sourcePageIds)
+      .where('staleAt', 'is', null)
+      .where('deletedAt', 'is', null)
+      .where('extractedText', 'is not', null)
+      .orderBy('updatedAt', 'desc')
+      .execute();
+
+    const seen = new Set<string>();
+    return rows.flatMap((row) => {
+      if (seen.has(row.sourcePageId) || row.extractedText === null) return [];
+      seen.add(row.sourcePageId);
+      return [
+        {
+          sourcePageId: row.sourcePageId,
+          extractedText: row.extractedText,
+        },
+      ];
+    });
+  }
+
+  async findLatestActiveSourceByPageId(input: {
+    workspaceId: string;
+    sourcePageId: string;
+  }): Promise<KnowledgeSource | undefined> {
+    return this.db
+      .selectFrom('knowledgeSources')
+      .selectAll()
+      .where('workspaceId', '=', input.workspaceId)
+      .where('sourcePageId', '=', input.sourcePageId)
+      .where('staleAt', 'is', null)
+      .where('deletedAt', 'is', null)
+      .orderBy('updatedAt', 'desc')
+      .orderBy('createdAt', 'desc')
+      .executeTakeFirst();
   }
 
   async markSourcesStale(

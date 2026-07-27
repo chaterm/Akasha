@@ -237,7 +237,7 @@ export default function ChatInput({
           allowSpaces: true,
           items: () => [],
           // @ts-ignore
-          render: mentionRenderItems,
+          render: () => mentionRenderItems({ pageOnly: true }),
         },
         HTMLAttributes: {
           class: "mention",

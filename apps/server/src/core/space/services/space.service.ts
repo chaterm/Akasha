@@ -205,6 +205,24 @@ export class SpaceService {
         );
       }
 
+      if (typeof updateSpaceDto.enableCompilationReview !== 'undefined') {
+        const prev =
+          settingsBefore?.knowledge?.compilationReviewEnabled ?? false;
+        if (prev !== updateSpaceDto.enableCompilationReview) {
+          before.enableCompilationReview = prev;
+          after.enableCompilationReview =
+            updateSpaceDto.enableCompilationReview;
+        }
+
+        await this.spaceRepo.updateKnowledgeSettings(
+          updateSpaceDto.spaceId,
+          workspaceId,
+          'compilationReviewEnabled',
+          updateSpaceDto.enableCompilationReview,
+          trx,
+        );
+      }
+
       updatedSpace = await this.spaceRepo.updateSpace(
         {
           name: updateSpaceDto.name,

@@ -16,11 +16,17 @@ import {
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { User, Workspace } from '@akasha/db/types/entity.types';
+import { SpaceRepo } from '@akasha/db/repos/space/space.repo';
+import { KnowledgeReviewApplicationRepo } from '@akasha/db/repos/llm-wiki/knowledge-review-application.repo';
 import { AuthUser } from '../../../common/decorators/auth-user.decorator';
 import { AuthWorkspace } from '../../../common/decorators/auth-workspace.decorator';
 import { AuditEvent, AuditResource } from '../../../common/events/audit-events';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
-import { UserRole } from '../../../common/helpers/types/permission';
+import SpaceAbilityFactory from '../../../core/casl/abilities/space-ability.factory';
+import {
+  SpaceCaslAction,
+  SpaceCaslSubject,
+} from '../../../core/casl/interfaces/space-ability.type';
 import {
   AUDIT_SERVICE,
   IAuditService,
@@ -54,6 +60,9 @@ export class ReviewController {
     private readonly snapshotService: ReviewSnapshotService,
     @InjectQueue(QueueName.AI_QUEUE) private readonly aiQueue: Queue,
     @Inject(AUDIT_SERVICE) private readonly auditService: IAuditService,
+    private readonly spaceAbility: SpaceAbilityFactory,
+    private readonly spaceRepo: SpaceRepo,
+    private readonly applicationRepo: KnowledgeReviewApplicationRepo,
   ) {}
 
   @HttpCode(HttpStatus.OK)
@@ -64,7 +73,7 @@ export class ReviewController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     this.assertAiEnabled(workspace);
-    this.assertAdmin(user);
+    await this.assertReviewAccess(user, workspace.id, dto.spaceId);
 
     return this.snapshotService.loadSnapshot({
       workspaceId: workspace.id,
@@ -80,7 +89,7 @@ export class ReviewController {
     @AuthWorkspace() workspace: Workspace,
   ): Promise<ReviewJobResult> {
     this.assertAiEnabled(workspace);
-    this.assertAdmin(user);
+    await this.assertReviewAccess(user, workspace.id, dto.spaceId);
 
     const jobId = buildReviewDiscoverJobId({
       workspaceId: workspace.id,
@@ -110,7 +119,7 @@ export class ReviewController {
     @AuthWorkspace() workspace: Workspace,
   ): Promise<ResolvedReview | ReviewJobResult> {
     this.assertAiEnabled(workspace);
-    this.assertAdmin(user);
+    await this.assertReviewAccess(user, workspace.id, dto.spaceId);
 
     const item = reviewItemSchema.parse(dto.item);
     const feedback = (dto.feedback ?? '').trim();
@@ -171,10 +180,10 @@ export class ReviewController {
     @AuthWorkspace() workspace: Workspace,
   ): Promise<ReviewJobResult> {
     this.assertAiEnabled(workspace);
-    this.assertAdmin(user);
     if (!spaceId) {
       throw new BadRequestException('spaceId is required');
     }
+    await this.assertReviewAccess(user, workspace.id, spaceId);
 
     const found = await this.snapshotService.getJob({
       workspaceId: workspace.id,
@@ -196,7 +205,7 @@ export class ReviewController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     this.assertAiEnabled(workspace);
-    this.assertAdmin(user);
+    await this.assertReviewAccess(user, workspace.id, dto.spaceId);
 
     const snapshot = await this.snapshotService.loadSnapshot({
       workspaceId: workspace.id,
@@ -248,7 +257,15 @@ export class ReviewController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     this.assertAiEnabled(workspace);
-    this.assertAdmin(user);
+    const storedApplication = await this.loadReviewApplication(
+      workspace.id,
+      applicationId,
+    );
+    await this.assertReviewAccess(
+      user,
+      workspace.id,
+      storedApplication.spaceId,
+    );
 
     const application = await this.applyService.applyApplication({
       workspaceId: workspace.id,
@@ -281,7 +298,15 @@ export class ReviewController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     this.assertAiEnabled(workspace);
-    this.assertAdmin(user);
+    const storedApplication = await this.loadReviewApplication(
+      workspace.id,
+      applicationId,
+    );
+    await this.assertReviewAccess(
+      user,
+      workspace.id,
+      storedApplication.spaceId,
+    );
 
     const application = await this.applyService.revertApplication({
       workspaceId: workspace.id,
@@ -313,7 +338,15 @@ export class ReviewController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     this.assertAiEnabled(workspace);
-    this.assertAdmin(user);
+    const storedApplication = await this.loadReviewApplication(
+      workspace.id,
+      applicationId,
+    );
+    await this.assertReviewAccess(
+      user,
+      workspace.id,
+      storedApplication.spaceId,
+    );
 
     return this.applyService.getDiff({
       workspaceId: workspace.id,
@@ -339,10 +372,43 @@ export class ReviewController {
     }
   }
 
-  private assertAdmin(user: User): void {
-    if (user.role !== UserRole.OWNER && user.role !== UserRole.ADMIN) {
-      throw new ForbiddenException('LLM wiki review is restricted to admins');
+  private async assertReviewAccess(
+    user: User,
+    workspaceId: string,
+    spaceId: string,
+  ): Promise<void> {
+    const space = await this.spaceRepo.findById(spaceId, workspaceId);
+    if (!space) {
+      throw new NotFoundException('Space not found');
     }
+
+    const ability = await this.spaceAbility.createForUser(user, spaceId);
+    if (ability.cannot(SpaceCaslAction.Manage, SpaceCaslSubject.Settings)) {
+      throw new ForbiddenException(
+        'Compilation review is restricted to space administrators',
+      );
+    }
+
+    const settings = (space.settings ?? {}) as Record<string, any>;
+    if (settings?.knowledge?.compilationReviewEnabled !== true) {
+      throw new ForbiddenException(
+        'Compilation review is disabled for this space',
+      );
+    }
+  }
+
+  private async loadReviewApplication(
+    workspaceId: string,
+    applicationId: string,
+  ) {
+    const application = await this.applicationRepo.findById({
+      workspaceId,
+      id: applicationId,
+    });
+    if (!application) {
+      throw new NotFoundException('Review application not found');
+    }
+    return application;
   }
 
   private assertAiEnabled(workspace: Workspace): void {

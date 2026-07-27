@@ -36,4 +36,22 @@ describe('EnvironmentService', () => {
 
     expect(configured.getKnowledgeCompilerTimeoutMs()).toBe(45_000);
   });
+
+  it('defaults the image understanding model and timeout', () => {
+    expect(service.getAiVisionModel()).toBe('qwen3.7-plus');
+    expect(service.getKnowledgeImageTimeoutMs()).toBe(120_000);
+  });
+
+  it('reads configured image understanding settings', () => {
+    const configured = new EnvironmentService({
+      get: jest.fn((key: string) => {
+        if (key === 'AI_VISION_MODEL') return 'custom-vision-model';
+        if (key === 'KNOWLEDGE_IMAGE_TIMEOUT_MS') return '45000';
+        return undefined;
+      }),
+    } as unknown as ConfigService);
+
+    expect(configured.getAiVisionModel()).toBe('custom-vision-model');
+    expect(configured.getKnowledgeImageTimeoutMs()).toBe(45_000);
+  });
 });

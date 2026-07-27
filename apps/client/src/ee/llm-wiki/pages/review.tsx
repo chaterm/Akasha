@@ -8,7 +8,6 @@ import {
   Group,
   Loader,
   Paper,
-  Select,
   SimpleGrid,
   Stack,
   Text,
@@ -21,10 +20,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconCheck, IconSearch, IconX } from "@tabler/icons-react";
 import { Helmet } from "react-helmet-async";
 import { useTranslation } from "react-i18next";
+import { Navigate, useParams } from "react-router-dom";
 import { getAppName } from "@/lib/config";
-import { findPersonalSpaceById } from "@/features/space/personal-space";
-import { useGetSpacesQuery } from "@/features/space/queries/space-query";
-import useCurrentUser from "@/features/user/hooks/use-current-user";
+import { useGetSpaceBySlugQuery } from "@/features/space/queries/space-query";
+import { useSpaceAbility } from "@/features/space/permissions/use-space-ability";
+import {
+  SpaceCaslAction,
+  SpaceCaslSubject,
+} from "@/features/space/permissions/permissions.type";
 import {
   applyReviewApplication,
   discoverReview,
@@ -65,7 +68,6 @@ const TYPE_COLOR: Record<ReviewType, string> = {
 const FEEDBACK_DEEPSEARCH = "DeepSearch";
 const FEEDBACK_ACCEPT = "采纳";
 const FEEDBACK_SKIP = "暂时跳过";
-const REVIEW_SPACE_STORAGE_KEY = "llm-wiki.review.spaceId";
 
 type ItemState = {
   busy?: "draft" | "plan" | "diff" | "apply" | "revert";
@@ -89,41 +91,21 @@ const BUSY_LABEL: Record<NonNullable<ItemState["busy"]>, string> = {
 export default function ReviewPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { data: currentUser } = useCurrentUser();
-  const { data: spacesData, isLoading: spacesLoading } = useGetSpacesQuery({
-    limit: 100,
-  });
-  const spaces = spacesData?.items ?? [];
-  const spaceOptions = useMemo(
-    () => spaces.map((space) => ({ value: space.id, label: space.name })),
-    [spaces],
+  const { spaceSlug = "" } = useParams();
+  const { data: space, isLoading: spaceLoading } =
+    useGetSpaceBySlugQuery(spaceSlug);
+  const spaceAbility = useSpaceAbility(space?.membership?.permissions);
+  const canReview = spaceAbility.can(
+    SpaceCaslAction.Manage,
+    SpaceCaslSubject.Settings,
   );
+  const reviewEnabled =
+    space?.settings?.knowledge?.compilationReviewEnabled === true;
+  const spaceId = space?.id ?? null;
 
-  const [spaceId, setSpaceId] = useState<string | null>(null);
   const [items, setItems] = useState<ReviewItem[] | null>(null);
   const [docMap, setDocMap] = useState<Record<string, ReviewDocMeta>>({});
   const [states, setStates] = useState<Record<string, ItemState>>({});
-
-  useEffect(() => {
-    if (spaceId || spaces.length === 0) return;
-
-    const rememberedSpace = findRememberedReviewSpace(spaces);
-    if (rememberedSpace) {
-      setSpaceId(rememberedSpace.id);
-      return;
-    }
-
-    const personalSpace = findPersonalSpaceById(
-      spaces,
-      currentUser?.personalSpaceId,
-    );
-    setSpaceId((personalSpace ?? spaces[0]).id);
-  }, [spaceId, spaces, currentUser?.personalSpaceId]);
-
-  const handleSpaceChange = (value: string | null) => {
-    setSpaceId(value);
-    rememberReviewSpace(value);
-  };
 
   useEffect(() => {
     setItems(null);
@@ -134,7 +116,7 @@ export default function ReviewPage() {
   const snapshotQuery = useQuery({
     queryKey: ["review-snapshot", spaceId],
     queryFn: () => loadReviewSnapshot({ spaceId: spaceId! }),
-    enabled: !!spaceId,
+    enabled: !!spaceId && canReview && reviewEnabled,
   });
   const activeReviewJobs = useMemo(
     () => (snapshotQuery.data?.jobs ?? []).filter(isActiveReviewJob),
@@ -430,17 +412,29 @@ export default function ReviewPage() {
       });
   }, [items, states]);
 
+  if (spaceLoading) {
+    return (
+      <Group justify="center" py="xl">
+        <Loader size="sm" />
+      </Group>
+    );
+  }
+
+  if (!space || !canReview || !reviewEnabled) {
+    return <Navigate to={`/s/${spaceSlug}`} replace />;
+  }
+
   return (
     <Container size="md" py="lg">
       <Helmet>
         <title>
-          {t("Review")} - {getAppName()}
+          {t("Compilation content review")} - {getAppName()}
         </title>
       </Helmet>
 
       <Stack gap="lg">
         <div>
-          <Title order={2}>{t("Review")}</Title>
+          <Title order={2}>{t("Compilation content review")}</Title>
           <Text c="dimmed" size="sm">
             {t(
               "Let AI review the structured wiki of a space, then decide each item.",
@@ -448,21 +442,7 @@ export default function ReviewPage() {
           </Text>
         </div>
 
-        <Group align="flex-end">
-          <Select
-            label={t("Space")}
-            placeholder={t("Select a space")}
-            data={spaceOptions}
-            value={spaceId}
-            onChange={handleSpaceChange}
-            searchable
-            disabled={
-              spacesLoading ||
-              isDiscoverReviewRunning ||
-              snapshotQuery.isLoading
-            }
-            style={{ flex: 1 }}
-          />
+        <Group justify="flex-end">
           <Button
             onClick={handleDiscover}
             loading={isDiscoverReviewRunning}
@@ -683,36 +663,6 @@ function isActiveReviewJob(job: ReviewJob): boolean {
 
 function getDiscoverReviewJobMessage(): string {
   return "AI is reviewing the wiki in the background. This page will update automatically.";
-}
-
-function findRememberedReviewSpace<T extends { id: string }>(
-  spaces: T[],
-): T | undefined {
-  const rememberedSpaceId = readRememberedReviewSpaceId();
-  if (!rememberedSpaceId) return undefined;
-  return spaces.find((space) => space.id === rememberedSpaceId);
-}
-
-function readRememberedReviewSpaceId(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.localStorage.getItem(REVIEW_SPACE_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function rememberReviewSpace(spaceId: string | null): void {
-  if (typeof window === "undefined") return;
-  try {
-    if (spaceId) {
-      window.localStorage.setItem(REVIEW_SPACE_STORAGE_KEY, spaceId);
-    } else {
-      window.localStorage.removeItem(REVIEW_SPACE_STORAGE_KEY);
-    }
-  } catch {
-    // Ignore private-mode or quota failures; the selector still works.
-  }
 }
 
 function previewText(value: string, maxLength: number): string {

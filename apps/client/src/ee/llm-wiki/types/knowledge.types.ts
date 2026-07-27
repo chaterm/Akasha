@@ -74,6 +74,7 @@ export type KnowledgePageCompileStatus =
 export type KnowledgePageCompileStage =
   | "queued"
   | "read_source"
+  | "image_enrichment"
   | "analysis"
   | "generation"
   | "merge"
