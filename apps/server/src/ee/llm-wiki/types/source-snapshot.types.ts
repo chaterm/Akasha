@@ -4,6 +4,12 @@ export interface KnowledgeSourceSnapshot {
   sourcePageId: string;
   sourceVersion: string;
   contentHash: string;
+  /**
+   * Hash of the source, compiler inputs, and ordered ready image knowledge.
+   * It is distinct from contentHash, which remains the raw source-version
+   * fence.
+   */
+  effectiveKnowledgeHash?: string;
   title: string;
   text: string;
   content?: unknown;

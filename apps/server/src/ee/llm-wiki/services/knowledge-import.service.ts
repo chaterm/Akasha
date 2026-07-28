@@ -1,4 +1,4 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { toSql as vectorToSql } from 'pgvector';
 import { InjectKysely } from 'nestjs-kysely';
@@ -56,10 +56,8 @@ export class KnowledgeImportService {
     private readonly quarantineRepo: KnowledgeQuarantineRepo,
     @InjectKysely() private readonly db: KyselyDB,
     private readonly vectorIndex: KnowledgeVectorIndexService,
-    @Optional()
-    private readonly contributionRepo?: KnowledgeArtifactContributionRepo,
-    @Optional()
-    private readonly materializer?: KnowledgeArtifactMaterializerService,
+    private readonly contributionRepo: KnowledgeArtifactContributionRepo,
+    private readonly materializer: KnowledgeArtifactMaterializerService,
   ) {}
 
   async importCompileResult(input: {
@@ -70,6 +68,7 @@ export class KnowledgeImportService {
     retireSources?: boolean;
     retireCompileScope?: boolean;
     publicationGuard?: (trx: KyselyTransaction) => Promise<boolean>;
+    publicationComplete?: (trx: KyselyTransaction) => Promise<void>;
   }): Promise<KnowledgeImportResult> {
     await input.onStage?.('validation');
     const validation = this.validator.validateCompileResult(input);
@@ -82,9 +81,7 @@ export class KnowledgeImportService {
       reasonCodes: toQuarantineReasonCodes(quarantined.reasons),
     }));
     const isSemanticPagePublication =
-      input.input.compileMode === 'pages' &&
-      input.input.sources.length === 1 &&
-      Boolean(this.contributionRepo && this.materializer);
+      input.input.compileMode === 'pages' && input.input.sources.length === 1;
     if (isSemanticPagePublication && quarantineInputs.length > 0) {
       let quarantinePublicationRejected = false;
       await executeTx(this.db, async (trx) => {
@@ -545,7 +542,7 @@ export class KnowledgeImportService {
             },
             trx,
           );
-          await this.contributionRepo!.replaceSourceContributions(
+          await this.contributionRepo.replaceSourceContributions(
             {
               workspaceId: input.input.workspaceId,
               sourcePageId: contributionPublication.sourcePageId,
@@ -605,6 +602,8 @@ export class KnowledgeImportService {
         if (artifactInputs.length > 0) {
           await this.capsuleRepo.upsertCompiledArtifacts(artifactInputs, trx);
         }
+
+        await input.publicationComplete?.(trx);
       });
     }
 

@@ -7,6 +7,7 @@ import { Queue } from 'bullmq';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
 import { PageRepo } from '../repos/page/page.repo';
 import { KnowledgeCompilationRepo } from '../repos/llm-wiki/knowledge-compilation.repo';
+import { KnowledgeSpaceCompilationRepo } from '../repos/llm-wiki/knowledge-space-compilation.repo';
 import {
   buildKnowledgeCompileCoalesceKey,
   buildKnowledgeCompilePageJobId,
@@ -31,8 +32,10 @@ export class PageListener {
     private readonly environmentService: EnvironmentService,
     private readonly pageRepo: PageRepo,
     @InjectQueue(QueueName.SEARCH_QUEUE) private searchQueue: Queue,
-    @InjectQueue(QueueName.AI_QUEUE) private aiQueue: Queue,
+    @InjectQueue(QueueName.KNOWLEDGE_TEXT_QUEUE)
+    private knowledgeQueue: Queue,
     private readonly compilationRepo: KnowledgeCompilationRepo,
+    private readonly runRepo: KnowledgeSpaceCompilationRepo,
   ) {}
 
   @OnEvent(EventName.PAGE_CREATED)
@@ -44,7 +47,6 @@ export class PageListener {
       });
     }
 
-    await this.aiQueue.add(QueueJob.PAGE_CREATED, { pageIds, workspaceId });
     await this.enqueueKnowledgeAccessReindex(workspaceId, pageIds);
     await this.enqueueKnowledgeCompileForPages(workspaceId, pageIds);
   }
@@ -66,7 +68,6 @@ export class PageListener {
     }
 
     await this.enqueueKnowledgeSourceInvalidation(workspaceId, pageIds);
-    await this.aiQueue.add(QueueJob.PAGE_DELETED, { pageIds, workspaceId });
   }
 
   @OnEvent(EventName.PAGE_SOFT_DELETED)
@@ -78,10 +79,6 @@ export class PageListener {
     }
 
     await this.enqueueKnowledgeSourceInvalidation(workspaceId, pageIds);
-    await this.aiQueue.add(QueueJob.PAGE_SOFT_DELETED, {
-      pageIds,
-      workspaceId,
-    });
   }
 
   @OnEvent(EventName.PAGE_RESTORED)
@@ -91,7 +88,6 @@ export class PageListener {
       await this.searchQueue.add(QueueJob.PAGE_RESTORED, { pageIds });
     }
 
-    await this.aiQueue.add(QueueJob.PAGE_RESTORED, { pageIds, workspaceId });
     await this.enqueueKnowledgeSourceInvalidation(
       workspaceId,
       pageIds,
@@ -112,7 +108,7 @@ export class PageListener {
   ): Promise<void> {
     if (!workspaceId || pageIds.length === 0) return;
 
-    await this.aiQueue.add(QueueJob.KNOWLEDGE_MARK_SOURCES_STALE, {
+    await this.knowledgeQueue.add(QueueJob.KNOWLEDGE_MARK_SOURCES_STALE, {
       workspaceId,
       sourcePageIds: pageIds,
       ...(mode === 'source_artifacts' ? { mode } : {}),
@@ -125,7 +121,7 @@ export class PageListener {
   ): Promise<void> {
     if (!workspaceId || pageIds.length === 0) return;
 
-    await this.aiQueue.add(QueueJob.KNOWLEDGE_REINDEX_ACCESS, {
+    await this.knowledgeQueue.add(QueueJob.KNOWLEDGE_REINDEX_ACCESS, {
       workspaceId,
       sourcePageIds: pageIds,
     });
@@ -142,8 +138,18 @@ export class PageListener {
       pageIds,
     });
 
+    const activeBySpace = new Map<string, boolean>();
     for (const page of pageRefs) {
       if (page.deletedAt) continue;
+      let hasActiveRun = activeBySpace.get(page.spaceId);
+      if (hasActiveRun === undefined) {
+        hasActiveRun = await this.runRepo.hasActiveRun({
+          workspaceId,
+          spaceId: page.spaceId,
+        });
+        activeBySpace.set(page.spaceId, hasActiveRun);
+      }
+      if (hasActiveRun) continue;
       const jobId = buildKnowledgeCompilePageJobId({
         workspaceId,
         spaceId: page.spaceId,
@@ -161,12 +167,13 @@ export class PageListener {
         compilerRunId: jobId,
         compileTaskId: jobId,
       });
-      await this.aiQueue.add(
+      await this.knowledgeQueue.add(
         QueueJob.KNOWLEDGE_COMPILE_PAGES,
         {
           workspaceId,
           spaceId: page.spaceId,
           sourcePageIds: [page.id],
+          trigger: 'page_update',
         },
         {
           delay: KNOWLEDGE_COMPILE_DELAY_MS,

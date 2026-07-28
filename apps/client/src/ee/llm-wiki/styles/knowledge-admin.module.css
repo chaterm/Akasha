@@ -61,3 +61,26 @@
   color: var(--mantine-color-dimmed);
   cursor: help;
 }
+
+.confirmationName {
+  font-family: var(--mantine-font-family-monospace);
+  overflow-wrap: anywhere;
+}
+
+.queueGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--mantine-spacing-sm);
+}
+
+.queueCard {
+  min-width: 0;
+  padding: var(--mantine-spacing-sm);
+  border: 1px solid
+    light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+  border-radius: var(--mantine-radius-sm);
+  background: light-dark(
+    var(--mantine-color-gray-0),
+    var(--mantine-color-dark-6)
+  );
+}

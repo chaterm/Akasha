@@ -2,6 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectKysely } from 'nestjs-kysely';
 import { sql } from 'kysely';
 import { KyselyDB } from '@akasha/db/types/kysely.types';
+import { toSql as vectorToSql } from 'pgvector';
+import {
+  ConfiguredKnowledgeEmbeddingProvider,
+  KnowledgeEmbedding,
+} from './knowledge-embedding-provider.service';
 
 export type KnowledgeVectorIndexResult = 'created' | 'exists' | 'exact-only';
 
@@ -16,7 +21,84 @@ export class KnowledgeVectorIndexService {
     Promise<KnowledgeVectorIndexResult>
   >();
 
-  constructor(@InjectKysely() private readonly db: KyselyDB) {}
+  constructor(
+    @InjectKysely() private readonly db: KyselyDB,
+    private readonly embeddingProvider: ConfiguredKnowledgeEmbeddingProvider,
+  ) {}
+
+  async rebuildSpaceEmbeddings(input: {
+    workspaceId: string;
+    spaceId: string;
+  }): Promise<{ rebuiltChunkCount: number }> {
+    const chunks = await this.findActiveChunksForSpace(input);
+    if (chunks.length === 0) return { rebuiltChunkCount: 0 };
+    const rebuilt: Array<KnowledgeEmbedding & { id: string }> = [];
+
+    for (const chunk of chunks) {
+      const embedding = await this.embeddingProvider.embedQuery(
+        embeddingInput(chunk),
+      );
+      if (!embedding) {
+        throw new Error(
+          `Unable to rebuild embedding for knowledge chunk ${chunk.id}`,
+        );
+      }
+      rebuilt.push({ id: chunk.id, ...embedding });
+    }
+
+    await this.persistRebuiltEmbeddings({ ...input, chunks: rebuilt });
+
+    const profiles = new Map<string, number>();
+    for (const chunk of rebuilt) {
+      profiles.set(chunk.profile, chunk.dimensions);
+    }
+    await Promise.all(
+      [...profiles].map(([profile, dimensions]) =>
+        this.ensureProfileIndex({ profile, dimensions }),
+      ),
+    );
+
+    return { rebuiltChunkCount: rebuilt.length };
+  }
+
+  protected async findActiveChunksForSpace(input: {
+    workspaceId: string;
+    spaceId: string;
+  }): Promise<Array<{ id: string; text: string; headingPath: unknown }>> {
+    return this.db
+      .selectFrom('knowledgeChunks')
+      .select(['id', 'text', 'headingPath'])
+      .where('workspaceId', '=', input.workspaceId)
+      .where('spaceId', '=', input.spaceId)
+      .where('staleAt', 'is', null)
+      .orderBy('id', 'asc')
+      .execute();
+  }
+
+  protected async persistRebuiltEmbeddings(input: {
+    workspaceId: string;
+    spaceId: string;
+    chunks: Array<KnowledgeEmbedding & { id: string }>;
+  }): Promise<void> {
+    await this.db.transaction().execute(async (trx) => {
+      for (const chunk of input.chunks) {
+        await trx
+          .updateTable('knowledgeChunks')
+          .set({
+            embedding: vectorToSql(chunk.vector),
+            embeddingLegacy: chunk.vector,
+            embeddingProfile: chunk.profile,
+            embeddingModel: chunk.model,
+            embeddingDimensions: chunk.dimensions,
+          })
+          .where('id', '=', chunk.id)
+          .where('workspaceId', '=', input.workspaceId)
+          .where('spaceId', '=', input.spaceId)
+          .where('staleAt', 'is', null)
+          .execute();
+      }
+    });
+  }
 
   async ensureProfileIndex(input: {
     profile: string;
@@ -99,4 +181,15 @@ function indexIdentifier(input: {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function embeddingInput(chunk: { text: string; headingPath: unknown }): string {
+  const headingPath = Array.isArray(chunk.headingPath)
+    ? chunk.headingPath.filter(
+        (value): value is string => typeof value === 'string' && Boolean(value),
+      )
+    : [];
+  return headingPath.length > 0
+    ? `${headingPath.join(' > ')}\n\n${chunk.text}`
+    : chunk.text;
 }

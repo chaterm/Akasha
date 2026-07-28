@@ -62,7 +62,15 @@ import { GeneralQueueProcessor } from './processors/general-queue.processor';
       },
     }),
     BullModule.registerQueue({
-      name: QueueName.AI_QUEUE,
+      name: QueueName.KNOWLEDGE_TEXT_QUEUE,
+      defaultJobOptions: {
+        removeOnComplete: true,
+        removeOnFail: true,
+        attempts: 1,
+      },
+    }),
+    BullModule.registerQueue({
+      name: QueueName.KNOWLEDGE_IMAGE_QUEUE,
       defaultJobOptions: {
         removeOnComplete: true,
         removeOnFail: true,

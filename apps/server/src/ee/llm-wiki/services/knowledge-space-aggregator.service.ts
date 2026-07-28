@@ -1,6 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { KnowledgeCapsuleRepo } from '@akasha/db/repos/llm-wiki/knowledge-capsule.repo';
 import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
 import {
   KnowledgeCompilerLlmError,
@@ -11,14 +10,9 @@ import { KNOWLEDGE_COMPILER_LLM_PROVIDER } from '../llm-wiki.constants';
 import { CompiledKnowledgeArtifact } from '../types/compiler-artifact.types';
 import { KnowledgeSourceRef } from '../types/knowledge.types';
 import { KnowledgeImportService } from './knowledge-import.service';
+import { KnowledgeArtifactCatalogService } from './knowledge-artifact-catalog.service';
 import { KnowledgeLinkResolverService } from './knowledge-link-resolver.service';
 
-const PAGE_ARTIFACT_KINDS = new Set([
-  'source_summary',
-  'concept',
-  'entity',
-  'comparison',
-]);
 const MAX_AGGREGATE_PROMPT_ARTIFACTS = 100;
 const MAX_AGGREGATE_PROMPT_CHARS = 120_000;
 
@@ -26,7 +20,7 @@ const MAX_AGGREGATE_PROMPT_CHARS = 120_000;
 export class KnowledgeSpaceAggregatorService {
   constructor(
     private readonly runRepo: KnowledgeSpaceCompilationRepo,
-    private readonly capsuleRepo: KnowledgeCapsuleRepo,
+    private readonly artifactCatalog: KnowledgeArtifactCatalogService,
     @Inject(KNOWLEDGE_COMPILER_LLM_PROVIDER)
     private readonly provider: KnowledgeCompilerLlmProvider,
     private readonly importService: KnowledgeImportService,
@@ -37,44 +31,21 @@ export class KnowledgeSpaceAggregatorService {
     runId: string;
     workspaceId: string;
     spaceId: string;
+    phase?: 'initial_aggregate' | 'final_aggregate';
   }) {
-    const run = await this.runRepo.startAggregation(input.runId);
+    const requestedPhase = input.phase ?? 'initial_aggregate';
+    const run = await this.runRepo.startAggregation(
+      input.runId,
+      requestedPhase,
+    );
     if (!run) {
       return emptyAggregateResult();
     }
-    const candidates = await this.capsuleRepo.findGraphCandidatesForSpace({
+    const aggregateInput = await this.artifactCatalog.aggregateInput({
       workspaceId: input.workspaceId,
       spaceId: input.spaceId,
-      limit: 5_000,
     });
-    const pages = candidates.pages
-      .filter(
-        (page) =>
-          page.canonicalKey &&
-          page.pageType &&
-          PAGE_ARTIFACT_KINDS.has(page.pageType),
-      )
-      .sort((a, b) =>
-        `${a.pageType}:${a.canonicalKey}`.localeCompare(
-          `${b.pageType}:${b.canonicalKey}`,
-          'en',
-        ),
-      );
-    const sourceRefsByArtifact = new Map<string, KnowledgeSourceRef[]>();
-    for (const source of candidates.pageSources) {
-      const refs = sourceRefsByArtifact.get(source.knowledgePageId) ?? [];
-      refs.push({
-        workspaceId: input.workspaceId,
-        spaceId: input.spaceId,
-        sourcePageId: source.sourcePageId,
-        sourceVersion: source.sourceVersion,
-        contentHash: source.contentHash,
-      });
-      sourceRefsByArtifact.set(source.knowledgePageId, refs);
-    }
-    const allSourceRefs = uniqueSourceRefs(
-      pages.flatMap((page) => sourceRefsByArtifact.get(page.id) ?? []),
-    );
+    const { pages, sourceRefsByArtifact, allSourceRefs } = aggregateInput;
 
     if (pages.length === 0 || allSourceRefs.length === 0) {
       const retirement = await this.importService.importCompileResult({
@@ -95,6 +66,8 @@ export class KnowledgeSpaceAggregatorService {
               runId: input.runId,
               workspaceId: input.workspaceId,
               spaceId: input.spaceId,
+              knowledgeGeneration: run.knowledgeGeneration,
+              allowedPhases: ['text', 'initial_aggregate', 'final_aggregate'],
             },
             trx,
           ),
@@ -106,6 +79,8 @@ export class KnowledgeSpaceAggregatorService {
         runId: input.runId,
         importedArtifactCount: 0,
         quarantinedArtifactCount: 0,
+        catalogHash: aggregateInput.fingerprint.hash,
+        phase: run.phase as 'initial_aggregate' | 'final_aggregate',
       });
       return { importedArtifactCount: 0, quarantinedArtifactCount: 0 };
     }
@@ -178,6 +153,8 @@ export class KnowledgeSpaceAggregatorService {
             runId: input.runId,
             workspaceId: input.workspaceId,
             spaceId: input.spaceId,
+            knowledgeGeneration: run.knowledgeGeneration,
+            allowedPhases: ['text', 'initial_aggregate', 'final_aggregate'],
           },
           trx,
         ),
@@ -193,6 +170,8 @@ export class KnowledgeSpaceAggregatorService {
       runId: input.runId,
       importedArtifactCount: result.importedArtifactCount,
       quarantinedArtifactCount: result.quarantinedArtifactCount,
+      catalogHash: aggregateInput.fingerprint.hash,
+      phase: run.phase as 'initial_aggregate' | 'final_aggregate',
     });
     return result;
   }
@@ -326,19 +305,6 @@ function buildOverviewArtifact(input: {
     graphEdges: [],
     rawArtifactKey: 'overview:overview',
   };
-}
-
-function uniqueSourceRefs(refs: KnowledgeSourceRef[]): KnowledgeSourceRef[] {
-  const byKey = new Map<string, KnowledgeSourceRef>();
-  for (const ref of refs) {
-    byKey.set(
-      `${ref.sourcePageId}:${ref.sourceVersion}:${ref.contentHash}`,
-      ref,
-    );
-  }
-  return [...byKey.values()].sort((a, b) =>
-    a.sourcePageId.localeCompare(b.sourcePageId, 'en'),
-  );
 }
 
 function stableUuid(value: string): string {

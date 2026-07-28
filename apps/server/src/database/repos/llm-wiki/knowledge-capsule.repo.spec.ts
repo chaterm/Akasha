@@ -202,6 +202,33 @@ describe('KnowledgeCapsuleRepo', () => {
     );
   });
 
+  it('filters aggregate page kinds before the stable 5,000-row limit', async () => {
+    const { repo, queries } = createSqlRepo();
+
+    await repo.findAggregateCandidatesForSpace({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      limit: 5_000,
+    });
+
+    const pageQuery = queries[0].sql.toLowerCase().replace(/\s+/g, ' ');
+    expect(pageQuery).toContain('"canonical_key" is not null');
+    expect(pageQuery).toContain('"page_type" in');
+    expect(queries[0].parameters).toEqual(
+      expect.arrayContaining([
+        'source_summary',
+        'concept',
+        'entity',
+        'comparison',
+        5_000,
+      ]),
+    );
+    expect(pageQuery).toContain(
+      'order by "page_type" asc, "canonical_key" asc, "id" asc limit',
+    );
+    expect(pageQuery).not.toContain('updated_at');
+  });
+
   it('applies complete-source authorization before dense candidate limits', async () => {
     const { repo, queries } = createSqlRepo();
 

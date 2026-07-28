@@ -117,11 +117,8 @@ export interface IApprovalRejectedNotificationJob {
 export interface IKnowledgeCompileSpaceJob {
   workspaceId: string;
   spaceId: string;
-  trigger?:
-    | 'manual_compile'
-    | 'retry_compile'
-    | 'rebuild_embeddings'
-    | 'page_update';
+  confirmationSpaceName?: string;
+  trigger?: 'manual_compile' | 'retry_compile' | 'page_update';
 }
 
 export interface IKnowledgeCompilePagesJob {
@@ -131,19 +128,56 @@ export interface IKnowledgeCompilePagesJob {
   sourceVersion?: string;
   sourceContentHash?: string;
   spaceRunId?: string;
+  knowledgeGeneration?: number;
   trigger?:
     | 'manual_compile'
     | 'retry_compile'
-    | 'rebuild_embeddings'
     | 'page_update'
     | 'page_created'
     | 'page_restored';
+}
+
+export interface IKnowledgeCompilePageImagesJob {
+  workspaceId: string;
+  spaceId: string;
+  sourcePageId: string;
+  sourceVersion: string;
+  sourceContentHash: string;
+  spaceRunId?: string;
+  knowledgeGeneration: number;
+  images: Array<{
+    attachmentId: string;
+    fileName: string;
+    mimeType:
+      | 'image/jpeg'
+      | 'image/png'
+      | 'image/apng'
+      | 'image/gif'
+      | 'image/webp'
+      | 'image/avif'
+      | 'image/tiff'
+      | 'image/bmp';
+    fileSize: number | null;
+    attachmentVersion: string;
+    altText?: string;
+  }>;
+}
+
+export interface IKnowledgeMergePageImagesJob extends IKnowledgeCompilePageImagesJob {
+  effectiveKnowledgeHash: string;
 }
 
 export interface IKnowledgeAggregateSpaceJob {
   workspaceId: string;
   spaceId: string;
   spaceRunId: string;
+  knowledgeGeneration: number;
+  phase?: 'initial_aggregate' | 'final_aggregate';
+}
+
+export interface IKnowledgeRebuildEmbeddingsJob {
+  workspaceId: string;
+  spaceId: string;
 }
 
 export interface IKnowledgeReindexAccessJob {

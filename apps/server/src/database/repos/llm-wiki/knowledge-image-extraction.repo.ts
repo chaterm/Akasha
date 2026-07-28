@@ -8,6 +8,7 @@ import { KyselyDB } from '@akasha/db/types/kysely.types';
 export type KnowledgeImageExtractionCacheKey = {
   workspaceId: string;
   attachmentId: string;
+  attachmentVersion: Date;
   cacheFingerprint: string;
   contentHash: string;
   model: string;
@@ -51,6 +52,14 @@ export type KnowledgeImageExtractionFailureInput = {
   retryAfter?: Date | null;
 };
 
+export type CurrentReadyKnowledgeImageExtraction = KnowledgeImageExtraction & {
+  attachmentVersion: Date | null;
+  currentAttachmentVersion: Date;
+  attachmentWorkspaceId: string;
+  attachmentSpaceId: string | null;
+  attachmentPageId: string | null;
+};
+
 const CACHE_KEY_COLUMNS = [
   'workspaceId',
   'attachmentId',
@@ -76,6 +85,84 @@ export class KnowledgeImageExtractionRepo {
       .executeTakeFirst();
   }
 
+  async findCurrentReadyForSnapshotImages(input: {
+    workspaceId: string;
+    spaceId: string;
+    images: Array<{
+      sourcePageId: string;
+      attachmentId: string;
+      attachmentVersion: string;
+    }>;
+    model: string;
+    promptVersion: string;
+  }): Promise<CurrentReadyKnowledgeImageExtraction[]> {
+    if (input.images.length === 0) return [];
+    const attachmentIds = [
+      ...new Set(input.images.map((image) => image.attachmentId)),
+    ];
+    const expectedOwnership = new Map(
+      input.images.map((image) => [
+        image.attachmentId,
+        `${image.sourcePageId}\u001f${image.attachmentVersion}`,
+      ]),
+    );
+
+    const rows = await this.db
+      .selectFrom('knowledgeImageExtractions as extraction')
+      .innerJoin(
+        'attachments as attachment',
+        'attachment.id',
+        'extraction.attachmentId',
+      )
+      .selectAll('extraction')
+      .select([
+        'attachment.updatedAt as currentAttachmentVersion',
+        'attachment.workspaceId as attachmentWorkspaceId',
+        'attachment.spaceId as attachmentSpaceId',
+        'attachment.pageId as attachmentPageId',
+      ])
+      .distinctOn('extraction.attachmentId')
+      .where('extraction.workspaceId', '=', input.workspaceId)
+      .where('extraction.attachmentId', 'in', attachmentIds)
+      .where('extraction.status', '=', 'ready')
+      .where('extraction.model', '=', input.model)
+      .where('extraction.promptVersion', '=', input.promptVersion)
+      .where('extraction.cacheFingerprint', '!=', '')
+      .where('extraction.contentHash', '!=', '')
+      .where('attachment.workspaceId', '=', input.workspaceId)
+      .where('attachment.spaceId', '=', input.spaceId)
+      .where('attachment.deletedAt', 'is', null)
+      .where('extraction.attachmentVersion', 'is not', null)
+      .where(
+        sql<boolean>`date_trunc('milliseconds', extraction.attachment_version) = date_trunc('milliseconds', attachment.updated_at)`,
+      )
+      .where(
+        sql<boolean>`(
+          length(trim(coalesce(extraction.ocr_text, ''))) > 0
+          OR length(trim(coalesce(extraction.caption, ''))) > 0
+        )`,
+      )
+      .orderBy('extraction.attachmentId', 'asc')
+      .orderBy('extraction.updatedAt', 'desc')
+      .orderBy('extraction.id', 'desc')
+      .execute();
+    return rows.filter((row) => {
+      const expected = expectedOwnership.get(row.attachmentId);
+      return (
+        expected ===
+          `${row.attachmentPageId ?? ''}\u001f${row.currentAttachmentVersion.toISOString()}` &&
+        row.attachmentVersion?.toISOString() ===
+          row.currentAttachmentVersion.toISOString() &&
+        row.status === 'ready' &&
+        row.model === input.model &&
+        row.promptVersion === input.promptVersion &&
+        Boolean(row.cacheFingerprint.trim()) &&
+        Boolean(row.contentHash.trim()) &&
+        Boolean(row.ocrText?.trim() || row.caption?.trim())
+      );
+    });
+  }
+
   /**
    * Atomically claims a cache key. Only the lease owner may publish a result.
    * A crashed worker can be replaced after its lease expires, and retryable
@@ -88,6 +175,28 @@ export class KnowledgeImageExtractionRepo {
     const leaseToken = randomUUID();
     const leaseExpiresAt = sql<Date>`now() + (${leaseMs} * interval '1 millisecond')`;
     const updatedAt = new Date();
+
+    // The caller has already re-read and validated ownership plus image bytes.
+    // Refresh the durable attachment version before reusing an otherwise
+    // identical ready cache entry.
+    const validatedReady = await this.db
+      .updateTable('knowledgeImageExtractions')
+      .set({
+        attachmentVersion: input.attachmentVersion,
+        updatedAt,
+      })
+      .where('workspaceId', '=', input.workspaceId)
+      .where('attachmentId', '=', input.attachmentId)
+      .where('cacheFingerprint', '=', input.cacheFingerprint)
+      .where('status', '=', 'ready')
+      .where('contentHash', '=', input.contentHash)
+      .where('model', '=', input.model)
+      .where('promptVersion', '=', input.promptVersion)
+      .returningAll()
+      .executeTakeFirst();
+    if (validatedReady) {
+      return { state: 'ready', extraction: validatedReady };
+    }
 
     const claimed = await this.db
       .insertInto('knowledgeImageExtractions')
@@ -122,6 +231,7 @@ export class KnowledgeImageExtractionRepo {
             leaseExpiresAt,
             retryable: null,
             retryAfter: null,
+            attachmentVersion: input.attachmentVersion,
             attemptCount: sql<number>`knowledge_image_extractions.attempt_count + 1`,
             updatedAt,
           })

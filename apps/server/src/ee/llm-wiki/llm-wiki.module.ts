@@ -16,7 +16,8 @@ import { KnowledgeQualityService } from './services/knowledge-quality.service';
 import { KnowledgeGraphService } from './services/knowledge-graph.service';
 import { AiKnowledgeChatService } from './services/ai-knowledge-chat.service';
 import { ConfiguredKnowledgeAnswerProvider } from './services/knowledge-answer-provider.service';
-import { LlmWikiProcessor } from './processors/llm-wiki.processor';
+import { KnowledgeTextProcessor } from './processors/knowledge-text.processor';
+import { KnowledgeImageProcessor } from './processors/knowledge-image.processor';
 import {
   KNOWLEDGE_ANSWER_PROVIDER,
   KNOWLEDGE_COMPILER_ADAPTER,
@@ -38,6 +39,8 @@ import { KnowledgeSpaceAggregatorService } from './services/knowledge-space-aggr
 import { KnowledgeLinkResolverService } from './services/knowledge-link-resolver.service';
 import { ConfiguredKnowledgeImageUnderstandingProvider } from './services/knowledge-image-understanding-provider.service';
 import { KnowledgeImageEnrichmentService } from './services/knowledge-image-enrichment.service';
+import { KnowledgeSpaceResetService } from './services/knowledge-space-reset.service';
+import { KnowledgeTextJobHandler } from './services/knowledge-text-job.handler';
 
 @Module({
   imports: [NoopAuditModule, ReviewModule],
@@ -67,7 +70,9 @@ import { KnowledgeImageEnrichmentService } from './services/knowledge-image-enri
     KnowledgeArtifactMaterializerService,
     KnowledgeArtifactCatalogService,
     KnowledgeSpaceCompilationService,
+    KnowledgeSpaceResetService,
     KnowledgeSpaceAggregatorService,
+    KnowledgeTextJobHandler,
     KnowledgeLinkResolverService,
     {
       provide: KNOWLEDGE_ANSWER_PROVIDER,
@@ -91,7 +96,8 @@ import { KnowledgeImageEnrichmentService } from './services/knowledge-image-enri
       provide: KNOWLEDGE_COMPILER_ADAPTER,
       useExisting: LlmWikiFileCompilerAdapter,
     },
-    LlmWikiProcessor,
+    KnowledgeTextProcessor,
+    KnowledgeImageProcessor,
   ],
   exports: [
     KnowledgeSourceAuthorizationService,

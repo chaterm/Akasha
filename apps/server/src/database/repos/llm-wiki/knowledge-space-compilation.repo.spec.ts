@@ -21,6 +21,8 @@ class FakeKyselyQuery {
       requestOrderedRun?: { queuedAt: Date } & Record<string, unknown>;
       supersededPageJobs?: unknown[];
       supersededAggregateJobs?: unknown[];
+      spaceGeneration?: number;
+      spaceName?: string | null;
     } = {},
   ) {}
 
@@ -127,7 +129,13 @@ class FakeKyselyQuery {
 
   async executeTakeFirstOrThrow() {
     this.calls.push({ method: 'executeTakeFirstOrThrow', args: [] });
-    if (this.table === 'spaces') return { id: 'space-1' };
+    if (this.table === 'spaces') {
+      return {
+        id: 'space-1',
+        knowledgeGeneration: this.fixtures.spaceGeneration ?? 0,
+        name: this.fixtures.spaceName ?? 'Space 1',
+      };
+    }
     return this.table === 'knowledgeSpaceCompileRuns'
       ? (this.fixtures.insertedRun ?? { id: 'run-1', status: 'queued' })
       : undefined;
@@ -135,6 +143,13 @@ class FakeKyselyQuery {
 
   async executeTakeFirst() {
     this.calls.push({ method: 'executeTakeFirst', args: [] });
+    if (this.table === 'spaces') {
+      return {
+        id: 'space-1',
+        knowledgeGeneration: this.fixtures.spaceGeneration ?? 0,
+        name: this.fixtures.spaceName ?? 'Space 1',
+      };
+    }
     if (
       this.operation === 'select' &&
       this.table === 'knowledgeSpaceCompileRuns' &&
@@ -282,6 +297,7 @@ describe('KnowledgeSpaceCompilationRepo', () => {
       }),
     ).resolves.toEqual({
       created: false,
+      reason: 'newer_run',
       run: newerRun,
       supersededRunIds: [],
       supersededJobIds: [],
@@ -361,6 +377,7 @@ describe('KnowledgeSpaceCompilationRepo', () => {
         { runId: 'run-old-1', jobId: null },
         { runId: 'run-old-2', jobId: 'page-job-old-2' },
       ],
+      spaceGeneration: 7,
     });
     const repo = new KnowledgeSpaceCompilationRepo(query as never);
 
@@ -369,6 +386,7 @@ describe('KnowledgeSpaceCompilationRepo', () => {
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
         trigger: 'manual_compile',
+        mode: 'force_rebuild',
         compilerVersion: 'compiler-v1',
         promptVersion: 'prompt-v1',
         catalogSnapshot: [],
@@ -378,6 +396,8 @@ describe('KnowledgeSpaceCompilationRepo', () => {
             sourcePageId: 'page-1',
             sourceVersion: 'v1',
             sourceContentHash: 'hash-1',
+            expectedImageCount: 2,
+            targetEffectiveKnowledgeHash: 'effective-hash-1',
           },
           {
             sourcePageId: 'page-2',
@@ -396,6 +416,7 @@ describe('KnowledgeSpaceCompilationRepo', () => {
     expect(query.calls).toEqual(
       expect.arrayContaining([
         { method: 'selectFrom', args: ['spaces'] },
+        { method: 'select', args: [['knowledgeGeneration', 'name']] },
         { method: 'where', args: ['id', '=', 'space-1'] },
         { method: 'where', args: ['workspaceId', '=', 'workspace-1'] },
         { method: 'forUpdate', args: [] },
@@ -421,6 +442,9 @@ describe('KnowledgeSpaceCompilationRepo', () => {
         status: 'queued',
         expectedPageCount: 2,
         catalogHash: 'catalog-hash',
+        mode: 'force_rebuild',
+        knowledgeGeneration: 7,
+        phase: 'text',
       }),
     );
     expect(values[1]).toEqual([
@@ -428,11 +452,18 @@ describe('KnowledgeSpaceCompilationRepo', () => {
         runId: 'run-1',
         sourcePageId: 'page-1',
         status: 'pending',
+        expectedImageCount: 2,
+        imageStatus: 'pending',
+        mergeStatus: 'waiting_images',
+        targetEffectiveKnowledgeHash: 'effective-hash-1',
       }),
       expect.objectContaining({
         runId: 'run-1',
         sourcePageId: 'page-2',
         status: 'pending',
+        expectedImageCount: 0,
+        imageStatus: 'not_required',
+        mergeStatus: 'not_required',
       }),
     ]);
 
@@ -454,6 +485,203 @@ describe('KnowledgeSpaceCompilationRepo', () => {
           status: 'superseded',
           skippedPageCount: 1,
         }),
+      ]),
+    );
+  });
+
+  it('compares the confirmation byte-for-byte under the Space lock before changing runs', async () => {
+    const query = new FakeKyselyQuery(undefined, [], {
+      spaceName: 'AIM-运维-公共文档',
+      oldRuns: [],
+    });
+    const repo = new KnowledgeSpaceCompilationRepo(query as never);
+
+    await expect(
+      repo.createRun({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        confirmationSpaceName: ' AIM-运维-公共文档',
+        trigger: 'manual_compile',
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+        catalogSnapshot: [],
+        catalogHash: 'catalog-hash',
+        sources: [],
+      }),
+    ).resolves.toEqual({
+      created: false,
+      reason: 'space_name_mismatch',
+      run: null,
+      supersededRunIds: [],
+      supersededJobIds: [],
+    });
+
+    expect(query.calls.some((call) => call.method === 'insertInto')).toBe(
+      false,
+    );
+    expect(query.calls).toEqual(
+      expect.arrayContaining([
+        { method: 'forUpdate', args: [] },
+        { method: 'where', args: ['workspaceId', '=', 'workspace-1'] },
+      ]),
+    );
+  });
+
+  it('initializes a mixed incremental run from durable terminal page states', async () => {
+    const query = new FakeKyselyQuery(undefined, [], {
+      insertedRun: { id: 'run-1', status: 'queued' },
+    });
+    const repo = new KnowledgeSpaceCompilationRepo(query as never);
+    const reused = Array.from({ length: 999 }, (_, index) => ({
+      sourcePageId: `reused-${index}`,
+      sourceVersion: 'v1',
+      sourceContentHash: `hash-${index}`,
+      status: 'skipped',
+      errorCode: 'unchanged',
+      errorMessage: 'Existing compiled knowledge is current.',
+    }));
+
+    await repo.createRun({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      trigger: 'manual_compile',
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+      catalogSnapshot: [],
+      catalogHash: 'catalog-hash',
+      aggregateRequired: true,
+      sources: [
+        ...reused,
+        {
+          sourcePageId: 'changed-page',
+          sourceVersion: 'v2',
+          sourceContentHash: 'changed-hash',
+          status: 'pending',
+        },
+      ],
+    } as never);
+
+    const values = query.calls
+      .filter((call) => call.method === 'values')
+      .map((call) => call.args[0]);
+    expect(values[0]).toEqual(
+      expect.objectContaining({
+        status: 'queued',
+        expectedPageCount: 1_000,
+        succeededPageCount: 0,
+        failedPageCount: 0,
+        skippedPageCount: 999,
+      }),
+    );
+    expect(values[1]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourcePageId: 'reused-0',
+          status: 'skipped',
+          errorCode: 'unchanged',
+          finishedAt: expect.any(Date),
+        }),
+        expect.objectContaining({
+          sourcePageId: 'changed-page',
+          status: 'pending',
+          finishedAt: null,
+        }),
+      ]),
+    );
+  });
+
+  it('completes a fully reused run atomically when its aggregate is reusable', async () => {
+    const query = new FakeKyselyQuery(undefined, [], {
+      insertedRun: { id: 'run-1', status: 'succeeded', phase: 'complete' },
+    });
+    const repo = new KnowledgeSpaceCompilationRepo(query as never);
+
+    await repo.createRun({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      trigger: 'manual_compile',
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+      catalogSnapshot: [],
+      catalogHash: 'catalog-hash',
+      aggregateRequired: false,
+      sources: Array.from({ length: 2_000 }, (_, index) => ({
+        sourcePageId: `page-${index}`,
+        sourceVersion: 'v1',
+        sourceContentHash: `hash-${index}`,
+        status: 'skipped',
+        errorCode: 'unchanged',
+        errorMessage: 'Existing compiled knowledge is current.',
+      })),
+    } as never);
+
+    const runValues = query.calls.find(
+      (call) =>
+        call.method === 'values' &&
+        !Array.isArray(call.args[0]) &&
+        (call.args[0] as { trigger?: string }).trigger === 'manual_compile',
+    )?.args[0];
+    expect(runValues).toEqual(
+      expect.objectContaining({
+        status: 'succeeded',
+        phase: 'complete',
+        expectedPageCount: 2_000,
+        skippedPageCount: 2_000,
+        startedAt: expect.any(Date),
+        finishedAt: expect.any(Date),
+      }),
+    );
+  });
+
+  it('stores the post-publication aggregate fingerprint and complete phase', async () => {
+    const query = new FakeKyselyQuery();
+    const repo = new KnowledgeSpaceCompilationRepo(query as never);
+
+    await repo.completeAggregation({
+      runId: 'run-1',
+      importedArtifactCount: 4,
+      quarantinedArtifactCount: 1,
+      catalogHash: 'sha256:post-publication',
+      phase: 'final_aggregate',
+    });
+
+    const update = query.calls.find((call) => call.method === 'set')?.args[0];
+    expect(update).toEqual(
+      expect.objectContaining({
+        phase: 'complete',
+        catalogHash: 'sha256:post-publication',
+        importedArtifactCount: 4,
+        quarantinedArtifactCount: 1,
+      }),
+    );
+    expect(query.calls).toEqual(
+      expect.arrayContaining([
+        { method: 'where', args: ['id', '=', 'run-1'] },
+        { method: 'where', args: ['status', '=', 'aggregating'] },
+      ]),
+    );
+  });
+
+  it('allows the same aggregate job to resume after a crash changed the run to aggregating', async () => {
+    const query = new FakeKyselyQuery({
+      id: 'run-1',
+      status: 'aggregating',
+    });
+    const repo = new KnowledgeSpaceCompilationRepo(query as never);
+
+    await expect(
+      repo.startAggregation('run-1', 'initial_aggregate'),
+    ).resolves.toEqual({
+      id: 'run-1',
+      status: 'aggregating',
+    });
+
+    expect(query.calls).toEqual(
+      expect.arrayContaining([
+        {
+          method: 'where',
+          args: ['status', 'in', ['aggregate_pending', 'aggregating']],
+        },
       ]),
     );
   });
@@ -491,7 +719,8 @@ describe('KnowledgeSpaceCompilationRepo', () => {
 
   it('checks the run fence while holding the space publication lock', async () => {
     const trx = new FakeKyselyQuery(undefined, [], {
-      activeRun: { id: 'run-1' },
+      spaceGeneration: 4,
+      activeRun: { id: 'run-1', knowledgeGeneration: 4, phase: 'text' },
     });
     const repo = new KnowledgeSpaceCompilationRepo({} as never);
 
@@ -501,6 +730,8 @@ describe('KnowledgeSpaceCompilationRepo', () => {
           runId: 'run-1',
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
+          knowledgeGeneration: 4,
+          allowedPhases: ['text'],
         },
         trx as never,
       ),
@@ -510,7 +741,7 @@ describe('KnowledgeSpaceCompilationRepo', () => {
       expect.arrayContaining([
         { method: 'selectFrom', args: ['spaces'] },
         { method: 'forUpdate', args: [] },
-        { method: 'where', args: ['id', '=', 'run-1'] },
+        { method: 'orderBy', args: ['createdAt', 'desc'] },
         {
           method: 'where',
           args: [
@@ -521,6 +752,27 @@ describe('KnowledgeSpaceCompilationRepo', () => {
         },
       ]),
     );
+  });
+
+  it('rejects publication from a stale generation under the Space lock', async () => {
+    const trx = new FakeKyselyQuery(undefined, [], {
+      spaceGeneration: 5,
+      activeRun: { id: 'run-old', knowledgeGeneration: 4, phase: 'text' },
+    });
+    const repo = new KnowledgeSpaceCompilationRepo({} as never);
+
+    await expect(
+      repo.isRunActiveForPublication(
+        {
+          runId: 'run-old',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          knowledgeGeneration: 4,
+          allowedPhases: ['text'],
+        },
+        trx as never,
+      ),
+    ).resolves.toBe(false);
   });
 
   it('finds an active run by workspace and space for retry conflict checks', async () => {
@@ -690,6 +942,7 @@ describe('KnowledgeSpaceCompilationRepo', () => {
     await expect(
       repo.markAggregationQueued({
         runId: 'run-1',
+        phase: 'initial_aggregate',
         jobId: 'knowledge-aggregate-space:run-1',
       }),
     ).resolves.toBe(true);
@@ -702,10 +955,6 @@ describe('KnowledgeSpaceCompilationRepo', () => {
       method: 'where',
       args: ['status', '!=', 'superseded'],
     });
-    expect(query.calls).not.toContainEqual({
-      method: 'where',
-      args: ['status', '=', 'aggregate_pending'],
-    });
   });
 
   it('reports a failed aggregate outbox mark after the run is superseded', async () => {
@@ -715,6 +964,7 @@ describe('KnowledgeSpaceCompilationRepo', () => {
     await expect(
       repo.markAggregationQueued({
         runId: 'run-1',
+        phase: 'initial_aggregate',
         jobId: 'knowledge-aggregate-space:run-1',
       }),
     ).resolves.toBe(false);

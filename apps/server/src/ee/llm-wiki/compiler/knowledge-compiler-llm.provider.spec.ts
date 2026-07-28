@@ -244,6 +244,139 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     );
   });
 
+  it('classifies a retry-wrapped provider rate limit from the last error', async () => {
+    (createOpenAI as jest.Mock).mockReturnValue(
+      jest.fn().mockReturnValue('compiler-model'),
+    );
+    const upstream = Object.assign(new Error('private quota detail'), {
+      name: 'AI_APICallError',
+      statusCode: 429,
+      isRetryable: true,
+      data: {
+        error: {
+          code: 'Throttling',
+          type: 'rate_limit_error',
+          message: 'private quota detail',
+        },
+      },
+      responseHeaders: { 'x-request-id': 'request-429' },
+    });
+    (generateText as jest.Mock).mockRejectedValue(
+      Object.assign(new Error('private retry wrapper detail'), {
+        name: 'AI_RetryError',
+        reason: 'maxRetriesExceeded',
+        errors: [upstream, upstream, upstream],
+        lastError: upstream,
+      }),
+    );
+
+    await expect(
+      createProvider({ aiDriver: 'openai' }).analyze({
+        system: 'system',
+        prompt: 'prompt',
+      }),
+    ).rejects.toMatchObject({
+      code: 'rate_limited',
+      retryable: true,
+      message: 'Knowledge compiler provider rate limit was exceeded.',
+      diagnostic: {
+        wrapperName: 'AI_RetryError',
+        upstreamName: 'AI_APICallError',
+        statusCode: 429,
+        providerCode: 'Throttling',
+        providerType: 'rate_limit_error',
+        requestId: 'request-429',
+        retryReason: 'maxRetriesExceeded',
+        sdkAttempts: 3,
+      },
+    });
+  });
+
+  it('keeps retry-wrapped provider input errors non-retryable and diagnostic', async () => {
+    (createOpenAI as jest.Mock).mockReturnValue(
+      jest.fn().mockReturnValue('compiler-model'),
+    );
+    const upstream = Object.assign(new Error('private context detail'), {
+      name: 'AI_APICallError',
+      statusCode: 400,
+      isRetryable: false,
+      data: {
+        error: {
+          code: 'InvalidParameter',
+          type: 'invalid_request_error',
+          message: 'private context detail',
+        },
+      },
+      responseHeaders: { 'x-dashscope-request-id': 'request-400' },
+    });
+    (generateText as jest.Mock).mockRejectedValue(
+      Object.assign(new Error('private retry wrapper detail'), {
+        name: 'AI_RetryError',
+        reason: 'errorNotRetryable',
+        errors: [upstream],
+        lastError: upstream,
+      }),
+    );
+
+    await expect(
+      createProvider({ aiDriver: 'openai' }).analyze({
+        system: 'system',
+        prompt: 'prompt',
+      }),
+    ).rejects.toMatchObject({
+      code: 'provider_error',
+      retryable: false,
+      message: 'Knowledge compiler provider request failed.',
+      diagnostic: {
+        statusCode: 400,
+        providerCode: 'InvalidParameter',
+        providerType: 'invalid_request_error',
+        requestId: 'request-400',
+        sdkAttempts: 1,
+      },
+    });
+  });
+
+  it('classifies a retry-wrapped timeout from the upstream cause', async () => {
+    (createOpenAI as jest.Mock).mockReturnValue(
+      jest.fn().mockReturnValue('compiler-model'),
+    );
+    const timeout = Object.assign(new Error('private timeout detail'), {
+      name: 'TimeoutError',
+      code: 'UND_ERR_CONNECT_TIMEOUT',
+    });
+    const upstream = Object.assign(new Error('private API detail'), {
+      name: 'AI_APICallError',
+      cause: timeout,
+      isRetryable: true,
+    });
+    (generateText as jest.Mock).mockRejectedValue(
+      Object.assign(new Error('private retry wrapper detail'), {
+        name: 'AI_RetryError',
+        reason: 'maxRetriesExceeded',
+        errors: [upstream, upstream],
+        lastError: upstream,
+      }),
+    );
+
+    await expect(
+      createProvider({ aiDriver: 'openai' }).analyze({
+        system: 'system',
+        prompt: 'prompt',
+      }),
+    ).rejects.toMatchObject({
+      code: 'timeout',
+      retryable: true,
+      message: 'Knowledge compiler provider timed out.',
+      diagnostic: {
+        wrapperName: 'AI_RetryError',
+        upstreamName: 'AI_APICallError',
+        upstreamCode: 'UND_ERR_CONNECT_TIMEOUT',
+        sdkAttempts: 2,
+      },
+    });
+  });
+
   it('classifies schema validation failures without exposing model output', async () => {
     (createOpenAI as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),

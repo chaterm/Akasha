@@ -6,6 +6,10 @@ export type SemanticCompilerMessages = {
   prompt: string;
 };
 
+const MAX_PROMPT_CATALOG_ENTRIES = 100;
+const MAX_PROMPT_CATALOG_CHARS = 32_000;
+const MAX_PROMPT_CATALOG_SUMMARY_CHARS = 240;
+
 export function buildSemanticAnalysisMessages(input: {
   sourceTitle: string;
   sourceText: string;
@@ -13,6 +17,11 @@ export function buildSemanticAnalysisMessages(input: {
   schema?: string;
   catalog?: KnowledgeArtifactCatalogEntry[];
 }): SemanticCompilerMessages {
+  const promptCatalog = selectPromptCatalog({
+    catalog: input.catalog,
+    sourceTitle: input.sourceTitle,
+    sourceText: input.sourceText,
+  });
   return {
     system: [
       'You are the analysis stage of a knowledge compiler.',
@@ -32,7 +41,7 @@ export function buildSemanticAnalysisMessages(input: {
         'Supported page kinds: source_summary, entity, concept, comparison.',
       '</wiki_schema>',
       '<existing_catalog>',
-      JSON.stringify(input.catalog ?? []),
+      JSON.stringify(promptCatalog),
       '</existing_catalog>',
       '<source_document>',
       JSON.stringify({ title: input.sourceTitle, text: input.sourceText }),
@@ -54,6 +63,12 @@ export function buildSemanticGenerationMessages(input: {
   schema?: string;
   catalog?: KnowledgeArtifactCatalogEntry[];
 }): SemanticCompilerMessages {
+  const promptCatalog = selectPromptCatalog({
+    catalog: input.catalog,
+    sourceTitle: input.sourceTitle,
+    sourceText: input.sourceText,
+    preferredCanonicalKeys: analysisCatalogKeys(input.analysis),
+  });
   return {
     system: [
       'You are the generation stage of a source-grounded knowledge compiler.',
@@ -81,7 +96,7 @@ export function buildSemanticGenerationMessages(input: {
         'Supported page kinds: source_summary, entity, concept, comparison.',
       '</wiki_schema>',
       '<existing_catalog>',
-      JSON.stringify(input.catalog ?? []),
+      JSON.stringify(promptCatalog),
       '</existing_catalog>',
       '<stage_1_analysis>',
       JSON.stringify(input.analysis),
@@ -95,6 +110,116 @@ export function buildSemanticGenerationMessages(input: {
       'Follow the output contract exactly. version must be the string "1". Every artifact must include claims, links, and tags arrays. canonicalKey must start with a letter or number and contain only letters, numbers, dot, underscore, colon, or hyphen; it must not contain spaces.',
     ].join('\n'),
   };
+}
+
+type PromptCatalogEntry = Pick<
+  KnowledgeArtifactCatalogEntry,
+  'artifactKind' | 'canonicalKey' | 'title' | 'summary'
+>;
+
+function selectPromptCatalog(input: {
+  catalog?: KnowledgeArtifactCatalogEntry[];
+  sourceTitle: string;
+  sourceText: string;
+  preferredCanonicalKeys?: string[];
+}): PromptCatalogEntry[] {
+  const source = normalizeCatalogSearchText(
+    `${input.sourceTitle}\n${input.sourceText}`,
+  );
+  const preferred = new Set(
+    (input.preferredCanonicalKeys ?? []).map(normalizeCatalogSearchText),
+  );
+  const candidates = (input.catalog ?? [])
+    .map((entry) => ({
+      entry,
+      score: catalogEntryScore(entry, source, preferred),
+    }))
+    .filter((candidate) => candidate.score > 0)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        `${a.entry.artifactKind}:${a.entry.canonicalKey}`.localeCompare(
+          `${b.entry.artifactKind}:${b.entry.canonicalKey}`,
+          'en',
+        ),
+    );
+
+  const selected: PromptCatalogEntry[] = [];
+  let serializedChars = 2;
+  for (const { entry } of candidates) {
+    if (selected.length >= MAX_PROMPT_CATALOG_ENTRIES) break;
+    const compact = compactPromptCatalogEntry(entry);
+    const candidateChars =
+      JSON.stringify(compact).length + (selected.length > 0 ? 1 : 0);
+    if (serializedChars + candidateChars > MAX_PROMPT_CATALOG_CHARS) {
+      continue;
+    }
+    selected.push(compact);
+    serializedChars += candidateChars;
+  }
+  return selected;
+}
+
+function catalogEntryScore(
+  entry: KnowledgeArtifactCatalogEntry,
+  normalizedSource: string,
+  preferred: Set<string>,
+): number {
+  const canonicalKey = normalizeCatalogSearchText(entry.canonicalKey);
+  const title = normalizeCatalogSearchText(entry.title);
+  let score = preferred.has(canonicalKey) ? 100 : 0;
+  if (isUsefulCatalogMention(title) && normalizedSource.includes(title)) {
+    score += 50;
+  }
+  if (
+    isUsefulCatalogMention(canonicalKey) &&
+    normalizedSource.includes(canonicalKey)
+  ) {
+    score += 40;
+  }
+  return score;
+}
+
+function compactPromptCatalogEntry(
+  entry: KnowledgeArtifactCatalogEntry,
+): PromptCatalogEntry {
+  const summary = entry.summary
+    ?.trim()
+    .slice(0, MAX_PROMPT_CATALOG_SUMMARY_CHARS);
+  return {
+    artifactKind: entry.artifactKind,
+    canonicalKey: entry.canonicalKey,
+    title: entry.title,
+    ...(summary ? { summary } : {}),
+  };
+}
+
+function normalizeCatalogSearchText(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLocaleLowerCase('en')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+function isUsefulCatalogMention(value: string): boolean {
+  return Array.from(value).length >= 2;
+}
+
+function analysisCatalogKeys(analysis: SemanticAnalysis): string[] {
+  return [
+    ...analysis.entities.map((entry) => entry.canonicalKey),
+    ...analysis.concepts.map((entry) => entry.canonicalKey),
+    ...analysis.comparisons.flatMap((entry) => [
+      entry.canonicalKey,
+      ...entry.subjects,
+    ]),
+    ...analysis.relations.flatMap((entry) => [
+      entry.fromCanonicalKey,
+      entry.toCanonicalKey,
+    ]),
+    ...analysis.contradictions.flatMap((entry) => entry.relatedCanonicalKeys),
+  ];
 }
 
 const ANALYSIS_OUTPUT_CONTRACT = JSON.stringify({

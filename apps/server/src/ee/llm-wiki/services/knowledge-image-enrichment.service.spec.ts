@@ -22,6 +22,63 @@ const gifBytes = Buffer.from(
 );
 
 describe('KnowledgeImageEnrichmentService', () => {
+  it('reads current ready image knowledge without calling the vision provider', async () => {
+    const fixture = createFixture();
+    fixture.extractionRepo.findCurrentReadyForSnapshotImages.mockResolvedValue([
+      {
+        ...extraction({
+          status: 'ready',
+          ocrText: 'cached OCR',
+          caption: 'cached caption',
+        }),
+        workspaceId: 'workspace-1',
+        attachmentId: 'image-1',
+        attachmentVersion: new Date('2026-07-27T00:01:00.000Z'),
+        currentAttachmentVersion: new Date('2026-07-27T00:01:00.000Z'),
+        attachmentWorkspaceId: 'workspace-1',
+        attachmentSpaceId: 'space-1',
+        attachmentPageId: 'page-1',
+        cacheFingerprint: 'sha256:cache',
+        contentHash: 'sha256:image',
+        model: 'qwen3.7-plus',
+        promptVersion: 'akasha-page-image-understanding-v1',
+      },
+    ]);
+
+    const result = await fixture.service.readReadySource(source('正文'));
+
+    expect(result.source.text).toContain('cached OCR');
+    expect(result.readyExtractionIds).toEqual(['extraction-1']);
+    expect(fixture.provider.describe).not.toHaveBeenCalled();
+    expect(fixture.storageService.read).not.toHaveBeenCalled();
+  });
+
+  it('returns explicit terminal counters for a ready cache hit', async () => {
+    const fixture = createFixture();
+    fixture.extractionRepo.claim.mockResolvedValue({
+      state: 'ready',
+      extraction: extraction({
+        status: 'ready',
+        ocrText: 'ready text',
+        caption: '',
+      }),
+    });
+
+    const result = await fixture.service.enrichSource(source());
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        expected: 1,
+        succeeded: 1,
+        failed: 0,
+        skipped: 0,
+        retryableFailureCount: 0,
+        readyExtractionIds: ['extraction-1'],
+      }),
+    );
+    expect(fixture.provider.describe).not.toHaveBeenCalled();
+  });
+
   it('uses a ready leased cache entry and appends searchable image text', async () => {
     const fixture = createFixture();
     fixture.extractionRepo.claim.mockResolvedValue({
@@ -67,6 +124,7 @@ describe('KnowledgeImageEnrichmentService', () => {
       expect.objectContaining({
         workspaceId: 'workspace-1',
         attachmentId: 'image-1',
+        attachmentVersion: new Date('2026-07-27T00:01:00.000Z'),
         cacheFingerprint: expect.stringMatching(/^sha256:/),
         model: 'qwen3.7-plus',
         promptVersion: 'akasha-page-image-understanding-v1',
@@ -115,6 +173,7 @@ describe('KnowledgeImageEnrichmentService', () => {
 
     expect(result.source.text).toBe('正文仍然可用');
     expect(result.failedCount).toBe(1);
+    expect(result.retryableFailureCount).toBe(1);
     expect(result.warnings).toEqual([
       expect.objectContaining({ attachmentId: 'image-1', code: 'timeout' }),
     ]);
@@ -125,6 +184,143 @@ describe('KnowledgeImageEnrichmentService', () => {
         errorCode: 'timeout',
         retryable: true,
         retryAfter: expect.any(Date),
+      }),
+    );
+  });
+
+  it('continues in source order after a permanent failure', async () => {
+    const fixture = createFixture();
+    const twoImages = source('正文');
+    twoImages.images = [
+      twoImages.images![0],
+      {
+        ...twoImages.images![0],
+        attachmentId: 'image-2',
+        fileName: 'second.png',
+        attachmentVersion: '2026-07-27T00:02:00.000Z',
+      },
+    ];
+    fixture.attachmentRepo.findByIds.mockResolvedValue([
+      attachment({
+        id: 'image-2',
+        fileName: 'second.png',
+        filePath: 'workspace-1/image-2/second.png',
+        updatedAt: new Date('2026-07-27T00:02:00.000Z'),
+      }),
+      attachment(),
+    ]);
+    fixture.extractionRepo.claim
+      .mockResolvedValueOnce({
+        state: 'failed',
+        extraction: extraction({
+          id: 'failed-1',
+          status: 'failed',
+          retryable: false,
+          errorCode: 'unsupported_image',
+        }),
+      })
+      .mockResolvedValueOnce({
+        state: 'ready',
+        extraction: extraction({
+          id: 'ready-2',
+          status: 'ready',
+          ocrText: 'second image text',
+        }),
+      });
+
+    const result = await fixture.service.enrichSource(twoImages);
+
+    expect(
+      fixture.extractionRepo.claim.mock.calls.map(
+        (call) => call[0].attachmentId,
+      ),
+    ).toEqual(['image-1', 'image-2']);
+    expect(result).toEqual(
+      expect.objectContaining({
+        expected: 2,
+        succeeded: 1,
+        failed: 1,
+        skipped: 0,
+        retryableFailureCount: 0,
+        readyExtractionIds: ['ready-2'],
+      }),
+    );
+  });
+
+  it('marks images beyond the safety limit terminal skipped without retrying', async () => {
+    const fixture = createFixture();
+    const many = source('正文');
+    many.images = Array.from({ length: 13 }, (_, index) => ({
+      ...many.images![0],
+      attachmentId: `image-${index + 1}`,
+    }));
+    fixture.attachmentRepo.findByIds.mockResolvedValue(
+      many.images.slice(0, 12).map((image) =>
+        attachment({
+          id: image.attachmentId,
+          filePath: `workspace-1/${image.attachmentId}/dashboard.png`,
+        }),
+      ),
+    );
+    fixture.extractionRepo.claim.mockImplementation(async (input) => ({
+      state: 'ready',
+      extraction: extraction({
+        id: `extraction-${input.attachmentId}`,
+        status: 'ready',
+        ocrText: input.attachmentId,
+      }),
+    }));
+
+    const result = await fixture.service.enrichSource(many);
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        expected: 13,
+        succeeded: 12,
+        failed: 0,
+        skipped: 1,
+        retryableFailureCount: 0,
+      }),
+    );
+    expect(fixture.extractionRepo.claim).toHaveBeenCalledTimes(12);
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({ code: 'skipped_limit' }),
+    );
+  });
+
+  it('treats exactly 12 ready images as complete rather than incomplete', async () => {
+    const fixture = createFixture();
+    const twelve = source('正文');
+    twelve.images = Array.from({ length: 12 }, (_, index) => ({
+      ...twelve.images![0],
+      attachmentId: `image-${index + 1}`,
+    }));
+    fixture.attachmentRepo.findByIds.mockResolvedValue(
+      twelve.images.map((image) =>
+        attachment({
+          id: image.attachmentId,
+          filePath: `workspace-1/${image.attachmentId}/dashboard.png`,
+        }),
+      ),
+    );
+    fixture.extractionRepo.claim.mockImplementation(async (input) => ({
+      state: 'ready',
+      extraction: extraction({
+        id: `extraction-${input.attachmentId}`,
+        status: 'ready',
+        ocrText: input.attachmentId,
+      }),
+    }));
+
+    const result = await fixture.service.enrichSource(twelve);
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        expected: 12,
+        succeeded: 12,
+        failed: 0,
+        skipped: 0,
+        retryableFailureCount: 0,
       }),
     );
   });
@@ -227,26 +423,34 @@ function extraction(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function attachment(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'image-1',
+    workspaceId: 'workspace-1',
+    spaceId: 'space-1',
+    pageId: 'page-1',
+    type: 'file',
+    fileName: 'dashboard.png',
+    filePath: 'workspace-1/image-1/dashboard.png',
+    fileExt: '.png',
+    fileSize: 1024,
+    mimeType: 'image/png',
+    updatedAt: new Date('2026-07-27T00:01:00.000Z'),
+    deletedAt: null,
+    ...overrides,
+  };
+}
+
 function createFixture(overrides?: { pageId?: string; bytes?: Buffer }) {
   const attachmentRepo = {
-    findByIds: jest.fn().mockResolvedValue([
-      {
-        id: 'image-1',
-        workspaceId: 'workspace-1',
-        spaceId: 'space-1',
-        pageId: overrides?.pageId ?? 'page-1',
-        type: 'file',
-        fileName: 'dashboard.png',
-        filePath: 'workspace-1/image-1/dashboard.png',
-        fileExt: '.png',
-        fileSize: 1024,
-        mimeType: 'image/png',
-        updatedAt: new Date('2026-07-27T00:01:00.000Z'),
-        deletedAt: null,
-      },
-    ]),
+    findByIds: jest
+      .fn()
+      .mockResolvedValue([
+        attachment({ pageId: overrides?.pageId ?? 'page-1' }),
+      ]),
   };
   const extractionRepo = {
+    findCurrentReadyForSnapshotImages: jest.fn().mockResolvedValue([]),
     claim: jest.fn().mockResolvedValue({
       state: 'claimed',
       extraction: extraction(),

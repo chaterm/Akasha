@@ -7,7 +7,7 @@ import {
   KnowledgeSourceAnalysis,
 } from '@akasha/db/types/entity.types';
 import { KyselyDB, KyselyTransaction } from '@akasha/db/types/kysely.types';
-import { dbOrTx } from '@akasha/db/utils';
+import { dbOrTx, executeTx } from '@akasha/db/utils';
 
 export type KnowledgeCompilationStatus =
   | 'queued'
@@ -40,6 +40,7 @@ type CompilationAttemptInput = CompilationIdentity & {
   spaceId: string;
   sourceVersion?: string;
   sourceContentHash?: string;
+  effectiveKnowledgeHash?: string;
   compilerVersion: string;
   promptVersion: string;
   compilerRunId: string;
@@ -47,7 +48,7 @@ type CompilationAttemptInput = CompilationIdentity & {
 };
 
 type AnalysisCacheKey = CompilationIdentity & {
-  sourceContentHash: string;
+  effectiveKnowledgeHash: string;
   compilerVersion: string;
   promptVersion: string;
 };
@@ -67,6 +68,7 @@ export class KnowledgeCompilationRepo {
         ...input,
         sourceVersion: input.sourceVersion ?? null,
         sourceContentHash: input.sourceContentHash ?? null,
+        effectiveKnowledgeHash: input.effectiveKnowledgeHash ?? null,
         status: 'queued',
         stage: 'queued',
         attemptCount: 0,
@@ -82,6 +84,7 @@ export class KnowledgeCompilationRepo {
           spaceId: input.spaceId,
           sourceVersion: input.sourceVersion ?? null,
           sourceContentHash: input.sourceContentHash ?? null,
+          effectiveKnowledgeHash: input.effectiveKnowledgeHash ?? null,
           compilerVersion: input.compilerVersion,
           promptVersion: input.promptVersion,
           compilerRunId: input.compilerRunId,
@@ -112,6 +115,7 @@ export class KnowledgeCompilationRepo {
         ...input,
         sourceVersion: input.sourceVersion ?? null,
         sourceContentHash: input.sourceContentHash ?? null,
+        effectiveKnowledgeHash: input.effectiveKnowledgeHash ?? null,
         status: 'running',
         stage: 'read_source',
         attemptCount: 1,
@@ -129,6 +133,7 @@ export class KnowledgeCompilationRepo {
             spaceId: input.spaceId,
             sourceVersion: input.sourceVersion ?? null,
             sourceContentHash: input.sourceContentHash ?? null,
+            effectiveKnowledgeHash: input.effectiveKnowledgeHash ?? null,
             compilerVersion: input.compilerVersion,
             promptVersion: input.promptVersion,
             compilerRunId: input.compilerRunId,
@@ -155,6 +160,7 @@ export class KnowledgeCompilationRepo {
     input: FencedCompilationIdentity & {
       sourceVersion: string;
       sourceContentHash: string;
+      effectiveKnowledgeHash?: string;
     },
     trx?: KyselyTransaction,
   ): Promise<void> {
@@ -163,6 +169,9 @@ export class KnowledgeCompilationRepo {
       .set({
         sourceVersion: input.sourceVersion,
         sourceContentHash: input.sourceContentHash,
+        ...(input.effectiveKnowledgeHash
+          ? { effectiveKnowledgeHash: input.effectiveKnowledgeHash }
+          : {}),
         updatedAt: new Date(),
       })
       .where('workspaceId', '=', input.workspaceId)
@@ -238,6 +247,7 @@ export class KnowledgeCompilationRepo {
     input: FencedCompilationIdentity & {
       sourceVersion: string;
       sourceContentHash: string;
+      effectiveKnowledgeHash?: string;
     },
     trx?: KyselyTransaction,
   ): Promise<void> {
@@ -251,6 +261,8 @@ export class KnowledgeCompilationRepo {
         errorMessage: null,
         lastSuccessfulSourceVersion: input.sourceVersion,
         lastSuccessfulSourceHash: input.sourceContentHash,
+        effectiveKnowledgeHash: input.effectiveKnowledgeHash ?? null,
+        lastSuccessfulEffectiveHash: input.effectiveKnowledgeHash ?? null,
         lastSucceededAt: now,
         finishedAt: now,
         updatedAt: now,
@@ -270,7 +282,7 @@ export class KnowledgeCompilationRepo {
       .select('analysis')
       .where('workspaceId', '=', input.workspaceId)
       .where('sourcePageId', '=', input.sourcePageId)
-      .where('sourceContentHash', '=', input.sourceContentHash)
+      .where('sourceContentHash', '=', input.effectiveKnowledgeHash)
       .where('compilerVersion', '=', input.compilerVersion)
       .where('promptVersion', '=', input.promptVersion)
       .executeTakeFirst();
@@ -284,33 +296,58 @@ export class KnowledgeCompilationRepo {
       spaceId: string;
       sourcePageId: string;
       sourceVersion: string;
-      sourceContentHash: string;
+      effectiveKnowledgeHash: string;
       compilerVersion: string;
       promptVersion: string;
       analysis: JsonValue;
+      publicationGuard?: (trx: KyselyTransaction) => Promise<boolean>;
     },
     trx?: KyselyTransaction,
-  ): Promise<void> {
-    const now = new Date();
-    await dbOrTx(this.db, trx)
-      .insertInto('knowledgeSourceAnalyses')
-      .values({ ...input, updatedAt: now })
-      .onConflict((oc) =>
-        oc
-          .columns([
-            'workspaceId',
-            'sourcePageId',
-            'sourceContentHash',
-            'compilerVersion',
-            'promptVersion',
-          ])
-          .doUpdateSet({
+  ): Promise<boolean> {
+    return executeTx(
+      this.db,
+      async (writeTrx) => {
+        if (
+          input.publicationGuard &&
+          !(await input.publicationGuard(writeTrx))
+        ) {
+          return false;
+        }
+        const now = new Date();
+        await writeTrx
+          .insertInto('knowledgeSourceAnalyses')
+          .values({
+            workspaceId: input.workspaceId,
+            spaceId: input.spaceId,
+            sourcePageId: input.sourcePageId,
             sourceVersion: input.sourceVersion,
+            sourceContentHash: input.effectiveKnowledgeHash,
+            compilerVersion: input.compilerVersion,
+            promptVersion: input.promptVersion,
             analysis: input.analysis,
             updatedAt: now,
-          }),
-      )
-      .execute();
+          })
+          .onConflict((oc) =>
+            oc
+              .columns([
+                'workspaceId',
+                'sourcePageId',
+                'sourceContentHash',
+                'compilerVersion',
+                'promptVersion',
+              ])
+              .doUpdateSet({
+                spaceId: input.spaceId,
+                sourceVersion: input.sourceVersion,
+                analysis: input.analysis,
+                updatedAt: now,
+              }),
+          )
+          .execute();
+        return true;
+      },
+      trx,
+    );
   }
 
   async findDiagnosticsByPageIds(input: {
@@ -325,6 +362,94 @@ export class KnowledgeCompilationRepo {
       .where('workspaceId', '=', input.workspaceId)
       .where('sourcePageId', 'in', input.sourcePageIds)
       .orderBy('updatedAt', 'desc')
+      .execute();
+  }
+
+  /**
+   * Reads the last published page identity in one Space-scoped query. A row is
+   * returned only when the successful attempt still has its exact active
+   * source, semantic contribution, source-summary page, and searchable chunk.
+   * The current attempt status is intentionally informational: a later failed
+   * retry must not erase a still-valid successful publication.
+   */
+  async findSpaceReuseCandidates(input: {
+    workspaceId: string;
+    spaceId: string;
+    sourcePageIds: string[];
+  }) {
+    if (input.sourcePageIds.length === 0) return [];
+
+    return this.db
+      .selectFrom('knowledgeCompilationAttempts as attempt')
+      .innerJoin('knowledgeSources as source', (join) =>
+        join
+          .onRef('source.workspaceId', '=', 'attempt.workspaceId')
+          .onRef('source.sourcePageId', '=', 'attempt.sourcePageId')
+          .onRef(
+            'source.sourceVersion',
+            '=',
+            'attempt.lastSuccessfulSourceVersion',
+          )
+          .onRef('source.contentHash', '=', 'attempt.lastSuccessfulSourceHash')
+          .on('source.sourceSpaceId', '=', input.spaceId)
+          .on('source.staleAt', 'is', null)
+          .on('source.deletedAt', 'is', null),
+      )
+      .innerJoin('knowledgeArtifactContributions as contribution', (join) =>
+        join
+          .onRef('contribution.workspaceId', '=', 'attempt.workspaceId')
+          .onRef('contribution.sourcePageId', '=', 'attempt.sourcePageId')
+          .onRef(
+            'contribution.sourceVersion',
+            '=',
+            'attempt.lastSuccessfulSourceVersion',
+          )
+          .onRef(
+            'contribution.sourceContentHash',
+            '=',
+            'attempt.lastSuccessfulSourceHash',
+          )
+          .on('contribution.spaceId', '=', input.spaceId)
+          .on('contribution.artifactKind', '=', 'source_summary'),
+      )
+      .innerJoin('knowledgePages as summary', (join) =>
+        join
+          .onRef('summary.id', '=', 'contribution.artifactId')
+          .onRef('summary.workspaceId', '=', 'attempt.workspaceId')
+          .on('summary.spaceId', '=', input.spaceId)
+          .on('summary.pageType', '=', 'source_summary')
+          .on('summary.staleAt', 'is', null),
+      )
+      .innerJoin('knowledgeChunks as summaryChunk', (join) =>
+        join
+          .onRef('summaryChunk.knowledgePageId', '=', 'summary.id')
+          .onRef('summaryChunk.workspaceId', '=', 'attempt.workspaceId')
+          .on('summaryChunk.staleAt', 'is', null)
+          .on('summaryChunk.retrievalChannel', '=', 'memory'),
+      )
+      .select([
+        'attempt.sourcePageId',
+        'attempt.status',
+        'attempt.lastSuccessfulSourceVersion',
+        'attempt.lastSuccessfulSourceHash',
+        'attempt.lastSuccessfulEffectiveHash',
+        'source.id as activeSourceId',
+        'summary.id as activeSummaryId',
+        'summaryChunk.id as activeSummaryChunkId',
+        'contribution.sourceVersion as contributionSourceVersion',
+        'contribution.sourceContentHash as contributionSourceHash',
+        'contribution.compilerVersion as contributionCompilerVersion',
+        'contribution.promptVersion as contributionPromptVersion',
+      ])
+      .distinctOn('attempt.sourcePageId')
+      .where('attempt.workspaceId', '=', input.workspaceId)
+      .where('attempt.spaceId', '=', input.spaceId)
+      .where('attempt.sourcePageId', 'in', input.sourcePageIds)
+      .where('attempt.lastSuccessfulSourceVersion', 'is not', null)
+      .where('attempt.lastSuccessfulSourceHash', 'is not', null)
+      .where('attempt.lastSuccessfulEffectiveHash', 'is not', null)
+      .orderBy('attempt.sourcePageId', 'asc')
+      .orderBy('contribution.updatedAt', 'desc')
       .execute();
   }
 }

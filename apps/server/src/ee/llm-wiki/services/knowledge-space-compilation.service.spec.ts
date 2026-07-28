@@ -1,7 +1,19 @@
 import { Queue } from 'bullmq';
 import { KnowledgeCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-compilation.repo';
+import { KnowledgeArtifactContributionRepo } from '@akasha/db/repos/llm-wiki/knowledge-artifact-contribution.repo';
+import { KnowledgeCapsuleRepo } from '@akasha/db/repos/llm-wiki/knowledge-capsule.repo';
+import { KnowledgeImageExtractionRepo } from '@akasha/db/repos/llm-wiki/knowledge-image-extraction.repo';
+import { KnowledgeSourceRepo } from '@akasha/db/repos/llm-wiki/knowledge-source.repo';
 import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
 import { QueueJob } from '../../../integrations/queue/constants';
+import { EnvironmentService } from '../../../integrations/environment/environment.service';
+import { KnowledgeSourceSnapshot } from '../types/source-snapshot.types';
+import {
+  DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+  DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
+  DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+} from '../llm-wiki.constants';
+import { buildEffectiveKnowledgeHash } from './knowledge-effective-hash';
 import { KnowledgeArtifactCatalogService } from './knowledge-artifact-catalog.service';
 import { KnowledgeSpaceCompilationService } from './knowledge-space-compilation.service';
 
@@ -27,7 +39,7 @@ describe('KnowledgeSpaceCompilationService', () => {
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
         catalogSnapshot: [expect.objectContaining({ canonicalKey: 'alpha' })],
-        catalogHash: 'sha256:catalog',
+        catalogHash: 'sha256:aggregate-catalog',
         sources: [
           expect.objectContaining({
             sourcePageId: 'page-1',
@@ -61,6 +73,456 @@ describe('KnowledgeSpaceCompilationService', () => {
       sourcePageId: 'page-1',
       jobId,
     });
+  });
+
+  it('creates 2,000 durable reused rows and dispatches zero page or aggregate jobs', async () => {
+    const sources = Array.from({ length: 2_000 }, (_, index) =>
+      source({
+        sourcePageId: `page-${index}`,
+        sourceVersion: `v-${index}`,
+        contentHash: `sha256:source-${index}`,
+      }),
+    );
+    const reuseCandidates = sources.map((item, index) =>
+      reusableCandidate(item, index),
+    );
+    const { service, repo, queue } = createService({
+      pendingPages: [],
+      pendingAggregates: [],
+      reuseCandidates,
+      activeSourcePageIds: sources.map((item) => item.sourcePageId),
+      latestAggregateRun: {
+        phase: 'complete',
+        status: 'succeeded',
+        compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+        promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+        catalogHash: 'sha256:aggregate-catalog',
+        knowledgeGeneration: 4,
+        currentKnowledgeGeneration: 4,
+      },
+      hasActiveOverview: true,
+    });
+
+    await service.startSpaceRun({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      trigger: 'manual_compile',
+      sources,
+    });
+
+    expect(repo.createRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        aggregateRequired: false,
+        sources: expect.arrayContaining([
+          expect.objectContaining({
+            sourcePageId: 'page-0',
+            status: 'skipped',
+            errorCode: 'unchanged',
+          }),
+          expect.objectContaining({
+            sourcePageId: 'page-1999',
+            status: 'skipped',
+            errorCode: 'unchanged',
+          }),
+        ]),
+      }),
+    );
+    expect(
+      (repo.createRun.mock.calls[0][0] as { sources: unknown[] }).sources,
+    ).toHaveLength(2_000);
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['legacy text phase', { phase: 'text' }, true],
+    ['generation mismatch', { currentKnowledgeGeneration: 5 }, true],
+    ['aggregate fingerprint mismatch', { catalogHash: 'sha256:old' }, true],
+    ['nonterminal run', { status: 'compiling' }, true],
+    ['trusted complete aggregate', {}, false],
+  ])(
+    'requires aggregation for %s',
+    async (_label, runOverrides, aggregateRequired) => {
+      const currentSource = source();
+      const baselineRun = {
+        phase: 'complete',
+        status: 'succeeded',
+        compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+        promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+        catalogHash: 'sha256:aggregate-catalog',
+        knowledgeGeneration: 4,
+        currentKnowledgeGeneration: 4,
+      };
+      const { service, repo } = createService({
+        reuseCandidates: [reusableCandidate(currentSource, 0)],
+        activeSourcePageIds: [currentSource.sourcePageId],
+        latestAggregateRun: { ...baselineRun, ...runOverrides },
+        hasActiveOverview: true,
+        pendingPages: [],
+        pendingAggregates: [],
+      });
+
+      await service.startSpaceRun({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        trigger: 'manual_compile',
+        sources: [currentSource],
+      });
+
+      expect(repo.createRun).toHaveBeenCalledWith(
+        expect.objectContaining({ aggregateRequired }),
+      );
+    },
+  );
+
+  it('requires aggregation when the overview artifact or its active memory chunk is absent', async () => {
+    const currentSource = source();
+    const { service, repo } = createService({
+      reuseCandidates: [reusableCandidate(currentSource, 0)],
+      activeSourcePageIds: [currentSource.sourcePageId],
+      latestAggregateRun: {
+        phase: 'complete',
+        status: 'succeeded',
+        compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+        promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+        catalogHash: 'sha256:aggregate-catalog',
+        knowledgeGeneration: 4,
+        currentKnowledgeGeneration: 4,
+      },
+      hasActiveOverview: false,
+      pendingPages: [],
+      pendingAggregates: [],
+    });
+
+    await service.startSpaceRun({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      trigger: 'manual_compile',
+      sources: [currentSource],
+    });
+
+    expect(repo.createRun).toHaveBeenCalledWith(
+      expect.objectContaining({ aggregateRequired: true }),
+    );
+  });
+
+  it('plans 999 reused pages and one changed page in one pass', async () => {
+    const sources = Array.from({ length: 1_000 }, (_, index) =>
+      source({
+        sourcePageId: `page-${index}`,
+        sourceVersion: 'v1',
+        contentHash: `sha256:source-${index}`,
+      }),
+    );
+    const reuseCandidates = sources
+      .slice(0, 999)
+      .map((item, index) => reusableCandidate(item, index));
+    const { service, repo } = createService({
+      reuseCandidates,
+      activeSourcePageIds: sources.map((item) => item.sourcePageId),
+      pendingPages: [],
+      pendingAggregates: [],
+    });
+
+    await service.startSpaceRun({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      trigger: 'manual_compile',
+      sources,
+    });
+
+    const planned = repo.createRun.mock.calls[0][0] as {
+      aggregateRequired: boolean;
+      sources: Array<{ sourcePageId: string; status: string }>;
+    };
+    expect(planned.aggregateRequired).toBe(true);
+    expect(
+      planned.sources.filter((item) => item.status === 'skipped'),
+    ).toHaveLength(999);
+    expect(planned.sources[planned.sources.length - 1]).toEqual(
+      expect.objectContaining({ sourcePageId: 'page-999', status: 'pending' }),
+    );
+  });
+
+  it('reuses the last valid publication after a failed retry but rejects missing active publication state', async () => {
+    const sources = [
+      'reused',
+      'failed',
+      'missing-source',
+      'missing-summary',
+      'version-mismatch',
+    ].map((sourcePageId) => source({ sourcePageId }));
+    const candidates = sources.map((item, index) =>
+      reusableCandidate(item, index),
+    );
+    candidates[1].status = 'failed';
+    candidates[2].activeSourceId = null;
+    candidates[3].activeSummaryId = null;
+    candidates[4].lastSuccessfulSourceVersion = 'old-version';
+    const { service, repo } = createService({
+      reuseCandidates: candidates,
+      activeSourcePageIds: sources.map((item) => item.sourcePageId),
+      pendingPages: [],
+      pendingAggregates: [],
+    });
+
+    await service.startSpaceRun({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      trigger: 'manual_compile',
+      sources,
+    });
+
+    const planned = (
+      repo.createRun.mock.calls[0][0] as {
+        sources: Array<{ sourcePageId: string; status: string }>;
+      }
+    ).sources;
+    expect(
+      planned.map(({ sourcePageId, status }) => ({ sourcePageId, status })),
+    ).toEqual([
+      { sourcePageId: 'reused', status: 'skipped' },
+      { sourcePageId: 'failed', status: 'skipped' },
+      { sourcePageId: 'missing-source', status: 'pending' },
+      { sourcePageId: 'missing-summary', status: 'pending' },
+      { sourcePageId: 'version-mismatch', status: 'pending' },
+    ]);
+  });
+
+  it('reuses image knowledge only when every ordered image has a current ready extraction', async () => {
+    const attachmentVersion = '2026-07-28T01:00:00.000Z';
+    const images = ['image-1', 'image-2'].map((attachmentId) => ({
+      attachmentId,
+      attachmentVersion,
+      fileName: `${attachmentId}.png`,
+      mimeType: 'image/png' as const,
+      fileSize: 100,
+    }));
+    const imageSource = source({ sourcePageId: 'page-images', images });
+    const readyExtractions = images.map((image, index) => ({
+      id: `extraction-${index}`,
+      workspaceId: 'workspace-1',
+      attachmentId: image.attachmentId,
+      attachmentVersion: new Date(attachmentVersion),
+      currentAttachmentVersion: new Date(attachmentVersion),
+      attachmentWorkspaceId: 'workspace-1',
+      attachmentSpaceId: 'space-1',
+      attachmentPageId: 'page-images',
+      status: 'ready',
+      cacheFingerprint: `sha256:fingerprint-${index}`,
+      contentHash: `sha256:image-${index}`,
+      model: 'qwen3.7-plus',
+      promptVersion: DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
+      ocrText: `OCR ${index}`,
+      caption: `Caption ${index}`,
+      updatedAt: new Date('2026-07-28T01:01:00.000Z'),
+    }));
+    const effectiveHash = buildEffectiveKnowledgeHash({
+      sourceContentHash: imageSource.contentHash,
+      compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+      promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+      readyImages: readyExtractions.map((item) => ({
+        attachmentId: item.attachmentId,
+        attachmentVersion,
+        cacheFingerprint: item.cacheFingerprint,
+        contentHash: item.contentHash,
+        ocrText: item.ocrText,
+        caption: item.caption,
+      })),
+    });
+    const candidate = {
+      ...reusableCandidate(imageSource, 0),
+      lastSuccessfulEffectiveHash: effectiveHash,
+    };
+    const { service, repo } = createService({
+      reuseCandidates: [candidate],
+      readyExtractions,
+      activeSourcePageIds: [imageSource.sourcePageId],
+      pendingPages: [],
+      pendingAggregates: [],
+    });
+
+    await service.startSpaceRun({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      trigger: 'manual_compile',
+      sources: [imageSource],
+    });
+    expect(repo.createRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sources: [
+          expect.objectContaining({
+            status: 'skipped',
+            expectedImageCount: 2,
+            succeededImageCount: 2,
+            imageStatus: 'succeeded',
+            targetEffectiveKnowledgeHash: effectiveHash,
+          }),
+        ],
+      }),
+    );
+
+    const invalidSecondExtractions = [
+      { ...readyExtractions[1], status: 'failed' },
+      {
+        ...readyExtractions[1],
+        attachmentVersion: new Date('2026-07-27T01:00:00.000Z'),
+      },
+      { ...readyExtractions[1], model: 'old-vision-model' },
+      { ...readyExtractions[1], promptVersion: 'old-image-prompt' },
+      { ...readyExtractions[1], ocrText: ' ', caption: '' },
+    ];
+    for (const invalidSecond of invalidSecondExtractions) {
+      const withoutSecond = createService({
+        reuseCandidates: [candidate],
+        readyExtractions: [readyExtractions[0], invalidSecond],
+        activeSourcePageIds: [imageSource.sourcePageId],
+        pendingPages: [],
+        pendingAggregates: [],
+      });
+      await withoutSecond.service.startSpaceRun({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        trigger: 'manual_compile',
+        sources: [imageSource],
+      });
+      const missingPlan = withoutSecond.repo.createRun.mock.calls[0][0] as {
+        sources: Array<Record<string, unknown>>;
+      };
+      expect(missingPlan.sources[0]).toEqual(
+        expect.objectContaining({
+          status: 'pending',
+          expectedImageCount: 2,
+          succeededImageCount: 1,
+          imageStatus: 'pending',
+          targetEffectiveKnowledgeHash: buildEffectiveKnowledgeHash({
+            sourceContentHash: imageSource.contentHash,
+            compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+            promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+            readyImages: [
+              {
+                attachmentId: readyExtractions[0].attachmentId,
+                attachmentVersion,
+                cacheFingerprint: readyExtractions[0].cacheFingerprint,
+                contentHash: readyExtractions[0].contentHash,
+                ocrText: readyExtractions[0].ocrText,
+                caption: readyExtractions[0].caption,
+              },
+            ],
+          }),
+        }),
+      );
+    }
+  });
+
+  it('retires only source pages absent from the exported Space snapshot and forces aggregation', async () => {
+    const { service, repo, sourceRepo, capsuleRepo, contributionRepo } =
+      createService({
+        reuseCandidates: [reusableCandidate(source(), 0)],
+        activeSourcePageIds: ['page-1', 'removed-page'],
+        pendingPages: [],
+        pendingAggregates: [],
+        executeRetirement: true,
+      });
+
+    await service.startSpaceRun({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      trigger: 'manual_compile',
+      sources: [source()],
+    });
+
+    expect(repo.createRun).toHaveBeenCalledWith(
+      expect.objectContaining({ aggregateRequired: true }),
+    );
+    expect(sourceRepo.markSpaceSourcesStale).toHaveBeenCalledWith(
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageIds: ['removed-page'],
+      },
+      expect.anything(),
+    );
+    expect(
+      capsuleRepo.markSourceSummaryArtifactsStaleBySourcePageIds,
+    ).not.toHaveBeenCalled();
+    expect(
+      contributionRepo.deleteSpaceSourceContributions,
+    ).toHaveBeenCalledWith(
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageIds: ['removed-page'],
+      },
+      expect.anything(),
+    );
+    expect(capsuleRepo.markArtifactsStaleByIds).not.toHaveBeenCalled();
+  });
+
+  it('stales only orphan artifacts and recompiles remaining sources affected by removed contributions', async () => {
+    const { service, repo, capsuleRepo } = createService({
+      reuseCandidates: [reusableCandidate(source(), 0)],
+      activeSourcePageIds: ['page-1', 'removed-page'],
+      remainingSourcesAffectedByRemoval: ['page-1'],
+      orphanedArtifactIds: ['orphan-artifact'],
+      pendingPages: [],
+      pendingAggregates: [],
+      executeRetirement: true,
+    });
+
+    await service.startSpaceRun({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      trigger: 'manual_compile',
+      sources: [source()],
+    });
+
+    expect(repo.createRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sources: [expect.objectContaining({ status: 'pending' })],
+      }),
+    );
+    expect(capsuleRepo.markArtifactsStaleByIds).toHaveBeenCalledWith(
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        artifactIds: ['orphan-artifact'],
+      },
+      expect.anything(),
+    );
+  });
+
+  it('removes stale source ids that survive only in current Space contributions', async () => {
+    const { service, sourceRepo, contributionRepo } = createService({
+      activeSourcePageIds: [],
+      contributionSourcePageIds: ['stale-but-contributing'],
+      pendingPages: [],
+      pendingAggregates: [],
+      executeRetirement: true,
+    });
+
+    await service.startSpaceRun({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      trigger: 'manual_compile',
+      sources: [source()],
+    });
+
+    expect(sourceRepo.markSpaceSourcesStale).toHaveBeenCalledWith(
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageIds: ['stale-but-contributing'],
+      },
+      expect.anything(),
+    );
+    expect(
+      contributionRepo.deleteSpaceSourceContributions,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourcePageIds: ['stale-but-contributing'],
+      }),
+      expect.anything(),
+    );
   });
 
   it('does not clean or dispatch when the locked repo rejects a stale command', async () => {
@@ -241,6 +703,8 @@ describe('KnowledgeSpaceCompilationService', () => {
           id: 'run-1',
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
+          knowledgeGeneration: 4,
+          phase: 'text',
         },
       ],
     });
@@ -253,15 +717,18 @@ describe('KnowledgeSpaceCompilationService', () => {
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
         spaceRunId: 'run-1',
+        knowledgeGeneration: 4,
+        phase: 'initial_aggregate',
       },
       expect.objectContaining({
-        jobId: 'knowledge-aggregate-space__run-1',
+        jobId: 'knowledge-aggregate-space__run-1__initial_aggregate',
         attempts: 3,
       }),
     );
     expect(repo.markAggregationQueued).toHaveBeenCalledWith({
       runId: 'run-1',
-      jobId: 'knowledge-aggregate-space__run-1',
+      phase: 'initial_aggregate',
+      jobId: 'knowledge-aggregate-space__run-1__initial_aggregate',
     });
   });
 
@@ -307,7 +774,7 @@ describe('KnowledgeSpaceCompilationService', () => {
   });
 
   it('removes an aggregate job when the run is superseded before the outbox mark', async () => {
-    const jobId = 'knowledge-aggregate-space__run-1';
+    const jobId = 'knowledge-aggregate-space__run-1__initial_aggregate';
     const waiting = queueJob('waiting');
     const { service, compilationRepo } = createService({
       pendingPages: [],
@@ -316,6 +783,8 @@ describe('KnowledgeSpaceCompilationService', () => {
           id: 'run-1',
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
+          knowledgeGeneration: 4,
+          phase: 'text',
         },
       ],
       markAggregationQueuedResult: false,
@@ -327,16 +796,182 @@ describe('KnowledgeSpaceCompilationService', () => {
     expect(waiting.remove).toHaveBeenCalledTimes(1);
     expect(compilationRepo.skipAttempt).not.toHaveBeenCalled();
   });
+
+  it('dispatches one page-sized image job only from the images phase outbox', async () => {
+    const imageSource = source({
+      images: [
+        {
+          attachmentId: 'image-1',
+          fileName: 'diagram.png',
+          mimeType: 'image/png',
+          fileSize: 10,
+          attachmentVersion: '2026-07-28T00:00:00.000Z',
+        },
+      ],
+    });
+    const { service, imageQueue, repo } = createService({
+      pendingPages: [],
+      pendingAggregates: [],
+      pendingImages: [
+        {
+          runId: 'run-1',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageId: 'page-1',
+          expectedSourceVersion: 'v1',
+          expectedSourceContentHash: 'hash-1',
+          knowledgeGeneration: 4,
+        },
+      ],
+      imageSources: [imageSource],
+    });
+
+    await service.dispatchPending();
+
+    expect(imageQueue.add).toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_COMPILE_PAGE_IMAGES,
+      expect.objectContaining({
+        spaceRunId: 'run-1',
+        sourcePageId: 'page-1',
+        sourceContentHash: 'hash-1',
+        knowledgeGeneration: 4,
+        images: imageSource.images,
+      }),
+      expect.objectContaining({
+        attempts: 3,
+        jobId: expect.stringMatching(
+          /^knowledge-compile-page-images__workspace-1__space-1__run-1__page-1__4__/,
+        ),
+      }),
+    );
+    expect(repo.markPageImageQueued).toHaveBeenCalledTimes(1);
+  });
+
+  it('dispatches one deterministic merge job from durable pending state', async () => {
+    const imageSource = source({
+      images: [
+        {
+          attachmentId: 'image-1',
+          fileName: 'diagram.png',
+          mimeType: 'image/png',
+          fileSize: 10,
+          attachmentVersion: '2026-07-28T00:00:00.000Z',
+        },
+      ],
+    });
+    const { service, queue, repo } = createService({
+      pendingPages: [],
+      pendingAggregates: [],
+      pendingImages: [],
+      pendingMerges: [
+        {
+          runId: 'run-1',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageId: 'page-1',
+          expectedSourceVersion: 'v1',
+          expectedSourceContentHash: 'hash-1',
+          knowledgeGeneration: 4,
+        },
+      ],
+      imageSources: [imageSource],
+      readyExtractions: [
+        {
+          id: 'extraction-1',
+          sourcePageId: 'page-1',
+          attachmentId: 'image-1',
+          attachmentVersion: new Date('2026-07-28T00:00:00.000Z'),
+          currentAttachmentVersion: new Date('2026-07-28T00:00:00.000Z'),
+          workspaceId: 'workspace-1',
+          attachmentWorkspaceId: 'workspace-1',
+          attachmentSpaceId: 'space-1',
+          attachmentPageId: 'page-1',
+          status: 'ready',
+          model: 'qwen3.7-plus',
+          promptVersion: DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
+          cacheFingerprint: 'cache-1',
+          contentHash: 'sha256:image-1',
+          ocrText: '架构图文字',
+          caption: '架构图',
+        },
+      ],
+    });
+
+    await service.dispatchPending();
+    await service.dispatchPending();
+
+    expect(queue.add).toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_MERGE_PAGE_IMAGES,
+      expect.objectContaining({
+        spaceRunId: 'run-1',
+        sourcePageId: 'page-1',
+        effectiveKnowledgeHash: expect.any(String),
+        images: imageSource.images,
+      }),
+      expect.objectContaining({
+        jobId: expect.stringMatching(
+          /^knowledge-merge-page-images__workspace-1__space-1__run-1__page-1__4__/,
+        ),
+      }),
+    );
+    const firstId = jest.mocked(queue.add).mock.calls[0][2]?.jobId;
+    expect(jest.mocked(queue.add).mock.calls[1][2]?.jobId).toBe(firstId);
+    expect(repo.markPageMergeQueued).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses the aggregate phase in the durable job identity', async () => {
+    const { service, queue, repo } = createService({
+      pendingPages: [],
+      pendingImages: [],
+      pendingMerges: [],
+      pendingAggregates: [
+        {
+          id: 'run-1',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          knowledgeGeneration: 4,
+          phase: 'final_aggregate',
+        },
+      ],
+    });
+
+    await service.dispatchPending();
+
+    expect(queue.add).toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_AGGREGATE_SPACE,
+      expect.objectContaining({ phase: 'final_aggregate' }),
+      expect.objectContaining({
+        jobId: 'knowledge-aggregate-space__run-1__final_aggregate',
+      }),
+    );
+    expect(repo.markAggregationQueued).toHaveBeenCalledWith({
+      runId: 'run-1',
+      phase: 'final_aggregate',
+      jobId: 'knowledge-aggregate-space__run-1__final_aggregate',
+    });
+  });
 });
 
 function createService(
   overrides: {
     pendingPages?: unknown[];
     pendingAggregates?: unknown[];
+    pendingImages?: unknown[];
+    pendingMerges?: unknown[];
+    imageSources?: KnowledgeSourceSnapshot[];
     createRunResult?: unknown;
     queueJobs?: Record<string, ReturnType<typeof queueJob>>;
     markPageQueuedResult?: boolean;
     markAggregationQueuedResult?: boolean;
+    reuseCandidates?: unknown[];
+    readyExtractions?: unknown[];
+    activeSourcePageIds?: string[];
+    contributionSourcePageIds?: string[];
+    latestAggregateRun?: unknown;
+    hasActiveOverview?: boolean;
+    executeRetirement?: boolean;
+    remainingSourcesAffectedByRemoval?: string[];
+    orphanedArtifactIds?: string[];
   } = {},
 ) {
   const pendingPages = overrides.pendingPages ?? [
@@ -353,13 +988,18 @@ function createService(
     },
   ];
   const repo = {
-    createRun: jest.fn().mockResolvedValue(
-      overrides.createRunResult ?? {
-        run: { id: 'run-1', status: 'queued' },
-        supersededRunIds: [],
-        supersededJobIds: [],
-      },
-    ),
+    createRun: jest.fn().mockImplementation(async (input) => {
+      if (overrides.executeRetirement && input.retireRemovedSources) {
+        await input.retireRemovedSources({ transaction: true });
+      }
+      return (
+        overrides.createRunResult ?? {
+          run: { id: 'run-1', status: 'queued' },
+          supersededRunIds: [],
+          supersededJobIds: [],
+        }
+      );
+    }),
     findPendingPageDispatches: jest.fn().mockResolvedValue(pendingPages),
     markPageQueued: jest
       .fn()
@@ -367,11 +1007,24 @@ function createService(
     findAggregatePendingRuns: jest
       .fn()
       .mockResolvedValue(overrides.pendingAggregates ?? []),
+    findPendingImageDispatches: jest
+      .fn()
+      .mockResolvedValue(overrides.pendingImages ?? []),
+    findPendingMergeDispatches: jest
+      .fn()
+      .mockResolvedValue(overrides.pendingMerges ?? []),
+    markPageImageQueued: jest.fn().mockResolvedValue(true),
+    markPageMergeQueued: jest.fn().mockResolvedValue(true),
+    completePageImages: jest.fn().mockResolvedValue(true),
+    getSpaceKnowledgeGeneration: jest.fn().mockResolvedValue(4),
     markAggregationQueued: jest
       .fn()
       .mockResolvedValue(overrides.markAggregationQueuedResult ?? true),
     hasActiveRun: jest.fn().mockResolvedValue(false),
     isRunActive: jest.fn().mockResolvedValue(true),
+    findLatestRunForAggregateReuse: jest
+      .fn()
+      .mockResolvedValue(overrides.latestAggregateRun),
   };
   const queue = {
     add: jest.fn().mockResolvedValue(undefined),
@@ -383,9 +1036,21 @@ function createService(
           : undefined,
       ),
   };
+  const imageQueue = {
+    add: jest.fn().mockResolvedValue(undefined),
+    getJob: jest.fn().mockResolvedValue(undefined),
+  };
+  const sourceExporter = {
+    exportPageSources: jest
+      .fn()
+      .mockResolvedValue(overrides.imageSources ?? []),
+  };
   const compilationRepo = {
     queueAttempt: jest.fn().mockResolvedValue(undefined),
     skipAttempt: jest.fn().mockResolvedValue(undefined),
+    findSpaceReuseCandidates: jest
+      .fn()
+      .mockResolvedValue(overrides.reuseCandidates ?? []),
   };
   const catalog = {
     snapshot: jest.fn().mockResolvedValue({
@@ -400,14 +1065,72 @@ function createService(
       ],
       hash: 'sha256:catalog',
     }),
+    aggregateFingerprint: jest.fn().mockResolvedValue({
+      hash: 'sha256:aggregate-catalog',
+      artifactCount: 1,
+      truncated: false,
+    }),
+  };
+  const sourceRepo = {
+    findActiveSourcePageIdsBySpace: jest
+      .fn()
+      .mockResolvedValue(overrides.activeSourcePageIds ?? []),
+    markSpaceSourcesStale: jest.fn().mockResolvedValue(undefined),
+  };
+  const imageExtractionRepo = {
+    findCurrentReadyForSnapshotImages: jest
+      .fn()
+      .mockResolvedValue(overrides.readyExtractions ?? []),
+  };
+  const capsuleRepo = {
+    hasActiveSpaceOverview: jest
+      .fn()
+      .mockResolvedValue(overrides.hasActiveOverview ?? false),
+    markSourceSummaryArtifactsStaleBySourcePageIds: jest
+      .fn()
+      .mockResolvedValue(undefined),
+    markArtifactsStaleByIds: jest.fn().mockResolvedValue(undefined),
+  };
+  const contributionRepo = {
+    findSpaceSourcePageIds: jest
+      .fn()
+      .mockResolvedValue(overrides.contributionSourcePageIds ?? []),
+    findRemainingSourcePageIdsForRemovedSources: jest
+      .fn()
+      .mockResolvedValue(overrides.remainingSourcesAffectedByRemoval ?? []),
+    deleteSpaceSourceContributions: jest.fn().mockResolvedValue({
+      orphanedArtifactIds: overrides.orphanedArtifactIds ?? [],
+    }),
+  };
+  const environmentService = {
+    getAiVisionModel: jest.fn().mockReturnValue('qwen3.7-plus'),
   };
   const service = new KnowledgeSpaceCompilationService(
     queue as unknown as Queue,
+    imageQueue as unknown as Queue,
     repo as unknown as KnowledgeSpaceCompilationRepo,
     compilationRepo as unknown as KnowledgeCompilationRepo,
     catalog as unknown as KnowledgeArtifactCatalogService,
+    sourceRepo as unknown as KnowledgeSourceRepo,
+    imageExtractionRepo as unknown as KnowledgeImageExtractionRepo,
+    capsuleRepo as unknown as KnowledgeCapsuleRepo,
+    contributionRepo as unknown as KnowledgeArtifactContributionRepo,
+    environmentService as unknown as EnvironmentService,
+    sourceExporter as never,
   );
-  return { service, repo, queue, compilationRepo, catalog };
+  return {
+    service,
+    repo,
+    queue,
+    imageQueue,
+    compilationRepo,
+    catalog,
+    sourceRepo,
+    imageExtractionRepo,
+    capsuleRepo,
+    contributionRepo,
+    environmentService,
+  };
 }
 
 function queueJob(state: string) {
@@ -417,7 +1140,13 @@ function queueJob(state: string) {
   };
 }
 
-function source() {
+function source(
+  overrides: Partial<KnowledgeSourceSnapshot> = {},
+): KnowledgeSourceSnapshot {
+  return { ...baseSource(), ...overrides };
+}
+
+function baseSource() {
   return {
     workspaceId: 'workspace-1',
     spaceId: 'space-1',
@@ -427,5 +1156,29 @@ function source() {
     title: 'Page',
     text: 'Body',
     references: [],
+  };
+}
+
+function reusableCandidate(item: ReturnType<typeof source>, index: number) {
+  return {
+    sourcePageId: item.sourcePageId,
+    status: 'succeeded',
+    lastSuccessfulSourceVersion: item.sourceVersion,
+    lastSuccessfulSourceHash: item.contentHash,
+    lastSuccessfulEffectiveHash: buildEffectiveKnowledgeHash({
+      sourceContentHash: item.contentHash,
+      compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+      promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+      readyImages: [],
+    }),
+    compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+    promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+    activeSourceId: `source-${index}` as string | null,
+    activeSummaryId: `summary-${index}` as string | null,
+    activeSummaryChunkId: `summary-chunk-${index}` as string | null,
+    contributionSourceVersion: item.sourceVersion,
+    contributionSourceHash: item.contentHash,
+    contributionCompilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+    contributionPromptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
   };
 }

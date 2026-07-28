@@ -42,7 +42,18 @@ class FakeKyselyQuery {
   }
   async executeTakeFirst() {
     this.calls.push({ method: 'executeTakeFirst', args: [] });
-    return this.results[this.resultIndex++];
+    const result = this.results[this.resultIndex++] as
+      | Record<string, unknown>
+      | undefined;
+    if (result?.leaseToken === '__from_values__') {
+      const values = [...this.calls]
+        .reverse()
+        .find((call) => call.method === 'values')?.args[0] as
+        | Record<string, unknown>
+        | undefined;
+      result.leaseToken = values?.leaseToken;
+    }
+    return result;
   }
 }
 
@@ -73,6 +84,7 @@ function executeConflictCallback(query: FakeKyselyQuery) {
 const cacheKey = {
   workspaceId: 'workspace-1',
   attachmentId: 'attachment-1',
+  attachmentVersion: new Date('2026-07-28T01:00:00.000Z'),
   cacheFingerprint: 'sha256:vision-config-and-image',
   contentHash: 'sha256:image-content',
   model: 'qwen3.7-plus',
@@ -101,19 +113,19 @@ describe('KnowledgeImageExtractionRepo', () => {
 
   it('atomically claims a new extraction with a lease', async () => {
     const query = new FakeKyselyQuery([
+      undefined,
       {
         id: 'extraction-1',
         status: 'processing',
-        leaseToken: expect.any(String),
+        leaseToken: '__from_values__',
       },
     ]);
     const repo = new KnowledgeImageExtractionRepo(query as never);
 
-    // Make the fake result carry the generated token written by values().
     const resultPromise = repo.claim(cacheKey, 150_000);
+    await Promise.resolve();
     const values = query.calls.find((call) => call.method === 'values')
       ?.args[0] as Record<string, unknown>;
-    (query as any).results[0].leaseToken = values.leaseToken;
 
     await expect(resultPromise).resolves.toMatchObject({
       state: 'claimed',
@@ -137,9 +149,49 @@ describe('KnowledgeImageExtractionRepo', () => {
     ]);
   });
 
+  it('revalidates a ready cache row against the attachment version before reuse', async () => {
+    const ready = {
+      id: 'extraction-1',
+      status: 'ready',
+      attachmentVersion: cacheKey.attachmentVersion,
+      leaseToken: null,
+    };
+    const query = new FakeKyselyQuery([ready]);
+    const repo = new KnowledgeImageExtractionRepo(query as never);
+
+    await expect(repo.claim(cacheKey, 150_000)).resolves.toEqual({
+      state: 'ready',
+      extraction: ready,
+    });
+    expect(query.calls).toEqual(
+      expect.arrayContaining([
+        { method: 'updateTable', args: ['knowledgeImageExtractions'] },
+        {
+          method: 'set',
+          args: [
+            expect.objectContaining({
+              attachmentVersion: cacheKey.attachmentVersion,
+            }),
+          ],
+        },
+        { method: 'where', args: ['status', '=', 'ready'] },
+        { method: 'where', args: ['contentHash', '=', cacheKey.contentHash] },
+        { method: 'where', args: ['model', '=', cacheKey.model] },
+        {
+          method: 'where',
+          args: ['promptVersion', '=', cacheKey.promptVersion],
+        },
+      ]),
+    );
+    expect(query.calls).not.toContainEqual({
+      method: 'insertInto',
+      args: ['knowledgeImageExtractions'],
+    });
+  });
+
   it('returns the winner when another worker already completed the key', async () => {
     const ready = { id: 'extraction-1', status: 'ready', leaseToken: null };
-    const query = new FakeKyselyQuery([undefined, ready]);
+    const query = new FakeKyselyQuery([undefined, undefined, ready]);
     const repo = new KnowledgeImageExtractionRepo(query as never);
 
     await expect(repo.claim(cacheKey, 150_000)).resolves.toEqual({

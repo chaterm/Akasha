@@ -186,6 +186,25 @@ export class KnowledgeSourceRepo {
       .execute();
   }
 
+  async markSpaceSourcesStale(
+    input: {
+      workspaceId: string;
+      spaceId: string;
+      sourcePageIds: string[];
+    },
+    trx?: KyselyTransaction,
+  ): Promise<void> {
+    if (input.sourcePageIds.length === 0) return;
+    await dbOrTx(this.db, trx)
+      .updateTable('knowledgeSources')
+      .set({ staleAt: new Date() })
+      .where('workspaceId', '=', input.workspaceId)
+      .where('sourceSpaceId', '=', input.spaceId)
+      .where('sourcePageId', 'in', input.sourcePageIds)
+      .where('deletedAt', 'is', null)
+      .execute();
+  }
+
   async findSourcesBySpace(
     input: { workspaceId: string; spaceId: string },
     trx?: KyselyTransaction,
@@ -197,5 +216,21 @@ export class KnowledgeSourceRepo {
       .where('sourceSpaceId', '=', input.spaceId)
       .where('deletedAt', 'is', null)
       .execute();
+  }
+
+  async findActiveSourcePageIdsBySpace(input: {
+    workspaceId: string;
+    spaceId: string;
+  }): Promise<string[]> {
+    const rows = await this.db
+      .selectFrom('knowledgeSources')
+      .select('sourcePageId')
+      .distinct()
+      .where('workspaceId', '=', input.workspaceId)
+      .where('sourceSpaceId', '=', input.spaceId)
+      .where('staleAt', 'is', null)
+      .where('deletedAt', 'is', null)
+      .execute();
+    return rows.map((row) => row.sourcePageId);
   }
 }

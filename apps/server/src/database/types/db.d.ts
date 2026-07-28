@@ -345,9 +345,11 @@ export interface KnowledgeCompilationAttempts {
   createdAt: Generated<Timestamp>;
   errorCode: string | null;
   errorMessage: string | null;
+  effectiveKnowledgeHash: string | null;
   finishedAt: Timestamp | null;
   id: Generated<string>;
   lastSucceededAt: Timestamp | null;
+  lastSuccessfulEffectiveHash: string | null;
   lastSuccessfulSourceHash: string | null;
   lastSuccessfulSourceVersion: string | null;
   promptVersion: string;
@@ -378,6 +380,7 @@ export interface KnowledgeGraphEdges {
 
 export interface KnowledgeImageExtractions {
   attachmentId: string;
+  attachmentVersion: Timestamp | null;
   attemptCount: Generated<number>;
   cacheFingerprint: string;
   caption: string | null;
@@ -643,17 +646,27 @@ export interface KnowledgeSpaceCompileRunPages {
   createdAt: Generated<Timestamp>;
   errorCode: string | null;
   errorMessage: string | null;
+  expectedImageCount: Generated<number>;
   expectedSourceContentHash: string;
   expectedSourceVersion: string;
   finishedAt: Timestamp | null;
+  failedImageCount: Generated<number>;
   id: Generated<string>;
   jobId: string | null;
+  imageJobId: string | null;
+  imageStatus: Generated<string>;
+  mergeJobId: string | null;
+  mergedEffectiveKnowledgeHash: string | null;
+  mergeStatus: Generated<string>;
   queuedAt: Timestamp | null;
   runId: string;
   sourcePageId: string;
+  skippedImageCount: Generated<number>;
   spaceId: string;
   startedAt: Timestamp | null;
   status: Generated<string>;
+  succeededImageCount: Generated<number>;
+  targetEffectiveKnowledgeHash: string | null;
   updatedAt: Generated<Timestamp>;
   workspaceId: string;
 }
@@ -672,6 +685,9 @@ export interface KnowledgeSpaceCompileRuns {
   finishedAt: Timestamp | null;
   id: Generated<string>;
   importedArtifactCount: Generated<number>;
+  knowledgeGeneration: Generated<number>;
+  mode: Generated<string>;
+  phase: Generated<string>;
   promptVersion: string;
   quarantinedArtifactCount: Generated<number>;
   queuedAt: Generated<Timestamp>;
@@ -883,6 +899,7 @@ export interface Spaces {
   deletedAt: Timestamp | null;
   description: string | null;
   id: Generated<string>;
+  knowledgeGeneration: Generated<number>;
   logo: string | null;
   name: string | null;
   personalOwnerId: string | null;

@@ -23,6 +23,7 @@ import { KnowledgeSourceRef } from '../types/knowledge.types';
 import { KnowledgeSourceSnapshot } from '../types/source-snapshot.types';
 import { LlmWikiCompilerRunner } from './llm-wiki-file-compiler.runner';
 import { chunkKnowledgeSource } from '../chunking/knowledge-structural-chunker';
+import { buildEffectiveKnowledgeHash } from '../services/knowledge-effective-hash';
 
 @Injectable()
 export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
@@ -167,10 +168,19 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
     input: CompileSpaceInput,
     source: KnowledgeSourceSnapshot,
   ): Promise<SemanticAnalysis> {
+    const effectiveKnowledgeHash =
+      source.effectiveKnowledgeHash ??
+      buildEffectiveKnowledgeHash({
+        sourceContentHash: source.contentHash,
+        sourceTextHash: `sha256:${sha256(source.text)}`,
+        compilerVersion: input.compilerVersion,
+        promptVersion: input.promptVersion,
+        readyImages: [],
+      });
     const cacheKey = {
       workspaceId: input.workspaceId,
       sourcePageId: source.sourcePageId,
-      sourceContentHash: source.contentHash,
+      effectiveKnowledgeHash,
       compilerVersion: input.compilerVersion,
       promptVersion: input.promptVersion,
     };
@@ -192,6 +202,7 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
       spaceId: input.spaceId,
       sourceVersion: source.sourceVersion,
       analysis: analysis as unknown as JsonValue,
+      publicationGuard: input.publicationGuard,
     });
     return analysis;
   }

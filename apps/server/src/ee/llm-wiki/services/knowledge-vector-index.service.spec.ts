@@ -5,7 +5,10 @@ describe('KnowledgeVectorIndexService', () => {
     const service = serviceWithExecutor(jest.fn());
 
     await expect(
-      service.ensureProfileIndex({ profile: "abc'; DROP TABLE pages", dimensions: 3 }),
+      service.ensureProfileIndex({
+        profile: "abc'; DROP TABLE pages",
+        dimensions: 3,
+      }),
     ).rejects.toThrow('profile');
     await expect(
       service.ensureProfileIndex({ profile: 'a'.repeat(64), dimensions: 0 }),
@@ -56,9 +59,11 @@ describe('KnowledgeVectorIndexService', () => {
 
   it('coalesces duplicate concurrent index requests', async () => {
     let release: (value: { rows: Array<{ exists: boolean }> }) => void;
-    const pending = new Promise<{ rows: Array<{ exists: boolean }> }>((resolve) => {
-      release = resolve;
-    });
+    const pending = new Promise<{ rows: Array<{ exists: boolean }> }>(
+      (resolve) => {
+        release = resolve;
+      },
+    );
     const execute = jest
       .fn()
       .mockReturnValueOnce(pending)
@@ -76,6 +81,133 @@ describe('KnowledgeVectorIndexService', () => {
     ]);
     expect(execute).toHaveBeenCalledTimes(2);
   });
+
+  it('rebuilds embeddings only from existing non-stale chunks and replaces their vector metadata', async () => {
+    const embeddingProvider = {
+      embedQuery: jest
+        .fn()
+        .mockResolvedValueOnce({
+          vector: [0.1, 0.2],
+          profile: 'a'.repeat(64),
+          model: 'embedding-v2',
+          dimensions: 2,
+        })
+        .mockResolvedValueOnce({
+          vector: [0.3, 0.4],
+          profile: 'a'.repeat(64),
+          model: 'embedding-v2',
+          dimensions: 2,
+        }),
+    };
+    const findActiveChunks = jest.fn().mockResolvedValue([
+      {
+        id: 'chunk-1',
+        text: 'First body',
+        headingPath: ['Guide', 'First'],
+      },
+      { id: 'chunk-2', text: 'Second body', headingPath: [] },
+    ]);
+    const persistEmbeddings = jest.fn().mockResolvedValue(undefined);
+    const ensureProfileIndex = jest.fn().mockResolvedValue('created');
+    const service = serviceWithRebuilder({
+      embeddingProvider,
+      findActiveChunks,
+      persistEmbeddings,
+      ensureProfileIndex,
+    });
+
+    await expect(
+      service.rebuildSpaceEmbeddings({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+      }),
+    ).resolves.toEqual({ rebuiltChunkCount: 2 });
+
+    expect(findActiveChunks).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+    });
+    expect(embeddingProvider.embedQuery).toHaveBeenNthCalledWith(
+      1,
+      'Guide > First\n\nFirst body',
+    );
+    expect(embeddingProvider.embedQuery).toHaveBeenNthCalledWith(
+      2,
+      'Second body',
+    );
+    expect(persistEmbeddings).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      chunks: [
+        expect.objectContaining({
+          id: 'chunk-1',
+          profile: 'a'.repeat(64),
+          model: 'embedding-v2',
+          dimensions: 2,
+          vector: [0.1, 0.2],
+        }),
+        expect.objectContaining({ id: 'chunk-2', vector: [0.3, 0.4] }),
+      ],
+    });
+    expect(ensureProfileIndex).toHaveBeenCalledWith({
+      profile: 'a'.repeat(64),
+      dimensions: 2,
+    });
+  });
+
+  it('does not persist a partial rebuild when embedding generation fails', async () => {
+    const embeddingProvider = {
+      embedQuery: jest
+        .fn()
+        .mockResolvedValueOnce({
+          vector: [0.1],
+          profile: 'b'.repeat(64),
+          model: 'embedding-v2',
+          dimensions: 1,
+        })
+        .mockResolvedValueOnce(null),
+    };
+    const persistEmbeddings = jest.fn();
+    const service = serviceWithRebuilder({
+      embeddingProvider,
+      findActiveChunks: jest.fn().mockResolvedValue([
+        { id: 'chunk-1', text: 'One', headingPath: [] },
+        { id: 'chunk-2', text: 'Two', headingPath: [] },
+      ]),
+      persistEmbeddings,
+      ensureProfileIndex: jest.fn(),
+    });
+
+    await expect(
+      service.rebuildSpaceEmbeddings({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+      }),
+    ).rejects.toThrow('chunk-2');
+    expect(persistEmbeddings).not.toHaveBeenCalled();
+  });
+
+  it('finishes an empty active chunk scope without provider or database writes', async () => {
+    const embeddingProvider = { embedQuery: jest.fn() };
+    const persistEmbeddings = jest.fn();
+    const ensureProfileIndex = jest.fn();
+    const service = serviceWithRebuilder({
+      embeddingProvider,
+      findActiveChunks: jest.fn().mockResolvedValue([]),
+      persistEmbeddings,
+      ensureProfileIndex,
+    });
+
+    await expect(
+      service.rebuildSpaceEmbeddings({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+      }),
+    ).resolves.toEqual({ rebuiltChunkCount: 0 });
+    expect(embeddingProvider.embedQuery).not.toHaveBeenCalled();
+    expect(persistEmbeddings).not.toHaveBeenCalled();
+    expect(ensureProfileIndex).not.toHaveBeenCalled();
+  });
 });
 
 function serviceWithExecutor(execute: jest.Mock): KnowledgeVectorIndexService {
@@ -85,5 +217,31 @@ function serviceWithExecutor(execute: jest.Mock): KnowledgeVectorIndexService {
     }
   }
 
-  return new TestService({} as never);
+  return new TestService({} as never, { embedQuery: jest.fn() } as never);
+}
+
+function serviceWithRebuilder(input: {
+  embeddingProvider: { embedQuery: jest.Mock };
+  findActiveChunks: jest.Mock;
+  persistEmbeddings: jest.Mock;
+  ensureProfileIndex: jest.Mock;
+}): KnowledgeVectorIndexService {
+  class TestService extends KnowledgeVectorIndexService {
+    protected findActiveChunksForSpace(scope: {
+      workspaceId: string;
+      spaceId: string;
+    }) {
+      return input.findActiveChunks(scope);
+    }
+
+    protected persistRebuiltEmbeddings(payload: unknown) {
+      return input.persistEmbeddings(payload);
+    }
+
+    ensureProfileIndex(scope: { profile: string; dimensions: number }) {
+      return input.ensureProfileIndex(scope);
+    }
+  }
+
+  return new TestService({} as never, input.embeddingProvider as never);
 }

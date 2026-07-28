@@ -8,11 +8,14 @@ import {
   Container,
   Group,
   Loader,
+  Menu,
+  Modal,
   MultiSelect,
   Select,
   Stack,
   Table,
   Text,
+  TextInput,
   Tooltip,
   Title,
 } from "@mantine/core";
@@ -22,6 +25,7 @@ import {
   IconAlertTriangle,
   IconArrowLeft,
   IconDatabaseSearch,
+  IconDotsVertical,
   IconInfoCircle,
   IconRefresh,
 } from "@tabler/icons-react";
@@ -31,17 +35,21 @@ import { useTranslation } from "react-i18next";
 import { getAppName } from "@/lib/config";
 import { useGetSpacesQuery } from "@/features/space/queries/space-query";
 import {
-  compileKnowledgeSpaces,
+  forceRebuildKnowledgeSpace,
   getKnowledgeDiagnostics,
   retryKnowledgePages,
   runKnowledgeAdminAction,
+  updateKnowledgeSpace,
 } from "../services/knowledge-service";
 import classes from "../styles/knowledge-admin.module.css";
 import type {
   KnowledgeAdminSpaceAction,
+  KnowledgeCompilationStageProgress,
+  KnowledgeCompileRunProgress,
   KnowledgeCompileStatus,
   KnowledgePageCompileStage,
   KnowledgePageCompileStatus,
+  KnowledgeQueueSnapshot,
 } from "../types/knowledge.types";
 
 const DIAGNOSTICS_LIMIT = 50;
@@ -55,6 +63,16 @@ const EMPTY_QUEUE_COUNTS = {
   failed: 0,
   completed: 0,
 };
+
+export function knowledgeDiagnosticsRefetchInterval(): number | false {
+  if (
+    typeof document !== "undefined" &&
+    document.visibilityState === "hidden"
+  ) {
+    return false;
+  }
+  return 5000;
+}
 const COMPILE_STATUS_OPTIONS: Array<{
   value: KnowledgePageCompileStatus;
   label: string;
@@ -81,6 +99,12 @@ const COMPILE_STAGE_OPTIONS: Array<{
   "completed",
 ].map((value) => ({ value: value as KnowledgePageCompileStage, label: value }));
 
+type ConfirmedSpaceCompilation = {
+  mode: "update" | "force";
+  spaceId: string;
+  spaceName: string;
+};
+
 export default function KnowledgeAdminPage() {
   const { t } = useTranslation();
   const [spaceIds, setSpaceIds] = useState<string[]>([]);
@@ -89,6 +113,12 @@ export default function KnowledgeAdminPage() {
   const [compileStage, setCompileStage] =
     useState<KnowledgePageCompileStage | null>(null);
   const [selectedPageIds, setSelectedPageIds] = useState<string[]>([]);
+  const [confirmedCompilation, setConfirmedCompilation] =
+    useState<ConfirmedSpaceCompilation | null>(null);
+  const [confirmationSpaceName, setConfirmationSpaceName] = useState("");
+  const [confirmationError, setConfirmationError] = useState<string | null>(
+    null,
+  );
   const spaceIdsInitialized = useRef(false);
   const { data: spacesData, isLoading: spacesLoading } = useGetSpacesQuery({
     limit: 100,
@@ -116,12 +146,28 @@ export default function KnowledgeAdminPage() {
         limit: DIAGNOSTICS_LIMIT,
       }),
     enabled: spaceIds.length > 0,
-    refetchInterval: 5000,
+    refetchInterval: knowledgeDiagnosticsRefetchInterval,
+    refetchIntervalInBackground: false,
   });
 
-  const compileMutation = useMutation({
-    mutationFn: compileKnowledgeSpaces,
+  const confirmedCompilationMutation = useMutation({
+    mutationFn: async (params: {
+      target: ConfirmedSpaceCompilation;
+      confirmationSpaceName: string;
+    }) => {
+      const request = {
+        spaceId: params.target.spaceId,
+        confirmationSpaceName: params.confirmationSpaceName,
+      };
+      return params.target.mode === "force"
+        ? forceRebuildKnowledgeSpace(request)
+        : updateKnowledgeSpace(request);
+    },
+    retry: false,
     onSuccess: (data) => {
+      setConfirmedCompilation(null);
+      setConfirmationSpaceName("");
+      setConfirmationError(null);
       notifications.show({
         message: t("Knowledge update queued", {
           count: data.queuedSpaceCount,
@@ -130,10 +176,7 @@ export default function KnowledgeAdminPage() {
       void diagnosticsQuery.refetch();
     },
     onError: (error) => {
-      notifications.show({
-        color: "red",
-        message: error.message,
-      });
+      setConfirmationError(error.message);
     },
   });
 
@@ -175,6 +218,13 @@ export default function KnowledgeAdminPage() {
   const pages = diagnosticsQuery.data?.pages ?? [];
   const jobs = diagnosticsQuery.data?.jobs ?? [];
   const queueCounts = diagnosticsQuery.data?.queueCounts ?? EMPTY_QUEUE_COUNTS;
+  const queueSnapshots = diagnosticsQuery.data?.queueSnapshots ?? {
+    text: { ...queueCounts, sampledAt: null },
+    image: { ...EMPTY_QUEUE_COUNTS, sampledAt: null },
+  };
+  const compileRuns = diagnosticsQuery.data?.compileRuns ?? [];
+  const canViewGlobalQueues =
+    diagnosticsQuery.data?.canViewGlobalQueues === true;
   const quarantines = diagnosticsQuery.data?.quarantines ?? [];
   const retrieval = diagnosticsQuery.data?.retrieval;
   const compileStatusBySpaceId = useMemo(
@@ -193,6 +243,36 @@ export default function KnowledgeAdminPage() {
     targetSpaceId: string,
   ) => {
     actionMutation.mutate({ action, spaceIds: [targetSpaceId] });
+  };
+  const openConfirmedCompilation = (
+    mode: ConfirmedSpaceCompilation["mode"],
+    spaceId: string,
+    spaceName: string,
+  ) => {
+    setConfirmedCompilation({ mode, spaceId, spaceName });
+    setConfirmationSpaceName("");
+    setConfirmationError(null);
+    confirmedCompilationMutation.reset();
+  };
+  const closeConfirmedCompilation = () => {
+    if (confirmedCompilationMutation.isPending) {
+      return;
+    }
+    setConfirmedCompilation(null);
+    setConfirmationSpaceName("");
+    setConfirmationError(null);
+  };
+  const submitConfirmedCompilation = () => {
+    if (
+      !confirmedCompilation ||
+      confirmationSpaceName !== confirmedCompilation.spaceName
+    ) {
+      return;
+    }
+    confirmedCompilationMutation.mutate({
+      target: confirmedCompilation,
+      confirmationSpaceName,
+    });
   };
 
   return (
@@ -230,16 +310,93 @@ export default function KnowledgeAdminPage() {
               >
                 {t("Refresh")}
               </Button>
-              <Button
-                leftSection={<IconRefresh size={16} />}
-                loading={compileMutation.isPending}
-                disabled={spaceIds.length === 0}
-                onClick={() => compileMutation.mutate({ spaceIds })}
-              >
-                {t("Update knowledge")}
-              </Button>
             </Group>
           </Group>
+
+          <Modal
+            opened={confirmedCompilation !== null}
+            onClose={closeConfirmedCompilation}
+            closeOnClickOutside={!confirmedCompilationMutation.isPending}
+            closeOnEscape={!confirmedCompilationMutation.isPending}
+            title={
+              confirmedCompilation?.mode === "force"
+                ? t("Force rebuild knowledge")
+                : t("Update knowledge")
+            }
+            centered
+          >
+            {confirmedCompilation && (
+              <Stack gap="md">
+                {confirmedCompilation.mode === "force" ? (
+                  <Alert color="red" icon={<IconAlertTriangle size={18} />}>
+                    <Stack gap="xs">
+                      <Text size="sm" fw={600}>
+                        {t(
+                          "This permanently clears all compiled knowledge, image recognition cache, vectors, and relationships for this space.",
+                        )}
+                      </Text>
+                      <Text size="sm">
+                        {t(
+                          "Original pages and attachments are preserved. Knowledge is unavailable while rebuilding.",
+                        )}
+                      </Text>
+                    </Stack>
+                  </Alert>
+                ) : (
+                  <Alert color="blue" icon={<IconInfoCircle size={18} />}>
+                    {t(
+                      "Only changed pages are compiled. Unchanged pages reuse existing knowledge, and existing knowledge is not cleared.",
+                    )}
+                  </Alert>
+                )}
+
+                <Text size="sm">
+                  {t("Enter the exact space name to continue:")}{" "}
+                  <Text
+                    component="span"
+                    fw={700}
+                    className={classes.confirmationName}
+                  >
+                    {confirmedCompilation.spaceName}
+                  </Text>
+                </Text>
+                <TextInput
+                  label={t("Type the space name to confirm")}
+                  value={confirmationSpaceName}
+                  onChange={(event) => {
+                    setConfirmationSpaceName(event.currentTarget.value);
+                    setConfirmationError(null);
+                  }}
+                  error={confirmationError}
+                  autoComplete="off"
+                  data-autofocus
+                />
+                <Group justify="flex-end">
+                  <Button
+                    variant="default"
+                    onClick={closeConfirmedCompilation}
+                    disabled={confirmedCompilationMutation.isPending}
+                  >
+                    {t("Cancel")}
+                  </Button>
+                  <Button
+                    color={
+                      confirmedCompilation.mode === "force" ? "red" : undefined
+                    }
+                    loading={confirmedCompilationMutation.isPending}
+                    disabled={
+                      confirmationSpaceName !== confirmedCompilation.spaceName
+                    }
+                    onClick={submitConfirmedCompilation}
+                  >
+                    {confirmedCompilation.mode === "force"
+                      ? t("Confirm force rebuild")
+                      : t("Confirm knowledge update")}
+                  </Button>
+                </Group>
+              </Stack>
+            )}
+          </Modal>
 
           <section className={classes.panel}>
             <Group align="end" grow>
@@ -444,14 +601,17 @@ export default function KnowledgeAdminPage() {
                             <Group gap="xs">
                               <Button
                                 size="xs"
-                                variant="default"
+                                variant="light"
                                 leftSection={<IconRefresh size={14} />}
-                                loading={actionMutation.isPending}
                                 onClick={() =>
-                                  runSpaceAction("retry_compile", space.spaceId)
+                                  openConfirmedCompilation(
+                                    "update",
+                                    space.spaceId,
+                                    space.spaceName,
+                                  )
                                 }
                               >
-                                {t("Retry compile")}
+                                {t("Update knowledge")}
                               </Button>
                               <Button
                                 size="xs"
@@ -492,6 +652,36 @@ export default function KnowledgeAdminPage() {
                               >
                                 {t("Rebuild embeddings")}
                               </Button>
+                              <Menu position="bottom-end" withinPortal>
+                                <Menu.Target>
+                                  <Button
+                                    size="xs"
+                                    variant="subtle"
+                                    color="red"
+                                    leftSection={<IconDotsVertical size={14} />}
+                                  >
+                                    {t("Dangerous actions")}
+                                  </Button>
+                                </Menu.Target>
+                                <Menu.Dropdown>
+                                  <Menu.Label>{t("Danger zone")}</Menu.Label>
+                                  <Menu.Item
+                                    color="red"
+                                    leftSection={
+                                      <IconAlertTriangle size={14} />
+                                    }
+                                    onClick={() =>
+                                      openConfirmedCompilation(
+                                        "force",
+                                        space.spaceId,
+                                        space.spaceName,
+                                      )
+                                    }
+                                  >
+                                    {t("Force rebuild knowledge")}
+                                  </Menu.Item>
+                                </Menu.Dropdown>
+                              </Menu>
                             </Group>
                           </Table.Td>
                         </Table.Tr>
@@ -557,6 +747,41 @@ export default function KnowledgeAdminPage() {
                         </Table.Td>
                         <Table.Td>{formatDate(item.createdAt)}</Table.Td>
                       </Table.Tr>
+                    ))
+                  )}
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+          </section>
+
+          <section className={classes.panel}>
+            <Title order={2} size="h4" mb="md">
+              {t("Compilation run history")}
+            </Title>
+            <Table.ScrollContainer minWidth={1120}>
+              <Table highlightOnHover verticalSpacing="sm">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>{t("Space")}</Table.Th>
+                    <Table.Th>{t("State")}</Table.Th>
+                    <Table.Th>{t("Text progress")}</Table.Th>
+                    <Table.Th>{t("Image progress")}</Table.Th>
+                    <Table.Th>{t("Merge progress")}</Table.Th>
+                    <Table.Th>{t("Updated")}</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {compileRuns.length === 0 ? (
+                    <Table.Tr>
+                      <Table.Td colSpan={6}>
+                        <Text className={classes.emptyText}>
+                          {t("No compilation runs")}
+                        </Text>
+                      </Table.Td>
+                    </Table.Tr>
+                  ) : (
+                    compileRuns.map((run) => (
+                      <CompilationRunRow key={run.runId} run={run} />
                     ))
                   )}
                 </Table.Tbody>
@@ -749,107 +974,216 @@ export default function KnowledgeAdminPage() {
             </Table.ScrollContainer>
           </section>
 
-          <section className={classes.panel}>
-            <Stack gap="sm" mb="md">
-              <Group justify="space-between">
-                <Title order={2} size="h4">
-                  {t("AI queue")}
-                </Title>
-                <Group gap="xs">
-                  <Badge color="yellow" variant="light">
-                    {t("Waiting")}:{" "}
-                    {queueCounts.waiting +
-                      queueCounts.prioritized +
-                      queueCounts.waitingChildren}
-                  </Badge>
-                  <Badge color="blue" variant="light">
-                    {t("Active")}: {queueCounts.active}
-                  </Badge>
-                  <Badge color="orange" variant="light">
-                    {t("Delayed")}: {queueCounts.delayed}
-                  </Badge>
-                  <Badge color="gray" variant="light">
-                    {t("Paused")}: {queueCounts.paused}
-                  </Badge>
-                  <Badge color="red" variant="light">
-                    {t("Failed")}: {queueCounts.failed}
-                  </Badge>
-                  <Badge color="green" variant="light">
-                    {t("Completed")}: {queueCounts.completed}
-                  </Badge>
-                </Group>
-              </Group>
-              <Group justify="space-between">
-                <Text fw={600}>{t("Recent AI jobs")}</Text>
-                <Group gap="xs">
+          {canViewGlobalQueues && (
+            <section className={classes.panel}>
+              <Stack gap="sm" mb="md">
+                <div>
+                  <Title order={2} size="h4">
+                    {t("Current queue tasks")}
+                  </Title>
                   <Text size="sm" c="dimmed">
-                    {t("Recent records")}
+                    {t(
+                      "Current Redis snapshot; completed and failed counts are not historical totals.",
+                    )}
                   </Text>
-                  <Badge variant="light">{jobs.length}</Badge>
+                </div>
+                <div className={classes.queueGrid}>
+                  <QueueSnapshotCard
+                    title={t("Text compilation queue")}
+                    snapshot={queueSnapshots.text}
+                  />
+                  <QueueSnapshotCard
+                    title={t("Image recognition queue")}
+                    snapshot={queueSnapshots.image}
+                  />
+                </div>
+                <Group justify="space-between">
+                  <Text fw={600}>{t("Current sampled jobs")}</Text>
+                  <Group gap="xs">
+                    <Text size="sm" c="dimmed">
+                      {t("Recent records")}
+                    </Text>
+                    <Badge variant="light">{jobs.length}</Badge>
+                  </Group>
                 </Group>
-              </Group>
-            </Stack>
+              </Stack>
 
-            <Table.ScrollContainer minWidth={900}>
-              <Table highlightOnHover verticalSpacing="sm">
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>{t("Job")}</Table.Th>
-                    <Table.Th>{t("State")}</Table.Th>
-                    <Table.Th>{t("Space")}</Table.Th>
-                    <Table.Th>{t("Pages")}</Table.Th>
-                    <Table.Th>{t("Updated")}</Table.Th>
-                    <Table.Th>{t("Error")}</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {jobs.length === 0 ? (
+              <Table.ScrollContainer minWidth={900}>
+                <Table highlightOnHover verticalSpacing="sm">
+                  <Table.Thead>
                     <Table.Tr>
-                      <Table.Td colSpan={6}>
-                        <Text className={classes.emptyText}>
-                          {t("No matching jobs")}
-                        </Text>
-                      </Table.Td>
+                      <Table.Th>{t("Job")}</Table.Th>
+                      <Table.Th>{t("State")}</Table.Th>
+                      <Table.Th>{t("Space")}</Table.Th>
+                      <Table.Th>{t("Pages")}</Table.Th>
+                      <Table.Th>{t("Updated")}</Table.Th>
+                      <Table.Th>{t("Error")}</Table.Th>
                     </Table.Tr>
-                  ) : (
-                    jobs.map((job) => (
-                      <Table.Tr key={`${job.name}:${job.id}`}>
-                        <Table.Td>
-                          <Text fw={600}>{job.name}</Text>
-                          <Text className={classes.mono} c="dimmed">
-                            {job.id}
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {jobs.length === 0 ? (
+                      <Table.Tr>
+                        <Table.Td colSpan={6}>
+                          <Text className={classes.emptyText}>
+                            {t("No matching jobs")}
                           </Text>
                         </Table.Td>
-                        <Table.Td>
-                          <Badge
-                            color={jobStateColor(job.state)}
-                            variant="light"
-                          >
-                            {job.state}
-                          </Badge>
-                        </Table.Td>
-                        <Table.Td>
-                          <Text className={classes.mono}>
-                            {job.spaceId || "-"}
-                          </Text>
-                        </Table.Td>
-                        <Table.Td>{job.pageIds.length}</Table.Td>
-                        <Table.Td>
-                          {formatTimestamp(
-                            job.finishedOn ?? job.processedOn ?? job.timestamp,
-                          )}
-                        </Table.Td>
-                        <Table.Td>{job.failedReason || "-"}</Table.Td>
                       </Table.Tr>
-                    ))
-                  )}
-                </Table.Tbody>
-              </Table>
-            </Table.ScrollContainer>
-          </section>
+                    ) : (
+                      jobs.map((job) => (
+                        <Table.Tr key={`${job.name}:${job.id}`}>
+                          <Table.Td>
+                            <Text fw={600}>{job.name}</Text>
+                            <Text className={classes.mono} c="dimmed">
+                              {job.id}
+                            </Text>
+                          </Table.Td>
+                          <Table.Td>
+                            <Badge
+                              color={jobStateColor(job.state)}
+                              variant="light"
+                            >
+                              {job.state}
+                            </Badge>
+                          </Table.Td>
+                          <Table.Td>
+                            <Text className={classes.mono}>
+                              {job.spaceId || "-"}
+                            </Text>
+                          </Table.Td>
+                          <Table.Td>{job.pageIds.length}</Table.Td>
+                          <Table.Td>
+                            {formatTimestamp(
+                              job.finishedOn ??
+                                job.processedOn ??
+                                job.timestamp,
+                            )}
+                          </Table.Td>
+                          <Table.Td>{job.failedReason || "-"}</Table.Td>
+                        </Table.Tr>
+                      ))
+                    )}
+                  </Table.Tbody>
+                </Table>
+              </Table.ScrollContainer>
+            </section>
+          )}
         </Stack>
       </Container>
     </>
+  );
+}
+
+function QueueSnapshotCard({
+  title,
+  snapshot,
+}: {
+  title: string;
+  snapshot?: KnowledgeQueueSnapshot;
+}) {
+  const { t } = useTranslation();
+  const value = snapshot ?? { ...EMPTY_QUEUE_COUNTS, sampledAt: null };
+  const waiting = value.waiting + value.prioritized + value.waitingChildren;
+
+  return (
+    <div className={classes.queueCard}>
+      <Text fw={600}>{title}</Text>
+      <Group gap="xs" mt="xs">
+        <Badge color="yellow" variant="light">
+          {t("Waiting")}: {waiting}
+        </Badge>
+        <Badge color="blue" variant="light">
+          {t("Active")}: {value.active}
+        </Badge>
+        <Badge color="orange" variant="light">
+          {t("Delayed")}: {value.delayed}
+        </Badge>
+        <Badge color="gray" variant="light">
+          {t("Paused")}: {value.paused}
+        </Badge>
+        <Badge color="red" variant="light">
+          {t("Failed")}: {value.failed}
+        </Badge>
+        <Badge color="green" variant="light">
+          {t("Completed")}: {value.completed}
+        </Badge>
+      </Group>
+      <Text size="xs" c="dimmed" mt="xs">
+        {t("Sampled")}: {formatDate(value.sampledAt)}
+      </Text>
+    </div>
+  );
+}
+
+function CompilationRunRow({ run }: { run: KnowledgeCompileRunProgress }) {
+  return (
+    <Table.Tr>
+      <Table.Td>
+        <Text fw={600}>{run.spaceName || run.spaceId || "-"}</Text>
+        <Text className={classes.mono} c="dimmed">
+          {run.runId || "-"}
+        </Text>
+      </Table.Td>
+      <Table.Td>
+        <Stack gap={4} align="flex-start">
+          <Badge color={compileStatusColor(run.status)} variant="light">
+            {run.status}
+          </Badge>
+          {(run.mode || run.phase) && (
+            <Text size="xs" c="dimmed">
+              {[run.mode, run.phase].filter(Boolean).join(" · ")}
+            </Text>
+          )}
+        </Stack>
+      </Table.Td>
+      <Table.Td>
+        <CompilationProgressCell progress={run.progress.text} />
+      </Table.Td>
+      <Table.Td>
+        <CompilationProgressCell progress={run.progress.image} />
+      </Table.Td>
+      <Table.Td>
+        <CompilationProgressCell progress={run.progress.merge} />
+      </Table.Td>
+      <Table.Td>{formatDate(run.updatedAt ?? run.createdAt ?? null)}</Table.Td>
+    </Table.Tr>
+  );
+}
+
+function CompilationProgressCell({
+  progress,
+}: {
+  progress: KnowledgeCompilationStageProgress;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Stack gap={5}>
+      <Group gap={5}>
+        <Badge variant="light">
+          {t("Expected")}: {progress.expected}
+        </Badge>
+        <Badge color="green" variant="light">
+          {t("Succeeded")}: {progress.succeeded}
+        </Badge>
+        <Badge color="red" variant="light">
+          {t("Failed")}: {progress.failed}
+        </Badge>
+        <Badge color="gray" variant="light">
+          {t("Skipped")}: {progress.skipped}
+        </Badge>
+        <Badge color="yellow" variant="light">
+          {t("Pending")}: {progress.pending}
+        </Badge>
+        <Badge color="orange" variant="outline">
+          {t("Waiting")}: {progress.waiting}
+        </Badge>
+      </Group>
+      {progress.lastAttemptError && (
+        <Text size="xs" c="red">
+          {t("Last attempt error")}: {progress.lastAttemptError}
+        </Text>
+      )}
+    </Stack>
   );
 }
 

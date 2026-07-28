@@ -7,7 +7,11 @@ import {
   PostgresAdapter,
   PostgresIntrospector,
   PostgresQueryCompiler,
+  sql,
 } from 'kysely';
+import { PostgresJSDialect } from 'kysely-postgres-js';
+import * as postgres from 'postgres';
+import { normalizePostgresUrl } from '../../../common/helpers';
 
 type QueryCall = { method: string; args: unknown[] };
 
@@ -15,6 +19,12 @@ class FakeKyselyQuery {
   readonly calls: QueryCall[] = [];
 
   constructor(private readonly result: unknown[] = []) {}
+
+  transaction() {
+    return {
+      execute: async (callback: (trx: this) => unknown) => callback(this),
+    };
+  }
 
   insertInto(...args: unknown[]) {
     this.calls.push({ method: 'insertInto', args });
@@ -97,6 +107,7 @@ describe('KnowledgeCompilationRepo', () => {
       sourcePageId: 'page-1',
       sourceVersion: 'v2',
       sourceContentHash: 'hash-2',
+      effectiveKnowledgeHash: 'effective-hash-2',
       compilerVersion: 'compiler-v2',
       promptVersion: 'prompt-v2',
       compilerRunId: 'run-2',
@@ -111,6 +122,7 @@ describe('KnowledgeCompilationRepo', () => {
         attemptCount: 0,
         sourceVersion: 'v2',
         sourceContentHash: 'hash-2',
+        effectiveKnowledgeHash: 'effective-hash-2',
         startedAt: null,
         finishedAt: null,
       }),
@@ -135,6 +147,7 @@ describe('KnowledgeCompilationRepo', () => {
       sourcePageId: 'page-1',
       sourceVersion: 'v2',
       sourceContentHash: 'hash-2',
+      effectiveKnowledgeHash: 'effective-hash-2',
       compilerVersion: 'compiler-v2',
       promptVersion: 'prompt-v2',
       compilerRunId: 'run-2',
@@ -144,6 +157,7 @@ describe('KnowledgeCompilationRepo', () => {
     const persisted = JSON.stringify(query.calls);
     expect(persisted).toContain('knowledgeCompilationAttempts');
     expect(persisted).toContain('hash-2');
+    expect(persisted).toContain('effective-hash-2');
     expect(persisted).not.toContain('lastSuccessfulSourceVersion');
     expect(query.calls).toContainEqual({
       method: 'onConflict',
@@ -178,6 +192,7 @@ describe('KnowledgeCompilationRepo', () => {
       sourcePageId: 'page-1',
       sourceVersion: 'v2',
       sourceContentHash: 'hash-2',
+      effectiveKnowledgeHash: 'effective-hash-2',
       compilerVersion: 'compiler-v2',
       promptVersion: 'prompt-v2',
       compilerRunId: 'run-2',
@@ -210,6 +225,7 @@ describe('KnowledgeCompilationRepo', () => {
       compileTaskId: 'task-page-1',
       sourceVersion: 'v2',
       sourceContentHash: 'hash-2',
+      effectiveKnowledgeHash: 'effective-hash-2',
     };
     await repo.updateSourceSnapshot(snapshotUpdate);
 
@@ -229,6 +245,7 @@ describe('KnowledgeCompilationRepo', () => {
       expect.objectContaining({
         sourceVersion: 'v2',
         sourceContentHash: 'hash-2',
+        effectiveKnowledgeHash: 'effective-hash-2',
       }),
     );
     expect(query.calls).toContainEqual({
@@ -312,6 +329,7 @@ describe('KnowledgeCompilationRepo', () => {
       compileTaskId: 'task-page-1',
       sourceVersion: 'v2',
       sourceContentHash: 'hash-2',
+      effectiveKnowledgeHash: 'effective-hash-2',
     };
     await repo.succeedAttempt(success);
 
@@ -321,6 +339,8 @@ describe('KnowledgeCompilationRepo', () => {
         stage: 'completed',
         lastSuccessfulSourceVersion: 'v2',
         lastSuccessfulSourceHash: 'hash-2',
+        effectiveKnowledgeHash: 'effective-hash-2',
+        lastSuccessfulEffectiveHash: 'effective-hash-2',
         lastSucceededAt: expect.any(Date),
       }),
     );
@@ -328,6 +348,26 @@ describe('KnowledgeCompilationRepo', () => {
       method: 'where',
       args: ['compileTaskId', '=', 'task-page-1'],
     });
+  });
+
+  it('clears effective hashes when a successful attempt has no effective hash', async () => {
+    const query = new FakeKyselyQuery();
+    const repo = new KnowledgeCompilationRepo(query as never);
+
+    await repo.succeedAttempt({
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-1',
+      compileTaskId: 'task-page-2',
+      sourceVersion: 'v3',
+      sourceContentHash: 'hash-3',
+    });
+
+    expect(query.calls.find((call) => call.method === 'set')?.args[0]).toEqual(
+      expect.objectContaining({
+        effectiveKnowledgeHash: null,
+        lastSuccessfulEffectiveHash: null,
+      }),
+    );
   });
 
   it('fences stage updates by compile task id', async () => {
@@ -357,7 +397,7 @@ describe('KnowledgeCompilationRepo', () => {
       repo.findAnalysis({
         workspaceId: 'workspace-1',
         sourcePageId: 'page-1',
-        sourceContentHash: 'hash-1',
+        effectiveKnowledgeHash: 'effective-hash-1',
         compilerVersion: 'compiler-v1',
         promptVersion: 'prompt-v1',
       }),
@@ -366,7 +406,10 @@ describe('KnowledgeCompilationRepo', () => {
     expect(query.calls.filter((call) => call.method === 'where')).toEqual([
       { method: 'where', args: ['workspaceId', '=', 'workspace-1'] },
       { method: 'where', args: ['sourcePageId', '=', 'page-1'] },
-      { method: 'where', args: ['sourceContentHash', '=', 'hash-1'] },
+      {
+        method: 'where',
+        args: ['sourceContentHash', '=', 'effective-hash-1'],
+      },
       { method: 'where', args: ['compilerVersion', '=', 'compiler-v1'] },
       { method: 'where', args: ['promptVersion', '=', 'prompt-v1'] },
     ]);
@@ -381,7 +424,7 @@ describe('KnowledgeCompilationRepo', () => {
       spaceId: 'space-1',
       sourcePageId: 'page-1',
       sourceVersion: 'v1',
-      sourceContentHash: 'hash-1',
+      effectiveKnowledgeHash: 'effective-hash-1',
       compilerVersion: 'compiler-v1',
       promptVersion: 'prompt-v1',
       analysis: { synopsis: 'Cached analysis' },
@@ -396,6 +439,38 @@ describe('KnowledgeCompilationRepo', () => {
       'compilerVersion',
       'promptVersion',
     ]);
+    expect(
+      (
+        query.calls.find((call) => call.method === 'doUpdateSet')?.args[1] as {
+          spaceId?: string;
+        }
+      ).spaceId,
+    ).toBe('space-1');
+  });
+
+  it('does not recreate an analysis cache row when the publication fence rejects it', async () => {
+    const query = new FakeKyselyQuery();
+    const repo = new KnowledgeCompilationRepo(query as never);
+    const publicationGuard = jest.fn().mockResolvedValue(false);
+
+    await expect(
+      repo.saveAnalysis({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageId: 'page-1',
+        sourceVersion: 'v1',
+        effectiveKnowledgeHash: 'effective-hash-1',
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+        analysis: { synopsis: 'Late result' },
+        publicationGuard,
+      }),
+    ).resolves.toBe(false);
+
+    expect(publicationGuard).toHaveBeenCalledWith(query);
+    expect(query.calls.some((call) => call.method === 'insertInto')).toBe(
+      false,
+    );
   });
 
   it('returns page diagnostics for the requested workspace pages', async () => {
@@ -420,3 +495,208 @@ describe('KnowledgeCompilationRepo', () => {
     ]);
   });
 });
+
+const integrationDatabaseUrl =
+  process.env.AKASHA_MIGRATION_TEST_DATABASE_URL?.trim();
+const describePostgres = integrationDatabaseUrl ? describe : describe.skip;
+
+describePostgres('KnowledgeCompilationRepo PostgreSQL round trip', () => {
+  const schema = `akasha_effective_hash_${process.pid}_${Date.now()}`;
+  let client: ReturnType<typeof postgres>;
+  let db: Kysely<unknown>;
+  let repo: KnowledgeCompilationRepo;
+
+  beforeAll(async () => {
+    client = postgres(normalizePostgresUrl(integrationDatabaseUrl!), {
+      max: 1,
+      onnotice: () => {},
+    });
+    db = new Kysely({
+      dialect: new PostgresJSDialect({ postgres: client }),
+      plugins: [new CamelCasePlugin()],
+    });
+    await sql.raw(`create schema "${schema}"`).execute(db);
+    await sql.raw(`set search_path to "${schema}"`).execute(db);
+    await createEffectiveHashFixture(db);
+    repo = new KnowledgeCompilationRepo(db as never);
+  });
+
+  afterAll(async () => {
+    if (!db) return;
+    await sql.raw(`drop schema if exists "${schema}" cascade`).execute(db);
+    await db.destroy();
+  });
+
+  it('persists the current hash first and the successful hash only on success', async () => {
+    const identity = {
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageId: 'page-1',
+      sourceVersion: 'v1',
+      sourceContentHash: 'sha256:source-1',
+      effectiveKnowledgeHash: 'sha256:effective-1',
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+      compilerRunId: 'run-1',
+      compileTaskId: 'task-1',
+    };
+
+    await repo.queueAttempt(identity);
+    await expectAttemptHashes(db, {
+      current: 'sha256:effective-1',
+      successful: null,
+      status: 'queued',
+    });
+
+    await repo.startAttempt({
+      ...identity,
+      effectiveKnowledgeHash: 'sha256:effective-2',
+    });
+    await expectAttemptHashes(db, {
+      current: 'sha256:effective-2',
+      successful: null,
+      status: 'running',
+    });
+
+    await repo.succeedAttempt({
+      workspaceId: identity.workspaceId,
+      sourcePageId: identity.sourcePageId,
+      compileTaskId: identity.compileTaskId,
+      sourceVersion: identity.sourceVersion,
+      sourceContentHash: identity.sourceContentHash,
+      effectiveKnowledgeHash: 'sha256:effective-2',
+    });
+    await expectAttemptHashes(db, {
+      current: 'sha256:effective-2',
+      successful: 'sha256:effective-2',
+      status: 'succeeded',
+    });
+
+    const { effectiveKnowledgeHash: _effectiveKnowledgeHash, ...next } = {
+      ...identity,
+      sourceVersion: 'v2',
+      sourceContentHash: 'sha256:source-2',
+      compilerRunId: 'run-2',
+      compileTaskId: 'task-2',
+    };
+    await repo.queueAttempt(next);
+    await expectAttemptHashes(db, {
+      current: null,
+      successful: 'sha256:effective-2',
+      status: 'queued',
+    });
+    await repo.startAttempt(next);
+    await repo.succeedAttempt({
+      workspaceId: next.workspaceId,
+      sourcePageId: next.sourcePageId,
+      compileTaskId: next.compileTaskId,
+      sourceVersion: next.sourceVersion,
+      sourceContentHash: next.sourceContentHash,
+    });
+    await expectAttemptHashes(db, {
+      current: null,
+      successful: null,
+      status: 'succeeded',
+    });
+  });
+
+  it('stores and reads Stage 1 analysis by effective knowledge hash', async () => {
+    const key = {
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageId: 'page-1',
+      sourceVersion: 'v1',
+      effectiveKnowledgeHash: 'sha256:analysis-effective-1',
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    };
+    await repo.saveAnalysis({ ...key, analysis: { synopsis: 'from image' } });
+
+    await expect(repo.findAnalysis(key)).resolves.toEqual({
+      synopsis: 'from image',
+    });
+    await expect(
+      repo.findAnalysis({
+        ...key,
+        effectiveKnowledgeHash: 'sha256:analysis-effective-2',
+      }),
+    ).resolves.toBeUndefined();
+  });
+});
+
+async function createEffectiveHashFixture(db: Kysely<unknown>): Promise<void> {
+  await sql`
+    create table knowledge_compilation_attempts (
+      workspace_id varchar not null,
+      space_id varchar not null,
+      source_page_id varchar not null,
+      source_version varchar,
+      source_content_hash varchar,
+      effective_knowledge_hash varchar,
+      compiler_version varchar not null,
+      prompt_version varchar not null,
+      compiler_run_id varchar,
+      compile_task_id varchar,
+      status varchar not null,
+      stage varchar not null,
+      attempt_count integer not null,
+      error_code varchar,
+      error_message varchar,
+      queued_at timestamptz not null,
+      started_at timestamptz,
+      finished_at timestamptz,
+      updated_at timestamptz not null,
+      last_successful_source_version varchar,
+      last_successful_source_hash varchar,
+      last_successful_effective_hash varchar,
+      last_succeeded_at timestamptz,
+      unique (workspace_id, source_page_id)
+    );
+    create table knowledge_source_analyses (
+      workspace_id varchar not null,
+      space_id varchar not null,
+      source_page_id varchar not null,
+      source_version varchar not null,
+      source_content_hash varchar not null,
+      compiler_version varchar not null,
+      prompt_version varchar not null,
+      analysis jsonb not null,
+      updated_at timestamptz not null,
+      unique (
+        workspace_id, source_page_id, source_content_hash,
+        compiler_version, prompt_version
+      )
+    )
+  `.execute(db);
+}
+
+async function expectAttemptHashes(
+  db: Kysely<unknown>,
+  expected: {
+    current: string | null;
+    successful: string | null;
+    status: string;
+  },
+): Promise<void> {
+  const result = await sql<{
+    current: string;
+    successful: string | null;
+    status: string;
+  }>`
+    select
+      effective_knowledge_hash as "current",
+      last_successful_effective_hash as "successful",
+      status
+    from knowledge_compilation_attempts
+    where workspace_id = 'workspace-1'
+      and source_page_id = 'page-1'
+  `.execute(db);
+
+  expect(result.rows).toEqual([expected]);
+  if (process.env.AKASHA_MIGRATION_TEST_EVIDENCE === '1') {
+    console.info(
+      'knowledge_effective_hash_database_evidence',
+      JSON.stringify(result.rows[0]),
+    );
+  }
+}

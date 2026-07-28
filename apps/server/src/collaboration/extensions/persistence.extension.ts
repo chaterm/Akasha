@@ -42,7 +42,8 @@ export class PersistenceExtension implements Extension {
   constructor(
     private readonly pageRepo: PageRepo,
     @InjectKysely() private readonly db: KyselyDB,
-    @InjectQueue(QueueName.AI_QUEUE) private aiQueue: Queue,
+    @InjectQueue(QueueName.KNOWLEDGE_TEXT_QUEUE)
+    private knowledgeQueue: Queue,
     @InjectQueue(QueueName.HISTORY_QUEUE) private historyQueue: Queue,
     @InjectQueue(QueueName.NOTIFICATION_QUEUE) private notificationQueue: Queue,
     private readonly collabHistory: CollabHistoryService,
@@ -209,7 +210,7 @@ export class PersistenceExtension implements Extension {
         } as IPageMentionNotificationJob);
       }
 
-      await this.aiQueue.add(QueueJob.PAGE_CONTENT_UPDATED, {
+      await this.knowledgeQueue.add(QueueJob.PAGE_CONTENT_UPDATED, {
         pageIds: [pageId],
         workspaceId: page.workspaceId,
       });
