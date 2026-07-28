@@ -1,10 +1,12 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsArray,
   IsIn,
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
   Min,
 } from 'class-validator';
@@ -12,7 +14,9 @@ import {
 export class AdminKnowledgeDiagnosticsDto {
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(100)
   @IsString({ each: true })
+  @IsUUID(undefined, { each: true })
   spaceIds?: string[];
 
   @IsOptional()

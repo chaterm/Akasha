@@ -149,6 +149,30 @@ export class KnowledgeCapsuleRepo {
       .execute() as Promise<ActiveKnowledgeArtifactCatalogRow[]>;
   }
 
+  async hasActiveSpaceOverview(input: {
+    workspaceId: string;
+    spaceId: string;
+  }): Promise<boolean> {
+    const row = await this.db
+      .selectFrom('knowledgePages as overview')
+      .innerJoin('knowledgeChunks as chunk', (join) =>
+        join
+          .onRef('chunk.knowledgePageId', '=', 'overview.id')
+          .onRef('chunk.workspaceId', '=', 'overview.workspaceId')
+          .on('chunk.staleAt', 'is', null)
+          .on('chunk.retrievalChannel', '=', 'memory'),
+      )
+      .select('overview.id')
+      .where('overview.workspaceId', '=', input.workspaceId)
+      .where('overview.spaceId', '=', input.spaceId)
+      .where('overview.pageType', '=', 'overview')
+      .where('overview.canonicalKey', '=', 'overview')
+      .where('overview.compileScope', '=', 'space')
+      .where('overview.staleAt', 'is', null)
+      .executeTakeFirst();
+    return Boolean(row);
+  }
+
   async resolveCanonicalLinks(
     input: { workspaceId: string; spaceId: string },
     trx?: KyselyTransaction,
@@ -368,24 +392,36 @@ export class KnowledgeCapsuleRepo {
   }
 
   async markArtifactsStaleByIds(
-    input: { workspaceId: string; artifactIds: string[] },
+    input: { workspaceId: string; spaceId?: string; artifactIds: string[] },
     trx?: KyselyTransaction,
   ): Promise<void> {
     if (input.artifactIds.length === 0) return;
     const db = dbOrTx(this.db, trx);
+    let scopedIds = input.artifactIds;
+    if (input.spaceId) {
+      const rows = await db
+        .selectFrom('knowledgePages')
+        .select('id')
+        .where('workspaceId', '=', input.workspaceId)
+        .where('spaceId', '=', input.spaceId)
+        .where('id', 'in', input.artifactIds)
+        .execute();
+      scopedIds = rows.map((row) => row.id);
+      if (scopedIds.length === 0) return;
+    }
     const staleAt = new Date();
     await Promise.all([
       db
         .updateTable('knowledgePages')
         .set({ staleAt })
         .where('workspaceId', '=', input.workspaceId)
-        .where('id', 'in', input.artifactIds)
+        .where('id', 'in', scopedIds)
         .execute(),
       db
         .updateTable('knowledgeParentSections')
         .set({ staleAt })
         .where('workspaceId', '=', input.workspaceId)
-        .where('knowledgePageId', 'in', input.artifactIds)
+        .where('knowledgePageId', 'in', scopedIds)
         .execute(),
       ...(
         [
@@ -399,7 +435,7 @@ export class KnowledgeCapsuleRepo {
           .updateTable(table)
           .set({ staleAt })
           .where('workspaceId', '=', input.workspaceId)
-          .where(ownerColumn, 'in', input.artifactIds)
+          .where(ownerColumn, 'in', scopedIds)
           .execute(),
       ),
     ]);
@@ -1072,6 +1108,72 @@ export class KnowledgeCapsuleRepo {
       graphEdges,
       graphEdgeSources,
     };
+  }
+
+  /**
+   * Reads exactly the page artifacts consumed by Space aggregation. Filtering
+   * and stable identity ordering happen before the bound so overview or other
+   * graph-only pages cannot displace an aggregate input.
+   */
+  async findAggregateCandidatesForSpace(
+    input: { workspaceId: string; spaceId: string; limit: number },
+    trx?: KyselyTransaction,
+  ): Promise<Pick<KnowledgeGraphCandidates, 'pages' | 'pageSources'>> {
+    const db = dbOrTx(this.db, trx);
+    const pages = await db
+      .selectFrom('knowledgePages')
+      .selectAll()
+      .where('workspaceId', '=', input.workspaceId)
+      .where('spaceId', '=', input.spaceId)
+      .where('staleAt', 'is', null)
+      .where('canonicalKey', 'is not', null)
+      .where('pageType', 'in', [
+        'source_summary',
+        'concept',
+        'entity',
+        'comparison',
+      ])
+      .orderBy('pageType', 'asc')
+      .orderBy('canonicalKey', 'asc')
+      .orderBy('id', 'asc')
+      .limit(input.limit)
+      .execute();
+    const pageIds = pages.map((page) => page.id);
+    const pageSources =
+      pageIds.length === 0
+        ? []
+        : await db
+            .selectFrom('knowledgePageSources')
+            .selectAll()
+            .where('workspaceId', '=', input.workspaceId)
+            .where('knowledgePageId', 'in', pageIds)
+            .orderBy('knowledgePageId', 'asc')
+            .orderBy('sourcePageId', 'asc')
+            .orderBy('sourceVersion', 'asc')
+            .orderBy('contentHash', 'asc')
+            .execute();
+    return { pages, pageSources };
+  }
+
+  async countActiveAggregateArtifacts(input: {
+    workspaceId: string;
+    spaceId: string;
+  }): Promise<number> {
+    const row = await this.db
+      .selectFrom('knowledgePages')
+      .select((eb) => eb.fn.countAll<number>().as('count'))
+      .where('workspaceId', '=', input.workspaceId)
+      .where('spaceId', '=', input.spaceId)
+      .where('staleAt', 'is', null)
+      .where('canonicalKey', 'is not', null)
+      .where('pageType', 'in', [
+        'source_summary',
+        'concept',
+        'entity',
+        'comparison',
+      ])
+      .executeTakeFirst();
+    return Number(row?.count ?? 0);
   }
 
   async findDependencySourcePageIds(

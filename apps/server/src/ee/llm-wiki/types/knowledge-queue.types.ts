@@ -1,7 +1,6 @@
 export type KnowledgeCompileTrigger =
   | 'manual_compile'
   | 'retry_compile'
-  | 'rebuild_embeddings'
   | 'page_update';
 
 export type KnowledgeCompileJobResult = {

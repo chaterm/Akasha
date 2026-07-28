@@ -55,6 +55,8 @@ import {
   KnowledgeSourceChunks,
   KnowledgeSourceAnalyses,
   KnowledgeSources,
+  KnowledgeSpaceCompileRunPages,
+  KnowledgeSpaceCompileRuns,
   UserMfa as _UserMFA,
   UserSessions,
   ApiKeys,
@@ -89,6 +91,21 @@ export type InsertableKnowledgeCompilationAttempt =
   Insertable<KnowledgeCompilationAttempts>;
 export type UpdatableKnowledgeCompilationAttempt = Updateable<
   Omit<KnowledgeCompilationAttempts, 'id'>
+>;
+
+export type KnowledgeSpaceCompileRun = Selectable<KnowledgeSpaceCompileRuns>;
+export type InsertableKnowledgeSpaceCompileRun =
+  Insertable<KnowledgeSpaceCompileRuns>;
+export type UpdatableKnowledgeSpaceCompileRun = Updateable<
+  Omit<KnowledgeSpaceCompileRuns, 'id'>
+>;
+
+export type KnowledgeSpaceCompileRunPage =
+  Selectable<KnowledgeSpaceCompileRunPages>;
+export type InsertableKnowledgeSpaceCompileRunPage =
+  Insertable<KnowledgeSpaceCompileRunPages>;
+export type UpdatableKnowledgeSpaceCompileRunPage = Updateable<
+  Omit<KnowledgeSpaceCompileRunPages, 'id'>
 >;
 
 export type KnowledgeSourceAnalysis = Selectable<KnowledgeSourceAnalyses>;

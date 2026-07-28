@@ -1,4 +1,5 @@
 import { KnowledgeCapsuleRepo } from '@akasha/db/repos/llm-wiki/knowledge-capsule.repo';
+import { OPTIONAL_DEPS_METADATA } from '@nestjs/common/constants';
 import { KnowledgeSourceRepo } from '@akasha/db/repos/llm-wiki/knowledge-source.repo';
 import { KnowledgeArtifactValidatorService } from './knowledge-artifact-validator.service';
 import {
@@ -8,6 +9,12 @@ import {
 import { CompileSpaceInput } from '../types/compiler-artifact.types';
 
 describe('KnowledgeImportService', () => {
+  it('requires contribution merge dependencies at application startup', () => {
+    expect(
+      Reflect.getMetadata(OPTIONAL_DEPS_METADATA, KnowledgeImportService) ?? [],
+    ).toEqual([]);
+  });
+
   it('embeds imported chunks when compiler artifacts do not include embeddings', async () => {
     const artifact = {
       artifactId: 'artifact-1',
@@ -69,6 +76,8 @@ describe('KnowledgeImportService', () => {
       quarantineRepo as never,
       createTransactionDb() as never,
       vectorIndex as never,
+      createContributionRepo() as never,
+      createMaterializer() as never,
     );
 
     await service.importCompileResult({
@@ -177,6 +186,8 @@ describe('KnowledgeImportService', () => {
       { recordQuarantinedArtifacts: jest.fn() } as never,
       createTransactionDb() as never,
       vectorIndex as never,
+      createContributionRepo() as never,
+      createMaterializer() as never,
     );
 
     await expect(
@@ -201,6 +212,7 @@ describe('KnowledgeImportService', () => {
       contentMarkdown: '# Compiled',
       sourcePageIds: ['source-1'],
       artifactKind: 'source_summary' as const,
+      canonicalKey: 'page:source-1',
       compilerVersion: 'compiler@1',
       promptVersion: 'prompt@1',
       compilerRunId: 'run-1',
@@ -273,6 +285,8 @@ describe('KnowledgeImportService', () => {
       quarantineRepo as never,
       createTransactionDb() as never,
       { ensureProfileIndex: jest.fn() } as never,
+      createContributionRepo() as never,
+      createMaterializer() as never,
     );
 
     await expect(
@@ -522,6 +536,8 @@ describe('KnowledgeImportService', () => {
       quarantineRepo as never,
       createTransactionDb() as never,
       { ensureProfileIndex: jest.fn() } as never,
+      createContributionRepo() as never,
+      createMaterializer() as never,
     );
 
     await service.importCompileResult({
@@ -575,6 +591,8 @@ describe('KnowledgeImportService', () => {
       quarantineRepo as never,
       createTransactionDb() as never,
       { ensureProfileIndex: jest.fn() } as never,
+      createContributionRepo() as never,
+      createMaterializer() as never,
     );
 
     await expect(
@@ -597,6 +615,7 @@ describe('KnowledgeImportService', () => {
       contentMarkdown: '# Changed page',
       sourcePageIds: ['source-1'],
       artifactKind: 'source_summary' as const,
+      canonicalKey: 'page:source-1',
       compilerVersion: 'compiler@1',
       promptVersion: 'prompt@1',
       inputSourceRefs: [
@@ -619,6 +638,7 @@ describe('KnowledgeImportService', () => {
       markSourceArtifactsStaleBySourcePageIds: jest
         .fn()
         .mockResolvedValue(undefined),
+      markArtifactsStaleByIds: jest.fn().mockResolvedValue(undefined),
       upsertCompiledArtifacts: jest.fn().mockResolvedValue([]),
     };
     const validator = {
@@ -635,6 +655,8 @@ describe('KnowledgeImportService', () => {
       { recordQuarantinedArtifacts: jest.fn() } as never,
       createTransactionDb() as never,
       { ensureProfileIndex: jest.fn() } as never,
+      createContributionRepo() as never,
+      createMaterializer() as never,
     );
 
     await service.importCompileResult({
@@ -957,6 +979,8 @@ describe('KnowledgeImportService', () => {
       { recordQuarantinedArtifacts: jest.fn() } as never,
       createTransactionDb(trx) as never,
       { ensureProfileIndex: jest.fn() } as never,
+      createContributionRepo() as never,
+      createMaterializer() as never,
     );
 
     await expect(
@@ -1102,6 +1126,8 @@ describe('KnowledgeImportService', () => {
       quarantineRepo as never,
       createTransactionDb() as never,
       { ensureProfileIndex: jest.fn() } as never,
+      createContributionRepo() as never,
+      createMaterializer() as never,
     );
 
     await expect(
@@ -1214,6 +1240,8 @@ describe('KnowledgeImportService', () => {
       quarantineRepo as never,
       createTransactionDb(trx) as never,
       { ensureProfileIndex: jest.fn() } as never,
+      createContributionRepo() as never,
+      createMaterializer() as never,
     );
 
     await service.importCompileResult({
@@ -1294,6 +1322,8 @@ describe('KnowledgeImportService', () => {
       { recordQuarantinedArtifacts: jest.fn() } as never,
       createTransactionDb(trx) as never,
       { ensureProfileIndex: jest.fn() } as never,
+      createContributionRepo() as never,
+      createMaterializer() as never,
     );
 
     await expect(
@@ -1313,6 +1343,76 @@ describe('KnowledgeImportService', () => {
     expect(sourceRepo.replaceSourceChunks).not.toHaveBeenCalled();
     expect(capsuleRepo.markCompileScopeStale).not.toHaveBeenCalled();
     expect(capsuleRepo.upsertCompiledArtifacts).not.toHaveBeenCalled();
+  });
+
+  it('acknowledges page publication inside the same transaction after artifact writes', async () => {
+    const trx = { id: 'trx-publication-complete' };
+    const artifact = {
+      artifactId: 'artifact-merge',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      title: 'Merged page',
+      contentMarkdown: '# Merged page\n\nImage facts',
+      sourcePageIds: ['source-1'],
+      artifactKind: 'source_summary' as const,
+      canonicalKey: 'page:source-1',
+      generationMode: 'semantic' as const,
+      compilerVersion: 'compiler@1',
+      promptVersion: 'prompt@1',
+      compilerRunId: 'run-1',
+      compileTaskId: 'merge-1',
+      inputSourceRefs: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          sourcePageId: 'source-1',
+          sourceVersion: 'v1',
+          contentHash: 'hash-1',
+        },
+      ],
+      chunks: [{ text: 'Image facts' }],
+    };
+    const capsuleRepo = {
+      markSourceArtifactsStaleBySourcePageIds: jest.fn(),
+      markArtifactsStaleByIds: jest.fn(),
+      upsertCompiledArtifacts: jest.fn().mockResolvedValue(undefined),
+    };
+    const publicationComplete = jest.fn().mockResolvedValue(undefined);
+    const service = new KnowledgeImportService(
+      {
+        upsertPageSource: jest.fn().mockResolvedValue({ id: 'source-row-1' }),
+        replaceSourceChunks: jest.fn(),
+      } as never,
+      capsuleRepo as never,
+      {
+        validateCompileResult: jest.fn().mockReturnValue({
+          accepted: [artifact],
+          quarantined: [],
+        }),
+      } as never,
+      { embedQuery: jest.fn().mockResolvedValue(null) } as never,
+      { recordQuarantinedArtifacts: jest.fn() } as never,
+      createTransactionDb(trx) as never,
+      { ensureProfileIndex: jest.fn() } as never,
+      createContributionRepo() as never,
+      createMaterializer() as never,
+    );
+
+    await service.importCompileResult({
+      input: { ...compileInput(), compileMode: 'pages' },
+      artifacts: [artifact],
+      publicationGuard: jest.fn().mockResolvedValue(true),
+      publicationComplete,
+    });
+
+    expect(capsuleRepo.upsertCompiledArtifacts).toHaveBeenCalledWith(
+      expect.any(Array),
+      trx,
+    );
+    expect(publicationComplete).toHaveBeenCalledWith(trx);
+    expect(
+      capsuleRepo.upsertCompiledArtifacts.mock.invocationCallOrder[0],
+    ).toBeLessThan(publicationComplete.mock.invocationCallOrder[0]);
   });
 });
 
@@ -1350,5 +1450,22 @@ function createTransactionDb(trx: unknown = { id: 'trx-1' }) {
       execute: async (callback: (trx: unknown) => Promise<unknown>) =>
         callback(trx),
     }),
+  };
+}
+
+function createContributionRepo() {
+  return {
+    findBySourcePage: jest.fn().mockResolvedValue([]),
+    findByArtifactIds: jest.fn().mockResolvedValue([]),
+    replaceSourceContributions: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
+function createMaterializer() {
+  return {
+    materializeSourceUpdate: jest.fn().mockImplementation(async (input) => ({
+      artifacts: input.incomingArtifacts,
+      removedArtifactIds: [],
+    })),
   };
 }

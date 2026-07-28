@@ -21,6 +21,7 @@ import {
   KnowledgeImageUnderstandingError,
   KnowledgeImageUnderstandingProvider,
 } from './knowledge-image-understanding-provider.service';
+import { ReadyKnowledgeImage } from './knowledge-effective-hash';
 
 const MAX_IMAGES_PER_PAGE = 12;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -52,15 +53,26 @@ export type KnowledgeImageEnrichmentWarning = {
 
 export type KnowledgeImageEnrichmentResult = {
   source: KnowledgeSourceSnapshot;
+  expected: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  retryableFailureCount: number;
+  readyExtractionIds: string[];
+  truncatedCount: number;
   imageCount: number;
   succeededCount: number;
   failedCount: number;
   cacheHitCount: number;
   warnings: KnowledgeImageEnrichmentWarning[];
+  readyImages: ReadyKnowledgeImage[];
 };
 
 type ExtractedImageText = {
   attachmentId: string;
+  attachmentVersion: string;
+  cacheFingerprint: string;
+  contentHash: string;
   fileName: string;
   altText?: string;
   ocrText: string;
@@ -96,25 +108,103 @@ export class KnowledgeImageEnrichmentService {
     private readonly imageProvider: KnowledgeImageUnderstandingProvider,
   ) {}
 
+  async readReadySource(source: KnowledgeSourceSnapshot): Promise<{
+    source: KnowledgeSourceSnapshot;
+    readyImages: ReadyKnowledgeImage[];
+    readyExtractionIds: string[];
+    truncatedCount: number;
+  }> {
+    const images = source.images ?? [];
+    if (images.length === 0) {
+      return {
+        source,
+        readyImages: [],
+        readyExtractionIds: [],
+        truncatedCount: 0,
+      };
+    }
+    const rows = await this.extractionRepo.findCurrentReadyForSnapshotImages({
+      workspaceId: source.workspaceId,
+      spaceId: source.spaceId,
+      images: images.map((image) => ({
+        sourcePageId: source.sourcePageId,
+        attachmentId: image.attachmentId,
+        attachmentVersion: image.attachmentVersion,
+      })),
+      model: this.environmentService.getAiVisionModel().trim(),
+      promptVersion: DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
+    });
+    const rowByAttachmentId = new Map(
+      rows.map((row) => [row.attachmentId, row] as const),
+    );
+    const extracted = images.flatMap((image): ExtractedImageText[] => {
+      const row = rowByAttachmentId.get(image.attachmentId);
+      if (!row || !(row.ocrText?.trim() || row.caption?.trim())) return [];
+      return [
+        {
+          attachmentId: image.attachmentId,
+          attachmentVersion: image.attachmentVersion,
+          cacheFingerprint: row.cacheFingerprint,
+          contentHash: row.contentHash,
+          fileName: image.fileName,
+          altText: image.altText,
+          ocrText: row.ocrText ?? '',
+          caption: row.caption ?? '',
+        },
+      ];
+    });
+    const formatted = formatImageKnowledge(extracted);
+    const readyImages = extracted.map((image) => ({
+      attachmentId: image.attachmentId,
+      attachmentVersion: image.attachmentVersion,
+      cacheFingerprint: image.cacheFingerprint,
+      contentHash: image.contentHash,
+      ocrText: image.ocrText,
+      caption: image.caption,
+    }));
+    return {
+      source: formatted.text
+        ? {
+            ...source,
+            text: source.text.trim()
+              ? `${source.text.trimEnd()}\n\n${formatted.text}`
+              : formatted.text,
+          }
+        : source,
+      readyImages,
+      readyExtractionIds: extracted.flatMap((image) => {
+        const id = rowByAttachmentId.get(image.attachmentId)?.id;
+        return id ? [id] : [];
+      }),
+      truncatedCount: formatted.truncatedCount,
+    };
+  }
+
   async enrichSource(
     source: KnowledgeSourceSnapshot,
   ): Promise<KnowledgeImageEnrichmentResult> {
-    const sourceImages = (source.images ?? []).slice(0, MAX_IMAGES_PER_PAGE);
+    const allSourceImages = source.images ?? [];
+    const sourceImages = allSourceImages.slice(0, MAX_IMAGES_PER_PAGE);
     const warnings: KnowledgeImageEnrichmentWarning[] = [];
-    if ((source.images?.length ?? 0) > MAX_IMAGES_PER_PAGE) {
+    let failed = 0;
+    let skipped = Math.max(0, allSourceImages.length - sourceImages.length);
+    let retryableFailureCount = 0;
+    const readyExtractionIds: string[] = [];
+    if (allSourceImages.length > MAX_IMAGES_PER_PAGE) {
       warnings.push({
         attachmentId: '',
-        code: 'image_limit_exceeded',
-        message: `Only the first ${MAX_IMAGES_PER_PAGE} page images were processed.`,
+        code: 'skipped_limit',
+        message: `${allSourceImages.length - MAX_IMAGES_PER_PAGE} page images exceeded the ${MAX_IMAGES_PER_PAGE}-image safety limit and were terminally skipped.`,
       });
     }
     if (sourceImages.length === 0) {
-      return emptyResult(source, warnings);
+      return emptyResult(source, warnings, allSourceImages.length, skipped);
     }
     if (!this.imageProvider.isConfigured()) {
       return {
-        ...emptyResult(source, warnings),
+        ...emptyResult(source, warnings, allSourceImages.length, skipped),
         imageCount: sourceImages.length,
+        failed: sourceImages.length,
         failedCount: sourceImages.length,
         warnings: [
           ...warnings,
@@ -150,6 +240,7 @@ export class KnowledgeImageEnrichmentService {
         attachment.updatedAt.toISOString() !== image.attachmentVersion
       ) {
         warnings.push(warning(image.attachmentId, 'image_changed'));
+        skipped += 1;
         continue;
       }
       if (
@@ -157,6 +248,7 @@ export class KnowledgeImageEnrichmentService {
         Number(attachment.fileSize) > MAX_IMAGE_BYTES
       ) {
         warnings.push(warning(image.attachmentId, 'image_too_large'));
+        failed += 1;
         continue;
       }
 
@@ -165,6 +257,8 @@ export class KnowledgeImageEnrichmentService {
         bytes = await this.storageService.read(attachment.filePath);
       } catch {
         warnings.push(warning(image.attachmentId, 'image_unreadable'));
+        failed += 1;
+        retryableFailureCount += 1;
         continue;
       }
       if (bytes.length === 0 || bytes.length > MAX_IMAGE_BYTES) {
@@ -174,12 +268,14 @@ export class KnowledgeImageEnrichmentService {
             bytes.length === 0 ? 'image_empty' : 'image_too_large',
           ),
         );
+        failed += 1;
         continue;
       }
 
       const detectedMime = sniffRasterMime(bytes);
       if (!detectedMime) {
         warnings.push(warning(image.attachmentId, 'unsupported_image'));
+        failed += 1;
         continue;
       }
 
@@ -187,6 +283,7 @@ export class KnowledgeImageEnrichmentService {
       const cacheKey = {
         workspaceId: source.workspaceId,
         attachmentId: image.attachmentId,
+        attachmentVersion: attachment.updatedAt,
         cacheFingerprint: hash(
           Buffer.from(
             JSON.stringify([
@@ -214,17 +311,26 @@ export class KnowledgeImageEnrichmentService {
         );
       } catch {
         warnings.push(warning(image.attachmentId, 'image_cache_unavailable'));
+        failed += 1;
+        retryableFailureCount += 1;
         continue;
       }
 
       if (claim.state === 'ready') {
         cacheHitCount += 1;
-        appendCachedExtraction(extracted, image, claim.extraction);
+        const appended = appendCachedExtraction(
+          extracted,
+          image,
+          claim.extraction,
+        );
         if (
           !claim.extraction.ocrText?.trim() &&
           !claim.extraction.caption?.trim()
         ) {
           warnings.push(warning(image.attachmentId, 'image_no_content'));
+          skipped += 1;
+        } else if (appended) {
+          readyExtractionIds.push(claim.extraction.id);
         }
         continue;
       }
@@ -232,6 +338,8 @@ export class KnowledgeImageEnrichmentService {
         warnings.push(
           warning(image.attachmentId, 'image_processing_in_progress'),
         );
+        failed += 1;
+        retryableFailureCount += 1;
         continue;
       }
       if (claim.state === 'failed') {
@@ -243,6 +351,8 @@ export class KnowledgeImageEnrichmentService {
               : claim.extraction.errorCode || 'image_processing_failed',
           ),
         );
+        failed += 1;
+        if (claim.extraction.retryable) retryableFailureCount += 1;
         continue;
       }
 
@@ -272,14 +382,20 @@ export class KnowledgeImageEnrichmentService {
         });
         if (!published) {
           warnings.push(warning(image.attachmentId, 'image_result_superseded'));
+          skipped += 1;
           continue;
         }
         if (!ocrText && !caption) {
           warnings.push(warning(image.attachmentId, 'image_no_content'));
+          skipped += 1;
           continue;
         }
+        readyExtractionIds.push(published.id);
         extracted.push({
           attachmentId: image.attachmentId,
+          attachmentVersion: image.attachmentVersion,
+          cacheFingerprint: cacheKey.cacheFingerprint,
+          contentHash: cacheKey.contentHash,
           fileName: image.fileName,
           altText: image.altText,
           ocrText,
@@ -287,6 +403,8 @@ export class KnowledgeImageEnrichmentService {
         });
       } catch (error) {
         const failure = imageFailure(error);
+        failed += 1;
+        if (failure.retryable) retryableFailureCount += 1;
         warnings.push({
           attachmentId: image.attachmentId,
           code: failure.code,
@@ -313,21 +431,43 @@ export class KnowledgeImageEnrichmentService {
       }
     }
 
-    const imageText = formatImageKnowledge(extracted);
+    const formatted = formatImageKnowledge(extracted);
+    if (formatted.truncatedCount > 0) {
+      warnings.push({
+        attachmentId: '',
+        code: 'image_text_budget_truncated',
+        message: `${formatted.truncatedCount} image extractions were truncated by the page image text budget.`,
+      });
+    }
     return {
-      source: imageText
+      source: formatted.text
         ? {
             ...source,
             text: source.text.trim()
-              ? `${source.text.trimEnd()}\n\n${imageText}`
-              : imageText,
+              ? `${source.text.trimEnd()}\n\n${formatted.text}`
+              : formatted.text,
           }
         : source,
+      expected: allSourceImages.length,
+      succeeded: extracted.length,
+      failed,
+      skipped,
+      retryableFailureCount,
+      readyExtractionIds,
+      truncatedCount: formatted.truncatedCount,
       imageCount: sourceImages.length,
       succeededCount: extracted.length,
-      failedCount: sourceImages.length - extracted.length,
+      failedCount: failed,
       cacheHitCount,
       warnings,
+      readyImages: extracted.map((image) => ({
+        attachmentId: image.attachmentId,
+        attachmentVersion: image.attachmentVersion,
+        cacheFingerprint: image.cacheFingerprint,
+        contentHash: image.contentHash,
+        ocrText: image.ocrText,
+        caption: image.caption,
+      })),
     };
   }
 }
@@ -335,14 +475,24 @@ export class KnowledgeImageEnrichmentService {
 function emptyResult(
   source: KnowledgeSourceSnapshot,
   warnings: KnowledgeImageEnrichmentWarning[],
+  expected = 0,
+  skipped = 0,
 ): KnowledgeImageEnrichmentResult {
   return {
     source,
+    expected,
+    succeeded: 0,
+    failed: 0,
+    skipped,
+    retryableFailureCount: 0,
+    readyExtractionIds: [],
+    truncatedCount: 0,
     imageCount: 0,
     succeededCount: 0,
     failedCount: 0,
     cacheHitCount: 0,
     warnings,
+    readyImages: [],
   };
 }
 
@@ -404,18 +554,27 @@ function imageFailure(error: unknown): {
 function appendCachedExtraction(
   extracted: ExtractedImageText[],
   image: KnowledgeSourceImage,
-  cached: { ocrText: string | null; caption: string | null },
-): void {
+  cached: {
+    cacheFingerprint: string;
+    contentHash: string;
+    ocrText: string | null;
+    caption: string | null;
+  },
+): boolean {
   const ocrText = cached.ocrText ?? '';
   const caption = cached.caption ?? '';
-  if (!ocrText.trim() && !caption.trim()) return;
+  if (!ocrText.trim() && !caption.trim()) return false;
   extracted.push({
     attachmentId: image.attachmentId,
+    attachmentVersion: image.attachmentVersion,
+    cacheFingerprint: cached.cacheFingerprint,
+    contentHash: cached.contentHash,
     fileName: image.fileName,
     altText: image.altText,
     ocrText,
     caption,
   });
+  return true;
 }
 
 async function normalizeForVision(
@@ -537,20 +696,38 @@ function normalizeCacheMetadata(value: string): string {
   return value.replace(/\0/gu, '').replace(/\s+/gu, ' ').trim().slice(0, 1_000);
 }
 
-function formatImageKnowledge(images: ExtractedImageText[]): string {
+function formatImageKnowledge(images: ExtractedImageText[]): {
+  text: string;
+  truncatedCount: number;
+} {
   let remaining = MAX_ENRICHMENT_CHARS_PER_PAGE;
   const blocks: string[] = [];
+  let truncatedCount = 0;
   for (const [index, image] of images.entries()) {
-    const caption = normalizeExtractedText(image.caption).slice(
+    const fullCaption = normalizeExtractedText(image.caption).slice(
+      0,
+      MAX_CAPTION_CHARS_PER_IMAGE,
+    );
+    const caption = fullCaption.slice(
       0,
       Math.min(MAX_CAPTION_CHARS_PER_IMAGE, remaining),
     );
     remaining -= caption.length;
-    const ocrText = normalizeExtractedText(image.ocrText).slice(
+    const fullOcrText = normalizeExtractedText(image.ocrText).slice(
+      0,
+      MAX_OCR_CHARS_PER_IMAGE,
+    );
+    const ocrText = fullOcrText.slice(
       0,
       Math.min(MAX_OCR_CHARS_PER_IMAGE, Math.max(remaining, 0)),
     );
     remaining -= ocrText.length;
+    if (
+      caption.length < fullCaption.length ||
+      ocrText.length < fullOcrText.length
+    ) {
+      truncatedCount += 1;
+    }
     if (!caption && !ocrText && !image.altText) continue;
 
     const block = [
@@ -565,11 +742,22 @@ function formatImageKnowledge(images: ExtractedImageText[]): string {
       .filter(Boolean)
       .join('\n\n');
     blocks.push(block);
-    if (remaining <= 0) break;
+    if (remaining <= 0) {
+      truncatedCount += images
+        .slice(index + 1)
+        .filter(
+          (remainingImage) =>
+            normalizeExtractedText(remainingImage.caption).length > 0 ||
+            normalizeExtractedText(remainingImage.ocrText).length > 0,
+        ).length;
+      break;
+    }
   }
-  return blocks.length > 0
-    ? `## 页面图片识别内容\n\n${blocks.join('\n\n')}`
-    : '';
+  return {
+    text:
+      blocks.length > 0 ? `## 页面图片识别内容\n\n${blocks.join('\n\n')}` : '',
+    truncatedCount,
+  };
 }
 
 function normalizeExtractedText(value: string): string {

@@ -40,6 +40,55 @@ export function buildKnowledgeCompilePageJobId(input: {
   ].join('__');
 }
 
+export function buildKnowledgeCompilePageImagesJobId(input: {
+  workspaceId: string;
+  spaceId: string;
+  runId?: string;
+  sourcePageId: string;
+  sourceContentHash: string;
+  knowledgeGeneration: number;
+}): string {
+  const contentKey = createHash('sha256')
+    .update(input.sourceContentHash)
+    .digest('hex');
+  return [
+    'knowledge-compile-page-images',
+    input.workspaceId,
+    input.spaceId,
+    input.runId ?? 'standalone',
+    input.sourcePageId,
+    String(input.knowledgeGeneration),
+    contentKey,
+  ].join('__');
+}
+
+export function buildKnowledgeMergePageImagesJobId(input: {
+  workspaceId: string;
+  spaceId: string;
+  runId?: string;
+  sourcePageId: string;
+  sourceContentHash: string;
+  effectiveKnowledgeHash: string;
+  knowledgeGeneration: number;
+}): string {
+  const contentKey = createHash('sha256')
+    .update(input.sourceContentHash)
+    .digest('hex');
+  const effectiveKey = createHash('sha256')
+    .update(input.effectiveKnowledgeHash)
+    .digest('hex');
+  return [
+    'knowledge-merge-page-images',
+    input.workspaceId,
+    input.spaceId,
+    input.runId ?? 'standalone',
+    input.sourcePageId,
+    String(input.knowledgeGeneration),
+    contentKey,
+    effectiveKey,
+  ].join('__');
+}
+
 export function buildKnowledgeRetryPageJobId(input: {
   workspaceId: string;
   spaceId: string;
@@ -60,8 +109,13 @@ export function buildKnowledgeRetryPageJobId(input: {
 
 export function buildKnowledgeAggregateSpaceJobId(input: {
   runId: string;
+  phase?: 'initial_aggregate' | 'final_aggregate';
 }): string {
-  return ['knowledge-aggregate-space', input.runId].join('__');
+  return [
+    'knowledge-aggregate-space',
+    input.runId,
+    ...(input.phase ? [input.phase] : []),
+  ].join('__');
 }
 
 export function buildKnowledgeAdminActionJobId(input: {
@@ -70,12 +124,19 @@ export function buildKnowledgeAdminActionJobId(input: {
   spaceId: string;
   now?: number;
 }): string {
+  if (input.action === 'rebuild_embeddings') {
+    return [
+      'knowledge-rebuild-embeddings',
+      input.workspaceId,
+      input.spaceId,
+    ].join('__');
+  }
   const prefix =
     input.action === 'reindex_access'
       ? 'knowledge-reindex-access'
       : input.action === 'mark_stale'
         ? 'knowledge-mark-stale'
-        : 'knowledge-compile-space';
+        : 'knowledge-retry-pages';
 
   return buildKnowledgeJobId({
     prefix,

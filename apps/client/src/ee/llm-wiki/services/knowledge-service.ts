@@ -3,6 +3,7 @@ import type {
   KnowledgeAdminSpaceAction,
   KnowledgeContextBudget,
   KnowledgeCompileResult,
+  KnowledgeCompileRunProgress,
   KnowledgeCompileStatus,
   KnowledgeDiagnosticsResult,
   KnowledgePageCompileStage,
@@ -12,6 +13,7 @@ import type {
   KnowledgeQualityIssue,
   KnowledgeQuarantinedArtifact,
   KnowledgeQueryResult,
+  KnowledgeQueueSnapshot,
   KnowledgeRetryPagesResult,
   KnowledgeSourceWindow,
 } from "../types/knowledge.types";
@@ -53,6 +55,44 @@ export async function compileKnowledgeSpaces(params: {
 
   const body = unwrapApiData(await response.json());
   return normalizeCompileResult(body);
+}
+
+export async function updateKnowledgeSpace(params: {
+  spaceId: string;
+  confirmationSpaceName: string;
+}): Promise<KnowledgeCompileResult> {
+  return requestConfirmedSpaceCompilation(params, "update-knowledge");
+}
+
+export async function forceRebuildKnowledgeSpace(params: {
+  spaceId: string;
+  confirmationSpaceName: string;
+}): Promise<KnowledgeCompileResult> {
+  return requestConfirmedSpaceCompilation(params, "force-rebuild-knowledge");
+}
+
+async function requestConfirmedSpaceCompilation(
+  params: { spaceId: string; confirmationSpaceName: string },
+  endpoint: "update-knowledge" | "force-rebuild-knowledge",
+): Promise<KnowledgeCompileResult> {
+  const response = await fetch(
+    `/api/llm-wiki/admin/spaces/${encodeURIComponent(params.spaceId)}/${endpoint}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        confirmationSpaceName: params.confirmationSpaceName,
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const message = await readErrorMessage(response);
+    throw new Error(message);
+  }
+
+  return normalizeCompileResult(unwrapApiData(await response.json()));
 }
 
 export async function runKnowledgeAdminAction(params: {
@@ -283,6 +323,12 @@ function normalizeKnowledgeDiagnostics(
   const compileStatuses = Array.isArray(record.compileStatuses)
     ? record.compileStatuses
     : [];
+  const normalizedCompileStatuses = compileStatuses
+    .filter(isRecord)
+    .map(normalizeCompileStatus);
+  const compileRuns = Array.isArray(record.compileRuns)
+    ? record.compileRuns.filter(isRecord).map(normalizeCompileRunProgress)
+    : normalizedCompileStatuses.map(normalizeLegacyCompileRunProgress);
   const quarantines = Array.isArray(record.quarantines)
     ? record.quarantines
     : [];
@@ -348,9 +394,13 @@ function normalizeKnowledgeDiagnostics(
         typeof job.failedReason === "string" ? job.failedReason : undefined,
     })),
     queueCounts: normalizeKnowledgeQueueCounts(record.queueCounts),
-    compileStatuses: compileStatuses
-      .filter(isRecord)
-      .map(normalizeCompileStatus),
+    compileStatuses: normalizedCompileStatuses,
+    canViewGlobalQueues: record.canViewGlobalQueues === true,
+    queueSnapshots: normalizeKnowledgeQueueSnapshots(
+      record.queueSnapshots,
+      record.queueCounts,
+    ),
+    compileRuns,
     retrieval: normalizeRetrievalDiagnostics(record.retrieval),
     quarantines: quarantines.filter(isRecord).map(normalizeQuarantinedArtifact),
     quality: normalizeKnowledgeQuality(record.quality),
@@ -369,6 +419,135 @@ function normalizeKnowledgeQueueCounts(value: unknown) {
     failed: readNumber(counts.failed),
     completed: readNumber(counts.completed),
   };
+}
+
+function normalizeKnowledgeQueueSnapshot(
+  value: unknown,
+): KnowledgeQueueSnapshot {
+  const record = isRecord(value) ? value : {};
+  return {
+    ...normalizeKnowledgeQueueCounts(record),
+    sampledAt: typeof record.sampledAt === "string" ? record.sampledAt : null,
+  };
+}
+
+function normalizeKnowledgeQueueSnapshots(
+  value: unknown,
+  legacyTextCounts: unknown,
+) {
+  const snapshots = isRecord(value) ? value : {};
+  return {
+    text: normalizeKnowledgeQueueSnapshot(
+      isRecord(snapshots.text) ? snapshots.text : legacyTextCounts,
+    ),
+    image: normalizeKnowledgeQueueSnapshot(snapshots.image),
+  };
+}
+
+function normalizeCompileRunProgress(
+  value: Record<string, unknown>,
+): KnowledgeCompileRunProgress {
+  const progress = isRecord(value.progress) ? value.progress : {};
+  return {
+    runId: readString(value.runId),
+    spaceId: readString(value.spaceId),
+    spaceName: readString(value.spaceName),
+    status: normalizeCompileRunStatus(value.status),
+    mode:
+      value.mode === "update" || value.mode === "force"
+        ? value.mode
+        : undefined,
+    phase: typeof value.phase === "string" ? value.phase : undefined,
+    generation: readOptionalNumber(value.generation),
+    createdAt:
+      typeof value.createdAt === "string" ? value.createdAt : undefined,
+    updatedAt:
+      typeof value.updatedAt === "string" ? value.updatedAt : undefined,
+    completedAt:
+      typeof value.completedAt === "string" ? value.completedAt : undefined,
+    progress: {
+      text: normalizeCompilationStageProgress(progress.text),
+      image: normalizeCompilationStageProgress(progress.image),
+      merge: normalizeCompilationStageProgress(progress.merge),
+    },
+  };
+}
+
+function normalizeLegacyCompileRunProgress(
+  status: KnowledgeCompileStatus,
+): KnowledgeCompileRunProgress {
+  const succeeded = status.succeededPageCount ?? 0;
+  const failed = status.failedPageCount ?? 0;
+  const skipped = status.skippedPageCount ?? 0;
+  const expected = Math.max(status.sourceCount, succeeded + failed + skipped);
+  const pending = Math.max(0, expected - succeeded - failed - skipped);
+  const empty = normalizeCompilationStageProgress(undefined);
+  return {
+    runId: status.lastRunId,
+    spaceId: status.spaceId,
+    spaceName: "",
+    status: status.status,
+    updatedAt:
+      typeof status.updatedAt === "number"
+        ? new Date(status.updatedAt).toISOString()
+        : undefined,
+    progress: {
+      text: {
+        expected,
+        succeeded,
+        failed,
+        skipped,
+        pending,
+        waiting: status.status === "queued" ? pending : 0,
+        ...(status.failureReason
+          ? { lastAttemptError: status.failureReason }
+          : {}),
+      },
+      image: { ...empty },
+      merge: { ...empty },
+    },
+  };
+}
+
+function normalizeCompilationStageProgress(value: unknown) {
+  const progress = isRecord(value) ? value : {};
+  return {
+    expected: readNumber(progress.expected),
+    succeeded: readNumber(progress.succeeded),
+    failed: readNumber(progress.failed),
+    skipped: readNumber(progress.skipped),
+    pending: readNumber(progress.pending),
+    waiting: readNumber(progress.waiting),
+    ...(typeof progress.lastAttemptError === "string"
+      ? { lastAttemptError: progress.lastAttemptError }
+      : {}),
+  };
+}
+
+function normalizeCompileRunStatus(
+  value: unknown,
+): KnowledgeCompileRunProgress["status"] {
+  if (
+    value === "compiling" ||
+    value === "aggregate_pending" ||
+    value === "aggregating"
+  ) {
+    return "running";
+  }
+  if (value === "completed") {
+    return "succeeded";
+  }
+  if (
+    value === "queued" ||
+    value === "running" ||
+    value === "succeeded" ||
+    value === "partial" ||
+    value === "failed" ||
+    value === "superseded"
+  ) {
+    return value;
+  }
+  return "queued";
 }
 
 function normalizePageCompileStatus(

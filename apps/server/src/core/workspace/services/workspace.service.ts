@@ -71,7 +71,6 @@ export class WorkspaceService {
     @InjectKysely() private readonly db: KyselyDB,
     @InjectQueue(QueueName.ATTACHMENT_QUEUE) private attachmentQueue: Queue,
     @InjectQueue(QueueName.BILLING_QUEUE) private billingQueue: Queue,
-    @InjectQueue(QueueName.AI_QUEUE) private aiQueue: Queue,
     @Inject(AUDIT_SERVICE) private readonly auditService: IAuditService,
     private userSessionRepo: UserSessionRepo,
   ) {}
@@ -569,24 +568,6 @@ export class WorkspaceService {
         trx,
       );
     });
-
-    if (after.aiSearch === true) {
-      await this.aiQueue.add(QueueJob.WORKSPACE_CREATE_EMBEDDINGS, {
-        workspaceId,
-      });
-    } else if (after.aiSearch === false) {
-      const deleteJobId = `ai-search-disabled-${workspaceId}`;
-      await this.aiQueue.add(
-        QueueJob.WORKSPACE_DELETE_EMBEDDINGS,
-        { workspaceId },
-        {
-          jobId: deleteJobId,
-          delay: 24 * 60 * 60 * 1000,
-          removeOnComplete: true,
-          removeOnFail: true,
-        },
-      );
-    }
 
     const workspace = await this.workspaceRepo.findById(workspaceId, {
       withMemberCount: true,

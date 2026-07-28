@@ -156,6 +156,44 @@ export interface KnowledgeQueueCounts {
   completed: number;
 }
 
+export type KnowledgeQueueKind = "text" | "image";
+
+export interface KnowledgeQueueSnapshot extends KnowledgeQueueCounts {
+  sampledAt: string | null;
+}
+
+export type KnowledgeQueueSnapshots = Partial<
+  Record<KnowledgeQueueKind, KnowledgeQueueSnapshot>
+>;
+
+export interface KnowledgeCompilationStageProgress {
+  expected: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  pending: number;
+  waiting: number;
+  lastAttemptError?: string;
+}
+
+export interface KnowledgeCompileRunProgress {
+  runId: string;
+  spaceId: string;
+  spaceName: string;
+  status: KnowledgeCompileStatus["status"];
+  mode?: "update" | "force";
+  phase?: string;
+  generation?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  completedAt?: string;
+  progress: {
+    text: KnowledgeCompilationStageProgress;
+    image: KnowledgeCompilationStageProgress;
+    merge: KnowledgeCompilationStageProgress;
+  };
+}
+
 export interface KnowledgeQuarantinedArtifact {
   id: string;
   workspaceId: string;
@@ -173,6 +211,9 @@ export interface KnowledgeDiagnosticsResult {
   jobs: KnowledgeDiagnosticsJob[];
   queueCounts: KnowledgeQueueCounts;
   compileStatuses: KnowledgeCompileStatus[];
+  canViewGlobalQueues?: boolean;
+  queueSnapshots?: KnowledgeQueueSnapshots;
+  compileRuns?: KnowledgeCompileRunProgress[];
   retrieval?: KnowledgeRetrievalDiagnosticsSummary;
   quarantines: KnowledgeQuarantinedArtifact[];
   quality?: KnowledgeQualityReport;

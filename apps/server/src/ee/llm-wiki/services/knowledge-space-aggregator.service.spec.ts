@@ -3,6 +3,7 @@ import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowled
 import { KnowledgeCompilerLlmProvider } from '../compiler/knowledge-compiler-llm.provider';
 import { KnowledgeCompilerLlmError } from '../compiler/knowledge-compiler-llm.provider';
 import { KnowledgeImportService } from './knowledge-import.service';
+import { KnowledgeArtifactCatalogService } from './knowledge-artifact-catalog.service';
 import { KnowledgeSpaceAggregatorService } from './knowledge-space-aggregator.service';
 import { buildAggregatePrompt } from './knowledge-space-aggregator.service';
 import { KnowledgeLinkResolverService } from './knowledge-link-resolver.service';
@@ -76,7 +77,7 @@ describe('KnowledgeSpaceAggregatorService', () => {
     };
     const service = new KnowledgeSpaceAggregatorService(
       runRepo as unknown as KnowledgeSpaceCompilationRepo,
-      capsuleRepo as unknown as KnowledgeCapsuleRepo,
+      aggregateCatalog(capsuleRepo),
       provider as unknown as KnowledgeCompilerLlmProvider,
       importer as unknown as KnowledgeImportService,
       linkResolver as unknown as KnowledgeLinkResolverService,
@@ -129,11 +130,224 @@ describe('KnowledgeSpaceAggregatorService', () => {
       runId: 'run-1',
       importedArtifactCount: 1,
       quarantinedArtifactCount: 0,
+      catalogHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
     });
     expect(linkResolver.resolveSpace).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
     });
+  });
+
+  it('stores the fingerprint actually consumed even when page artifacts change after the read', async () => {
+    const runRepo = {
+      startAggregation: jest.fn().mockResolvedValue({
+        id: 'run-1',
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+      }),
+      findRun: jest.fn().mockResolvedValue({ status: 'aggregating' }),
+      completeAggregation: jest.fn().mockResolvedValue(undefined),
+    };
+    const artifactCatalog = {
+      aggregateInput: jest
+        .fn()
+        .mockResolvedValue(aggregateInputFixture('sha256:consumed-input')),
+      aggregateFingerprint: jest.fn().mockResolvedValue({
+        hash: 'sha256:published-after-read',
+      }),
+    };
+    const service = new KnowledgeSpaceAggregatorService(
+      runRepo as unknown as KnowledgeSpaceCompilationRepo,
+      artifactCatalog as unknown as KnowledgeArtifactCatalogService,
+      {
+        completeMerge: jest
+          .fn()
+          .mockResolvedValue(
+            JSON.stringify({ title: 'Overview', markdown: 'Consumed body' }),
+          ),
+      } as unknown as KnowledgeCompilerLlmProvider,
+      {
+        importCompileResult: jest.fn().mockResolvedValue({
+          importedArtifactCount: 1,
+          quarantinedArtifactCount: 0,
+        }),
+      } as unknown as KnowledgeImportService,
+      {
+        resolveSpace: jest.fn().mockResolvedValue(undefined),
+      } as unknown as KnowledgeLinkResolverService,
+    );
+
+    await service.aggregate({
+      runId: 'run-1',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+    });
+
+    expect(runRepo.completeAggregation).toHaveBeenCalledWith(
+      expect.objectContaining({ catalogHash: 'sha256:consumed-input' }),
+    );
+    expect(artifactCatalog.aggregateFingerprint).not.toHaveBeenCalled();
+  });
+
+  it('keeps the run open in images phase after its initial aggregate', async () => {
+    const runRepo = {
+      startAggregation: jest.fn().mockResolvedValue({
+        id: 'run-images',
+        phase: 'initial_aggregate',
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+      }),
+      findRun: jest.fn().mockResolvedValue({ status: 'aggregating' }),
+      hasPendingImagePages: jest.fn().mockResolvedValue(true),
+      completeAggregation: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new KnowledgeSpaceAggregatorService(
+      runRepo as unknown as KnowledgeSpaceCompilationRepo,
+      {
+        aggregateInput: jest
+          .fn()
+          .mockResolvedValue(aggregateInputFixture('sha256:initial')),
+      } as unknown as KnowledgeArtifactCatalogService,
+      {
+        completeMerge: jest
+          .fn()
+          .mockResolvedValue(
+            JSON.stringify({ title: 'Overview', markdown: 'Text overview' }),
+          ),
+      } as unknown as KnowledgeCompilerLlmProvider,
+      {
+        importCompileResult: jest.fn().mockResolvedValue({
+          importedArtifactCount: 1,
+          quarantinedArtifactCount: 0,
+        }),
+      } as unknown as KnowledgeImportService,
+      {
+        resolveSpace: jest.fn().mockResolvedValue(undefined),
+      } as unknown as KnowledgeLinkResolverService,
+    );
+
+    await service.aggregate({
+      runId: 'run-images',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+    });
+
+    expect(runRepo.completeAggregation).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: 'initial_aggregate' }),
+    );
+  });
+
+  it('safely retries the same aggregating run after publication crashes before completion', async () => {
+    const run = {
+      id: 'run-1',
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    };
+    const runRepo = {
+      startAggregation: jest.fn().mockResolvedValue(run),
+      findRun: jest.fn().mockResolvedValue({ status: 'aggregating' }),
+      completeAggregation: jest
+        .fn()
+        .mockRejectedValueOnce(new Error('crash after publication'))
+        .mockResolvedValueOnce(undefined),
+    };
+    const artifactCatalog = {
+      aggregateInput: jest
+        .fn()
+        .mockResolvedValue(aggregateInputFixture('sha256:consumed-input')),
+    };
+    const importer = {
+      importCompileResult: jest.fn().mockResolvedValue({
+        importedArtifactCount: 1,
+        quarantinedArtifactCount: 0,
+      }),
+    };
+    const service = new KnowledgeSpaceAggregatorService(
+      runRepo as unknown as KnowledgeSpaceCompilationRepo,
+      artifactCatalog as unknown as KnowledgeArtifactCatalogService,
+      {
+        completeMerge: jest
+          .fn()
+          .mockResolvedValue(
+            JSON.stringify({ title: 'Overview', markdown: 'Idempotent body' }),
+          ),
+      } as unknown as KnowledgeCompilerLlmProvider,
+      importer as unknown as KnowledgeImportService,
+      {
+        resolveSpace: jest.fn().mockResolvedValue(undefined),
+      } as unknown as KnowledgeLinkResolverService,
+    );
+    const input = {
+      runId: 'run-1',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+    };
+
+    await expect(service.aggregate(input)).rejects.toThrow(
+      'crash after publication',
+    );
+    await expect(service.aggregate(input)).resolves.toEqual(
+      expect.objectContaining({ importedArtifactCount: 1 }),
+    );
+
+    expect(runRepo.startAggregation).toHaveBeenCalledTimes(2);
+    expect(importer.importCompileResult).toHaveBeenCalledTimes(2);
+    expect(runRepo.completeAggregation).toHaveBeenLastCalledWith(
+      expect.objectContaining({ catalogHash: 'sha256:consumed-input' }),
+    );
+  });
+
+  it('safely retries the same run after a crash immediately after aggregation starts', async () => {
+    const runRepo = {
+      startAggregation: jest.fn().mockResolvedValue({
+        id: 'run-1',
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+      }),
+      findRun: jest.fn().mockResolvedValue({ status: 'aggregating' }),
+      completeAggregation: jest.fn().mockResolvedValue(undefined),
+    };
+    const artifactCatalog = {
+      aggregateInput: jest
+        .fn()
+        .mockRejectedValueOnce(new Error('crash after start'))
+        .mockResolvedValueOnce(aggregateInputFixture('sha256:consumed-input')),
+    };
+    const importer = {
+      importCompileResult: jest.fn().mockResolvedValue({
+        importedArtifactCount: 1,
+        quarantinedArtifactCount: 0,
+      }),
+    };
+    const service = new KnowledgeSpaceAggregatorService(
+      runRepo as unknown as KnowledgeSpaceCompilationRepo,
+      artifactCatalog as unknown as KnowledgeArtifactCatalogService,
+      {
+        completeMerge: jest
+          .fn()
+          .mockResolvedValue(
+            JSON.stringify({ title: 'Overview', markdown: 'Recovered body' }),
+          ),
+      } as unknown as KnowledgeCompilerLlmProvider,
+      importer as unknown as KnowledgeImportService,
+      {
+        resolveSpace: jest.fn().mockResolvedValue(undefined),
+      } as unknown as KnowledgeLinkResolverService,
+    );
+    const input = {
+      runId: 'run-1',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+    };
+
+    await expect(service.aggregate(input)).rejects.toThrow('crash after start');
+    await expect(service.aggregate(input)).resolves.toEqual(
+      expect.objectContaining({ importedArtifactCount: 1 }),
+    );
+
+    expect(runRepo.startAggregation).toHaveBeenCalledTimes(2);
+    expect(importer.importCompileResult).toHaveBeenCalledTimes(1);
+    expect(runRepo.completeAggregation).toHaveBeenCalledTimes(1);
   });
 
   it('completes an obsolete aggregate job as a no-op', async () => {
@@ -147,7 +361,7 @@ describe('KnowledgeSpaceAggregatorService', () => {
     const linkResolver = { resolveSpace: jest.fn() };
     const service = new KnowledgeSpaceAggregatorService(
       runRepo as unknown as KnowledgeSpaceCompilationRepo,
-      capsuleRepo as unknown as KnowledgeCapsuleRepo,
+      aggregateCatalog(capsuleRepo),
       provider as unknown as KnowledgeCompilerLlmProvider,
       importer as unknown as KnowledgeImportService,
       linkResolver as unknown as KnowledgeLinkResolverService,
@@ -198,7 +412,7 @@ describe('KnowledgeSpaceAggregatorService', () => {
     const linkResolver = { resolveSpace: jest.fn() };
     const service = new KnowledgeSpaceAggregatorService(
       runRepo as unknown as KnowledgeSpaceCompilationRepo,
-      capsuleRepo as unknown as KnowledgeCapsuleRepo,
+      aggregateCatalog(capsuleRepo),
       provider as unknown as KnowledgeCompilerLlmProvider,
       importer as unknown as KnowledgeImportService,
       linkResolver as unknown as KnowledgeLinkResolverService,
@@ -243,7 +457,7 @@ describe('KnowledgeSpaceAggregatorService', () => {
     };
     const service = new KnowledgeSpaceAggregatorService(
       runRepo as unknown as KnowledgeSpaceCompilationRepo,
-      capsuleRepo as unknown as KnowledgeCapsuleRepo,
+      aggregateCatalog(capsuleRepo),
       {
         completeMerge: jest
           .fn()
@@ -300,7 +514,7 @@ describe('KnowledgeSpaceAggregatorService', () => {
     };
     const service = new KnowledgeSpaceAggregatorService(
       runRepo as unknown as KnowledgeSpaceCompilationRepo,
-      capsuleRepo as unknown as KnowledgeCapsuleRepo,
+      aggregateCatalog(capsuleRepo),
       provider as unknown as KnowledgeCompilerLlmProvider,
       importer as unknown as KnowledgeImportService,
       { resolveSpace: jest.fn() } as unknown as KnowledgeLinkResolverService,
@@ -325,11 +539,11 @@ describe('KnowledgeSpaceAggregatorService', () => {
       }),
     );
     expect(runRepo.isRunActiveForPublication).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         runId: 'run-empty',
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
-      },
+      }),
       publicationTrx,
     );
     expect(provider.completeMerge).not.toHaveBeenCalled();
@@ -361,7 +575,7 @@ describe('KnowledgeSpaceAggregatorService', () => {
     };
     const service = new KnowledgeSpaceAggregatorService(
       runRepo as unknown as KnowledgeSpaceCompilationRepo,
-      capsuleRepo as unknown as KnowledgeCapsuleRepo,
+      aggregateCatalog(capsuleRepo),
       { completeMerge: jest.fn() } as unknown as KnowledgeCompilerLlmProvider,
       importer as unknown as KnowledgeImportService,
       { resolveSpace: jest.fn() } as unknown as KnowledgeLinkResolverService,
@@ -428,4 +642,48 @@ function pageSource(
     contentHash,
     provenanceKind: 'synthesis_lineage',
   };
+}
+
+function aggregateInputFixture(hash: string) {
+  const artifact = page(
+    'artifact-a',
+    'concept',
+    'alpha',
+    'Alpha',
+    'Alpha body',
+  );
+  const source = {
+    workspaceId: 'workspace-1',
+    spaceId: 'space-1',
+    sourcePageId: 'page-1',
+    sourceVersion: 'v1',
+    contentHash: 'hash-1',
+  };
+  return {
+    pages: [artifact],
+    sourceRefsByArtifact: new Map([[artifact.id, [source]]]),
+    allSourceRefs: [source],
+    fingerprint: { hash, artifactCount: 1, truncated: false },
+  };
+}
+
+function aggregateCatalog(
+  capsuleRepo: Record<string, jest.Mock>,
+): KnowledgeArtifactCatalogService {
+  capsuleRepo.findAggregateCandidatesForSpace ??=
+    capsuleRepo.findGraphCandidatesForSpace;
+  capsuleRepo.countActiveAggregateArtifacts ??= jest
+    .fn()
+    .mockImplementation(async () => {
+      const candidates = await capsuleRepo.findAggregateCandidatesForSpace();
+      return (candidates?.pages ?? []).filter(
+        (candidate: { pageType?: string }) =>
+          ['source_summary', 'concept', 'entity', 'comparison'].includes(
+            candidate.pageType ?? '',
+          ),
+      ).length;
+    });
+  return new KnowledgeArtifactCatalogService(
+    capsuleRepo as unknown as KnowledgeCapsuleRepo,
+  );
 }

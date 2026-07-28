@@ -18,7 +18,6 @@ describe('PageService', () => {
       {} as any,
       {} as any,
       {} as any,
-      {} as any,
       generalQueue as any,
       {} as any,
       {} as any,

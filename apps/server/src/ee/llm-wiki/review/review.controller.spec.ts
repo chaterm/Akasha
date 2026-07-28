@@ -1,10 +1,12 @@
 import { ForbiddenException } from '@nestjs/common';
+import { SELF_DECLARED_DEPS_METADATA } from '@nestjs/common/constants';
+import { getQueueToken } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { User, Workspace } from '@akasha/db/types/entity.types';
 import { AuditEvent, AuditResource } from '../../../common/events/audit-events';
 import { UserRole } from '../../../common/helpers/types/permission';
 import { IAuditService } from '../../../integrations/audit/audit.service';
-import { QueueJob } from '../../../integrations/queue/constants';
+import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import { ReviewController } from './review.controller';
 import { ReviewItem, ReviewJob } from './review.schema';
 import { ReviewSnapshotService } from './review-snapshot.service';
@@ -15,12 +17,21 @@ jest.mock('./review-apply.service', () => ({
 }));
 
 describe('ReviewController', () => {
+  it('publishes review work through the knowledge text queue', () => {
+    expect(
+      Reflect.getMetadata(SELF_DECLARED_DEPS_METADATA, ReviewController),
+    ).toContainEqual({
+      index: 2,
+      param: getQueueToken(QueueName.KNOWLEDGE_TEXT_QUEUE),
+    });
+  });
+
   it('rejects review discovery when workspace AI is disabled', async () => {
-    const aiQueue = createAiQueue();
+    const knowledgeQueue = createKnowledgeQueue();
     const auditService = {
       log: jest.fn(),
     };
-    const controller = createController({ aiQueue, auditService });
+    const controller = createController({ knowledgeQueue, auditService });
 
     await expect(
       controller.discover(
@@ -30,7 +41,7 @@ describe('ReviewController', () => {
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
-    expect(aiQueue.add).not.toHaveBeenCalled();
+    expect(knowledgeQueue.add).not.toHaveBeenCalled();
     expect(auditService.log).not.toHaveBeenCalled();
   });
 
@@ -104,12 +115,12 @@ describe('ReviewController', () => {
       jobId: 'review-discover__workspace-1__space-1',
       kind: 'discover',
     });
-    const aiQueue = createAiQueue();
+    const knowledgeQueue = createKnowledgeQueue();
     const auditService = {
       log: jest.fn(),
     };
     const controller = createController({
-      aiQueue,
+      knowledgeQueue,
       auditService,
       snapshotService: {
         beginJob: jest.fn().mockResolvedValue({ job, isNew: true }),
@@ -127,7 +138,7 @@ describe('ReviewController', () => {
       result: null,
     });
 
-    expect(aiQueue.add).toHaveBeenCalledWith(
+    expect(knowledgeQueue.add).toHaveBeenCalledWith(
       QueueJob.REVIEW_DISCOVER,
       {
         workspaceId: 'workspace-1',
@@ -150,12 +161,12 @@ describe('ReviewController', () => {
       searchQueries: ['rollout plan'],
       outline: ['Goal', 'Steps'],
     };
-    const aiQueue = createAiQueue();
+    const knowledgeQueue = createKnowledgeQueue();
     const auditService = {
       log: jest.fn(),
     };
     const controller = createController({
-      aiQueue,
+      knowledgeQueue,
       auditService,
       snapshotService: {
         saveResolvedReview: jest.fn().mockResolvedValue(undefined),
@@ -179,7 +190,7 @@ describe('ReviewController', () => {
       turns: [],
     });
 
-    expect(aiQueue.add).not.toHaveBeenCalled();
+    expect(knowledgeQueue.add).not.toHaveBeenCalled();
     expect(auditService.log).toHaveBeenCalledWith({
       event: AuditEvent.KNOWLEDGE_REVIEW_NEGOTIATED,
       resourceType: AuditResource.KNOWLEDGE,
@@ -231,7 +242,7 @@ describe('ReviewController', () => {
       kind: 'negotiate',
       itemId: item.id,
     });
-    const aiQueue = createAiQueue();
+    const knowledgeQueue = createKnowledgeQueue();
     const applyService = {
       planDraft: jest.fn().mockResolvedValue(application),
       applyApplication: jest.fn(),
@@ -268,7 +279,7 @@ describe('ReviewController', () => {
       beginJob: jest.fn().mockResolvedValue({ job, isNew: true }),
     };
     const controller = createController({
-      aiQueue,
+      knowledgeQueue,
       applyService,
       snapshotService,
     });
@@ -283,7 +294,7 @@ describe('ReviewController', () => {
       job,
       result: null,
     });
-    expect(aiQueue.add).toHaveBeenCalledWith(
+    expect(knowledgeQueue.add).toHaveBeenCalledWith(
       QueueJob.REVIEW_NEGOTIATE,
       {
         workspaceId: 'workspace-1',
@@ -345,9 +356,9 @@ describe('ReviewController', () => {
       kind: 'negotiate',
       itemId: item.id,
     });
-    const aiQueue = createAiQueue();
+    const knowledgeQueue = createKnowledgeQueue();
     const controller = createController({
-      aiQueue,
+      knowledgeQueue,
       snapshotService: {
         loadSnapshot: jest.fn().mockResolvedValue({
           version: '2',
@@ -390,7 +401,7 @@ describe('ReviewController', () => {
       result: null,
     });
 
-    expect(aiQueue.add).toHaveBeenCalledWith(
+    expect(knowledgeQueue.add).toHaveBeenCalledWith(
       QueueJob.REVIEW_NEGOTIATE,
       {
         workspaceId: 'workspace-1',
@@ -400,7 +411,7 @@ describe('ReviewController', () => {
       },
       { jobId: 'review-negotiate__workspace-1__space-1__rev-4' },
     );
-    expect(JSON.stringify(aiQueue.add.mock.calls)).not.toContain('priorTurns');
+    expect(JSON.stringify(knowledgeQueue.add.mock.calls)).not.toContain('priorTurns');
   });
 
   it('allows a re-reviewed item even when a previous application with the same item id was applied', async () => {
@@ -419,9 +430,9 @@ describe('ReviewController', () => {
       kind: 'negotiate',
       itemId: item.id,
     });
-    const aiQueue = createAiQueue();
+    const knowledgeQueue = createKnowledgeQueue();
     const controller = createController({
-      aiQueue,
+      knowledgeQueue,
       snapshotService: {
         loadSnapshot: jest.fn().mockResolvedValue({
           version: '2',
@@ -454,7 +465,7 @@ describe('ReviewController', () => {
       result: null,
     });
 
-    expect(aiQueue.add).toHaveBeenCalledWith(
+    expect(knowledgeQueue.add).toHaveBeenCalledWith(
       QueueJob.REVIEW_NEGOTIATE,
       {
         workspaceId: 'workspace-1',
@@ -471,7 +482,7 @@ function createController(
   overrides: {
     applyService?: Partial<ReviewApplyService>;
     snapshotService?: Partial<ReviewSnapshotService>;
-    aiQueue?: Queue & { add: jest.Mock };
+    knowledgeQueue?: Queue & { add: jest.Mock };
     auditService?: Partial<IAuditService>;
   } = {},
 ): ReviewController {
@@ -514,12 +525,12 @@ function createController(
     }),
     ...overrides.applyService,
   } as unknown as ReviewApplyService;
-  const aiQueue = overrides.aiQueue ?? createAiQueue();
+  const knowledgeQueue = overrides.knowledgeQueue ?? createKnowledgeQueue();
 
   return new ReviewController(
     applyService,
     snapshotService,
-    aiQueue,
+    knowledgeQueue,
     auditService,
     {
       createForUser: jest.fn().mockResolvedValue({
@@ -593,7 +604,7 @@ function setReviewAccess(
   });
 }
 
-function createAiQueue(): Queue & { add: jest.Mock } {
+function createKnowledgeQueue(): Queue & { add: jest.Mock } {
   return {
     add: jest.fn().mockResolvedValue(undefined),
   } as unknown as Queue & { add: jest.Mock };

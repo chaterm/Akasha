@@ -36,12 +36,27 @@ export type KnowledgeCompilerLlmErrorCode =
   | 'timeout'
   | 'provider_error';
 
+export type KnowledgeCompilerProviderDiagnostic = {
+  stage?: 'analysis' | 'generation' | 'merge';
+  wrapperName?: string;
+  upstreamName?: string;
+  upstreamCode?: string;
+  statusCode?: number;
+  providerCode?: string;
+  providerType?: string;
+  requestId?: string;
+  retryReason?: string;
+  sdkAttempts?: number;
+  providerRetryable?: boolean;
+};
+
 export class KnowledgeCompilerLlmError extends Error {
   constructor(
     readonly code: KnowledgeCompilerLlmErrorCode,
     message: string,
     readonly retryable: boolean,
     readonly cause?: unknown,
+    readonly diagnostic?: KnowledgeCompilerProviderDiagnostic,
   ) {
     super(message);
     this.name = 'KnowledgeCompilerLlmError';
@@ -200,7 +215,7 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
         return { value: undefined, hadNoOutput: true };
       }
       if (error instanceof KnowledgeCompilerLlmError) throw error;
-      throw classifyProviderError(error);
+      throw classifyProviderError(error, input.stage);
     }
   }
 
@@ -382,42 +397,151 @@ function sourceSummaryFallback(
   };
 }
 
-function classifyProviderError(error: unknown): KnowledgeCompilerLlmError {
-  const status =
-    readNumberProperty(error, 'statusCode') ??
-    readNumberProperty(error, 'status');
+function classifyProviderError(
+  error: unknown,
+  stage: 'analysis' | 'generation' | 'merge',
+): KnowledgeCompilerLlmError {
+  const chain = errorChain(error);
+  const status = firstDefined(
+    chain.flatMap((candidate) => [
+      readNumberProperty(candidate, 'statusCode'),
+      readNumberProperty(candidate, 'status'),
+    ]),
+  );
+  const diagnostic = providerDiagnostic(error, chain, stage, status);
   if (status === 429) {
     return new KnowledgeCompilerLlmError(
       'rate_limited',
       'Knowledge compiler provider rate limit was exceeded.',
       true,
       error,
+      diagnostic,
     );
   }
 
-  const name = readStringProperty(error, 'name');
-  const code = readStringProperty(error, 'code');
+  const names = chain.map((candidate) => readStringProperty(candidate, 'name'));
+  const codes = chain.map((candidate) =>
+    readScalarStringProperty(candidate, 'code'),
+  );
   if (
-    name === 'AbortError' ||
-    name === 'TimeoutError' ||
-    code === 'ETIMEDOUT' ||
-    code === 'ECONNABORTED' ||
-    code === 'UND_ERR_CONNECT_TIMEOUT'
+    status === 408 ||
+    names.some((name) => name === 'AbortError' || name === 'TimeoutError') ||
+    codes.some(
+      (code) =>
+        code === 'ETIMEDOUT' ||
+        code === 'ECONNABORTED' ||
+        code === 'UND_ERR_CONNECT_TIMEOUT' ||
+        code === 'UND_ERR_HEADERS_TIMEOUT',
+    )
   ) {
     return new KnowledgeCompilerLlmError(
       'timeout',
       'Knowledge compiler provider timed out.',
       true,
       error,
+      diagnostic,
     );
   }
 
+  const providerRetryable = firstDefined(
+    chain.map((candidate) => readBooleanProperty(candidate, 'isRetryable')),
+  );
   return new KnowledgeCompilerLlmError(
     'provider_error',
     'Knowledge compiler provider request failed.',
-    status === undefined || status >= 500,
+    providerRetryable ??
+      (status === undefined || status === 409 || status >= 500),
     error,
+    diagnostic,
   );
+}
+
+function providerDiagnostic(
+  error: unknown,
+  chain: unknown[],
+  stage: 'analysis' | 'generation' | 'merge',
+  statusCode: number | undefined,
+): KnowledgeCompilerProviderDiagnostic {
+  const lastError = readUnknownProperty(error, 'lastError');
+  const upstream = lastError ?? chain.find((candidate) => candidate !== error);
+  const dataError = chain
+    .map((candidate) =>
+      readObjectProperty(readObjectProperty(candidate, 'data'), 'error'),
+    )
+    .find((candidate) => candidate !== undefined);
+  const responseHeaders = chain
+    .map((candidate) => readObjectProperty(candidate, 'responseHeaders'))
+    .find((candidate) => candidate !== undefined);
+  const errors = readArrayProperty(error, 'errors');
+  const diagnostic: KnowledgeCompilerProviderDiagnostic = {
+    stage,
+    wrapperName: safeDiagnosticValue(readStringProperty(error, 'name')),
+    upstreamName: safeDiagnosticValue(readStringProperty(upstream, 'name')),
+    upstreamCode: safeDiagnosticValue(
+      firstDefined(
+        chain.map((candidate) => readScalarStringProperty(candidate, 'code')),
+      ),
+    ),
+    statusCode,
+    providerCode: safeDiagnosticValue(
+      readScalarStringProperty(dataError, 'code'),
+    ),
+    providerType: safeDiagnosticValue(readStringProperty(dataError, 'type')),
+    requestId: safeDiagnosticValue(readRequestId(responseHeaders)),
+    retryReason: safeDiagnosticValue(readStringProperty(error, 'reason')),
+    sdkAttempts: errors?.length,
+    providerRetryable: firstDefined(
+      chain.map((candidate) => readBooleanProperty(candidate, 'isRetryable')),
+    ),
+  };
+  return Object.fromEntries(
+    Object.entries(diagnostic).filter(([, value]) => value !== undefined),
+  ) as KnowledgeCompilerProviderDiagnostic;
+}
+
+function errorChain(error: unknown): unknown[] {
+  const result: unknown[] = [];
+  const pending: unknown[] = [error];
+  const seen = new Set<unknown>();
+  while (pending.length > 0 && result.length < 20) {
+    const candidate = pending.shift();
+    if (candidate === undefined || candidate === null || seen.has(candidate)) {
+      continue;
+    }
+    seen.add(candidate);
+    result.push(candidate);
+    const lastError = readUnknownProperty(candidate, 'lastError');
+    const cause = readUnknownProperty(candidate, 'cause');
+    const errors = readArrayProperty(candidate, 'errors');
+    if (lastError !== undefined) pending.push(lastError);
+    if (cause !== undefined) pending.push(cause);
+    if (errors) pending.push(...errors.slice(-5).reverse());
+  }
+  return result;
+}
+
+function firstDefined<T>(values: Array<T | undefined>): T | undefined {
+  return values.find((value): value is T => value !== undefined);
+}
+
+function safeDiagnosticValue(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized.slice(0, 160) : undefined;
+}
+
+function readRequestId(
+  headers: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!headers) return undefined;
+  for (const [key, value] of Object.entries(headers)) {
+    if (
+      key.toLowerCase() === 'x-request-id' ||
+      key.toLowerCase() === 'x-dashscope-request-id'
+    ) {
+      return typeof value === 'string' ? value : undefined;
+    }
+  }
+  return undefined;
 }
 
 function readStringProperty(value: unknown, key: string): string | undefined {
@@ -426,6 +550,43 @@ function readStringProperty(value: unknown, key: string): string | undefined {
   }
   const property = (value as Record<string, unknown>)[key];
   return typeof property === 'string' ? property : undefined;
+}
+
+function readScalarStringProperty(
+  value: unknown,
+  key: string,
+): string | undefined {
+  const property = readUnknownProperty(value, key);
+  return typeof property === 'string' || typeof property === 'number'
+    ? String(property)
+    : undefined;
+}
+
+function readBooleanProperty(value: unknown, key: string): boolean | undefined {
+  const property = readUnknownProperty(value, key);
+  return typeof property === 'boolean' ? property : undefined;
+}
+
+function readArrayProperty(value: unknown, key: string): unknown[] | undefined {
+  const property = readUnknownProperty(value, key);
+  return Array.isArray(property) ? property : undefined;
+}
+
+function readObjectProperty(
+  value: unknown,
+  key: string,
+): Record<string, unknown> | undefined {
+  const property = readUnknownProperty(value, key);
+  return typeof property === 'object' && property !== null
+    ? (property as Record<string, unknown>)
+    : undefined;
+}
+
+function readUnknownProperty(value: unknown, key: string): unknown {
+  if (typeof value !== 'object' || value === null || !(key in value)) {
+    return undefined;
+  }
+  return (value as Record<string, unknown>)[key];
 }
 
 function readNumberProperty(value: unknown, key: string): number | undefined {

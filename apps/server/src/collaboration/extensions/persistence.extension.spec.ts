@@ -1,8 +1,20 @@
 import * as Y from 'yjs';
 import { TiptapTransformer } from '@hocuspocus/transformer';
+import { getQueueToken } from '@nestjs/bullmq';
+import { SELF_DECLARED_DEPS_METADATA } from '@nestjs/common/constants';
+import { QueueName } from '../../integrations/queue/constants';
 import { PersistenceExtension } from './persistence.extension';
 
 describe('PersistenceExtension', () => {
+  it('publishes page content updates through the knowledge text queue', () => {
+    expect(
+      Reflect.getMetadata(SELF_DECLARED_DEPS_METADATA, PersistenceExtension),
+    ).toContainEqual({
+      index: 2,
+      param: getQueueToken(QueueName.KNOWLEDGE_TEXT_QUEUE),
+    });
+  });
+
   const createSubject = (storedContent: unknown) => {
     const pageRepo = {
       findById: jest.fn().mockResolvedValue({

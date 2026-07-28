@@ -58,7 +58,8 @@ export class ReviewController {
   constructor(
     private readonly applyService: ReviewApplyService,
     private readonly snapshotService: ReviewSnapshotService,
-    @InjectQueue(QueueName.AI_QUEUE) private readonly aiQueue: Queue,
+    @InjectQueue(QueueName.KNOWLEDGE_TEXT_QUEUE)
+    private readonly knowledgeQueue: Queue,
     @Inject(AUDIT_SERVICE) private readonly auditService: IAuditService,
     private readonly spaceAbility: SpaceAbilityFactory,
     private readonly spaceRepo: SpaceRepo,
@@ -360,7 +361,7 @@ export class ReviewController {
     data: Record<string, unknown>,
   ): Promise<void> {
     try {
-      await this.aiQueue.add(name, data, { jobId: job.jobId });
+      await this.knowledgeQueue.add(name, data, { jobId: job.jobId });
     } catch (error) {
       await this.snapshotService.markJobFailed({
         workspaceId: data.workspaceId as string,

@@ -67,7 +67,6 @@ export class PageService {
     @InjectKysely() private readonly db: KyselyDB,
     private readonly storageService: StorageService,
     @InjectQueue(QueueName.ATTACHMENT_QUEUE) private attachmentQueue: Queue,
-    @InjectQueue(QueueName.AI_QUEUE) private aiQueue: Queue,
     @InjectQueue(QueueName.GENERAL_QUEUE) private generalQueue: Queue,
     private eventEmitter: EventEmitter2,
     private collaborationGateway: CollaborationGateway,
@@ -482,10 +481,6 @@ export class PageService {
           },
         );
 
-        await this.aiQueue.add(QueueJob.PAGE_MOVED_TO_SPACE, {
-          pageIds: pageIdsToMove,
-          workspaceId: rootPage.workspaceId,
-        });
       }
     });
 

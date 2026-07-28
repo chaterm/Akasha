@@ -8,6 +8,8 @@ import {
   HttpCode,
   HttpStatus,
   Inject,
+  Param,
+  ParseUUIDPipe,
   Post,
   Query,
   UseGuards,
@@ -23,6 +25,7 @@ import { AuthWorkspace } from '../../common/decorators/auth-workspace.decorator'
 import { AuditEvent, AuditResource } from '../../common/events/audit-events';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { UserRole } from '../../common/helpers/types/permission';
+import { SpaceAuthorizationService } from '../../core/space/services/space-authorization.service';
 import {
   AUDIT_SERVICE,
   IAuditService,
@@ -38,6 +41,7 @@ import { AdminKnowledgeDiagnosticsDto } from './dto/admin-diagnostics.dto';
 import { AdminKnowledgeRetryPagesDto } from './dto/admin-retry-pages.dto';
 import { ImportCompileResultDto } from './dto/import-compile-result.dto';
 import { KnowledgeGraphDto } from './dto/knowledge-graph.dto';
+import { KnowledgeSpaceOperationDto } from './dto/knowledge-space-operation.dto';
 import { QueryKnowledgeDto } from './dto/query-knowledge.dto';
 import { AiKnowledgeChatService } from './services/ai-knowledge-chat.service';
 import { KnowledgeDiagnosticsService } from './services/knowledge-diagnostics.service';
@@ -45,6 +49,7 @@ import { KnowledgeGraphService } from './services/knowledge-graph.service';
 import { KnowledgeImportService } from './services/knowledge-import.service';
 import { KnowledgeSourceExporterService } from './services/knowledge-source-exporter.service';
 import { KnowledgeSpaceCompilationService } from './services/knowledge-space-compilation.service';
+import { KnowledgeSpaceResetService } from './services/knowledge-space-reset.service';
 import {
   buildKnowledgeAdminActionJobId,
   buildKnowledgeCompileJobId,
@@ -66,10 +71,13 @@ export class LlmWikiController {
     private readonly diagnosticsService: KnowledgeDiagnosticsService,
     private readonly graphService: KnowledgeGraphService,
     private readonly queryAuditRepo: KnowledgeQueryAuditRepo,
-    @InjectQueue(QueueName.AI_QUEUE) private readonly aiQueue: Queue,
+    @InjectQueue(QueueName.KNOWLEDGE_TEXT_QUEUE)
+    private readonly knowledgeQueue: Queue,
     private readonly pageRepo: PageRepo,
     private readonly sourceExporter: KnowledgeSourceExporterService,
     private readonly spaceCompilation: KnowledgeSpaceCompilationService,
+    private readonly spaceReset: KnowledgeSpaceResetService,
+    private readonly spaceAuthorization: SpaceAuthorizationService,
   ) {}
 
   @HttpCode(HttpStatus.OK)
@@ -152,6 +160,69 @@ export class LlmWikiController {
   }
 
   @HttpCode(HttpStatus.OK)
+  @Post('admin/spaces/:spaceId/update-knowledge')
+  async updateSpaceKnowledge(
+    @Param('spaceId', ParseUUIDPipe) spaceId: string,
+    @Body() dto: KnowledgeSpaceOperationDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertKnowledgeOperationAllowed(user, workspace);
+    const sources = await this.sourceExporter.exportSpaceSources({
+      workspaceId: workspace.id,
+      spaceId,
+    });
+    const run = await this.spaceCompilation.startSpaceRun({
+      workspaceId: workspace.id,
+      spaceId,
+      trigger: 'manual_compile',
+      mode: 'incremental',
+      confirmationSpaceName: dto.confirmationSpaceName,
+      sources,
+    });
+    if (!run) {
+      throw new ConflictException(
+        'A newer knowledge update has already replaced this request.',
+      );
+    }
+    const result = {
+      runId: run.id,
+      mode: 'incremental' as const,
+      knowledgeGeneration: run.knowledgeGeneration,
+    };
+    this.auditKnowledgeOperation(spaceId, result);
+    return result;
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('admin/spaces/:spaceId/force-rebuild-knowledge')
+  async forceRebuildSpaceKnowledge(
+    @Param('spaceId', ParseUUIDPipe) spaceId: string,
+    @Body() dto: KnowledgeSpaceOperationDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertKnowledgeOperationAllowed(user, workspace);
+    const sources = await this.sourceExporter.exportSpaceSources({
+      workspaceId: workspace.id,
+      spaceId,
+    });
+    const reset = await this.spaceReset.forceRebuild({
+      workspaceId: workspace.id,
+      spaceId,
+      confirmationSpaceName: dto.confirmationSpaceName,
+      sources,
+    });
+    const result = {
+      runId: reset.run.id,
+      mode: 'force_rebuild' as const,
+      knowledgeGeneration: reset.generation,
+    };
+    this.auditKnowledgeOperation(spaceId, result);
+    return result;
+  }
+
+  @HttpCode(HttpStatus.OK)
   @Post('admin/compile-spaces')
   async compileSpaces(
     @Body() dto: CompileSpacesDto,
@@ -227,11 +298,28 @@ export class LlmWikiController {
       throw new ForbiddenException('AI knowledge chat is disabled');
     }
 
-    this.assertAdmin(user, 'AI knowledge diagnostics is restricted to admins');
+    const candidateSpaceIds =
+      await this.diagnosticsService.findWorkspaceSpaceIds({
+        workspaceId: workspace.id,
+        requestedSpaceIds: dto.spaceIds,
+      });
+    const authorizedSpaceIds =
+      await this.spaceAuthorization.filterReadableSpaceIds({
+        user: {
+          id: user.id,
+          role: user.role ?? UserRole.MEMBER,
+          workspaceId: workspace.id,
+        },
+        spaceIds: candidateSpaceIds,
+      });
 
     return this.diagnosticsService.getWorkspaceDiagnostics({
       workspaceId: workspace.id,
-      spaceIds: dto.spaceIds,
+      spaceIds: authorizedSpaceIds,
+      enforceSpaceScope: true,
+      canViewGlobalQueues: user.role === UserRole.OWNER,
+      includeDetailedDiagnostics:
+        user.role === UserRole.OWNER || user.role === UserRole.ADMIN,
       statuses: dto.statuses,
       stages: dto.stages,
       limit: dto.limit,
@@ -266,7 +354,6 @@ export class LlmWikiController {
       );
     }
 
-    const jobIds: string[] = [];
     const pagesBySpace = new Map<string, (typeof pageRefs)[number][]>();
     for (const pageId of pageIds) {
       const page = pageById.get(pageId) as (typeof pageRefs)[number];
@@ -288,6 +375,19 @@ export class LlmWikiController {
       );
     }
 
+    const retryablePageIds = new Set(
+      await this.diagnosticsService.findRetryableFailedPageIds({
+        workspaceId: workspace.id,
+        sourcePageIds: pageIds,
+      }),
+    );
+    if (pageIds.some((pageId) => !retryablePageIds.has(pageId))) {
+      throw new BadRequestException(
+        'Only currently failed knowledge pages can be retried',
+      );
+    }
+
+    const jobIds: string[] = [];
     const retryGroups = [];
     for (const [spaceId, pages] of pagesBySpace) {
       const sources = await this.sourceExporter.exportPageSources({
@@ -374,6 +474,32 @@ export class LlmWikiController {
     }
   }
 
+  private assertKnowledgeOperationAllowed(
+    user: User,
+    workspace: Workspace,
+  ): void {
+    if (!this.chatService.isEnabledForWorkspace(workspace)) {
+      throw new ForbiddenException('AI knowledge chat is disabled');
+    }
+    this.assertAdmin(user, 'AI knowledge compile is restricted to admins');
+  }
+
+  private auditKnowledgeOperation(
+    spaceId: string,
+    result: {
+      runId: string;
+      mode: 'incremental' | 'force_rebuild';
+      knowledgeGeneration: number;
+    },
+  ): void {
+    this.auditService.log({
+      event: AuditEvent.KNOWLEDGE_COMPILE_QUEUED,
+      resourceType: AuditResource.KNOWLEDGE,
+      resourceId: spaceId,
+      metadata: result,
+    });
+  }
+
   private async enqueueCompileSpaces(input: {
     workspaceId: string;
     spaceIds: string[];
@@ -388,7 +514,7 @@ export class LlmWikiController {
         spaceId,
         runKey: buildKnowledgeRunKey(input.trigger),
       });
-      await this.aiQueue.add(
+      await this.knowledgeQueue.add(
         QueueJob.KNOWLEDGE_COMPILE_SPACE,
         {
           workspaceId: input.workspaceId,
@@ -413,21 +539,38 @@ export class LlmWikiController {
     jobIds: string[];
   }> {
     if (input.action === 'retry_compile') {
-      const result = await this.enqueueCompileSpaces({
-        workspaceId: input.workspaceId,
-        spaceIds: input.spaceIds,
-        trigger: 'retry_compile',
-      });
-      return { action: input.action, ...result };
+      throw new BadRequestException(
+        'Retry compile requires explicitly selected failed page IDs',
+      );
     }
 
     if (input.action === 'rebuild_embeddings') {
-      const result = await this.enqueueCompileSpaces({
-        workspaceId: input.workspaceId,
-        spaceIds: input.spaceIds,
-        trigger: 'rebuild_embeddings',
-      });
-      return { action: input.action, ...result };
+      const spaceIds = uniqueValues(input.spaceIds);
+      const jobIds: string[] = [];
+      for (const spaceId of spaceIds) {
+        const jobId = buildKnowledgeAdminActionJobId({
+          action: input.action,
+          workspaceId: input.workspaceId,
+          spaceId,
+        });
+        await this.knowledgeQueue.add(
+          QueueJob.KNOWLEDGE_REBUILD_EMBEDDINGS,
+          { workspaceId: input.workspaceId, spaceId },
+          {
+            jobId,
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 5_000 },
+            removeOnComplete: true,
+            removeOnFail: true,
+          },
+        );
+        jobIds.push(jobId);
+      }
+      return {
+        action: input.action,
+        queuedSpaceCount: jobIds.length,
+        jobIds,
+      };
     }
 
     const spaceIds = uniqueValues(input.spaceIds);
@@ -438,7 +581,7 @@ export class LlmWikiController {
         workspaceId: input.workspaceId,
         spaceId,
       });
-      await this.aiQueue.add(
+      await this.knowledgeQueue.add(
         input.action === 'reindex_access'
           ? QueueJob.KNOWLEDGE_REINDEX_ACCESS
           : QueueJob.KNOWLEDGE_MARK_SOURCES_STALE,

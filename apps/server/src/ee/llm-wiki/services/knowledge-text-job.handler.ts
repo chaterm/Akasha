@@ -1,16 +1,12 @@
-import { Inject, Logger, OnModuleDestroy, Optional } from '@nestjs/common';
-import {
-  InjectQueue,
-  OnWorkerEvent,
-  Processor,
-  WorkerHost,
-} from '@nestjs/bullmq';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
 import { Job, Queue, UnrecoverableError } from 'bullmq';
 import { KnowledgeCapsuleRepo } from '@akasha/db/repos/llm-wiki/knowledge-capsule.repo';
 import { KnowledgeCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-compilation.repo';
 import { KnowledgeReviewApplicationRepo } from '@akasha/db/repos/llm-wiki/knowledge-review-application.repo';
 import { KnowledgeSourceRepo } from '@akasha/db/repos/llm-wiki/knowledge-source.repo';
 import { PageRepo } from '@akasha/db/repos/page/page.repo';
+import { KyselyTransaction } from '@akasha/db/types/kysely.types';
 import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import {
   DEFAULT_KNOWLEDGE_COMPILER_VERSION,
@@ -21,11 +17,13 @@ import { KnowledgeCompilerAdapter } from '../adapters/knowledge-compiler.adapter
 import {
   KnowledgeCompilationValidationError,
   KnowledgeImportService,
-} from '../services/knowledge-import.service';
+} from './knowledge-import.service';
 import {
   IKnowledgeCompileSpaceJob,
   IKnowledgeCompilePagesJob,
+  IKnowledgeMergePageImagesJob,
   IKnowledgeAggregateSpaceJob,
+  IKnowledgeRebuildEmbeddingsJob,
   IKnowledgeMarkSourcesStaleJob,
   IKnowledgeReindexAccessJob,
   IReviewDiscoverJob,
@@ -36,8 +34,8 @@ import {
   AUDIT_SERVICE,
   IAuditService,
 } from '../../../integrations/audit/audit.service';
-import { KnowledgeAccessIndexerService } from '../services/knowledge-access-indexer.service';
-import { KnowledgeSourceExporterService } from '../services/knowledge-source-exporter.service';
+import { KnowledgeAccessIndexerService } from './knowledge-access-indexer.service';
+import { KnowledgeSourceExporterService } from './knowledge-source-exporter.service';
 import {
   buildKnowledgeCompileCoalesceKey,
   buildKnowledgeCompilePageJobId,
@@ -46,7 +44,7 @@ import {
   KNOWLEDGE_COMPILE_DELAY_MS,
   KNOWLEDGE_COMPILE_RETRY_BACKOFF_MS,
   uniqueValues,
-} from '../services/knowledge-queue.utils';
+} from './knowledge-queue.utils';
 import { KnowledgeCompileJobResult } from '../types/knowledge-queue.types';
 import { ReviewService } from '../review/review.service';
 import { ReviewSnapshotService } from '../review/review-snapshot.service';
@@ -55,10 +53,16 @@ import { MockSearchProvider } from '../review/search-provider';
 import { isDeepSearch, ResolvedReview } from '../review/approval';
 import { NegotiationTurn, reviewItemSchema } from '../review/review.schema';
 import { KnowledgeCompilerLlmError } from '../compiler/knowledge-compiler-llm.provider';
-import { KnowledgeArtifactCatalogService } from '../services/knowledge-artifact-catalog.service';
-import { KnowledgeSpaceCompilationService } from '../services/knowledge-space-compilation.service';
-import { KnowledgeSpaceAggregatorService } from '../services/knowledge-space-aggregator.service';
-import { KnowledgeImageEnrichmentService } from '../services/knowledge-image-enrichment.service';
+import { KnowledgeArtifactCatalogService } from './knowledge-artifact-catalog.service';
+import { KnowledgeSpaceCompilationService } from './knowledge-space-compilation.service';
+import { KnowledgeSpaceAggregatorService } from './knowledge-space-aggregator.service';
+import { KnowledgeImageEnrichmentService } from './knowledge-image-enrichment.service';
+import {
+  buildEffectiveKnowledgeHash,
+  ReadyKnowledgeImage,
+} from './knowledge-effective-hash';
+import { KnowledgeVectorIndexService } from './knowledge-vector-index.service';
+import { KnowledgeSourceSnapshot } from '../types/source-snapshot.types';
 
 type ReviewProcessorJobResult = {
   type: 'review-discover' | 'review-negotiate';
@@ -68,6 +72,10 @@ type ReviewProcessorJobResult = {
   jobId: string;
   reviewItemId?: string;
   durationMs: number;
+};
+
+type KnowledgeEmbeddingRebuildJobResult = {
+  rebuiltChunkCount: number;
 };
 
 class SourceChangedDuringCompilationError extends Error {
@@ -84,16 +92,9 @@ class UnavailableKnowledgeSourceError extends Error {
   }
 }
 
-class ImageEnrichmentIncompleteError extends Error {
-  constructor(message = 'Page image enrichment is incomplete.') {
-    super(message);
-    this.name = 'ImageEnrichmentIncompleteError';
-  }
-}
-
-@Processor(QueueName.AI_QUEUE)
-export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
-  private readonly logger = new Logger(LlmWikiProcessor.name);
+@Injectable()
+export class KnowledgeTextJobHandler {
+  private readonly logger = new Logger(KnowledgeTextJobHandler.name);
 
   constructor(
     private readonly sourceExporter: KnowledgeSourceExporterService,
@@ -104,27 +105,28 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
     private readonly sourceRepo: KnowledgeSourceRepo,
     private readonly capsuleRepo: KnowledgeCapsuleRepo,
     private readonly pageRepo: PageRepo,
-    @InjectQueue(QueueName.AI_QUEUE) private readonly aiQueue: Queue,
+    @InjectQueue(QueueName.KNOWLEDGE_TEXT_QUEUE)
+    private readonly textQueue: Queue,
     private readonly reviewService: ReviewService,
     private readonly reviewSnapshotService: ReviewSnapshotService,
     @Inject(AUDIT_SERVICE) private readonly auditService: IAuditService,
     private readonly reviewApplicationRepo: KnowledgeReviewApplicationRepo,
-    private readonly compilationRepo?: KnowledgeCompilationRepo,
-    @Optional()
-    private readonly artifactCatalog?: KnowledgeArtifactCatalogService,
-    @Optional()
-    private readonly spaceCompilation?: KnowledgeSpaceCompilationService,
-    @Optional()
-    private readonly spaceAggregator?: KnowledgeSpaceAggregatorService,
-    @Optional()
-    private readonly imageEnrichment?: KnowledgeImageEnrichmentService,
-  ) {
-    super();
-  }
+    private readonly compilationRepo: KnowledgeCompilationRepo,
+    private readonly artifactCatalog: KnowledgeArtifactCatalogService,
+    private readonly spaceCompilation: KnowledgeSpaceCompilationService,
+    private readonly spaceAggregator: KnowledgeSpaceAggregatorService,
+    private readonly imageEnrichment: KnowledgeImageEnrichmentService,
+    private readonly vectorIndex: KnowledgeVectorIndexService = undefined as never,
+  ) {}
 
-  async process(
+  async handle(
     job: Job,
-  ): Promise<KnowledgeCompileJobResult | ReviewProcessorJobResult | void> {
+  ): Promise<
+    | KnowledgeCompileJobResult
+    | ReviewProcessorJobResult
+    | KnowledgeEmbeddingRebuildJobResult
+    | void
+  > {
     switch (job.name) {
       case QueueJob.KNOWLEDGE_COMPILE_SPACE: {
         const data = job.data as IKnowledgeCompileSpaceJob;
@@ -133,11 +135,6 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
           workspaceId: data.workspaceId,
           spaceId: data.spaceId,
         });
-        if (!this.spaceCompilation) {
-          throw new UnrecoverableError(
-            'Knowledge Space compilation coordinator is unavailable.',
-          );
-        }
         const sourceByPageId = new Map(
           sources.map((source) => [source.sourcePageId, source] as const),
         );
@@ -180,17 +177,14 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
       case QueueJob.KNOWLEDGE_AGGREGATE_SPACE: {
         const data = job.data as IKnowledgeAggregateSpaceJob;
         const startedAt = Date.now();
-        if (!this.spaceAggregator) {
-          throw new UnrecoverableError(
-            'Knowledge Space aggregator is unavailable.',
-          );
-        }
         try {
           const result = await this.spaceAggregator.aggregate({
             runId: data.spaceRunId,
             workspaceId: data.workspaceId,
             spaceId: data.spaceId,
+            phase: data.phase ?? 'initial_aggregate',
           });
+          await this.spaceCompilation.dispatchPending();
           return {
             type: 'compile-space',
             status: 'succeeded',
@@ -204,7 +198,6 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
           };
         } catch (error) {
           if (
-            this.spaceCompilation &&
             !(await this.spaceCompilation.isRunActive({
               runId: data.spaceRunId,
               workspaceId: data.workspaceId,
@@ -224,8 +217,13 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
             };
           }
           const failure = classifyCompilationFailure(error);
+          this.logProviderFailure(error, {
+            workspaceId: data.workspaceId,
+            spaceId: data.spaceId,
+            compileTaskId: String(job.id ?? data.spaceRunId),
+          });
           const terminal = !failure.retryable || isFinalJobAttempt(job);
-          await this.spaceCompilation?.failAggregation({
+          await this.spaceCompilation.failAggregation({
             runId: data.spaceRunId,
             errorCode: failure.code,
             errorMessage: failure.message,
@@ -256,11 +254,6 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
             }),
         );
         if (data.spaceRunId) {
-          if (!this.spaceCompilation) {
-            throw new UnrecoverableError(
-              'Knowledge Space compilation coordinator is unavailable.',
-            );
-          }
           if (!(await this.isSpaceRunActive(data))) {
             await this.skipCancelledAttempt({
               data,
@@ -279,12 +272,12 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
         }
         try {
           if (data.spaceRunId) {
-            await this.spaceCompilation!.markPageRunning({
+            await this.spaceCompilation.markPageRunning({
               runId: data.spaceRunId,
               sourcePageId,
             });
           }
-          await this.compilationRepo?.startAttempt({
+          await this.compilationRepo.startAttempt({
             workspaceId: data.workspaceId,
             spaceId: data.spaceId,
             sourcePageId,
@@ -308,39 +301,28 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
           }
           const exportedSource = sources[0];
           let source = exportedSource;
-          let imageEnrichmentIncomplete = false;
+          let readyImages: ReadyKnowledgeImage[] = [];
           if ((source.images?.length ?? 0) > 0) {
-            await this.compilationRepo?.updateStage({
-              workspaceId: data.workspaceId,
-              sourcePageId,
-              compileTaskId,
-              stage: 'image_enrichment',
-            });
-            if (this.imageEnrichment) {
-              const enrichment =
-                await this.imageEnrichment.enrichSource(source);
-              source = enrichment.source;
-              sources[0] = source;
-              imageEnrichmentIncomplete =
-                enrichment.failedCount > 0 ||
-                enrichment.succeededCount < enrichment.imageCount ||
-                enrichment.imageCount < (exportedSource.images?.length ?? 0);
-              if (enrichment.warnings.length > 0) {
-                this.logger.warn(
-                  `Page image enrichment completed with warnings for page ${sourcePageId}: ` +
-                    `${enrichment.succeededCount}/${enrichment.imageCount} images produced searchable content.`,
-                );
-              }
-            } else {
-              imageEnrichmentIncomplete = true;
-            }
+            const ready = await this.imageEnrichment.readReadySource(source);
+            source = ready.source;
+            readyImages = ready.readyImages;
+            sources[0] = source;
           }
-          await this.compilationRepo?.updateSourceSnapshot({
+          const effectiveKnowledgeHash = buildEffectiveKnowledgeHash({
+            sourceContentHash: exportedSource.contentHash,
+            compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+            promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+            readyImages,
+          });
+          source = { ...source, effectiveKnowledgeHash };
+          sources[0] = source;
+          await this.compilationRepo.updateSourceSnapshot({
             workspaceId: data.workspaceId,
             sourcePageId,
             compileTaskId,
             sourceVersion: exportedSource.sourceVersion,
             sourceContentHash: exportedSource.contentHash,
+            effectiveKnowledgeHash,
           });
           if (
             data.spaceRunId &&
@@ -351,14 +333,14 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
           ) {
             const errorMessage =
               'Knowledge source changed after the Space run snapshot.';
-            await this.compilationRepo?.skipAttempt({
+            await this.compilationRepo.skipAttempt({
               workspaceId: data.workspaceId,
               sourcePageId,
               compileTaskId,
               reasonCode: 'source_changed',
               reasonMessage: errorMessage,
             });
-            await this.spaceCompilation!.completePage({
+            await this.spaceCompilation.completePage({
               runId: data.spaceRunId,
               sourcePageId,
               status: 'skipped',
@@ -377,97 +359,28 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
               durationMs: Math.max(0, Date.now() - startedAt),
             };
           }
-          if (imageEnrichmentIncomplete) {
-            if (!isFinalJobAttempt(job)) {
-              throw new ImageEnrichmentIncompleteError(
-                'Page image enrichment is incomplete and will be retried.',
-              );
-            }
-            const activeSource =
-              await this.sourceRepo.findLatestActiveSourceByPageId({
-                workspaceId: data.workspaceId,
+          if (!source.text.trim() && exportedSource.images?.length) {
+            const errorMessage =
+              'Text phase completed; the page is awaiting image knowledge.';
+            await this.compilationRepo.skipAttempt({
+              workspaceId: data.workspaceId,
+              sourcePageId,
+              compileTaskId,
+              reasonCode: 'awaiting_images',
+              reasonMessage: errorMessage,
+            });
+            if (data.spaceRunId) {
+              await this.spaceCompilation.completePage({
+                runId: data.spaceRunId,
                 sourcePageId,
+                status: 'succeeded',
               });
-            const preservingLastKnownGood =
-              activeSource?.contentHash === exportedSource.contentHash;
-            if (!preservingLastKnownGood) {
-              const latestSources = await this.sourceExporter.exportPageSources(
-                {
-                  workspaceId: data.workspaceId,
-                  spaceId: data.spaceId,
-                  sourcePageIds,
-                },
+            } else {
+              await this.spaceCompilation.queueStandalonePageImages(
+                exportedSource,
               );
-              if (!isSameSourceSnapshot(exportedSource, latestSources[0])) {
-                const sourceChangedMessage =
-                  'Knowledge source changed before failed-image retirement.';
-                await this.compilationRepo?.skipAttempt({
-                  workspaceId: data.workspaceId,
-                  sourcePageId,
-                  compileTaskId,
-                  stage: 'image_enrichment',
-                  reasonCode: 'source_changed',
-                  reasonMessage: sourceChangedMessage,
-                });
-                if (data.spaceRunId) {
-                  await this.spaceCompilation!.completePage({
-                    runId: data.spaceRunId,
-                    sourcePageId,
-                    status: 'skipped',
-                    errorCode: 'source_changed',
-                    errorMessage: sourceChangedMessage,
-                  });
-                }
-                return noOpPageResult(data, startedAt);
-              }
-              if (!(await this.isPageCompilationAllowed(data))) {
-                await this.skipCancelledAttempt({
-                  data,
-                  sourcePageId,
-                  compileTaskId,
-                });
-                return noOpPageResult(data, startedAt);
-              }
-              const retirement = await this.importService.importCompileResult({
-                input: {
-                  workspaceId: data.workspaceId,
-                  spaceId: data.spaceId,
-                  compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
-                  promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
-                  compileTaskId,
-                  compileMode: 'pages',
-                  sources,
-                },
-                artifacts: [],
-                upsertSources: false,
-                retireSources: true,
-                ...(data.spaceRunId
-                  ? {
-                      publicationGuard: (trx) =>
-                        this.spaceCompilation!.isRunActiveForPublication(
-                          {
-                            runId: data.spaceRunId!,
-                            workspaceId: data.workspaceId,
-                            spaceId: data.spaceId,
-                          },
-                          trx,
-                        ),
-                    }
-                  : {}),
-              });
-              if (retirement.skippedReason === 'run_superseded') {
-                await this.skipCancelledAttempt({
-                  data,
-                  sourcePageId,
-                  compileTaskId,
-                });
-                return noOpPageResult(data, startedAt);
-              }
             }
-            const errorMessage = preservingLastKnownGood
-              ? 'Page images did not produce searchable content; unchanged last-known-good knowledge is still being served.'
-              : 'Page images did not produce searchable content; outdated knowledge was retired.';
-            throw new ImageEnrichmentIncompleteError(errorMessage);
+            return noOpPageResult(data, startedAt);
           }
           if (!source.text.trim()) {
             const errorMessage = 'Knowledge source page is empty.';
@@ -479,7 +392,7 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
             if (!isSameSourceSnapshot(exportedSource, latestSources[0])) {
               const sourceChangedMessage =
                 'Knowledge source changed before empty-source retirement.';
-              await this.compilationRepo?.skipAttempt({
+              await this.compilationRepo.skipAttempt({
                 workspaceId: data.workspaceId,
                 sourcePageId,
                 compileTaskId,
@@ -487,7 +400,7 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
                 reasonMessage: sourceChangedMessage,
               });
               if (data.spaceRunId) {
-                await this.spaceCompilation!.completePage({
+                await this.spaceCompilation.completePage({
                   runId: data.spaceRunId,
                   sourcePageId,
                   status: 'skipped',
@@ -521,11 +434,16 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
               ...(data.spaceRunId
                 ? {
                     publicationGuard: (trx) =>
-                      this.spaceCompilation!.isRunActiveForPublication(
+                      this.spaceCompilation.isRunActiveForPublication(
                         {
                           runId: data.spaceRunId!,
                           workspaceId: data.workspaceId,
                           spaceId: data.spaceId,
+                          knowledgeGeneration: data.knowledgeGeneration,
+                          allowedPhases: ['text', 'images'],
+                          sourcePageId,
+                          sourceVersion: data.sourceVersion,
+                          sourceContentHash: data.sourceContentHash,
                         },
                         trx,
                       ),
@@ -540,7 +458,7 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
               });
               return noOpPageResult(data, startedAt);
             }
-            await this.compilationRepo?.skipAttempt({
+            await this.compilationRepo.skipAttempt({
               workspaceId: data.workspaceId,
               sourcePageId,
               compileTaskId,
@@ -548,7 +466,7 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
               reasonMessage: errorMessage,
             });
             if (data.spaceRunId) {
-              await this.spaceCompilation!.completePage({
+              await this.spaceCompilation.completePage({
                 runId: data.spaceRunId,
                 sourcePageId,
                 status: 'skipped',
@@ -556,20 +474,25 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
                 errorMessage,
               });
             }
+            if (!data.spaceRunId && exportedSource.images?.length) {
+              await this.spaceCompilation.queueStandalonePageImages(
+                exportedSource,
+              );
+            }
             return noOpPageResult(data, startedAt);
           }
           const catalogEntries = data.spaceRunId
-            ? await this.spaceCompilation!.catalogForPage({
+            ? await this.spaceCompilation.catalogForPage({
                 runId: data.spaceRunId,
                 workspaceId: data.workspaceId,
                 spaceId: data.spaceId,
               })
-            : ((
-                await this.artifactCatalog?.snapshot({
+            : (
+                await this.artifactCatalog.snapshot({
                   workspaceId: data.workspaceId,
                   spaceId: data.spaceId,
                 })
-              )?.entries ?? []);
+              ).entries;
           if (!(await this.isPageCompilationAllowed(data))) {
             await this.skipCancelledAttempt({
               data,
@@ -587,9 +510,27 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
             compileMode: 'pages' as const,
             catalog: catalogEntries,
             sources,
+            ...(data.spaceRunId
+              ? {
+                  publicationGuard: (trx: KyselyTransaction) =>
+                    this.spaceCompilation.isRunActiveForPublication(
+                      {
+                        runId: data.spaceRunId!,
+                        workspaceId: data.workspaceId,
+                        spaceId: data.spaceId,
+                        knowledgeGeneration: data.knowledgeGeneration,
+                        allowedPhases: ['text', 'images'],
+                        sourcePageId,
+                        sourceVersion: exportedSource.sourceVersion,
+                        sourceContentHash: exportedSource.contentHash,
+                      },
+                      trx,
+                    ),
+                }
+              : {}),
           };
           const compileResult = await this.compiler.compileSpace(compileInput);
-          await this.compilationRepo?.updateStage({
+          await this.compilationRepo.updateStage({
             workspaceId: data.workspaceId,
             sourcePageId,
             compileTaskId,
@@ -617,18 +558,23 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
             ...(data.spaceRunId
               ? {
                   publicationGuard: (trx) =>
-                    this.spaceCompilation!.isRunActiveForPublication(
+                    this.spaceCompilation.isRunActiveForPublication(
                       {
                         runId: data.spaceRunId!,
                         workspaceId: data.workspaceId,
                         spaceId: data.spaceId,
+                        knowledgeGeneration: data.knowledgeGeneration,
+                        allowedPhases: ['text', 'images'],
+                        sourcePageId,
+                        sourceVersion: data.sourceVersion,
+                        sourceContentHash: data.sourceContentHash,
                       },
                       trx,
                     ),
                 }
               : {}),
             onStage: async (stage) => {
-              await this.compilationRepo?.updateStage({
+              await this.compilationRepo.updateStage({
                 workspaceId: data.workspaceId,
                 sourcePageId,
                 compileTaskId,
@@ -648,19 +594,27 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
             workspaceId: data.workspaceId,
             sourcePageIds: [sourcePageId],
           });
-          await this.compilationRepo?.succeedAttempt({
+          await this.compilationRepo.succeedAttempt({
             workspaceId: data.workspaceId,
             sourcePageId,
             compileTaskId,
             sourceVersion: exportedSource.sourceVersion,
             sourceContentHash: exportedSource.contentHash,
+            effectiveKnowledgeHash,
           });
           if (data.spaceRunId) {
-            await this.spaceCompilation!.completePage({
+            await this.spaceCompilation.completePage({
               runId: data.spaceRunId,
               sourcePageId,
               status: 'succeeded',
             });
+          } else if (
+            exportedSource.images?.length &&
+            readyImages.length < exportedSource.images.length
+          ) {
+            await this.spaceCompilation.queueStandalonePageImages(
+              exportedSource,
+            );
           }
           return {
             type: 'compile-pages',
@@ -683,7 +637,13 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
             return noOpPageResult(data, startedAt);
           }
           const failure = classifyCompilationFailure(error);
-          await this.compilationRepo?.failAttempt({
+          this.logProviderFailure(error, {
+            workspaceId: data.workspaceId,
+            spaceId: data.spaceId,
+            sourcePageId,
+            compileTaskId,
+          });
+          await this.compilationRepo.failAttempt({
             workspaceId: data.workspaceId,
             sourcePageId,
             compileTaskId,
@@ -695,7 +655,7 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
             data.spaceRunId &&
             (!failure.retryable || isFinalJobAttempt(job))
           ) {
-            await this.spaceCompilation!.completePage({
+            await this.spaceCompilation.completePage({
               runId: data.spaceRunId,
               sourcePageId,
               status: 'failed',
@@ -708,6 +668,9 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
           }
           throw error;
         }
+      }
+      case QueueJob.KNOWLEDGE_MERGE_PAGE_IMAGES: {
+        return this.handlePageImageMerge(job);
       }
       case QueueJob.KNOWLEDGE_REINDEX_ACCESS: {
         const data = job.data as IKnowledgeReindexAccessJob;
@@ -727,6 +690,13 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
           });
         }
         break;
+      }
+      case QueueJob.KNOWLEDGE_REBUILD_EMBEDDINGS: {
+        const data = job.data as IKnowledgeRebuildEmbeddingsJob;
+        return this.vectorIndex.rebuildSpaceEmbeddings({
+          workspaceId: data.workspaceId,
+          spaceId: data.spaceId,
+        });
       }
       case QueueJob.KNOWLEDGE_MARK_SOURCES_STALE: {
         const data = job.data as IKnowledgeMarkSourcesStaleJob;
@@ -768,6 +738,18 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
         break;
       }
     }
+  }
+
+  async onFailed(job: Job): Promise<void> {
+    if (
+      job.name !== QueueJob.KNOWLEDGE_MERGE_PAGE_IMAGES ||
+      !isFinalJobAttempt(job)
+    ) {
+      return;
+    }
+    const data = job.data as IKnowledgeMergePageImagesJob;
+    if (!data.spaceRunId) return;
+    await this.spaceCompilation.failPageMerge(mergeRunIdentity(data));
   }
 
   private async handleReviewDiscoverJob(
@@ -841,6 +823,225 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
         jobId,
         error: error instanceof Error ? error.message : String(error),
       });
+      throw error;
+    }
+  }
+
+  private async handlePageImageMerge(
+    job: Job,
+  ): Promise<KnowledgeCompileJobResult> {
+    const data = job.data as IKnowledgeMergePageImagesJob;
+    const startedAt = Date.now();
+    const compileTaskId = String(job.id ?? 'knowledge-image-merge');
+    if (data.spaceRunId) {
+      const accepted = await this.spaceCompilation.beginPageMerge({
+        runId: data.spaceRunId,
+        sourcePageId: data.sourcePageId,
+        sourceVersion: data.sourceVersion,
+        sourceContentHash: data.sourceContentHash,
+        knowledgeGeneration: data.knowledgeGeneration,
+        effectiveKnowledgeHash: data.effectiveKnowledgeHash,
+      });
+      if (!accepted) return noOpMergeResult(data, startedAt);
+    } else if (!(await this.spaceCompilation.isPageImageJobCurrent(data))) {
+      return noOpMergeResult(data, startedAt);
+    }
+
+    const sources = await this.sourceExporter.exportPageSources({
+      workspaceId: data.workspaceId,
+      spaceId: data.spaceId,
+      sourcePageIds: [data.sourcePageId],
+    });
+    const exportedSource = sources[0];
+    if (!isSameImageMergeSnapshot(data, exportedSource)) {
+      if (data.spaceRunId) {
+        await this.spaceCompilation.failPageMerge(mergeRunIdentity(data));
+      }
+      return noOpMergeResult(data, startedAt);
+    }
+
+    await this.compilationRepo.startAttempt({
+      workspaceId: data.workspaceId,
+      spaceId: data.spaceId,
+      sourcePageId: data.sourcePageId,
+      sourceVersion: data.sourceVersion,
+      sourceContentHash: data.sourceContentHash,
+      effectiveKnowledgeHash: data.effectiveKnowledgeHash,
+      compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+      promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+      compilerRunId: data.spaceRunId ?? compileTaskId,
+      compileTaskId,
+    });
+
+    try {
+      const ready = await this.imageEnrichment.readReadySource(exportedSource);
+      const effectiveKnowledgeHash = buildEffectiveKnowledgeHash({
+        sourceContentHash: exportedSource.contentHash,
+        compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+        promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+        readyImages: ready.readyImages,
+      });
+      if (
+        ready.readyImages.length === 0 ||
+        effectiveKnowledgeHash !== data.effectiveKnowledgeHash
+      ) {
+        await this.compilationRepo.skipAttempt({
+          workspaceId: data.workspaceId,
+          sourcePageId: data.sourcePageId,
+          compileTaskId,
+          reasonCode: 'image_snapshot_changed',
+          reasonMessage: 'Page image knowledge changed before merge.',
+        });
+        if (data.spaceRunId) {
+          await this.spaceCompilation.failPageMerge(mergeRunIdentity(data));
+        }
+        return noOpMergeResult(data, startedAt);
+      }
+      const source = {
+        ...ready.source,
+        effectiveKnowledgeHash,
+      };
+      const catalog = data.spaceRunId
+        ? await this.spaceCompilation.catalogForPage({
+            runId: data.spaceRunId,
+            workspaceId: data.workspaceId,
+            spaceId: data.spaceId,
+          })
+        : (
+            await this.artifactCatalog.snapshot({
+              workspaceId: data.workspaceId,
+              spaceId: data.spaceId,
+            })
+          ).entries;
+      const compileInput = {
+        workspaceId: data.workspaceId,
+        spaceId: data.spaceId,
+        compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+        promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+        compileTaskId,
+        compileMode: 'pages' as const,
+        catalog,
+        sources: [source],
+      };
+      const compileResult = await this.compiler.compileSpace(compileInput);
+      const latest = await this.sourceExporter.exportPageSources({
+        workspaceId: data.workspaceId,
+        spaceId: data.spaceId,
+        sourcePageIds: [data.sourcePageId],
+      });
+      if (!isSameImageMergeSnapshot(data, latest[0])) {
+        throw new SourceChangedDuringCompilationError();
+      }
+      const importResult = await this.importService.importCompileResult({
+        input: compileInput,
+        artifacts: compileResult.artifacts,
+        ...(data.spaceRunId
+          ? {
+              publicationGuard: (trx: KyselyTransaction) =>
+                this.spaceCompilation.isRunActiveForPublication(
+                  {
+                    runId: data.spaceRunId!,
+                    workspaceId: data.workspaceId,
+                    spaceId: data.spaceId,
+                    knowledgeGeneration: data.knowledgeGeneration,
+                    allowedPhases: ['images'],
+                    sourcePageId: data.sourcePageId,
+                    sourceVersion: data.sourceVersion,
+                    sourceContentHash: data.sourceContentHash,
+                  },
+                  trx,
+                ),
+              publicationComplete: async (trx: KyselyTransaction) => {
+                await this.compilationRepo.succeedAttempt(
+                  {
+                    workspaceId: data.workspaceId,
+                    sourcePageId: data.sourcePageId,
+                    compileTaskId,
+                    sourceVersion: data.sourceVersion,
+                    sourceContentHash: data.sourceContentHash,
+                    effectiveKnowledgeHash,
+                  },
+                  trx,
+                );
+                const completed =
+                  await this.spaceCompilation.completePageMergePublication(
+                    {
+                      runId: data.spaceRunId!,
+                      sourcePageId: data.sourcePageId,
+                      sourceVersion: data.sourceVersion,
+                      sourceContentHash: data.sourceContentHash,
+                      knowledgeGeneration: data.knowledgeGeneration,
+                      mergedEffectiveKnowledgeHash: effectiveKnowledgeHash,
+                    },
+                    trx,
+                  );
+                if (!completed) throw new SourceChangedDuringCompilationError();
+              },
+            }
+          : {}),
+      });
+      if (importResult.skippedReason === 'run_superseded') {
+        await this.compilationRepo.skipAttempt({
+          workspaceId: data.workspaceId,
+          sourcePageId: data.sourcePageId,
+          compileTaskId,
+          reasonCode: 'run_superseded',
+          reasonMessage: 'Knowledge Space run was superseded.',
+        });
+        return noOpMergeResult(data, startedAt);
+      }
+      if (!data.spaceRunId) {
+        await this.compilationRepo.succeedAttempt({
+          workspaceId: data.workspaceId,
+          sourcePageId: data.sourcePageId,
+          compileTaskId,
+          sourceVersion: data.sourceVersion,
+          sourceContentHash: data.sourceContentHash,
+          effectiveKnowledgeHash,
+        });
+      }
+      await this.accessIndexer.reindexSourcePages({
+        workspaceId: data.workspaceId,
+        sourcePageIds: [data.sourcePageId],
+      });
+      if (data.spaceRunId) await this.spaceCompilation.dispatchPending();
+      return {
+        type: 'compile-pages',
+        status: 'succeeded',
+        workspaceId: data.workspaceId,
+        spaceId: data.spaceId,
+        compilerRunId: compileResult.compilerRunId,
+        sourceCount: 1,
+        importedArtifactCount: importResult.importedArtifactCount,
+        quarantinedArtifactCount: importResult.quarantinedArtifactCount,
+        durationMs: Math.max(0, Date.now() - startedAt),
+      };
+    } catch (error) {
+      if (error instanceof SourceChangedDuringCompilationError) {
+        await this.compilationRepo.skipAttempt({
+          workspaceId: data.workspaceId,
+          sourcePageId: data.sourcePageId,
+          compileTaskId,
+          reasonCode: 'source_changed',
+          reasonMessage: error.message,
+        });
+        if (data.spaceRunId) {
+          await this.spaceCompilation.failPageMerge(mergeRunIdentity(data));
+        }
+        return noOpMergeResult(data, startedAt);
+      }
+      const failure = classifyCompilationFailure(error);
+      await this.compilationRepo.failAttempt({
+        workspaceId: data.workspaceId,
+        sourcePageId: data.sourcePageId,
+        compileTaskId,
+        errorCode: failure.code,
+        errorMessage: failure.message,
+      });
+      if (data.spaceRunId && (!failure.retryable || isFinalJobAttempt(job))) {
+        await this.spaceCompilation.failPageMerge(mergeRunIdentity(data));
+      }
+      if (!failure.retryable) throw new UnrecoverableError(failure.message);
       throw error;
     }
   }
@@ -983,7 +1184,7 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
         sourcePageId: page.id,
         runKey: buildKnowledgeCompileCoalesceKey(),
       });
-      await this.compilationRepo?.queueAttempt({
+      await this.compilationRepo.queueAttempt({
         workspaceId: data.workspaceId,
         spaceId: page.spaceId,
         sourcePageId: page.id,
@@ -994,7 +1195,7 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
         compilerRunId: jobId,
         compileTaskId: jobId,
       });
-      await this.aiQueue.add(
+      await this.textQueue.add(
         QueueJob.KNOWLEDGE_COMPILE_PAGES,
         {
           workspaceId: data.workspaceId,
@@ -1027,7 +1228,7 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
     data: IKnowledgeCompilePagesJob,
   ): Promise<boolean> {
     if (!data.spaceRunId) return true;
-    return this.spaceCompilation!.isRunActive({
+    return this.spaceCompilation.isRunActive({
       runId: data.spaceRunId,
       workspaceId: data.workspaceId,
       spaceId: data.spaceId,
@@ -1038,7 +1239,9 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
     data: IKnowledgeCompilePagesJob,
   ): Promise<boolean> {
     if (data.spaceRunId) return this.isSpaceRunActive(data);
-    if (data.trigger !== 'retry_compile' || !this.spaceCompilation) return true;
+    if (data.trigger !== 'retry_compile' && data.trigger !== 'page_update') {
+      return true;
+    }
     return !(await this.spaceCompilation.hasActiveRun({
       workspaceId: data.workspaceId,
       spaceId: data.spaceId,
@@ -1051,7 +1254,7 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
     compileTaskId: string;
   }): Promise<void> {
     const superseded = Boolean(input.data.spaceRunId);
-    await this.compilationRepo?.skipAttempt({
+    await this.compilationRepo.skipAttempt({
       workspaceId: input.data.workspaceId,
       sourcePageId: input.sourcePageId,
       compileTaskId: input.compileTaskId,
@@ -1086,27 +1289,48 @@ export class LlmWikiProcessor extends WorkerHost implements OnModuleDestroy {
     });
   }
 
-  @OnWorkerEvent('active')
-  onActive(job: Job) {
-    this.logger.debug(`Processing ${job.name} job`);
-  }
-
-  @OnWorkerEvent('failed')
-  onError(job: Job) {
-    this.logger.error(
-      `Error processing ${job.name} job. Reason: ${job.failedReason}`,
-    );
-  }
-
-  @OnWorkerEvent('completed')
-  onCompleted(job: Job) {
-    this.logger.debug(`Completed ${job.name} job`);
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    if (this.worker) {
-      await this.worker.close();
+  private logProviderFailure(
+    error: unknown,
+    context: {
+      workspaceId: string;
+      spaceId: string;
+      sourcePageId?: string;
+      compileTaskId: string;
+    },
+  ): void {
+    if (!(error instanceof KnowledgeCompilerLlmError) || !error.diagnostic) {
+      return;
     }
+    const {
+      stage,
+      wrapperName,
+      upstreamName,
+      upstreamCode,
+      statusCode,
+      providerCode,
+      providerType,
+      requestId,
+      retryReason,
+      sdkAttempts,
+      providerRetryable,
+    } = error.diagnostic;
+    this.logger.error({
+      event: 'knowledge_compiler_provider_failure',
+      ...context,
+      errorCode: error.code,
+      retryable: error.retryable,
+      ...(stage ? { stage } : {}),
+      ...(wrapperName ? { wrapperName } : {}),
+      ...(upstreamName ? { upstreamName } : {}),
+      ...(upstreamCode ? { upstreamCode } : {}),
+      ...(statusCode !== undefined ? { statusCode } : {}),
+      ...(providerCode ? { providerCode } : {}),
+      ...(providerType ? { providerType } : {}),
+      ...(requestId ? { requestId } : {}),
+      ...(retryReason ? { retryReason } : {}),
+      ...(sdkAttempts !== undefined ? { sdkAttempts } : {}),
+      ...(providerRetryable !== undefined ? { providerRetryable } : {}),
+    });
   }
 }
 
@@ -1125,6 +1349,40 @@ function isSameSourceSnapshot(
     actual.sourceVersion === expected.sourceVersion &&
     actual.contentHash === expected.contentHash
   );
+}
+
+function isSameImageMergeSnapshot(
+  expected: IKnowledgeMergePageImagesJob,
+  actual: KnowledgeSourceSnapshot | undefined,
+): boolean {
+  if (
+    !actual ||
+    actual.sourcePageId !== expected.sourcePageId ||
+    actual.sourceVersion !== expected.sourceVersion ||
+    actual.contentHash !== expected.sourceContentHash
+  ) {
+    return false;
+  }
+  const expectedImages = expected.images ?? [];
+  const actualImages = actual?.images ?? [];
+  return (
+    expectedImages.length === actualImages.length &&
+    expectedImages.every(
+      (image, index) =>
+        image.attachmentId === actualImages[index]?.attachmentId &&
+        image.attachmentVersion === actualImages[index]?.attachmentVersion,
+    )
+  );
+}
+
+function mergeRunIdentity(data: IKnowledgeMergePageImagesJob) {
+  return {
+    runId: data.spaceRunId!,
+    sourcePageId: data.sourcePageId,
+    sourceVersion: data.sourceVersion,
+    sourceContentHash: data.sourceContentHash,
+    knowledgeGeneration: data.knowledgeGeneration,
+  };
 }
 
 function isFinalJobAttempt(job: Job): boolean {
@@ -1152,14 +1410,6 @@ function classifyCompilationFailure(error: unknown): {
       retryable: false,
     };
   }
-  if (error instanceof ImageEnrichmentIncompleteError) {
-    return {
-      code: 'image_enrichment_unavailable',
-      message: error.message,
-      retryable: true,
-      stage: 'image_enrichment',
-    };
-  }
   if (error instanceof KnowledgeCompilerLlmError) {
     return {
       code: error.code,
@@ -1183,6 +1433,23 @@ function classifyCompilationFailure(error: unknown): {
 
 function noOpPageResult(
   data: IKnowledgeCompilePagesJob,
+  startedAt: number,
+): KnowledgeCompileJobResult {
+  return {
+    type: 'compile-pages',
+    status: 'succeeded',
+    workspaceId: data.workspaceId,
+    spaceId: data.spaceId,
+    compilerRunId: data.spaceRunId ?? 'no-op',
+    sourceCount: 0,
+    importedArtifactCount: 0,
+    quarantinedArtifactCount: 0,
+    durationMs: Math.max(0, Date.now() - startedAt),
+  };
+}
+
+function noOpMergeResult(
+  data: IKnowledgeMergePageImagesJob,
   startedAt: number,
 ): KnowledgeCompileJobResult {
   return {

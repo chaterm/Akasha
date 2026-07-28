@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { InjectKysely } from 'nestjs-kysely';
 import { Job, JobState, Queue } from 'bullmq';
@@ -23,7 +23,9 @@ const KNOWLEDGE_JOB_NAMES = new Set<string>([
   QueueJob.PAGE_CONTENT_UPDATED,
   QueueJob.KNOWLEDGE_COMPILE_SPACE,
   QueueJob.KNOWLEDGE_COMPILE_PAGES,
+  QueueJob.KNOWLEDGE_COMPILE_PAGE_IMAGES,
   QueueJob.KNOWLEDGE_AGGREGATE_SPACE,
+  QueueJob.KNOWLEDGE_REBUILD_EMBEDDINGS,
   QueueJob.KNOWLEDGE_MARK_SOURCES_STALE,
   QueueJob.KNOWLEDGE_REINDEX_ACCESS,
 ]);
@@ -134,6 +136,43 @@ export type KnowledgeQueueCounts = {
   completed: number;
 };
 
+export type KnowledgeQueueSnapshot = KnowledgeQueueCounts & {
+  sampledAt: string;
+};
+
+export type KnowledgeQueueSnapshots = {
+  text: KnowledgeQueueSnapshot;
+  image: KnowledgeQueueSnapshot;
+};
+
+export type KnowledgeCompilationStageProgress = {
+  expected: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  pending: number;
+  waiting: number;
+  lastAttemptError?: string;
+};
+
+export type KnowledgeCompileRunProgress = {
+  runId: string;
+  spaceId: string;
+  spaceName: string;
+  status: string;
+  mode?: 'update' | 'force';
+  phase?: string;
+  generation?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  completedAt?: string;
+  progress: {
+    text: KnowledgeCompilationStageProgress;
+    image: KnowledgeCompilationStageProgress;
+    merge: KnowledgeCompilationStageProgress;
+  };
+};
+
 export type KnowledgeCompileStatus = {
   spaceId: string;
   status:
@@ -169,9 +208,43 @@ type DurableSpaceRunDiagnostic = {
   quarantinedArtifactCount: number;
   aggregateJobId: string | null;
   errorCode: string | null;
+  spaceName?: string;
+  mode?: string;
+  phase?: string;
+  knowledgeGeneration?: number;
+  createdAt?: Date;
   queuedAt: Date;
   startedAt: Date | null;
   finishedAt: Date | null;
+  updatedAt: Date;
+};
+
+type DurableCompileRunRow = {
+  id: string;
+  spaceId: string;
+  spaceName: string;
+  status: string;
+  mode: string;
+  phase: string;
+  knowledgeGeneration: number;
+  expectedPageCount: number;
+  createdAt: Date;
+  updatedAt: Date;
+  finishedAt: Date | null;
+};
+
+type DurableCompileRunPageRow = {
+  runId: string;
+  sourcePageId: string;
+  status: string;
+  expectedImageCount: number;
+  succeededImageCount: number;
+  failedImageCount: number;
+  skippedImageCount: number;
+  imageStatus: string;
+  mergeStatus: string;
+  errorCode: string | null;
+  errorMessage: string | null;
   updatedAt: Date;
 };
 
@@ -179,16 +252,62 @@ type DurableSpaceRunDiagnostic = {
 export class KnowledgeDiagnosticsService {
   constructor(
     @InjectKysely() private readonly db: KyselyDB,
-    @InjectQueue(QueueName.AI_QUEUE) private readonly aiQueue: Queue,
+    @InjectQueue(QueueName.KNOWLEDGE_TEXT_QUEUE)
+    private readonly knowledgeTextQueue: Queue,
+    @InjectQueue(QueueName.KNOWLEDGE_IMAGE_QUEUE)
+    private readonly knowledgeImageQueue: Queue,
     private readonly quality: KnowledgeQualityService,
     private readonly queryAuditRepo: KnowledgeQueryAuditRepo,
     private readonly quarantineRepo: KnowledgeQuarantineRepo,
     private readonly spaceRunRepo: KnowledgeSpaceCompilationRepo,
   ) {}
 
+  async findRetryableFailedPageIds(input: {
+    workspaceId: string;
+    sourcePageIds: string[];
+  }): Promise<string[]> {
+    if (input.sourcePageIds.length === 0) return [];
+    const sourcePageIds = [...new Set(input.sourcePageIds)];
+
+    const rows = await this.db
+      .selectFrom('knowledgeCompilationAttempts')
+      .select('sourcePageId')
+      .where('workspaceId', '=', input.workspaceId)
+      .where('sourcePageId', 'in', sourcePageIds)
+      .where('status', '=', 'failed')
+      .execute();
+
+    return [...new Set(rows.map((row) => row.sourcePageId))];
+  }
+
+  async findWorkspaceSpaceIds(input: {
+    workspaceId: string;
+    requestedSpaceIds?: string[];
+  }): Promise<string[]> {
+    const requestedSpaceIds = [...new Set(input.requestedSpaceIds ?? [])];
+    if (requestedSpaceIds.length > 100) {
+      throw new BadRequestException(
+        'At most 100 Spaces can be inspected at once.',
+      );
+    }
+    let query = this.db
+      .selectFrom('spaces')
+      .select('id')
+      .where('workspaceId', '=', input.workspaceId)
+      .where('deletedAt', 'is', null);
+    if (requestedSpaceIds.length > 0) {
+      query = query.where('id', 'in', requestedSpaceIds);
+    }
+    const rows = await query.execute();
+    return rows.map((row) => row.id);
+  }
+
   async getWorkspaceDiagnostics(input: {
     workspaceId: string;
     spaceIds?: string[];
+    enforceSpaceScope?: boolean;
+    canViewGlobalQueues?: boolean;
+    includeDetailedDiagnostics?: boolean;
     statuses?: KnowledgePageCompileStatus[];
     stages?: KnowledgePageCompileStage[];
     limit?: number;
@@ -197,18 +316,26 @@ export class KnowledgeDiagnosticsService {
     jobs: KnowledgeDiagnosticsJob[];
     queueCounts: KnowledgeQueueCounts;
     compileStatuses: KnowledgeCompileStatus[];
+    canViewGlobalQueues: boolean;
+    queueSnapshots?: KnowledgeQueueSnapshots;
+    compileRuns: KnowledgeCompileRunProgress[];
     retrieval: KnowledgeRetrievalAuditSummary;
     quarantines: KnowledgeQuarantinedArtifactDiagnostic[];
     quality: KnowledgeQualityReport;
   }> {
     const limit = Math.min(Math.max(input.limit ?? 50, 1), 100);
-    const pages = await this.findRecentPages({
-      workspaceId: input.workspaceId,
-      spaceIds: input.spaceIds ?? [],
-      statuses: input.statuses ?? [],
-      stages: input.stages ?? [],
-      limit,
-    });
+    const includeDetailedDiagnostics =
+      input.includeDetailedDiagnostics !== false;
+    const pages = includeDetailedDiagnostics
+      ? await this.findRecentPages({
+          workspaceId: input.workspaceId,
+          spaceIds: input.spaceIds ?? [],
+          enforceSpaceScope: Boolean(input.enforceSpaceScope),
+          statuses: input.statuses ?? [],
+          stages: input.stages ?? [],
+          limit,
+        })
+      : [];
     const pageIds = pages.map((page) => page.pageId);
     const [
       sourceCounts,
@@ -219,7 +346,7 @@ export class KnowledgeDiagnosticsService {
       missingEmbeddingCounts,
       lastCompiledAts,
       accessPolicyStats,
-      queueCounts,
+      queueSnapshots,
       jobs,
       durableRuns,
     ] = await Promise.all([
@@ -239,11 +366,19 @@ export class KnowledgeDiagnosticsService {
       this.countMissingEmbeddingsBySourcePage(input.workspaceId, pageIds),
       this.findLastCompiledAtBySourcePage(input.workspaceId, pageIds),
       this.findAccessPolicyStatsBySourcePage(input.workspaceId, pageIds),
-      this.findKnowledgeQueueCounts(),
-      this.findKnowledgeJobs(input.workspaceId, limit),
-      this.spaceRunRepo.findRecentRuns({
+      this.findQueueSnapshotsIfAllowed(Boolean(input.canViewGlobalQueues)),
+      includeDetailedDiagnostics
+        ? this.findKnowledgeJobs({
+            workspaceId: input.workspaceId,
+            spaceIds: input.spaceIds,
+            enforceSpaceScope: Boolean(input.enforceSpaceScope),
+            limit,
+          })
+        : Promise.resolve([]),
+      this.findLatestDurableRuns({
         workspaceId: input.workspaceId,
         spaceIds: input.spaceIds,
+        enforceSpaceScope: Boolean(input.enforceSpaceScope),
         limit,
       }),
     ]);
@@ -277,6 +412,26 @@ export class KnowledgeDiagnosticsService {
     const legacyJobStatuses = buildCompileStatusesFromJobs(jobs).filter(
       (status) => !durableSpaceIds.has(status.spaceId),
     );
+    const compileRuns = await this.findDurableCompileRunProgress({
+      workspaceId: input.workspaceId,
+      runs: durableRuns as DurableSpaceRunDiagnostic[],
+      limit,
+    });
+    const queueCounts = queueSnapshots?.text ?? emptyQueueCounts();
+    const includeWorkspaceWideDiagnostics =
+      includeDetailedDiagnostics && Boolean(input.canViewGlobalQueues);
+    const retrieval = includeWorkspaceWideDiagnostics
+      ? await this.queryAuditRepo.summarizeWorkspace({
+          workspaceId: input.workspaceId,
+          limit,
+        })
+      : emptyRetrievalSummary();
+    const quarantines = includeWorkspaceWideDiagnostics
+      ? await this.quarantineRepo.findRecentByWorkspace({
+          workspaceId: input.workspaceId,
+          limit,
+        })
+      : [];
 
     return {
       pages: diagnosticPages,
@@ -285,14 +440,11 @@ export class KnowledgeDiagnosticsService {
       compileStatuses: [...durableStatuses, ...legacyJobStatuses].sort(
         (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0),
       ),
-      retrieval: await this.queryAuditRepo.summarizeWorkspace({
-        workspaceId: input.workspaceId,
-        limit,
-      }),
-      quarantines: await this.quarantineRepo.findRecentByWorkspace({
-        workspaceId: input.workspaceId,
-        limit,
-      }),
+      canViewGlobalQueues: Boolean(input.canViewGlobalQueues),
+      ...(queueSnapshots ? { queueSnapshots } : {}),
+      compileRuns,
+      retrieval,
+      quarantines,
       quality: this.quality.evaluate({ pages: diagnosticPages }),
     };
   }
@@ -300,6 +452,7 @@ export class KnowledgeDiagnosticsService {
   private async findRecentPages(input: {
     workspaceId: string;
     spaceIds: string[];
+    enforceSpaceScope: boolean;
     statuses: KnowledgePageCompileStatus[];
     stages: KnowledgePageCompileStage[];
     limit: number;
@@ -317,6 +470,7 @@ export class KnowledgeDiagnosticsService {
       | 'staleAccessPolicyCount'
     >[]
   > {
+    if (input.enforceSpaceScope && input.spaceIds.length === 0) return [];
     let query = this.db
       .selectFrom('pages as p')
       .innerJoin('spaces as s', 's.id', 'p.spaceId')
@@ -550,24 +704,63 @@ export class KnowledgeDiagnosticsService {
     return statsBySource;
   }
 
-  private async findKnowledgeJobs(
-    workspaceId: string,
-    limit: number,
-  ): Promise<KnowledgeDiagnosticsJob[]> {
-    const jobs = await this.aiQueue.getJobs(JOB_STATES, 0, limit * 4, false);
+  private async findKnowledgeJobs(input: {
+    workspaceId: string;
+    spaceIds?: string[];
+    enforceSpaceScope: boolean;
+    limit: number;
+  }): Promise<KnowledgeDiagnosticsJob[]> {
+    if (input.enforceSpaceScope && (input.spaceIds?.length ?? 0) === 0) {
+      return [];
+    }
+    const jobs = (
+      await Promise.all(
+        [this.knowledgeTextQueue, this.knowledgeImageQueue].map(
+          (queue) => queue.getJobs(JOB_STATES, 0, input.limit * 4, false),
+        ),
+      )
+    ).flat();
+    const allowedSpaceIds = new Set(input.spaceIds ?? []);
     const rows = await Promise.all(
       jobs
         .filter((job) => KNOWLEDGE_JOB_NAMES.has(job.name))
-        .filter((job) => job.data?.workspaceId === workspaceId)
-        .slice(0, limit)
+        .filter((job) => job.data?.workspaceId === input.workspaceId)
+        .filter(
+          (job) =>
+            !input.enforceSpaceScope || allowedSpaceIds.has(job.data?.spaceId),
+        )
+        .sort(
+          (a, b) =>
+            (b.finishedOn ?? b.processedOn ?? b.timestamp ?? 0) -
+            (a.finishedOn ?? a.processedOn ?? a.timestamp ?? 0),
+        )
+        .slice(0, input.limit)
         .map((job) => this.toDiagnosticsJob(job)),
     );
 
     return rows;
   }
 
-  private async findKnowledgeQueueCounts(): Promise<KnowledgeQueueCounts> {
-    const counts = await this.aiQueue.getJobCounts(
+  private async findQueueSnapshotsIfAllowed(
+    canViewGlobalQueues: boolean,
+  ): Promise<KnowledgeQueueSnapshots | undefined> {
+    return canViewGlobalQueues ? this.findQueueSnapshots() : undefined;
+  }
+
+  private async findQueueSnapshots(): Promise<KnowledgeQueueSnapshots> {
+    const sampledAt = new Date().toISOString();
+    const [text, image] = await Promise.all([
+      this.findQueueSnapshot(this.knowledgeTextQueue, sampledAt),
+      this.findQueueSnapshot(this.knowledgeImageQueue, sampledAt),
+    ]);
+    return { text, image };
+  }
+
+  private async findQueueSnapshot(
+    queue: Queue,
+    sampledAt: string,
+  ): Promise<KnowledgeQueueSnapshot> {
+    const counts = await queue.getJobCounts(
       'waiting',
       'active',
       'delayed',
@@ -586,7 +779,107 @@ export class KnowledgeDiagnosticsService {
       paused: Number(counts.paused ?? 0),
       failed: Number(counts.failed ?? 0),
       completed: Number(counts.completed ?? 0),
+      sampledAt,
     };
+  }
+
+  private async findDurableCompileRunProgress(input: {
+    workspaceId: string;
+    runs: DurableSpaceRunDiagnostic[];
+    limit: number;
+  }): Promise<KnowledgeCompileRunProgress[]> {
+    const latestRuns = latestRunPerSpace(input.runs).slice(0, input.limit);
+    if (latestRuns.length === 0) return [];
+    const runIds = latestRuns.map((run) => run.id);
+    const pages = await this.db
+      .selectFrom('knowledgeSpaceCompileRunPages')
+      .select([
+        'runId',
+        'sourcePageId',
+        'status',
+        'expectedImageCount',
+        'succeededImageCount',
+        'failedImageCount',
+        'skippedImageCount',
+        'imageStatus',
+        'mergeStatus',
+        'errorCode',
+        'errorMessage',
+        'updatedAt',
+      ])
+      .where('workspaceId', '=', input.workspaceId)
+      .where('runId', 'in', runIds)
+      .execute();
+    return buildCompileRunProgress(
+      latestRuns.map((run) => ({
+        ...run,
+        spaceName: run.spaceName ?? '',
+        mode: run.mode ?? 'incremental',
+        phase: run.phase ?? 'text',
+        knowledgeGeneration: run.knowledgeGeneration ?? 0,
+        createdAt: run.createdAt ?? run.queuedAt,
+      })),
+      pages as DurableCompileRunPageRow[],
+    );
+  }
+
+  private async findLatestDurableRuns(input: {
+    workspaceId: string;
+    spaceIds?: string[];
+    enforceSpaceScope: boolean;
+    limit: number;
+  }): Promise<DurableSpaceRunDiagnostic[]> {
+    if (input.enforceSpaceScope && (input.spaceIds?.length ?? 0) === 0) {
+      return [];
+    }
+    let latestPerSpace = this.db
+      .selectFrom('knowledgeSpaceCompileRuns as run')
+      .innerJoin('spaces as space', (join) =>
+        join
+          .onRef('space.id', '=', 'run.spaceId')
+          .onRef('space.workspaceId', '=', 'run.workspaceId'),
+      )
+      .select([
+        'run.id',
+        'run.workspaceId',
+        'run.spaceId',
+        'space.name as spaceName',
+        'run.status',
+        'run.mode',
+        'run.phase',
+        'run.knowledgeGeneration',
+        'run.expectedPageCount',
+        'run.succeededPageCount',
+        'run.failedPageCount',
+        'run.skippedPageCount',
+        'run.importedArtifactCount',
+        'run.quarantinedArtifactCount',
+        'run.aggregateJobId',
+        'run.errorCode',
+        'run.createdAt',
+        'run.queuedAt',
+        'run.startedAt',
+        'run.finishedAt',
+        'run.updatedAt',
+      ])
+      .where('run.workspaceId', '=', input.workspaceId)
+      .where('space.deletedAt', 'is', null)
+      .distinctOn('run.spaceId')
+      .orderBy('run.spaceId', 'asc')
+      .orderBy('run.createdAt', 'desc');
+    if (input.spaceIds?.length) {
+      latestPerSpace = latestPerSpace.where(
+        'run.spaceId',
+        'in',
+        input.spaceIds,
+      );
+    }
+    return this.db
+      .selectFrom(latestPerSpace.as('latestRun'))
+      .selectAll()
+      .orderBy('createdAt', 'desc')
+      .limit(input.limit)
+      .execute() as Promise<DurableSpaceRunDiagnostic[]>;
   }
 
   private async toDiagnosticsJob(job: Job): Promise<KnowledgeDiagnosticsJob> {
@@ -605,7 +898,10 @@ export class KnowledgeDiagnosticsService {
       timestamp: job.timestamp,
       processedOn: job.processedOn,
       finishedOn: job.finishedOn,
-      failedReason: sanitizeKnowledgeFailureReason(job.failedReason),
+      failedReason:
+        state === 'failed'
+          ? sanitizeKnowledgeFailureReason(job.failedReason)
+          : undefined,
       returnValue: toCompileJobResult(
         (job as Job<unknown, unknown>).returnvalue,
       ),
@@ -615,6 +911,197 @@ export class KnowledgeDiagnosticsService {
 
 function rowsToCountMap(rows: CountRow[]): Map<string, number> {
   return new Map(rows.map((row) => [row.sourcePageId, Number(row.count ?? 0)]));
+}
+
+export function buildCompileRunProgress(
+  runs: DurableCompileRunRow[],
+  pages: DurableCompileRunPageRow[],
+): KnowledgeCompileRunProgress[] {
+  const pagesByRun = new Map<string, DurableCompileRunPageRow[]>();
+  for (const page of pages) {
+    const runPages = pagesByRun.get(page.runId) ?? [];
+    runPages.push(page);
+    pagesByRun.set(page.runId, runPages);
+  }
+
+  return runs.map((run) => {
+    const runPages = pagesByRun.get(run.id) ?? [];
+    const text = buildTextProgress(run.expectedPageCount, runPages);
+    const image = buildImageProgress(runPages);
+    const merge = buildMergeProgress(runPages);
+    return {
+      runId: run.id,
+      spaceId: run.spaceId,
+      spaceName: run.spaceName,
+      status: run.status,
+      mode:
+        run.mode === 'force_rebuild'
+          ? ('force' as const)
+          : run.mode === 'incremental'
+            ? ('update' as const)
+            : undefined,
+      phase: run.phase,
+      generation: Number(run.knowledgeGeneration ?? 0),
+      createdAt: run.createdAt?.toISOString(),
+      updatedAt: run.updatedAt?.toISOString(),
+      ...(run.finishedAt ? { completedAt: run.finishedAt.toISOString() } : {}),
+      progress: { text, image, merge },
+    };
+  });
+}
+
+function buildTextProgress(
+  expectedPageCount: number,
+  pages: DurableCompileRunPageRow[],
+): KnowledgeCompilationStageProgress {
+  const succeeded = countStatus(pages, 'status', ['succeeded']);
+  const failed = countStatus(pages, 'status', ['failed']);
+  const skipped = countStatus(pages, 'status', ['skipped']);
+  const expected = Math.max(Number(expectedPageCount ?? 0), pages.length);
+  const pending = Math.max(0, expected - succeeded - failed - skipped);
+  const waiting = countStatus(pages, 'status', ['pending']);
+  const errorCode = findLatestErrorCode(
+    pages,
+    (page) => page.status === 'failed',
+  );
+  return {
+    expected,
+    succeeded,
+    failed,
+    skipped,
+    pending,
+    waiting,
+    ...(errorCode
+      ? { lastAttemptError: safeCompilationErrorMessage(errorCode) }
+      : {}),
+  };
+}
+
+function buildImageProgress(
+  pages: DurableCompileRunPageRow[],
+): KnowledgeCompilationStageProgress {
+  const expected = sum(pages, 'expectedImageCount');
+  const succeeded = sum(pages, 'succeededImageCount');
+  const failed = sum(pages, 'failedImageCount');
+  const skipped = sum(pages, 'skippedImageCount');
+  const pending = Math.max(0, expected - succeeded - failed - skipped);
+  const waiting = pages
+    .filter((page) => page.imageStatus === 'pending')
+    .reduce((total, page) => total + Number(page.expectedImageCount ?? 0), 0);
+  const hasFailure = pages.some(
+    (page) => page.imageStatus === 'failed' || page.imageStatus === 'partial',
+  );
+  return {
+    expected,
+    succeeded,
+    failed,
+    skipped,
+    pending,
+    waiting,
+    ...(hasFailure
+      ? { lastAttemptError: 'Image processing completed with failures.' }
+      : {}),
+  };
+}
+
+function buildMergeProgress(
+  pages: DurableCompileRunPageRow[],
+): KnowledgeCompilationStageProgress {
+  const mergePages = pages.filter(
+    (page) => page.mergeStatus !== 'not_required',
+  );
+  const succeeded = countStatus(mergePages, 'mergeStatus', ['succeeded']);
+  const failed = countStatus(mergePages, 'mergeStatus', ['failed']);
+  const skipped = countStatus(mergePages, 'mergeStatus', ['skipped']);
+  const pending = countStatus(mergePages, 'mergeStatus', [
+    'waiting_images',
+    'pending',
+    'queued',
+    'running',
+  ]);
+  const waiting = countStatus(mergePages, 'mergeStatus', [
+    'waiting_images',
+    'pending',
+  ]);
+  return {
+    expected: mergePages.length,
+    succeeded,
+    failed,
+    skipped,
+    pending,
+    waiting,
+    ...(failed > 0
+      ? { lastAttemptError: 'Image knowledge merge failed.' }
+      : {}),
+  };
+}
+
+function countStatus(
+  pages: DurableCompileRunPageRow[],
+  field: 'status' | 'imageStatus' | 'mergeStatus',
+  values: string[],
+): number {
+  const allowed = new Set(values);
+  return pages.filter((page) => allowed.has(page[field])).length;
+}
+
+function sum(
+  pages: DurableCompileRunPageRow[],
+  field:
+    | 'expectedImageCount'
+    | 'succeededImageCount'
+    | 'failedImageCount'
+    | 'skippedImageCount',
+): number {
+  return pages.reduce((total, page) => total + Number(page[field] ?? 0), 0);
+}
+
+function findLatestErrorCode(
+  pages: DurableCompileRunPageRow[],
+  include: (page: DurableCompileRunPageRow) => boolean,
+): string | undefined {
+  return [...pages]
+    .filter((page) => include(page) && Boolean(page.errorCode))
+    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0]
+    ?.errorCode?.slice(0, 80);
+}
+
+function latestRunPerSpace<T extends DurableSpaceRunDiagnostic>(
+  runs: T[],
+): T[] {
+  const latest = new Map<string, T>();
+  for (const run of [...runs].sort(
+    (a, b) =>
+      (b.createdAt ?? b.queuedAt).getTime() -
+      (a.createdAt ?? a.queuedAt).getTime(),
+  )) {
+    if (!latest.has(run.spaceId)) latest.set(run.spaceId, run);
+  }
+  return [...latest.values()];
+}
+
+function emptyQueueCounts(): KnowledgeQueueCounts {
+  return {
+    waiting: 0,
+    active: 0,
+    delayed: 0,
+    prioritized: 0,
+    waitingChildren: 0,
+    paused: 0,
+    failed: 0,
+    completed: 0,
+  };
+}
+
+function emptyRetrievalSummary(): KnowledgeRetrievalAuditSummary {
+  return {
+    sampleCount: 0,
+    zeroHitRate: 0,
+    embeddingFallbackRate: 0,
+    accessPolicyFallbackRate: 0,
+    averageAuthorizedCandidateCount: 0,
+    averageFilteredCandidateCount: 0,
+  };
 }
 
 export function buildPageCompilationDiagnostics(input?: {
@@ -750,13 +1237,7 @@ export function buildCompileStatusesFromJobs(
 export function buildCompileStatusesFromRuns(
   runs: DurableSpaceRunDiagnostic[],
 ): KnowledgeCompileStatus[] {
-  const latestBySpace = new Map<string, DurableSpaceRunDiagnostic>();
-  for (const run of [...runs].sort(
-    (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
-  )) {
-    if (!latestBySpace.has(run.spaceId)) latestBySpace.set(run.spaceId, run);
-  }
-  return [...latestBySpace.values()].map((run) => ({
+  return latestRunPerSpace(runs).map((run) => ({
     spaceId: run.spaceId,
     status: toDurableCompileStatus(run.status),
     jobId: run.aggregateJobId ?? run.id,

@@ -1,6 +1,7 @@
 import { KnowledgeScope, KnowledgeSourceRef } from './knowledge.types';
 import { KnowledgeSourceSnapshot } from './source-snapshot.types';
 import { JsonValue } from '../../../database/types/db';
+import { KyselyTransaction } from '../../../database/types/kysely.types';
 
 export interface CompileSpaceInput extends KnowledgeScope {
   sources: KnowledgeSourceSnapshot[];
@@ -11,6 +12,7 @@ export interface CompileSpaceInput extends KnowledgeScope {
   purpose?: string;
   schema?: string;
   catalog?: KnowledgeArtifactCatalogEntry[];
+  publicationGuard?: (trx: KyselyTransaction) => Promise<boolean>;
 }
 
 export interface KnowledgeArtifactCatalogEntry {

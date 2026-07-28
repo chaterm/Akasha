@@ -6,6 +6,8 @@ import {
   queryKnowledge,
   retryKnowledgePages,
   runKnowledgeAdminAction,
+  updateKnowledgeSpace,
+  forceRebuildKnowledgeSpace,
 } from "./knowledge-service";
 
 describe("queryKnowledge", () => {
@@ -111,6 +113,54 @@ describe("queryKnowledge", () => {
     await expect(
       compileKnowledgeSpaces({ spaceIds: ["space-1"] }),
     ).resolves.toEqual({ queuedSpaceCount: 1, jobIds: [] });
+  });
+
+  it("updates one space through the incremental knowledge endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: { queuedSpaceCount: 1, jobIds: ["job-1"] } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      updateKnowledgeSpace({
+        spaceId: "space-1",
+        confirmationSpaceName: "AIM",
+      }),
+    ).resolves.toEqual({ queuedSpaceCount: 1, jobIds: ["job-1"] });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/llm-wiki/admin/spaces/space-1/update-knowledge",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify({ confirmationSpaceName: "AIM" }),
+      }),
+    );
+  });
+
+  it("force rebuilds one space without sending a mode field", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: { queuedSpaceCount: 1 } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      forceRebuildKnowledgeSpace({
+        spaceId: "space/with slash",
+        confirmationSpaceName: " AIM ",
+      }),
+    ).resolves.toEqual({ queuedSpaceCount: 1, jobIds: [] });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/llm-wiki/admin/spaces/space%2Fwith%20slash/force-rebuild-knowledge",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify({ confirmationSpaceName: " AIM " }),
+      }),
+    );
   });
 
   it("queues an admin space action", async () => {
@@ -271,6 +321,67 @@ describe("queryKnowledge", () => {
         failed: 7,
         completed: 8,
       },
+      canViewGlobalQueues: false,
+      queueSnapshots: {
+        text: {
+          waiting: 3,
+          active: 2,
+          delayed: 1,
+          prioritized: 4,
+          waitingChildren: 5,
+          paused: 6,
+          failed: 7,
+          completed: 8,
+          sampledAt: null,
+        },
+        image: {
+          waiting: 0,
+          active: 0,
+          delayed: 0,
+          prioritized: 0,
+          waitingChildren: 0,
+          paused: 0,
+          failed: 0,
+          completed: 0,
+          sampledAt: null,
+        },
+      },
+      compileRuns: [
+        {
+          runId: "run-1",
+          spaceId: "space-1",
+          spaceName: "",
+          status: "superseded",
+          updatedAt: "1970-01-01T00:00:01.000Z",
+          progress: {
+            text: {
+              expected: 61,
+              succeeded: 56,
+              failed: 5,
+              skipped: 0,
+              pending: 0,
+              waiting: 0,
+              lastAttemptError: "Compile job failed: Error",
+            },
+            image: {
+              expected: 0,
+              succeeded: 0,
+              failed: 0,
+              skipped: 0,
+              pending: 0,
+              waiting: 0,
+            },
+            merge: {
+              expected: 0,
+              succeeded: 0,
+              failed: 0,
+              skipped: 0,
+              pending: 0,
+              waiting: 0,
+            },
+          },
+        },
+      ],
       compileStatuses: [
         {
           spaceId: "space-1",
@@ -322,6 +433,131 @@ describe("queryKnowledge", () => {
         body: JSON.stringify({ spaceIds: ["space-1"], limit: 20 }),
       }),
     );
+  });
+
+  it("normalizes independent queue snapshots and durable run progress", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: {
+            canViewGlobalQueues: true,
+            queueSnapshots: {
+              ai: {
+                waiting: 1,
+                active: 2,
+                delayed: 3,
+                paused: 4,
+                failed: 5,
+                completed: 6,
+                sampledAt: "2026-07-28T06:00:00.000Z",
+              },
+              text: {
+                waiting: 7,
+                active: 8,
+                sampledAt: "2026-07-28T06:00:01.000Z",
+              },
+              image: {
+                waiting: 9,
+                active: 10,
+                sampledAt: "2026-07-28T06:00:02.000Z",
+              },
+            },
+            compileRuns: [
+              {
+                runId: "run-1",
+                spaceId: "space-1",
+                spaceName: "AIM",
+                status: "running",
+                mode: "update",
+                phase: "image",
+                progress: {
+                  text: {
+                    expected: 10,
+                    succeeded: 7,
+                    failed: 1,
+                    skipped: 1,
+                    pending: 1,
+                    waiting: 0,
+                  },
+                  image: {
+                    expected: 5,
+                    succeeded: 2,
+                    failed: 1,
+                    skipped: 0,
+                    pending: 2,
+                    waiting: 1,
+                    lastAttemptError: "Vision timed out",
+                  },
+                  merge: {
+                    expected: 5,
+                    succeeded: 2,
+                    failed: 0,
+                    skipped: 1,
+                    pending: 2,
+                    waiting: 0,
+                  },
+                },
+              },
+            ],
+          },
+        }),
+      }),
+    );
+
+    const result = await getKnowledgeDiagnostics({ spaceIds: ["space-1"] });
+
+    expect(result.canViewGlobalQueues).toBe(true);
+    expect(result.queueSnapshots).not.toHaveProperty("ai");
+    expect(result.queueSnapshots?.text).toEqual({
+      waiting: 7,
+      active: 8,
+      delayed: 0,
+      prioritized: 0,
+      waitingChildren: 0,
+      paused: 0,
+      failed: 0,
+      completed: 0,
+      sampledAt: "2026-07-28T06:00:01.000Z",
+    });
+    expect(result.compileRuns?.[0]?.progress.image).toEqual({
+      expected: 5,
+      succeeded: 2,
+      failed: 1,
+      skipped: 0,
+      pending: 2,
+      waiting: 1,
+      lastAttemptError: "Vision timed out",
+    });
+  });
+
+  it("maps durable database run states to stable client states", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: {
+            compileRuns: [
+              { runId: "run-compiling", status: "compiling" },
+              { runId: "run-pending", status: "aggregate_pending" },
+              { runId: "run-aggregating", status: "aggregating" },
+              { runId: "run-completed", status: "completed" },
+            ],
+          },
+        }),
+      }),
+    );
+
+    const result = await getKnowledgeDiagnostics({ spaceIds: ["space-1"] });
+
+    expect(result.compileRuns?.map((run) => run.status)).toEqual([
+      "running",
+      "running",
+      "running",
+      "succeeded",
+    ]);
   });
 
   it("retries explicit source pages", async () => {

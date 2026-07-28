@@ -1,6 +1,7 @@
 import { KnowledgeCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-compilation.repo';
 import { KnowledgeCompilerLlmProvider } from '../compiler/knowledge-compiler-llm.provider';
 import { SemanticAnalysis } from '../compiler/semantic-compiler.schema';
+import { CompileSpaceInput } from '../types/compiler-artifact.types';
 import { SemanticKnowledgeCompilerRunner } from './semantic-knowledge-compiler.runner';
 
 const analysis: SemanticAnalysis = {
@@ -147,6 +148,75 @@ describe('SemanticKnowledgeCompilerRunner', () => {
       },
     );
     expect(compilationRepo.saveAnalysis).not.toHaveBeenCalled();
+  });
+
+  it('does not reuse analysis when the effective knowledge hash changes', async () => {
+    const provider = createProvider();
+    const compilationRepo = createCompilationRepo();
+    compilationRepo.findAnalysis.mockImplementation(async (key) =>
+      key.effectiveKnowledgeHash === 'sha256:effective-text-only'
+        ? analysis
+        : undefined,
+    );
+    const runner = new TestSemanticKnowledgeCompilerRunner(
+      provider,
+      compilationRepo,
+    );
+    const textOnly = compileInput();
+    textOnly.sources[0].effectiveKnowledgeHash = 'sha256:effective-text-only';
+    const imageReady = compileInput();
+    imageReady.sources[0].effectiveKnowledgeHash =
+      'sha256:effective-with-image';
+
+    await runner.compileSpace(textOnly);
+    await runner.compileSpace(imageReady);
+
+    expect(provider.analyze).toHaveBeenCalledTimes(1);
+    expect(compilationRepo.findAnalysis).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        effectiveKnowledgeHash: 'sha256:effective-text-only',
+      }),
+    );
+    expect(compilationRepo.findAnalysis).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        effectiveKnowledgeHash: 'sha256:effective-with-image',
+      }),
+    );
+  });
+
+  it('includes final enriched source text in the compatibility cache key', async () => {
+    const provider = createProvider();
+    const compilationRepo = createCompilationRepo();
+    let firstCacheKey: string | undefined;
+    compilationRepo.findAnalysis.mockImplementation(async (key) => {
+      if (!firstCacheKey) {
+        firstCacheKey = key.effectiveKnowledgeHash;
+        return analysis;
+      }
+      return key.effectiveKnowledgeHash === firstCacheKey
+        ? analysis
+        : undefined;
+    });
+    const runner = new TestSemanticKnowledgeCompilerRunner(
+      provider,
+      compilationRepo,
+    );
+    const first = compileInput();
+    first.sources[0].text += '\n\n图片内文字: Error rate 8%';
+    const changedOcr = compileInput();
+    changedOcr.sources[0].text += '\n\n图片内文字: Error rate 12%';
+
+    await runner.compileSpace(first);
+    await runner.compileSpace(changedOcr);
+
+    expect(provider.analyze).toHaveBeenCalledTimes(1);
+    const cacheKeys = compilationRepo.findAnalysis.mock.calls.map(
+      ([key]) => key.effectiveKnowledgeHash,
+    );
+    expect(cacheKeys[0]).not.toBe(cacheKeys[1]);
+    expect(cacheKeys.join(' ')).not.toContain('Error rate');
   });
 
   it('marks deterministic source-summary recovery as raw fallback', async () => {
@@ -540,7 +610,7 @@ function createCompilationRepo(cachedAnalysis?: SemanticAnalysis) {
   } as unknown as jest.Mocked<KnowledgeCompilationRepo>;
 }
 
-function compileInput() {
+function compileInput(): CompileSpaceInput {
   return {
     workspaceId: 'workspace-1',
     spaceId: 'space-1',
