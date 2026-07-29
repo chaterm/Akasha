@@ -40,6 +40,7 @@ type ChunkSourceRefRow = {
   quoteHash: string | null;
 };
 type OwnerRow<K extends string> = Record<K, string>;
+const CHILD_INSERT_BATCH_SIZE = 1_000;
 export type UpsertCompiledArtifactInput = {
   page: InsertableKnowledgePage;
   pageSources?: InsertableKnowledgePageSource[];
@@ -339,10 +340,16 @@ export class KnowledgeCapsuleRepo {
   ): Promise<void> {
     if (rows.length === 0) return;
 
-    await db
-      .insertInto(table)
-      .values(rows as never)
-      .execute();
+    for (
+      let offset = 0;
+      offset < rows.length;
+      offset += CHILD_INSERT_BATCH_SIZE
+    ) {
+      await db
+        .insertInto(table)
+        .values(rows.slice(offset, offset + CHILD_INSERT_BATCH_SIZE) as never)
+        .execute();
+    }
   }
 
   async markCompileScopeStale(
