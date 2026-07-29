@@ -680,6 +680,79 @@ describe('AiKnowledgeChatService', () => {
     });
   });
 
+  it('keeps verified knowledge evidence within the context budget', async () => {
+    const answer = jest.fn().mockResolvedValue('Bounded answer.');
+    const oversizedEvidence = '证据'.repeat(20_000);
+    const sourceWindow = {
+      sourcePageId: 'page-large',
+      title: 'Large source',
+      url: '/p/large-source',
+      text: oversizedEvidence,
+      sourceRange: { startOffset: 0, endOffset: oversizedEvidence.length },
+      quoteHash: 'sha256:large-source',
+    };
+    const service = createService({
+      retrieval: {
+        retrieve: jest.fn().mockResolvedValue({
+          mode: 'high_completeness',
+          chunks: [chunk('chunk-large', 'kp-large', 'Compiled summary.')],
+          capsules: [],
+          diagnostics: {},
+        }),
+      },
+      citationResolver: {
+        resolveForChunks: jest.fn().mockResolvedValue([]),
+      },
+      contextPack: {
+        buildContextPack: jest.fn().mockReturnValue({
+          context: '# Large source\nCompiled summary.',
+          citations: [
+            {
+              sourcePageId: 'page-large',
+              title: 'Large source',
+              url: '/p/large-source',
+            },
+          ],
+          primary: [
+            {
+              id: 'chunk-large',
+              kind: 'chunk',
+              title: 'Large source',
+              text: 'Compiled summary.',
+              citationSourcePageIds: ['page-large'],
+              retrievalReasons: ['semantic'],
+              sourceWindows: [sourceWindow],
+            },
+          ],
+          warnings: [],
+          retrievalReasons: ['semantic'],
+          budget: {
+            maxContextLength: 12_000,
+            usedContextLength: 32,
+            remainingContextLength: 11_968,
+            includedItemCount: 1,
+            omittedItemCount: 0,
+            responseReserve: 0,
+            perItemMaxLength: 12_000,
+          },
+          completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+        }),
+      },
+      answerProvider: { answer },
+    });
+
+    await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: '总结证据',
+      spaceIds: ['space-1'],
+    });
+
+    const providerInput = answer.mock.calls[0][0];
+    expect(providerInput.context.length).toBeLessThanOrEqual(12_000);
+    expect(providerInput.context).toContain('[[cite:page-large]]');
+  });
+
   it('enables chat when workspace ai.chat is enabled', () => {
     const service = createService();
 

@@ -163,6 +163,28 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
     expect(generateText).not.toHaveBeenCalled();
   });
 
+  it('bounds the final provider prompt while preserving the current question and recent history', async () => {
+    const openaiProvider = jest.fn().mockReturnValue('openai-model');
+    (createOpenAI as jest.Mock).mockReturnValue(openaiProvider);
+    const service = createService({ aiDriver: 'openai' });
+
+    await service.answer({
+      query: `CURRENT QUESTION ${'问'.repeat(4_000)}`,
+      context: '知识'.repeat(20_000),
+      chatContext: [
+        `old-history ${'a'.repeat(8_000)}`,
+        `recent-history ${'b'.repeat(3_000)}`,
+      ],
+    });
+
+    const prompt = (generateText as jest.Mock).mock.calls[0][0]
+      .prompt as string;
+    expect(prompt.length).toBeLessThanOrEqual(24_000);
+    expect(prompt).toContain('CURRENT QUESTION');
+    expect(prompt).toContain('recent-history');
+    expect(prompt).not.toContain('old-history');
+  });
+
   it('exposes the model text stream without buffering the answer', async () => {
     const openaiProvider = jest.fn().mockReturnValue('openai-model');
     (createOpenAI as jest.Mock).mockReturnValue(openaiProvider);

@@ -17,6 +17,10 @@ export interface KnowledgeAnswerProvider {
   stream?(input: KnowledgeAnswerProviderInput): AsyncIterable<string>;
 }
 
+const MAX_KNOWLEDGE_CONTEXT_LENGTH = 12_000;
+const MAX_CONVERSATION_CONTEXT_LENGTH = 4_000;
+const MAX_QUESTION_LENGTH = 4_000;
+
 @Injectable()
 export class ConfiguredKnowledgeAnswerProvider implements KnowledgeAnswerProvider {
   constructor(private readonly environmentService: EnvironmentService) {}
@@ -121,16 +125,53 @@ function buildSystemPrompt(): string {
 }
 
 function buildPrompt(input: KnowledgeAnswerProviderInput): string {
+  const conversationContext = takeRecentConversationContext(
+    input.chatContext ?? [],
+    MAX_CONVERSATION_CONTEXT_LENGTH,
+  );
+  const knowledgeContext = input.context
+    .trim()
+    .slice(0, MAX_KNOWLEDGE_CONTEXT_LENGTH);
+  const question = input.query.slice(0, MAX_QUESTION_LENGTH);
+
   return [
     'Conversation context:',
-    ...(input.chatContext ?? []),
+    ...conversationContext,
     '',
     'Knowledge context:',
-    input.context.trim() || 'No workspace knowledge context was retrieved.',
+    knowledgeContext || 'No workspace knowledge context was retrieved.',
     '',
     'User question:',
-    input.query,
+    question,
   ].join('\n');
+}
+
+function takeRecentConversationContext(
+  messages: string[],
+  maxLength: number,
+): string[] {
+  const selected: string[] = [];
+  let usedLength = 0;
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    const separatorLength = selected.length > 0 ? 1 : 0;
+    const remaining = maxLength - usedLength - separatorLength;
+    if (remaining <= 0) break;
+
+    if (message.length <= remaining) {
+      selected.unshift(message);
+      usedLength += message.length + separatorLength;
+      continue;
+    }
+
+    if (selected.length === 0) {
+      selected.unshift(message.slice(0, remaining));
+    }
+    break;
+  }
+
+  return selected;
 }
 
 function formatDate(date: Date): string {

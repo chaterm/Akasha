@@ -322,13 +322,14 @@ type KnowledgeContextPack = ReturnType<
 >;
 
 const CITATION_MARKER_PATTERN = /\[\[cite:([^\]\s]+)\]\]/g;
+const MAX_ANSWER_CONTEXT_LENGTH = 12_000;
 
 function buildAnswerContext(pack: KnowledgeContextPack): string {
   if (pack.primary.length === 0) {
-    return pack.context;
+    return pack.context.slice(0, MAX_ANSWER_CONTEXT_LENGTH);
   }
 
-  return pack.primary
+  const context = pack.primary
     .map((entry) => {
       const sourceEvidence = entry.sourceWindows.flatMap((window, index) => [
         `## Verified source evidence ${index + 1}: ${window.title}`,
@@ -343,6 +344,11 @@ function buildAnswerContext(pack: KnowledgeContextPack): string {
       ].join('\n');
     })
     .join('\n\n');
+
+  return context.slice(
+    0,
+    Math.min(MAX_ANSWER_CONTEXT_LENGTH, pack.budget.maxContextLength),
+  );
 }
 
 function formatCitationIds(sourcePageIds: string[]): string {
