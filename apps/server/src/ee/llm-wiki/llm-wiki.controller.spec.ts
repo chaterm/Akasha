@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 import { User, Workspace } from '@akasha/db/types/entity.types';
 import { AuditEvent, AuditResource } from '../../common/events/audit-events';
@@ -20,6 +21,7 @@ import { KnowledgeSourceExporterService } from './services/knowledge-source-expo
 import { KnowledgeSpaceCompilationService } from './services/knowledge-space-compilation.service';
 import { KnowledgeSpaceResetService } from './services/knowledge-space-reset.service';
 import { SpaceAuthorizationService } from '../../core/space/services/space-authorization.service';
+import { PageAccessService } from '../../core/page/page-access/page-access.service';
 
 describe('LlmWikiController', () => {
   it('rejects queries when workspace AI knowledge chat is disabled', async () => {
@@ -132,6 +134,158 @@ describe('LlmWikiController', () => {
     expect(JSON.stringify(queryAuditRepo.recordQuery.mock.calls)).not.toContain(
       'How do we use Kafka?',
     );
+  });
+
+  it('reads the complete ACL-authorized shared Page by its internal URL', async () => {
+    const page = {
+      id: 'page-1',
+      slugId: 'kafka-guide',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      title: 'Kafka Guide',
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'heading',
+            attrs: { level: 1 },
+            content: [{ type: 'text', text: 'Kafka Guide' }],
+          },
+          {
+            type: 'paragraph',
+            content: [{ type: 'text', text: 'Use Kafka for async events.' }],
+          },
+        ],
+      },
+      deletedAt: null,
+      updatedAt: new Date('2026-07-29T00:00:00.000Z'),
+    };
+    const pageRepo = { findById: jest.fn().mockResolvedValue(page) };
+    const pageAccessService = {
+      validateCanReadCitationSourceWithPermissions: jest
+        .fn()
+        .mockResolvedValue({
+          canEdit: false,
+          hasRestriction: false,
+        }),
+    };
+    const auditService = { log: jest.fn() };
+    const controller = createController({
+      pageRepo,
+      pageAccessService,
+      auditService,
+    });
+
+    await expect(
+      controller.getCitationPage(
+        { pageUrl: '/p/kafka-guide' },
+        user(),
+        workspace(),
+      ),
+    ).resolves.toEqual({
+      pageId: 'page-1',
+      spaceId: 'space-1',
+      title: 'Kafka Guide',
+      url: '/p/kafka-guide',
+      content: '# Kafka Guide\n\nUse Kafka for async events.',
+      updatedAt: new Date('2026-07-29T00:00:00.000Z'),
+    });
+    expect(pageRepo.findById).toHaveBeenCalledWith('kafka-guide', {
+      includeContent: true,
+    });
+    expect(
+      pageAccessService.validateCanReadCitationSourceWithPermissions,
+    ).toHaveBeenCalledWith(page, expect.objectContaining({ id: 'user-1' }));
+    expect(auditService.log).toHaveBeenCalledWith({
+      event: AuditEvent.KNOWLEDGE_CITATION_PAGE_READ,
+      resourceType: AuditResource.PAGE,
+      resourceId: 'page-1',
+      spaceId: 'space-1',
+      metadata: {
+        origin: 'citation_page_url',
+        pageUrl: '/p/kafka-guide',
+      },
+    });
+    expect(JSON.stringify(auditService.log.mock.calls)).not.toContain(
+      'Use Kafka for async events.',
+    );
+  });
+
+  it.each([
+    '/p/',
+    'https://example.com/p/kafka-guide',
+    '/p/kafka-guide?download=1',
+    '/p/kafka-guide#details',
+    '/p/kafka-guide/child',
+  ])('rejects invalid shared Page URL %s before lookup', async (pageUrl) => {
+    const pageRepo = { findById: jest.fn() };
+    const controller = createController({ pageRepo });
+
+    await expect(
+      controller.getCitationPage({ pageUrl }, user(), workspace()),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(pageRepo.findById).not.toHaveBeenCalled();
+  });
+
+  it('hides shared Pages outside the authenticated workspace', async () => {
+    const pageAccessService = {
+      validateCanReadCitationSourceWithPermissions: jest.fn(),
+    };
+    const controller = createController({
+      pageRepo: {
+        findById: jest.fn().mockResolvedValue({
+          id: 'page-other',
+          slugId: 'other-page',
+          workspaceId: 'workspace-other',
+          deletedAt: null,
+        }),
+      },
+      pageAccessService,
+    });
+
+    await expect(
+      controller.getCitationPage(
+        { pageUrl: '/p/other-page' },
+        user(),
+        workspace(),
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(
+      pageAccessService.validateCanReadCitationSourceWithPermissions,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('propagates Page ACL denial without falling back to another read path', async () => {
+    const pageRepo = {
+      findById: jest.fn().mockResolvedValue({
+        id: 'page-private',
+        slugId: 'private-page',
+        workspaceId: 'workspace-1',
+        spaceId: 'space-private',
+        deletedAt: null,
+      }),
+    };
+    const pageAccessService = {
+      validateCanReadCitationSourceWithPermissions: jest
+        .fn()
+        .mockRejectedValue(new ForbiddenException()),
+    };
+    const auditService = { log: jest.fn() };
+    const controller = createController({
+      pageRepo,
+      pageAccessService,
+      auditService,
+    });
+
+    await expect(
+      controller.getCitationPage(
+        { pageUrl: '/p/private-page' },
+        user(),
+        workspace(),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(pageRepo.findById).toHaveBeenCalledTimes(1);
+    expect(auditService.log).not.toHaveBeenCalled();
   });
 
   it('returns an authorized knowledge graph for the selected space', async () => {
@@ -995,6 +1149,7 @@ function createController(
     spaceCompilation?: Partial<KnowledgeSpaceCompilationService>;
     spaceReset?: Partial<KnowledgeSpaceResetService>;
     spaceAuthorization?: Partial<SpaceAuthorizationService>;
+    pageAccessService?: Partial<PageAccessService>;
   } = {},
 ) {
   return new LlmWikiController(
@@ -1054,6 +1209,10 @@ function createController(
         .mockImplementation(({ spaceIds }) => spaceIds),
       ...overrides.spaceAuthorization,
     } as unknown as SpaceAuthorizationService,
+    {
+      validateCanReadCitationSourceWithPermissions: jest.fn(),
+      ...overrides.pageAccessService,
+    } as unknown as PageAccessService,
   );
 }
 

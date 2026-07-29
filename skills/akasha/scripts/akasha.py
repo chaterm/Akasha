@@ -46,6 +46,20 @@ def _build_parser() -> argparse.ArgumentParser:
     query.add_argument("question")
     query.add_argument("--space-id", action="append", dest="space_ids")
 
+    citation = commands.add_parser(
+        "citation",
+        help="Read an ACL-authorized shared Page by its internal URL",
+    )
+    citation_commands = citation.add_subparsers(
+        dest="citation_command",
+        required=True,
+    )
+    get_citation = citation_commands.add_parser(
+        "get",
+        help="Read an ACL-authorized shared Page by its internal URL",
+    )
+    get_citation.add_argument("page_url")
+
     page = commands.add_parser("page", help="Write pages in the personal space")
     page_commands = page.add_subparsers(dest="page_command", required=True)
 
@@ -151,7 +165,10 @@ def _compact_query_result(result: object) -> dict[str, object]:
         raise ApiContractError("Akasha Wiki query response is invalid.")
     return {
         "answer": result.get("answer", ""),
+        "answerMode": result.get("answerMode"),
         "citations": result.get("citations", []),
+        "citationEvidence": result.get("citationEvidence", []),
+        "retrievedSources": result.get("retrievedSources", []),
         "warnings": result.get("warnings", []),
         "completenessNotice": result.get("completenessNotice"),
     }
@@ -207,6 +224,27 @@ def _page_read_result(result: object) -> dict[str, object]:
         "spaceId": space_id,
         "title": title,
         "content": content or "",
+        "updatedAt": result.get("updatedAt"),
+    }
+
+
+def _citation_page_result(result: object) -> dict[str, object]:
+    if not isinstance(result, dict):
+        raise ApiContractError("Akasha shared Page response is invalid.")
+    required_fields = ("pageId", "spaceId", "title", "url")
+    if not all(
+        isinstance(result.get(field), str) and result.get(field)
+        for field in required_fields
+    ) or not isinstance(result.get("content"), str):
+        raise ApiContractError(
+            "Akasha shared Page response is missing readable content."
+        )
+    return {
+        "pageId": result["pageId"],
+        "spaceId": result["spaceId"],
+        "title": result["title"],
+        "url": result["url"],
+        "content": result["content"],
         "updatedAt": result.get("updatedAt"),
     }
 
@@ -273,6 +311,18 @@ def main(
             _write_json(
                 output,
                 _with_skill_update_notice(_compact_query_result(result), identity),
+            )
+            return 0
+
+        if args.command == "citation" and args.citation_command == "get":
+            client, identity = _create_client(
+                factory,
+                credential_file=credential_file,
+            )
+            result = client.get_citation_page(args.page_url)
+            _write_json(
+                output,
+                _with_skill_update_notice(_citation_page_result(result), identity),
             )
             return 0
 

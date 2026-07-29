@@ -98,6 +98,7 @@ export const AuditEvent = {
 
   // Knowledge
   KNOWLEDGE_QUERY: 'knowledge.query',
+  KNOWLEDGE_CITATION_PAGE_READ: 'knowledge.citation_page_read',
   KNOWLEDGE_IMPORT: 'knowledge.import',
   KNOWLEDGE_COMPILE_QUEUED: 'knowledge.compile_queued',
   KNOWLEDGE_REVIEW_DISCOVERED: 'knowledge.review_discovered',

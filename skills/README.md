@@ -1,6 +1,6 @@
 # Akasha Agent Skill
 
-Akasha Agent Skill 可让 Agent 查询 Wiki 知识，以及在个人空间中创建、读取和更新 Page。
+Akasha Agent Skill 可让 Agent 查询带可信论据的 Wiki 知识、按站内地址读取有权限访问的共享 Page，以及在个人空间中创建、读取和更新 Page。
 
 ## 安装
 
@@ -26,7 +26,7 @@ npx skills add chaterm/Akasha --skill akasha --global
 
 无需提前查找 Skill 的安装目录或执行认证命令。
 
-在自己的本地终端执行 Agent 提供的命令，并在隐藏提示中输入 API Key。认证完成后告诉 Agent 继续原来的操作即可。
+首次使用 Akasha 时，在自己的本地终端执行 Agent 提供的命令，并在隐藏提示中输入 API Key。认证完成后告诉 Agent 继续原来的操作即可。
 
 不要把 API Key 发送给 Agent，也不要放入命令参数、源代码、临时文件、日志或聊天消息中。Akasha 服务地址不是密钥；如果 Agent 不知道该地址，可以直接提供服务地址。
 

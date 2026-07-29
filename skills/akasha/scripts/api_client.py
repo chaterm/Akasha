@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Callable, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -10,7 +11,8 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 Transport = Callable[[Request, float], Any]
-SKILL_VERSION = "1.0.0"
+SKILL_VERSION = "1.1.0"
+INTERNAL_CITATION_PAGE_URL = re.compile(r"/p/[A-Za-z0-9_-]+")
 
 
 class ApiError(RuntimeError):
@@ -220,6 +222,21 @@ class AkashaApiClient:
         result = self.request_json("/api/llm-wiki/query", body)
         if not isinstance(result, dict):
             raise ApiContractError("/api/llm-wiki/query must return an object.")
+        return result
+
+    def get_citation_page(self, page_url: str) -> dict[str, Any]:
+        if not INTERNAL_CITATION_PAGE_URL.fullmatch(page_url):
+            raise ApiConfigurationError(
+                "Shared Page URL must be an internal /p/<slug> URL."
+            )
+        result = self.request_json(
+            "/api/llm-wiki/citation-page",
+            {"pageUrl": page_url},
+        )
+        if not isinstance(result, dict):
+            raise ApiContractError(
+                "/api/llm-wiki/citation-page must return an object."
+            )
         return result
 
     def create_personal_page(
