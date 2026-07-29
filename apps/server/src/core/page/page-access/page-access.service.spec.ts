@@ -53,6 +53,14 @@ describe('PageAccessService API key policy', () => {
     ).resolves.toEqual({ canEdit: false, hasRestriction: true });
   });
 
+  it('allows an ACL-readable shared Page only through the citation source policy', async () => {
+    const { service } = createService();
+
+    await expect(
+      service.validateCanReadCitationSourceWithPermissions(page, apiUser),
+    ).resolves.toEqual({ canEdit: false, hasRestriction: true });
+  });
+
   it('rejects reading shared-space source content with an API key', async () => {
     const { service, spaceAbility, pagePermissionRepo } = createService();
 

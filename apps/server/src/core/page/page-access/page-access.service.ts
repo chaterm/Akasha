@@ -106,6 +106,18 @@ export class PageAccessService {
   }
 
   /**
+   * Shared Page reads are an explicit read-only exception for API keys.
+   * The caller must first validate the internal Page URL contract;
+   * ordinary space and Page ACLs still apply here.
+   */
+  async validateCanReadCitationSourceWithPermissions(
+    page: Page,
+    user: User,
+  ): Promise<{ canEdit: boolean; hasRestriction: boolean }> {
+    return this.validateCanViewWithPermissions(page, user);
+  }
+
+  /**
    * Validate user can edit page, throws ForbiddenException if not.
    * If page has restrictions: page-level writer permission determines access.
    * If no restrictions: space-level edit permission determines access.

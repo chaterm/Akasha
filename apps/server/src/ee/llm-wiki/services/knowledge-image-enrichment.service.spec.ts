@@ -250,12 +250,12 @@ describe('KnowledgeImageEnrichmentService', () => {
   it('marks images beyond the safety limit terminal skipped without retrying', async () => {
     const fixture = createFixture();
     const many = source('正文');
-    many.images = Array.from({ length: 13 }, (_, index) => ({
+    many.images = Array.from({ length: 51 }, (_, index) => ({
       ...many.images![0],
       attachmentId: `image-${index + 1}`,
     }));
     fixture.attachmentRepo.findByIds.mockResolvedValue(
-      many.images.slice(0, 12).map((image) =>
+      many.images.slice(0, 50).map((image) =>
         attachment({
           id: image.attachmentId,
           filePath: `workspace-1/${image.attachmentId}/dashboard.png`,
@@ -275,28 +275,28 @@ describe('KnowledgeImageEnrichmentService', () => {
 
     expect(result).toEqual(
       expect.objectContaining({
-        expected: 13,
-        succeeded: 12,
+        expected: 51,
+        succeeded: 50,
         failed: 0,
         skipped: 1,
         retryableFailureCount: 0,
       }),
     );
-    expect(fixture.extractionRepo.claim).toHaveBeenCalledTimes(12);
+    expect(fixture.extractionRepo.claim).toHaveBeenCalledTimes(50);
     expect(result.warnings).toContainEqual(
       expect.objectContaining({ code: 'skipped_limit' }),
     );
   });
 
-  it('treats exactly 12 ready images as complete rather than incomplete', async () => {
+  it('treats exactly 50 ready images as complete rather than incomplete', async () => {
     const fixture = createFixture();
-    const twelve = source('正文');
-    twelve.images = Array.from({ length: 12 }, (_, index) => ({
-      ...twelve.images![0],
+    const fifty = source('正文');
+    fifty.images = Array.from({ length: 50 }, (_, index) => ({
+      ...fifty.images![0],
       attachmentId: `image-${index + 1}`,
     }));
     fixture.attachmentRepo.findByIds.mockResolvedValue(
-      twelve.images.map((image) =>
+      fifty.images.map((image) =>
         attachment({
           id: image.attachmentId,
           filePath: `workspace-1/${image.attachmentId}/dashboard.png`,
@@ -312,12 +312,12 @@ describe('KnowledgeImageEnrichmentService', () => {
       }),
     }));
 
-    const result = await fixture.service.enrichSource(twelve);
+    const result = await fixture.service.enrichSource(fifty);
 
     expect(result).toEqual(
       expect.objectContaining({
-        expected: 12,
-        succeeded: 12,
+        expected: 50,
+        succeeded: 50,
         failed: 0,
         skipped: 0,
         retryableFailureCount: 0,

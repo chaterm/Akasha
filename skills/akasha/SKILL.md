@@ -1,13 +1,13 @@
 ---
 name: akasha
-description: Use when a user asks to query Akasha or 已编译 Wiki knowledge, create a 个人空间 Page, or search, read, and update an existing personal Page.
+description: Use when a user asks to query Akasha or 已编译 Wiki knowledge, read an ACL-authorized shared Page from an internal /p/slug URL, create a 个人空间 Page, or search, read, and update an existing personal Page.
 ---
 
 # Akasha
 
 ## 核心原则
 
-通过随包 Python CLI 使用 Akasha。知识问答只查询已编译 Wiki；仅在编辑个人空间 Page 时搜索或读取原文。Page 原文读写只面向个人空间，最终权限始终由 Akasha API 决定。
+通过随包 Python CLI 使用 Akasha。知识问答只查询已编译 Wiki；可以按用户提供或 Akasha 返回的准确站内 Page 地址读取当前用户有权限访问的共享 Page 原文，或在编辑个人空间 Page 时搜索和读取个人 Page。共享空间 Page 只读，Page 写入仍只面向个人空间，最终权限始终由 Akasha API 决定。
 
 从当前 `SKILL.md` 的实际路径解析本 Skill 所在目录，并记为 <AKASHA_SKILL_DIR>。不要假设它位于固定的全局目录，也不要让用户查找或猜测 Skill 目录。执行：
 
@@ -37,9 +37,26 @@ macOS 凭据保存在 `~/.akasha/credentials.env`，Linux 保存在 `~/.config/a
 
 默认查询 API Key 可见的全部空间。只有用户明确限定空间且已提供可信 space ID 时，才增加一个或多个 --space-id。
 
-使用返回的 answer 回答，并保留 citations、warnings 和 completenessNotice 中的重要限制。不要自行声称结果完整。
+按以下语义使用结果：
 
-知识问答不搜索或读取原始 Page，不调用 Page 搜索/原文接口，也不在本地拼接原始内容。`page search` 和 `page get` 不能用于回答普通知识问题。
+- `answerMode` 为 `no_match` 时，明确说明当前知识范围没有足够依据，不要补写答案。
+- `answer` 是已清除内部引用标记的回答正文。
+- `citations` 只包含回答实际采用且有可核验原文的可信来源。
+- `citationEvidence` 提供每个可信来源的核验摘录、原文范围和 quote hash；论证回答时优先使用这些摘录。
+- `retrievedSources` 仅表示被召回的候选来源，不能当作回答已采用的论据。
+- 保留 `warnings` 和 `completenessNotice` 中的重要限制，不要自行声称结果完整。
+
+知识问答不调用 Page 搜索或个人 Page 原文接口，也不在本地拼接搜索结果。`page search` 和 `page get` 不能用于回答普通知识问题；需要查看可信论据的完整来源或读取指定共享 Page 时，使用下面的 `citation get`。
+
+## 读取有权限的共享 Page
+
+当用户要求读取共享 Page、查看完整来源，或回答确实需要核对论据摘录之外的上下文时，使用用户提供或 Akasha 返回的准确站内 Page 地址；不要改写、补全或猜测地址：
+
+    python3 <AKASHA_SKILL_DIR>/scripts/akasha.py citation get <PAGE_URL>
+
+命令接受准确的 `/p/<slug>` 站内地址，不要求该地址来自知识问答。服务端会按当前用户的空间与 Page ACL 检查权限，成功时返回 `pageId`、`spaceId`、`title`、`url`、完整 Markdown `content` 和 `updatedAt`。原始 Page 可能比已编译知识更新，若两者不一致，应明确说明依据来自当前 Page 原文。
+
+共享空间 Page 只读。不能把共享 Page 读取结果用于 `page update`；即使需要编辑个人空间 Page，也必须重新走 `page search` / `page get`，由个人空间权限校验确认目标。`citation get` 返回 403 时立即停止，不要改用 `/api/pages/info`、搜索、其他账号或猜测的 Page ID 绕过。
 
 ## 查找和读取待编辑的个人 Page
 
@@ -80,6 +97,15 @@ macOS 凭据保存在 `~/.akasha/credentials.env`，Linux 保存在 `~/.config/a
 
 不要发送 space ID，不要移动 Page，不要推断缺失的原文。
 
+## 常见错误
+
+| 错误 | 正确处理 |
+| --- | --- |
+| 把 `retrievedSources` 当作回答论据 | 只使用 `citations` 和对应的 `citationEvidence` |
+| 拼接或猜测 Page 地址 | 使用用户提供或 Akasha 返回的准确 `/p/<slug>` 地址 |
+| 每次 query 后读取所有完整 Page | 仅在用户要求或确需更多上下文时调用 `citation get` |
+| 用共享 Page 原文更新共享 Page | 共享 Page 只读；写入只走个人 Page 命令 |
+
 ## 权限与错误处理
 
 每个联网命令都会先检查当前用户。若 JSON 结果包含 `skillUpdateNotice`，先完成用户当前请求，再根据其中的 message、latestVersion 和 upgradeUrl 提示用户有新版本；未经用户明确确认，不要自动升级 Skill。
@@ -93,7 +119,7 @@ macOS 凭据保存在 `~/.akasha/credentials.env`，Linux 保存在 `~/.config/a
 | 5 | 报告网络或 API 暂时不可用 |
 | 6 | 报告服务端契约尚未满足 |
 
-遇到 403 时停止，不要改用其他接口、账号或路径绕过。普通用户 API Key 只能读取和写入个人 Page 原文；其他空间只能通过已编译 Wiki 查询知识。
+遇到 403 时停止，不要改用其他接口、账号或路径绕过。普通用户 API Key 可通过 `citation get` 只读访问当前用户有 Page ACL 的共享 Page，不要求地址来自知识问答；任意 Page 原文搜索以及 Page 写入仍仅限个人空间。
 
 不提供 Page 删除或 ACL 修改，也不要建议用户用脚本直接调用这些接口。
 

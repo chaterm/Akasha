@@ -56,6 +56,32 @@ describe('PageListener knowledge jobs', () => {
     ).toBeLessThan(knowledgeQueue.add.mock.invocationCallOrder[compileAddCall]);
   });
 
+  it('keeps search and access indexing but skips knowledge compilation for ZIP imports', async () => {
+    const { listener, knowledgeQueue, pageRepo, compilationRepo } =
+      createListener();
+    pageRepo.findExistingPageRefs.mockResolvedValue([
+      pageRef('page-1', 'space-1'),
+    ]);
+
+    await listener.handlePageCreated({
+      workspaceId: 'workspace-1',
+      pageIds: ['page-1'],
+      skipKnowledgeCompile: true,
+    });
+
+    expect(knowledgeQueue.add).toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_REINDEX_ACCESS,
+      { workspaceId: 'workspace-1', sourcePageIds: ['page-1'] },
+    );
+    expect(pageRepo.findExistingPageRefs).not.toHaveBeenCalled();
+    expect(compilationRepo.queueAttempt).not.toHaveBeenCalled();
+    expect(knowledgeQueue.add).not.toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_COMPILE_PAGES,
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
   it('keeps last successful knowledge available while a page update recompiles', async () => {
     const { listener, knowledgeQueue, pageRepo } = createListener();
     pageRepo.findExistingPageRefs.mockResolvedValue([

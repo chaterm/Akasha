@@ -77,6 +77,15 @@ describe('ConfluenceImportService page mapping persistence', () => {
         'update:fileTasks',
         'transaction:end',
       ]);
+      expect(harness.emitted).toEqual([
+        [
+          'page.created',
+          expect.objectContaining({
+            workspaceId: 'workspace-1',
+            skipKnowledgeCompile: true,
+          }),
+        ],
+      ]);
     } finally {
       await rm(extractDir, { recursive: true, force: true });
     }

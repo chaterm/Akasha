@@ -1,10 +1,18 @@
 # Akasha API 契约
 
+## 目录
+
+- 当前用户与 Skill 更新提示
+- 可见空间与已编译 Wiki 查询
+- 有权限的共享 Page 读取
+- 个人 Page 搜索、读取、创建和更新
+- 错误处理
+
 所有请求均为 JSON POST，并携带：
 
     Authorization: Bearer <API_KEY>
     Content-Type: application/json
-    X-Akasha-Skill-Version: 1.0.0
+    X-Akasha-Skill-Version: 1.1.0
 
 Akasha 服务的成功响应使用统一包装，Skill 会自动取出 `data`；下文描述的响应字段均指 `data` 内部字段：
 
@@ -14,7 +22,7 @@ Akasha 服务的成功响应使用统一包装，Skill 会自动取出 `data`；
       "status": 200
     }
 
-知识问答只能使用已编译 Wiki 接口。只有用户明确要求编辑个人空间 Page 时，才可搜索并读取个人 Page 原文。
+知识问答只能使用已编译 Wiki 接口。当前用户有 ACL 权限的共享 Page 可通过独立只读接口按站内地址获取，地址不要求来自知识问答；任意 Page 搜索、读取和写入仍仅限用户明确要求编辑的个人空间 Page。
 
 ## 当前用户
 
@@ -67,9 +75,34 @@ POST /api/llm-wiki/query
       "spaceIds": ["space-1", "space-2"]
     }
 
-可选传入 chatContext。默认保留响应中的 answer、citations、warnings 和 completenessNotice，不默认输出 snippets。
+可选传入 chatContext。默认保留 `answer`、`answerMode`、可信 `citations`、`citationEvidence`、`retrievedSources`、`warnings` 和 `completenessNotice`，不默认输出 snippets 或内部检索诊断。
+
+`citations` 只包含回答实际采用且由核验原文支持的来源；`citationEvidence` 带有摘录、原文范围和 quote hash；`retrievedSources` 只是候选召回记录，不能替代可信论据。
 
 这是 Skill 唯一的知识问答入口。服务端仍需过滤不可读空间和不可读来源。
+
+## 读取有权限的共享 Page
+
+POST /api/llm-wiki/citation-page
+
+    {
+      "pageUrl": "/p/page-slug"
+    }
+
+`pageUrl` 可由用户提供，也可使用知识问答 `citations[].url` 返回的地址；接口仅接受单段 `/p/<slug>` 站内地址，不要求地址来自某次知识问答。服务端按当前 workspace 定位未删除 Page，并使用当前用户的空间权限和 Page ACL 校验读取能力。
+
+成功响应：
+
+    {
+      "pageId": "page-1",
+      "spaceId": "space-1",
+      "title": "Kafka Guide",
+      "url": "/p/page-slug",
+      "content": "# Kafka Guide\n\n完整 Markdown 原文",
+      "updatedAt": "2026-07-29T00:00:00.000Z"
+    }
+
+接口只读。400 表示地址不是合法站内 Page 地址，404 表示 Page 不存在、已删除或不属于当前 workspace，403 表示当前用户无权读取；任何一种失败都不能回退到其他 Page 原文接口。
 
 ## 搜索待编辑的个人 Page
 

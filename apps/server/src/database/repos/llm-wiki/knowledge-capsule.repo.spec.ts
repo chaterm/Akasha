@@ -481,6 +481,45 @@ describe('KnowledgeCapsuleRepo', () => {
     expect(linkInsertIndex).toBeGreaterThan(Math.max(...pageInsertIndexes));
   });
 
+  it('splits large child collections into bounded inserts', async () => {
+    const query = new FakeKyselyQuery({
+      knowledgePages: [{ id: 'knowledge-page-1' }],
+    });
+    const repo = createRepo(query);
+    const links = Array.from({ length: 1_001 }, (_, index) => ({
+      id: `link-${index}`,
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      fromKnowledgePageId: 'knowledge-page-1',
+      toKnowledgePageId: null,
+      targetPageId: null,
+      targetSpaceId: 'space-1',
+      linkText: `Page ${index}`,
+      linkType: 'catalog_entry',
+      isDangling: true,
+    }));
+
+    await repo.upsertCompiledArtifacts([
+      {
+        page: basePage('knowledge-page-1'),
+        links,
+      },
+    ]);
+
+    const linkInsertBatchSizes = query.calls.flatMap((call, index) => {
+      if (call.method !== 'insertInto' || call.args[0] !== 'knowledgeLinks') {
+        return [];
+      }
+      const valuesCall = query.calls
+        .slice(index + 1)
+        .find((candidate) => candidate.method === 'values');
+      const rows = valuesCall?.args[0];
+      return [Array.isArray(rows) ? rows.length : 1];
+    });
+
+    expect(linkInsertBatchSizes).toEqual([1_000, 1]);
+  });
+
   it('upserts the compiled page and dependency rows for an artifact', async () => {
     const row = { id: 'knowledge-page-1', workspaceId: 'workspace-1' };
     const query = new FakeKyselyQuery({ knowledgePages: [row] });

@@ -8,6 +8,7 @@ import {
   HttpCode,
   HttpStatus,
   Inject,
+  NotFoundException,
   Param,
   ParseUUIDPipe,
   Post,
@@ -20,6 +21,7 @@ import { Queue } from 'bullmq';
 import { User, Workspace } from '@akasha/db/types/entity.types';
 import { KnowledgeQueryAuditRepo } from '@akasha/db/repos/llm-wiki/knowledge-query-audit.repo';
 import { PageRepo } from '@akasha/db/repos/page/page.repo';
+import { PageAccessService } from '../../core/page/page-access/page-access.service';
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
 import { AuthWorkspace } from '../../common/decorators/auth-workspace.decorator';
 import { AuditEvent, AuditResource } from '../../common/events/audit-events';
@@ -43,6 +45,7 @@ import { ImportCompileResultDto } from './dto/import-compile-result.dto';
 import { KnowledgeGraphDto } from './dto/knowledge-graph.dto';
 import { KnowledgeSpaceOperationDto } from './dto/knowledge-space-operation.dto';
 import { QueryKnowledgeDto } from './dto/query-knowledge.dto';
+import { CitationPageDto } from './dto/citation-page.dto';
 import { AiKnowledgeChatService } from './services/ai-knowledge-chat.service';
 import { KnowledgeDiagnosticsService } from './services/knowledge-diagnostics.service';
 import { KnowledgeGraphService } from './services/knowledge-graph.service';
@@ -60,6 +63,8 @@ import {
   KnowledgeAdminSpaceAction,
   KnowledgeCompileTrigger,
 } from './types/knowledge-queue.types';
+import { getPageTitle } from '../../common/helpers';
+import { jsonToMarkdown } from '../../collaboration/collaboration.util';
 
 @UseGuards(JwtAuthGuard)
 @Controller('llm-wiki')
@@ -78,6 +83,7 @@ export class LlmWikiController {
     private readonly spaceCompilation: KnowledgeSpaceCompilationService,
     private readonly spaceReset: KnowledgeSpaceResetService,
     private readonly spaceAuthorization: SpaceAuthorizationService,
+    private readonly pageAccessService: PageAccessService,
   ) {}
 
   @HttpCode(HttpStatus.OK)
@@ -139,6 +145,52 @@ export class LlmWikiController {
     });
 
     return response;
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('citation-page')
+  async getCitationPage(
+    @Body() dto: CitationPageDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    const match = /^\/p\/([A-Za-z0-9_-]+)$/.exec(dto.pageUrl);
+    if (!match) {
+      throw new BadRequestException('Invalid Akasha shared Page URL');
+    }
+
+    const slugId = match[1];
+    const page = await this.pageRepo.findById(slugId, {
+      includeContent: true,
+    });
+    if (!page || page.workspaceId !== workspace.id || page.deletedAt !== null) {
+      throw new NotFoundException('Shared Page not found');
+    }
+
+    await this.pageAccessService.validateCanReadCitationSourceWithPermissions(
+      page,
+      user,
+    );
+
+    this.auditService.log({
+      event: AuditEvent.KNOWLEDGE_CITATION_PAGE_READ,
+      resourceType: AuditResource.PAGE,
+      resourceId: page.id,
+      spaceId: page.spaceId,
+      metadata: {
+        origin: 'citation_page_url',
+        pageUrl: dto.pageUrl,
+      },
+    });
+
+    return {
+      pageId: page.id,
+      spaceId: page.spaceId,
+      title: getPageTitle(page.title),
+      url: `/p/${page.slugId}`,
+      content: page.content ? jsonToMarkdown(page.content) : '',
+      updatedAt: page.updatedAt,
+    };
   }
 
   @Get('graph')
