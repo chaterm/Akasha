@@ -1,6 +1,12 @@
 import { MantineProvider } from "@mantine/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -8,6 +14,7 @@ import { HelmetProvider } from "react-helmet-async";
 import { BrowserRouter, MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import KnowledgeGraphPage from "./knowledge-graph";
+import type { KnowledgeGraphNode } from "../types/knowledge.types";
 import { getKnowledgeGraph } from "../services/knowledge-service";
 import { useGetSpaceBySlugQuery } from "@/features/space/queries/space-query";
 
@@ -16,21 +23,37 @@ const graphCss = readFileSync(
   resolve(currentDir, "../styles/knowledge-graph.module.css"),
   "utf8",
 );
-const canvasContext = {
-  clearRect: vi.fn(),
-  save: vi.fn(),
-  translate: vi.fn(),
-  scale: vi.fn(),
-  beginPath: vi.fn(),
-  moveTo: vi.fn(),
-  lineTo: vi.fn(),
-  stroke: vi.fn(),
-  arc: vi.fn(),
-  fill: vi.fn(),
-  closePath: vi.fn(),
-  fillText: vi.fn(),
-  restore: vi.fn(),
-} as unknown as CanvasRenderingContext2D;
+const graphSource = readFileSync(
+  resolve(currentDir, "knowledge-graph.tsx"),
+  "utf8",
+);
+const webglMocks = vi.hoisted(() => ({
+  commands: {
+    zoomIn: vi.fn(),
+    zoomOut: vi.fn(),
+    fit: vi.fn(),
+  },
+  props: vi.fn(),
+}));
+
+vi.mock("../components/knowledge-graph-webgl", async () => {
+  const { forwardRef, useImperativeHandle } = await import("react");
+  return {
+    default: forwardRef(function MockKnowledgeGraphWebgl(
+      props: { nodes: unknown[] },
+      ref,
+    ) {
+      useImperativeHandle(ref, () => webglMocks.commands);
+      webglMocks.props(props);
+      return (
+        <div
+          data-testid="knowledge-graph-webgl"
+          data-node-count={props.nodes.length}
+        />
+      );
+    }),
+  };
+});
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -151,10 +174,6 @@ describe("KnowledgeGraphPage", () => {
         disconnect = vi.fn();
       },
     });
-    Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
-      writable: true,
-      value: vi.fn(() => canvasContext),
-    });
   });
 
   it("renders the selected space graph and links single-source nodes to pages", async () => {
@@ -257,7 +276,18 @@ describe("KnowledgeGraphPage", () => {
       /\.graphPanel\s*{[^}]*flex:\s*1 1 0;[^}]*min-height:\s*0;[^}]*}/s,
     );
     expect(graphCss).toMatch(
-      /\.graphSvg,\s*\.graphCanvas\s*{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*}/s,
+      /\.graphSvg,\s*\.graphWebgl\s*{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*}/s,
+    );
+    expect(graphCss).toMatch(
+      /\.graphMotionOverlay\s*{[^}]*pointer-events:\s*none;[^}]*}/s,
+    );
+  });
+  it("skips SVG state initialization for large graphs", () => {
+    expect(graphSource).toMatch(
+      /useState<Map<string, SimulatedNode>>\(\(\) =>\s*useHighDensityRenderer\s*\?\s*new Map\(\)\s*:\s*initializeSimulation/s,
+    );
+    expect(graphSource).toMatch(
+      /useState<GraphTransform>\(\(\) =>\s*useHighDensityRenderer\s*\?\s*\{ x: 0, y: 0, scale: 1 \}\s*:\s*fitGraphTransform/s,
     );
   });
 
@@ -387,7 +417,7 @@ describe("KnowledgeGraphPage", () => {
     expect(edgeLabel.getAttribute("data-visible")).toBe("true");
   });
 
-  it("shows more than 80 pages in the overview", async () => {
+  it("keeps all pages in the overview", async () => {
     vi.mocked(getKnowledgeGraph).mockResolvedValueOnce({
       nodes: Array.from({ length: 81 }, (_, index) => ({
         id: `kp-${index + 1}`,
@@ -420,7 +450,11 @@ describe("KnowledgeGraphPage", () => {
     expect(await screen.findByText("Pages: 81")).toBeTruthy();
   });
 
-  it("uses the high-density canvas renderer for large graphs", async () => {
+  it("passes every large-graph node to WebGL and delegates fit", async () => {
+    webglMocks.commands.fit.mockClear();
+    webglMocks.commands.zoomIn.mockClear();
+    webglMocks.commands.zoomOut.mockClear();
+    webglMocks.props.mockClear();
     vi.mocked(getKnowledgeGraph).mockResolvedValueOnce({
       nodes: Array.from({ length: 501 }, (_, index) => ({
         id: `kp-${index + 1}`,
@@ -450,8 +484,55 @@ describe("KnowledgeGraphPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByTestId("knowledge-graph-canvas")).toBeTruthy();
+    expect(await screen.findByText("Pages: 501")).toBeTruthy();
+    expect(
+      screen
+        .getByTestId("knowledge-graph-webgl")
+        .getAttribute("data-node-count"),
+    ).toBe("501");
+    expect(webglMocks.props.mock.lastCall?.[0].nodes).toHaveLength(501);
+    expect(screen.queryByTestId("knowledge-graph-canvas")).toBeNull();
     expect(screen.queryByTestId("knowledge-graph-viewport")).toBeNull();
-    await waitFor(() => expect(canvasContext.clearRect).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByLabelText("Search"), {
+      target: { value: "Page 501" },
+    });
+    expect(screen.queryByTestId("knowledge-graph-webgl")).toBeNull();
+    expect(screen.getByTestId("knowledge-graph-viewport")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Search"), {
+      target: { value: "Page 1" },
+    });
+    expect(
+      screen
+        .getByTestId("knowledge-graph-webgl")
+        .getAttribute("data-node-count"),
+    ).toBe("111");
+    expect(webglMocks.props.mock.lastCall?.[0].nodes).toHaveLength(111);
+    expect(screen.queryByTestId("knowledge-graph-viewport")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Search"), {
+      target: { value: "" },
+    });
+    expect(screen.getByTestId("knowledge-graph-webgl")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Zoom out" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fit graph" }));
+
+    expect(webglMocks.commands.zoomIn).toHaveBeenCalledTimes(1);
+    expect(webglMocks.commands.zoomOut).toHaveBeenCalledTimes(1);
+    expect(webglMocks.commands.fit).toHaveBeenCalledTimes(1);
+
+    const webglProps = webglMocks.props.mock.lastCall?.[0] as {
+      nodes: KnowledgeGraphNode[];
+      onSelectNode(nodeId: string | null): void;
+      onFocusNode(node: KnowledgeGraphNode): void;
+    };
+    act(() => webglProps.onSelectNode("kp-1"));
+    expect(await screen.findByText("Page 1")).toBeTruthy();
+
+    act(() => webglProps.onFocusNode(webglProps.nodes[0]));
+    expect(await screen.findByText("Focused neighborhood")).toBeTruthy();
   });
 });

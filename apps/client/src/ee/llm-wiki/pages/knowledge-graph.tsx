@@ -1,5 +1,4 @@
 import {
-  MouseEvent,
   PointerEvent,
   WheelEvent,
   useCallback,
@@ -48,6 +47,9 @@ import {
   useGetSpacesQuery,
 } from "@/features/space/queries/space-query";
 import { getKnowledgeGraph } from "../services/knowledge-service";
+import KnowledgeGraphWebgl, {
+  type KnowledgeGraphWebglHandle,
+} from "../components/knowledge-graph-webgl";
 import type {
   KnowledgeGraphEdge,
   KnowledgeGraphNode,
@@ -58,7 +60,8 @@ import classes from "../styles/knowledge-graph.module.css";
 const GRAPH_NODE_LIMIT = 10_000;
 const OVERVIEW_NODE_LIMIT = 10_000;
 const HIGH_DENSITY_NODE_THRESHOLD = 500;
-const GRAPH_WIDTH = 1100;
+const GRAPH_WIDTH = 1600;
+const COMPACT_SVG_NODE_THRESHOLD = 24;
 const GRAPH_HEIGHT = 680;
 const MIN_ZOOM = 0.02;
 const MAX_ZOOM = 3.2;
@@ -167,9 +170,14 @@ export default function KnowledgeGraphPage() {
     (node) => node.kind !== "section",
   ).length;
   const useHighDensityRenderer =
-    visibleGraph.nodes.length > HIGH_DENSITY_NODE_THRESHOLD;
+    graph.nodes.length > HIGH_DENSITY_NODE_THRESHOLD &&
+    visibleGraph.nodes.length > COMPACT_SVG_NODE_THRESHOLD;
   const persistentLabelNodeIds = useMemo(() => {
-    if (focusPageId || visibleGraph.nodes.length <= 24) {
+    if (useHighDensityRenderer) return new Set<string>();
+    if (
+      focusPageId ||
+      visibleGraph.nodes.length <= COMPACT_SVG_NODE_THRESHOLD
+    ) {
       return new Set(visibleGraph.nodes.map((node) => node.id));
     }
     return new Set(
@@ -178,29 +186,41 @@ export default function KnowledgeGraphPage() {
         .slice(0, 16)
         .map((node) => node.id),
     );
-  }, [focusPageId, visibleGraph.nodes]);
+  }, [focusPageId, useHighDensityRenderer, visibleGraph.nodes]);
   const initialLayout = useMemo(
     () =>
-      buildInitialGraphLayout(
-        visibleGraph.nodes,
-        visibleGraph.edges,
-        Boolean(focusPageId),
-      ),
-    [focusPageId, visibleGraph.nodes, visibleGraph.edges],
+      useHighDensityRenderer
+        ? new Map<string, GraphPoint>()
+        : buildInitialGraphLayout(
+            visibleGraph.nodes,
+            visibleGraph.edges,
+            Boolean(focusPageId),
+          ),
+    [
+      focusPageId,
+      useHighDensityRenderer,
+      visibleGraph.nodes,
+      visibleGraph.edges,
+    ],
   );
+  const webglRef = useRef<KnowledgeGraphWebglHandle | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationRef = useRef<number | null>(null);
   const simulationTickRef = useRef(0);
   const [positions, setPositions] = useState<Map<string, SimulatedNode>>(() =>
-    initializeSimulation(
-      visibleGraph.nodes,
-      initialLayout,
-      Boolean(focusPageId),
-    ),
+    useHighDensityRenderer
+      ? new Map()
+      : initializeSimulation(
+          visibleGraph.nodes,
+          initialLayout,
+          Boolean(focusPageId),
+        ),
   );
+  const positionsRef = useRef(positions);
   const [transform, setTransform] = useState<GraphTransform>(() =>
-    fitGraphTransform(visibleGraph.nodes, initialLayout),
+    useHighDensityRenderer
+      ? { x: 0, y: 0, scale: 1 }
+      : fitGraphTransform(visibleGraph.nodes, initialLayout),
   );
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [nodeDragState, setNodeDragState] = useState<NodeDragState | null>(
@@ -222,19 +242,30 @@ export default function KnowledgeGraphPage() {
   }, []);
 
   const fitGraph = useCallback(() => {
+    if (useHighDensityRenderer) {
+      webglRef.current?.fit();
+      return;
+    }
     setTransform(fitGraphTransform(visibleGraph.nodes, positions));
-  }, [positions, visibleGraph.nodes]);
+  }, [positions, useHighDensityRenderer, visibleGraph.nodes]);
 
   useEffect(() => {
+    if (useHighDensityRenderer) {
+      positionsRef.current = new Map();
+      setPositions(new Map());
+      simulationTickRef.current = 0;
+      return;
+    }
     const nextPositions = initializeSimulation(
       visibleGraph.nodes,
       initialLayout,
       Boolean(focusPageId),
     );
+    positionsRef.current = nextPositions;
     setPositions(nextPositions);
     setTransform(fitGraphTransform(visibleGraph.nodes, initialLayout));
     simulationTickRef.current = 0;
-  }, [focusPageId, initialLayout, visibleGraph.nodes]);
+  }, [focusPageId, initialLayout, useHighDensityRenderer, visibleGraph.nodes]);
 
   useEffect(() => {
     if (!ENABLE_GRAPH_ANIMATION || useHighDensityRenderer) return;
@@ -250,16 +281,19 @@ export default function KnowledgeGraphPage() {
       }
 
       simulationTickRef.current += 1;
-      setPositions((current) =>
-        simulateGraphStep({
-          current,
-          edges: visibleGraph.edges,
-          width: GRAPH_WIDTH,
-          height: GRAPH_HEIGHT,
-        }),
-      );
+      const nextPositions = simulateGraphStep({
+        current: positionsRef.current,
+        edges: visibleGraph.edges,
+        width: GRAPH_WIDTH,
+        height: GRAPH_HEIGHT,
+      });
+      positionsRef.current = nextPositions;
+      setPositions(nextPositions);
 
-      if (simulationTickRef.current < 220) {
+      if (
+        simulationTickRef.current < 60 ||
+        !simulationIsSettled(nextPositions)
+      ) {
         animationRef.current = requestAnimationFrame(animate);
       } else {
         animationRef.current = null;
@@ -283,33 +317,6 @@ export default function KnowledgeGraphPage() {
     visibleGraph.edges,
   ]);
 
-  useEffect(() => {
-    if (!useHighDensityRenderer) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const frame = requestAnimationFrame(() => {
-      drawHighDensityGraph({
-        canvas,
-        nodes: visibleGraph.nodes,
-        edges: visibleGraph.edges,
-        positions,
-        transform,
-        selectedNodeId,
-        labelNodeIds: persistentLabelNodeIds,
-      });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [
-    persistentLabelNodeIds,
-    positions,
-    selectedNodeId,
-    transform,
-    useHighDensityRenderer,
-    visibleGraph.edges,
-    visibleGraph.nodes,
-  ]);
-
   const zoomAt = useCallback((factor: number, center = graphCenter()) => {
     setTransform((current) => {
       const nextScale = clamp(current.scale * factor, MIN_ZOOM, MAX_ZOOM);
@@ -326,16 +333,13 @@ export default function KnowledgeGraphPage() {
   const handleWheel = useCallback(
     (event: WheelEvent<Element>) => {
       event.preventDefault();
-      const point = clientPointToGraphPoint(
-        useHighDensityRenderer ? canvasRef.current : svgRef.current,
-        {
-          clientX: event.clientX,
-          clientY: event.clientY,
-        },
-      );
+      const point = clientPointToGraphPoint(svgRef.current, {
+        clientX: event.clientX,
+        clientY: event.clientY,
+      });
       zoomAt(event.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP, point);
     },
-    [useHighDensityRenderer, zoomAt],
+    [zoomAt],
   );
 
   const handlePointerDown = useCallback(
@@ -372,6 +376,7 @@ export default function KnowledgeGraphPage() {
               vy: 0,
             });
           }
+          positionsRef.current = next;
           return next;
         });
         return;
@@ -397,68 +402,6 @@ export default function KnowledgeGraphPage() {
     setNodeDragState(null);
     simulationTickRef.current = 0;
   }, []);
-
-  const handleCanvasPointerDown = useCallback(
-    (event: PointerEvent<HTMLCanvasElement>) => {
-      event.currentTarget.setPointerCapture(event.pointerId);
-      setDragState({
-        clientX: event.clientX,
-        clientY: event.clientY,
-        transform,
-      });
-    },
-    [transform],
-  );
-
-  const handleCanvasPointerMove = useCallback(
-    (event: PointerEvent<HTMLCanvasElement>) => {
-      if (!dragState) return;
-      const rect = canvasRef.current?.getBoundingClientRect();
-      const unitX = rect?.width ? GRAPH_WIDTH / rect.width : 1;
-      const unitY = rect?.height ? GRAPH_HEIGHT / rect.height : 1;
-      setTransform({
-        ...dragState.transform,
-        x: dragState.transform.x + (event.clientX - dragState.clientX) * unitX,
-        y: dragState.transform.y + (event.clientY - dragState.clientY) * unitY,
-      });
-    },
-    [dragState],
-  );
-
-  const nodeAtCanvasEvent = useCallback(
-    (event: { clientX: number; clientY: number }) =>
-      findNodeAtPoint({
-        nodes: visibleGraph.nodes,
-        positions,
-        point: clientPointToWorldPoint(canvasRef.current, transform, event),
-        scale: transform.scale,
-      }),
-    [positions, transform, visibleGraph.nodes],
-  );
-
-  const handleCanvasPointerEnd = useCallback(
-    (event: PointerEvent<HTMLCanvasElement>) => {
-      const wasClick =
-        dragState &&
-        Math.hypot(
-          event.clientX - dragState.clientX,
-          event.clientY - dragState.clientY,
-        ) < 5;
-      setDragState(null);
-      if (wasClick) {
-        setSelectedNodeId(nodeAtCanvasEvent(event)?.id ?? null);
-      }
-    },
-    [dragState, nodeAtCanvasEvent],
-  );
-
-  const handleCanvasDoubleClick = useCallback(
-    (event: MouseEvent<HTMLCanvasElement>) => {
-      const node = nodeAtCanvasEvent(event);
-      if (node) focusNode(node);
-    },
-    [focusNode, nodeAtCanvasEvent],
-  );
 
   const handleNodePointerDown = useCallback(
     (event: PointerEvent<SVGGElement>, nodeId: string) => {
@@ -614,7 +557,11 @@ export default function KnowledgeGraphPage() {
                     <ActionIcon
                       variant="default"
                       aria-label={t("Zoom out")}
-                      onClick={() => zoomAt(1 / ZOOM_STEP)}
+                      onClick={() =>
+                        useHighDensityRenderer
+                          ? webglRef.current?.zoomOut()
+                          : zoomAt(1 / ZOOM_STEP)
+                      }
                     >
                       <IconZoomOut size={16} />
                     </ActionIcon>
@@ -623,7 +570,11 @@ export default function KnowledgeGraphPage() {
                     <ActionIcon
                       variant="default"
                       aria-label={t("Zoom in")}
-                      onClick={() => zoomAt(ZOOM_STEP)}
+                      onClick={() =>
+                        useHighDensityRenderer
+                          ? webglRef.current?.zoomIn()
+                          : zoomAt(ZOOM_STEP)
+                      }
                     >
                       <IconZoomIn size={16} />
                     </ActionIcon>
@@ -657,20 +608,13 @@ export default function KnowledgeGraphPage() {
                   </span>
                 </div>
                 {useHighDensityRenderer ? (
-                  <canvas
-                    ref={canvasRef}
-                    className={classes.graphCanvas}
-                    width={GRAPH_WIDTH}
-                    height={GRAPH_HEIGHT}
-                    data-testid="knowledge-graph-canvas"
-                    role="img"
-                    aria-label={t("Relationship graph")}
-                    onWheel={handleWheel}
-                    onPointerDown={handleCanvasPointerDown}
-                    onPointerMove={handleCanvasPointerMove}
-                    onPointerUp={handleCanvasPointerEnd}
-                    onPointerCancel={() => setDragState(null)}
-                    onDoubleClick={handleCanvasDoubleClick}
+                  <KnowledgeGraphWebgl
+                    ref={webglRef}
+                    nodes={visibleGraph.nodes}
+                    edges={visibleGraph.edges}
+                    selectedNodeId={selectedNodeId}
+                    onSelectNode={setSelectedNodeId}
+                    onFocusNode={focusNode}
                   />
                 ) : (
                   <svg
@@ -1119,10 +1063,6 @@ function buildInitialGraphLayout(
   edges: KnowledgeGraphEdge[],
   expandedSections = false,
 ): Map<string, GraphPoint> {
-  if (nodes.length > HIGH_DENSITY_NODE_THRESHOLD) {
-    return buildHighDensityLayout(nodes);
-  }
-
   const connected = new Set(edges.flatMap((edge) => [edge.from, edge.to]));
   const pageNodes = nodes.filter((node) => node.kind !== "section");
   const sectionNodes = nodes.filter((node) => node.kind === "section");
@@ -1170,32 +1110,6 @@ function buildInitialGraphLayout(
       y: parentPoint.y + Math.sin(angle) * ring,
     });
   }
-
-  return layout;
-}
-
-function buildHighDensityLayout(
-  nodes: KnowledgeGraphNode[],
-): Map<string, GraphPoint> {
-  const sortedNodes = [...nodes].sort(
-    (left, right) =>
-      left.communityId.localeCompare(right.communityId) ||
-      right.degree - left.degree ||
-      left.title.localeCompare(right.title),
-  );
-  const columns = Math.max(
-    1,
-    Math.ceil(Math.sqrt((sortedNodes.length * GRAPH_WIDTH) / GRAPH_HEIGHT)),
-  );
-  const spacing = 54;
-  const layout = new Map<string, GraphPoint>();
-
-  sortedNodes.forEach((node, index) => {
-    layout.set(node.id, {
-      x: 54 + (index % columns) * spacing,
-      y: 54 + Math.floor(index / columns) * spacing,
-    });
-  });
 
   return layout;
 }
@@ -1314,150 +1228,11 @@ function clonePositions(
   );
 }
 
-function drawHighDensityGraph(input: {
-  canvas: HTMLCanvasElement;
-  nodes: KnowledgeGraphNode[];
-  edges: KnowledgeGraphEdge[];
-  positions: Map<string, SimulatedNode>;
-  transform: GraphTransform;
-  selectedNodeId: string | null;
-  labelNodeIds: Set<string>;
-}) {
-  const context = input.canvas.getContext("2d");
-  if (!context) return;
-
-  context.clearRect(0, 0, GRAPH_WIDTH, GRAPH_HEIGHT);
-  context.save();
-  context.translate(input.transform.x, input.transform.y);
-  context.scale(input.transform.scale, input.transform.scale);
-
-  for (const [type, color] of [
-    ["link", "rgba(148, 163, 184, 0.34)"],
-    ["semantic", "rgba(34, 197, 94, 0.3)"],
-    ["contains", "rgba(139, 92, 246, 0.22)"],
-  ] as const) {
-    context.beginPath();
-    for (const edge of input.edges) {
-      if (edge.type !== type) continue;
-      const from = input.positions.get(edge.from);
-      const to = input.positions.get(edge.to);
-      if (!from || !to) continue;
-      context.moveTo(from.x, from.y);
-      context.lineTo(to.x, to.y);
-    }
-    context.strokeStyle = color;
-    context.lineWidth = 1 / input.transform.scale;
-    context.stroke();
+function simulationIsSettled(positions: Map<string, SimulatedNode>): boolean {
+  for (const node of positions.values()) {
+    if (Math.hypot(node.vx, node.vy) >= 0.05) return false;
   }
-
-  for (const node of input.nodes) {
-    const point = input.positions.get(node.id);
-    if (!point || !isPointVisible(point, input.transform, 40)) continue;
-    const radius = nodeRadius(node);
-    const selected = node.id === input.selectedNodeId;
-
-    context.beginPath();
-    if (node.kind === "section") {
-      const halfSize = SECTION_MARKER_SIZE / 2;
-      context.moveTo(point.x, point.y - halfSize);
-      context.lineTo(point.x + halfSize, point.y);
-      context.lineTo(point.x, point.y + halfSize);
-      context.lineTo(point.x - halfSize, point.y);
-      context.closePath();
-      context.fillStyle = "#f8f7ff";
-      context.strokeStyle = selected ? "#f59f00" : "#8b5cf6";
-      context.lineWidth = (selected ? 3 : 1.5) / input.transform.scale;
-      context.fill();
-      context.stroke();
-    } else {
-      context.arc(point.x, point.y, radius, 0, Math.PI * 2);
-      context.fillStyle = canvasNodeColor(node);
-      context.fill();
-      if (selected) {
-        context.strokeStyle = "#f59f00";
-        context.lineWidth = 3 / input.transform.scale;
-        context.stroke();
-      }
-    }
-
-    if (
-      selected ||
-      (input.transform.scale >= 0.35 && input.labelNodeIds.has(node.id))
-    ) {
-      context.font = "600 13px sans-serif";
-      context.textAlign = "center";
-      context.textBaseline = "top";
-      context.fillStyle = "#343a40";
-      context.fillText(
-        truncateLabel(node.title),
-        point.x,
-        point.y + radius + 8,
-      );
-    }
-  }
-
-  context.restore();
-}
-
-function isPointVisible(
-  point: GraphPoint,
-  transform: GraphTransform,
-  padding: number,
-): boolean {
-  const x = point.x * transform.scale + transform.x;
-  const y = point.y * transform.scale + transform.y;
-  return (
-    x >= -padding &&
-    x <= GRAPH_WIDTH + padding &&
-    y >= -padding &&
-    y <= GRAPH_HEIGHT + padding
-  );
-}
-
-function findNodeAtPoint(input: {
-  nodes: KnowledgeGraphNode[];
-  positions: Map<string, SimulatedNode>;
-  point: GraphPoint;
-  scale: number;
-}): KnowledgeGraphNode | undefined {
-  let closest: KnowledgeGraphNode | undefined;
-  let closestDistance = Number.POSITIVE_INFINITY;
-
-  for (const node of input.nodes) {
-    const position = input.positions.get(node.id);
-    if (!position) continue;
-    const distance = Math.hypot(
-      input.point.x - position.x,
-      input.point.y - position.y,
-    );
-    const hitRadius = Math.max(nodeRadius(node), 9 / input.scale);
-    if (distance <= hitRadius && distance < closestDistance) {
-      closest = node;
-      closestDistance = distance;
-    }
-  }
-
-  return closest;
-}
-
-const CANVAS_COMMUNITY_COLORS = [
-  "#1971c2",
-  "#0ca678",
-  "#7048e8",
-  "#f76707",
-  "#1098ad",
-  "#e64980",
-];
-
-function canvasNodeColor(node: KnowledgeGraphNode): string {
-  const key = node.communityId || node.id;
-  let hash = 0;
-  for (let index = 0; index < key.length; index += 1) {
-    hash = (hash * 31 + key.charCodeAt(index)) | 0;
-  }
-  return CANVAS_COMMUNITY_COLORS[
-    Math.abs(hash) % CANVAS_COMMUNITY_COLORS.length
-  ];
+  return true;
 }
 
 function nodeRadius(node: KnowledgeGraphNode): number {
