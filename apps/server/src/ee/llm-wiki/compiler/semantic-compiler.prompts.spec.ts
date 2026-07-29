@@ -55,6 +55,9 @@ describe('semantic compiler prompts', () => {
     expect(messages.system).toContain('evidenceQuote');
     expect(messages.system).toContain('same language');
     expect(messages.system).toContain('Do not generate overview');
+    expect(messages.system).toContain('at most 8 artifacts total');
+    expect(messages.system).toContain('ceiling, not a target');
+    expect(messages.system).toContain('independent retrieval value');
     expect(messages.prompt).toContain('"sourcePageId":"page-1"');
     expect(messages.prompt).toContain('<stage_1_analysis>');
     expect(messages.prompt).toContain('<source_document>');
