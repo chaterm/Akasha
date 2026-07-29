@@ -273,6 +273,7 @@ export class ConfluenceImportService {
         this.eventEmitter.emit(EventName.PAGE_CREATED, {
           pageIds: Array.from(validPageIds),
           workspaceId: fileTask.workspaceId,
+          skipKnowledgeCompile: true,
         });
       }
 
@@ -725,6 +726,7 @@ export class ConfluenceImportService {
       this.eventEmitter.emit(EventName.PAGE_CREATED, {
         pageIds: Array.from(validPageIds),
         workspaceId: fileTask.workspaceId,
+        skipKnowledgeCompile: true,
       });
     }
   }

@@ -22,6 +22,7 @@ import {
 export class PageEvent {
   pageIds: string[];
   workspaceId: string;
+  skipKnowledgeCompile?: boolean;
 }
 
 @Injectable()
@@ -48,7 +49,9 @@ export class PageListener {
     }
 
     await this.enqueueKnowledgeAccessReindex(workspaceId, pageIds);
-    await this.enqueueKnowledgeCompileForPages(workspaceId, pageIds);
+    if (!event.skipKnowledgeCompile) {
+      await this.enqueueKnowledgeCompileForPages(workspaceId, pageIds);
+    }
   }
 
   @OnEvent(EventName.PAGE_UPDATED)
