@@ -5,7 +5,7 @@ import { KyselyDB } from '@akasha/db/types/kysely.types';
 
 export type KnowledgeQueryAuditMetadata = {
   origin?: 'knowledge_query' | 'ai_qa';
-  answerMode?: 'knowledge' | 'no_match';
+  answerMode?: 'knowledge' | 'no_match' | 'general';
   citationCount?: number;
   retrievedSourceCount?: number;
   spaceIds: string[];

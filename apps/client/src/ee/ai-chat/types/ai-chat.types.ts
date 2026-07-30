@@ -24,7 +24,11 @@ export type AiChatMessage = {
   createdAt: string;
 };
 
-export type AiQaProgressStage = "permissions" | "retrieval" | "generation";
+export type AiQaProgressStage =
+  | "permissions"
+  | "understanding"
+  | "retrieval"
+  | "generation";
 
 export type AiQaCitation = {
   sourcePageId: string;
@@ -78,7 +82,9 @@ export type AiChatStreamEvent =
       retrievalDiagnostics?: AiQaRetrievalDiagnostics;
       retrievalReasons?: string[];
       completenessNotice?: string;
-      answerMode?: "knowledge" | "no_match";
+      answerMode?: "knowledge" | "no_match" | "general";
+      retrievalQuery?: string;
+      canExpandScope?: boolean;
     }
   | { type: "error"; message: string; code?: string; retryable?: boolean };
 

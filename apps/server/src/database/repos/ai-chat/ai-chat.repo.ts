@@ -156,11 +156,12 @@ export class AiChatRepo {
       .where('workspaceId', '=', input.workspaceId)
       .where('chatId', '=', input.chatId)
       .where('deletedAt', 'is', null)
-      .orderBy('createdAt', 'asc')
+      .orderBy('createdAt', 'desc')
+      .orderBy('id', 'desc')
       .limit(input.limit ?? 100)
       .execute();
 
-    return rows.map(stripTsv);
+    return rows.reverse().map(stripTsv);
   }
 }
 

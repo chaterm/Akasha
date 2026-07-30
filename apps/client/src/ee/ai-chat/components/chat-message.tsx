@@ -195,14 +195,18 @@ export default function ChatMessage({
             <span className={classes.streamingCursor} />
           </>
         )}
-        {!isStreaming && !isUser && qaMetadata.hasQaMetadata && (
-          <KnowledgeEvidence
-            citations={qaMetadata.citations}
-            citationEvidence={qaMetadata.citationEvidence}
-            diagnostics={qaMetadata.diagnostics}
-            answerMode={qaMetadata.answerMode}
-          />
-        )}
+        {!isStreaming &&
+          !isUser &&
+          qaMetadata.hasQaMetadata &&
+          qaMetadata.answerMode !== "general" && (
+            <KnowledgeEvidence
+              citations={qaMetadata.citations}
+              citationEvidence={qaMetadata.citationEvidence}
+              diagnostics={qaMetadata.diagnostics}
+              answerMode={qaMetadata.answerMode}
+              retrievalQuery={qaMetadata.retrievalQuery}
+            />
+          )}
       </div>
     </div>
   );
@@ -213,11 +217,13 @@ function KnowledgeEvidence({
   citationEvidence,
   diagnostics,
   answerMode,
+  retrievalQuery,
 }: {
   citations: AiQaCitation[];
   citationEvidence: AiQaCitationEvidence[];
   diagnostics?: AiQaRetrievalDiagnostics;
-  answerMode?: "knowledge" | "no_match";
+  answerMode?: "knowledge" | "no_match" | "general";
+  retrievalQuery?: string;
 }) {
   const { t } = useTranslation();
   const evidenceBySourceId = new Map(
@@ -227,92 +233,104 @@ function KnowledgeEvidence({
   const hasCitations = citations.length > 0;
 
   return (
-    <details className={classes.evidenceCard} data-answer-mode={answerMode}>
-      <summary className={classes.evidenceHeader}>
-        <IconDatabaseSearch size={16} />
-        <span>
-          {isNoMatch
-            ? t("No matching knowledge found")
-            : hasCitations
-              ? t("Answer sources")
-              : t("No verifiable citation was generated")}
-        </span>
-        {hasCitations && (
-          <span className={classes.evidenceCount}>
-            {citations.length === 1
-              ? t("1 verifiable source")
-              : t("{{count}} verifiable sources", {
-                  count: citations.length,
-                })}
+    <>
+      <details className={classes.evidenceCard} data-answer-mode={answerMode}>
+        <summary className={classes.evidenceHeader}>
+          <IconDatabaseSearch size={16} />
+          <span>
+            {isNoMatch
+              ? t("No matching knowledge found")
+              : hasCitations
+                ? t("Answer sources")
+                : t("No verifiable citation was generated")}
           </span>
-        )}
-        <IconChevronRight className={classes.evidenceChevron} size={15} />
-      </summary>
-
-      {hasCitations && (
-        <div className={classes.citationSources}>
-          {citations.map((source) => {
-            const evidence = evidenceBySourceId.get(source.sourcePageId);
-            return (
-              <div key={source.sourcePageId} className={classes.citationSource}>
-                <a
-                  href={source.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={classes.citationSourceLink}
-                >
-                  <span>{source.title}</span>
-                  <IconExternalLink size={13} />
-                </a>
-                {evidence?.excerpts.map((excerpt) => (
-                  <blockquote
-                    key={`${excerpt.quoteHash}:${excerpt.sourceRange.startOffset}:${excerpt.sourceRange.endOffset}`}
-                    className={classes.citationExcerpt}
-                  >
-                    {excerpt.text}
-                  </blockquote>
-                ))}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {diagnostics && (
-        <details className={classes.retrievalDetails}>
-          <summary>{t("Retrieval details")}</summary>
-          <dl className={classes.retrievalDiagnostics}>
-            <div>
-              <dt>{t("Candidate sources")}</dt>
-              <dd>{diagnostics.candidateSourceCount}</dd>
-            </div>
-            <div>
-              <dt>{t("Knowledge chunks used")}</dt>
-              <dd>{diagnostics.authorizedChunkCount}</dd>
-            </div>
-            <div>
-              <dt>{t("Verifiable citations")}</dt>
-              <dd>{citations.length}</dd>
-            </div>
-            <div>
-              <dt>{t("Retrieval mode")}</dt>
-              <dd>
-                {diagnostics.queryEmbeddingAvailable
-                  ? t("Semantic + keyword retrieval")
-                  : t("Keyword retrieval fallback")}
-              </dd>
-            </div>
-          </dl>
-          {diagnostics.queryEmbeddingAvailable === false && (
-            <div className={classes.retrievalWarning}>
-              {t(
-                "Semantic retrieval was unavailable; keyword retrieval was used.",
-              )}
-            </div>
+          {hasCitations && (
+            <span className={classes.evidenceCount}>
+              {citations.length === 1
+                ? t("1 verifiable source")
+                : t("{{count}} verifiable sources", {
+                    count: citations.length,
+                  })}
+            </span>
           )}
-        </details>
-      )}
-    </details>
+          <IconChevronRight className={classes.evidenceChevron} size={15} />
+        </summary>
+
+        {retrievalQuery && (
+          <details className={classes.retrievalDetails}>
+            <summary>{t("Contextual retrieval query")}</summary>
+            <p className={classes.retrievalQueryText}>{retrievalQuery}</p>
+          </details>
+        )}
+
+        {hasCitations && (
+          <div className={classes.citationSources}>
+            {citations.map((source) => {
+              const evidence = evidenceBySourceId.get(source.sourcePageId);
+              return (
+                <div
+                  key={source.sourcePageId}
+                  className={classes.citationSource}
+                >
+                  <a
+                    href={source.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={classes.citationSourceLink}
+                  >
+                    <span>{source.title}</span>
+                    <IconExternalLink size={13} />
+                  </a>
+                  {evidence?.excerpts.map((excerpt) => (
+                    <blockquote
+                      key={`${excerpt.quoteHash}:${excerpt.sourceRange.startOffset}:${excerpt.sourceRange.endOffset}`}
+                      className={classes.citationExcerpt}
+                    >
+                      {excerpt.text}
+                    </blockquote>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {diagnostics && (
+          <details className={classes.retrievalDetails}>
+            <summary>{t("Retrieval details")}</summary>
+            <dl className={classes.retrievalDiagnostics}>
+              <div>
+                <dt>{t("Candidate sources")}</dt>
+                <dd>{diagnostics.candidateSourceCount}</dd>
+              </div>
+              <div>
+                <dt>{t("Knowledge chunks used")}</dt>
+                <dd>{diagnostics.authorizedChunkCount}</dd>
+              </div>
+              <div>
+                <dt>{t("Verifiable citations")}</dt>
+                <dd>{citations.length}</dd>
+              </div>
+              <div>
+                <dt>{t("Retrieval mode")}</dt>
+                <dd>
+                  {diagnostics.queryEmbeddingAvailable
+                    ? t("Semantic + keyword retrieval")
+                    : t("Keyword retrieval fallback")}
+                </dd>
+              </div>
+            </dl>
+            {diagnostics.queryEmbeddingAvailable === false && (
+              <div className={classes.retrievalWarning}>
+                {t(
+                  "Semantic retrieval was unavailable; keyword retrieval was used.",
+                )}
+              </div>
+            )}
+          </details>
+        )}
+      </details>
+    </>
   );
 }
 
@@ -322,9 +340,16 @@ function readQaMetadata(metadata: Record<string, unknown> | null) {
   const diagnostics = isRecord(metadata?.retrievalDiagnostics)
     ? (metadata?.retrievalDiagnostics as AiQaRetrievalDiagnostics)
     : undefined;
-  const answerMode: "knowledge" | "no_match" | undefined =
-    metadata?.answerMode === "knowledge" || metadata?.answerMode === "no_match"
+  const answerMode: "knowledge" | "no_match" | "general" | undefined =
+    metadata?.answerMode === "knowledge" ||
+    metadata?.answerMode === "no_match" ||
+    metadata?.answerMode === "general"
       ? metadata.answerMode
+      : undefined;
+  const retrievalQuery =
+    typeof metadata?.retrievalQuery === "string" &&
+    metadata.retrievalQuery.trim()
+      ? metadata.retrievalQuery.trim()
       : undefined;
 
   return {
@@ -332,8 +357,13 @@ function readQaMetadata(metadata: Record<string, unknown> | null) {
     citationEvidence,
     diagnostics,
     answerMode,
+    retrievalQuery,
     hasQaMetadata: Boolean(
-      answerMode || diagnostics || citations.length || citationEvidence.length,
+      answerMode ||
+      retrievalQuery ||
+      diagnostics ||
+      citations.length ||
+      citationEvidence.length,
     ),
   };
 }
@@ -409,6 +439,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function progressLabel(stage?: AiQaProgressStage | null): string {
   if (stage === "permissions") return "Checking knowledge access...";
+  if (stage === "understanding") return "Understanding the conversation...";
   if (stage === "retrieval") return "Searching the knowledge base...";
   if (stage === "generation") return "Generating a grounded answer...";
   return "Preparing knowledge answer...";

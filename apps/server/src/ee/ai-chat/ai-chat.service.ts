@@ -18,7 +18,10 @@ import { createHash } from 'crypto';
 
 export type AiChatStreamEvent =
   | { type: 'chat_created'; chatId: string }
-  | { type: 'progress'; stage: 'permissions' | 'retrieval' | 'generation' }
+  | {
+      type: 'progress';
+      stage: 'permissions' | 'understanding' | 'retrieval' | 'generation';
+    }
   | { type: 'content'; text: string };
 
 export type SendAiChatMessageInput = {
@@ -30,6 +33,7 @@ export type SendAiChatMessageInput = {
   contextPageId?: string;
   attachmentIds?: string[];
   spaceIds?: string[];
+  responseMode?: 'knowledge' | 'general';
   onEvent?: (event: AiChatStreamEvent) => void;
 };
 
@@ -43,7 +47,9 @@ export type SendAiChatMessageResult = {
   retrievalDiagnostics?: unknown;
   retrievalReasons?: string[];
   completenessNotice?: string;
-  answerMode?: 'knowledge' | 'no_match';
+  answerMode?: 'knowledge' | 'no_match' | 'general';
+  retrievalQuery?: string;
+  canExpandScope?: boolean;
 };
 
 @Injectable()
@@ -160,6 +166,9 @@ export class AiChatService {
       user: input.user,
     });
     const spaceIds = resolveRequestedSpaceIds(input.spaceIds, readableSpaceIds);
+    const canExpandScope =
+      Boolean(input.spaceIds?.length) &&
+      spaceIds.length < readableSpaceIds.length;
 
     await this.aiChatRepo.addMessage({
       workspaceId: input.workspace.id,
@@ -171,7 +180,6 @@ export class AiChatService {
       metadata: buildUserMetadata(input, spaceIds) as never,
     });
 
-    input.onEvent?.({ type: 'progress', stage: 'retrieval' });
     const answer = await this.knowledgeChat.chat({
       workspaceId: input.workspace.id,
       userId: input.user.id,
@@ -179,12 +187,13 @@ export class AiChatService {
       spaceIds,
       chatContext: previousMessages
         .filter((message) => message.content)
-        .slice(-8)
+        .slice(-15)
         .map((message) => `${message.role}: ${message.content}`),
       workspace: input.workspace,
       mentionedPageIds: input.mentionedPageIds,
       contextPageId: input.contextPageId,
       attachmentIds: input.attachmentIds,
+      responseMode: input.responseMode,
       onToken: (text) => input.onEvent?.({ type: 'content', text }),
       onStage: (stage) => input.onEvent?.({ type: 'progress', stage }),
     });
@@ -204,6 +213,10 @@ export class AiChatService {
         retrievalReasons: answer.retrievalReasons,
         completenessNotice: answer.completenessNotice,
         answerMode: answer.answerMode,
+        ...(answer.retrievalQuery
+          ? { retrievalQuery: answer.retrievalQuery }
+          : {}),
+        ...(answer.answerMode === 'no_match' ? { canExpandScope } : {}),
         spaceIds,
       } as never,
     });
@@ -234,6 +247,10 @@ export class AiChatService {
       retrievalReasons: answer.retrievalReasons,
       completenessNotice: answer.completenessNotice,
       answerMode: answer.answerMode,
+      ...(answer.retrievalQuery
+        ? { retrievalQuery: answer.retrievalQuery }
+        : {}),
+      ...(answer.answerMode === 'no_match' ? { canExpandScope } : {}),
     };
   }
 
@@ -291,7 +308,7 @@ export class AiChatService {
     userId: string;
     query: string;
     spaceIds: string[];
-    answerMode: 'knowledge' | 'no_match';
+    answerMode: 'knowledge' | 'no_match' | 'general';
     citationCount: number;
     retrievedSourceCount: number;
     snippets: Array<{
@@ -304,7 +321,7 @@ export class AiChatService {
       }>;
     }>;
     trustedCitationIds: string[];
-    retrievalDiagnostics: {
+    retrievalDiagnostics?: {
       mode: string;
       queryEmbeddingAvailable: boolean;
       candidateSourceCount: number;
@@ -395,6 +412,9 @@ function buildUserMetadata(input: SendAiChatMessageInput, spaceIds: string[]) {
   }
   if (input.attachmentIds?.length) {
     metadata.attachmentIds = input.attachmentIds;
+  }
+  if (input.responseMode) {
+    metadata.responseMode = input.responseMode;
   }
 
   return metadata;

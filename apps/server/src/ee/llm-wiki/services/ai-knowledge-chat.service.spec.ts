@@ -10,7 +10,7 @@ import {
 } from './ai-knowledge-chat.service';
 
 describe('AiKnowledgeChatService', () => {
-  it('retrieves, packs authorized chunk context, and returns answer without raw capsules', async () => {
+  it('falls back to verified source evidence when the model omits citation markers', async () => {
     const retrieval = {
       retrieve: jest.fn().mockResolvedValue({
         mode: 'high_completeness',
@@ -79,9 +79,7 @@ describe('AiKnowledgeChatService', () => {
       }),
     };
     const answerProvider = {
-      answer: jest
-        .fn()
-        .mockResolvedValue('Kafka is used for async events. [[cite:page-1]]'),
+      answer: jest.fn().mockResolvedValue('Kafka is used for async events.'),
     };
     const citationResolver = {
       resolveForCapsules: jest.fn(),
@@ -238,29 +236,160 @@ describe('AiKnowledgeChatService', () => {
     });
   });
 
-  it('returns a deterministic no-match answer without calling the model', async () => {
-    const answer = jest.fn().mockResolvedValue('must not be used');
+  it('automatically answers with general knowledge when retrieval has no verified evidence', async () => {
+    const answer = jest.fn().mockResolvedValue('Kafka is an event platform.');
+    const onToken = jest.fn();
     const service = createService({
       answerProvider: { answer },
     });
 
-    await expect(
-      service.chat({
-        workspaceId: 'workspace-1',
-        userId: 'user-1',
-        query: 'Kafka?',
-        spaceIds: ['space-1'],
-        workspace: workspace({ aiChat: true }),
-      }),
-    ).resolves.toMatchObject({
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: 'Kafka?',
+      spaceIds: ['space-1'],
+      workspace: workspace({ aiChat: true }),
+      onToken,
+    });
+
+    expect(answer).toHaveBeenCalledWith({
+      query: 'Kafka?',
+      context: '',
+      chatContext: undefined,
+      mode: 'general',
+    });
+    expect(result).toMatchObject({
       answer:
-        "I couldn't find enough relevant information in the selected knowledge base. Try rephrasing the question or selecting more knowledge spaces.",
-      answerMode: 'no_match',
+        '> This answer uses general model knowledge and does not cite the workspace knowledge base.\n\nKafka is an event platform.',
+      answerMode: 'general',
       citations: [],
       citationEvidence: [],
       retrievedSources: [],
     });
-    expect(answer).not.toHaveBeenCalled();
+    expect(onToken.mock.calls.map(([text]) => text).join('')).toBe(
+      result.answer,
+    );
+  });
+
+  it('answers from general model knowledge only after an explicit request', async () => {
+    const retrieval = { retrieve: jest.fn() };
+    const answer = jest.fn().mockResolvedValue('Shanghai summers are hot.');
+    const onToken = jest.fn();
+    const service = createService({
+      retrieval,
+      answerProvider: { answer },
+    });
+
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: 'What is Shanghai weather like in July?',
+      spaceIds: ['space-1'],
+      chatContext: ['user: What is the weather today?'],
+      responseMode: 'general',
+      onToken,
+    });
+
+    expect(retrieval.retrieve).not.toHaveBeenCalled();
+    expect(answer).toHaveBeenCalledWith({
+      query: 'What is Shanghai weather like in July?',
+      context: '',
+      chatContext: ['user: What is the weather today?'],
+      mode: 'general',
+    });
+    expect(result).toMatchObject({
+      answer:
+        '> This answer uses general model knowledge and does not cite the workspace knowledge base.\n\nShanghai summers are hot.',
+      answerMode: 'general',
+      citations: [],
+      citationEvidence: [],
+      retrievedSources: [],
+      snippets: [],
+    });
+    expect(onToken.mock.calls.map(([text]) => text).join('')).toBe(
+      result.answer,
+    );
+  });
+
+  it('rewrites a follow-up question with conversation history before retrieval', async () => {
+    const rewriteQuery = jest.fn().mockResolvedValue('Codex 的套餐多少钱');
+    const onStage = jest.fn();
+    const retrieval = {
+      retrieve: jest.fn().mockResolvedValue({
+        mode: 'high_completeness',
+        chunks: [],
+        capsules: [],
+        completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+      }),
+    };
+    const service = createService({
+      retrieval,
+      answerProvider: { rewriteQuery } as never,
+    });
+
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: '套餐多少钱',
+      spaceIds: ['space-1'],
+      chatContext: [
+        'user: Codex 开通目前可以看到哪些人已经开通了',
+        'assistant: 可以在 Codex 管理页面查看。',
+      ],
+      onStage,
+    });
+
+    expect(rewriteQuery).toHaveBeenCalledWith({
+      query: '套餐多少钱',
+      chatContext: [
+        'user: Codex 开通目前可以看到哪些人已经开通了',
+        'assistant: 可以在 Codex 管理页面查看。',
+      ],
+    });
+    expect(retrieval.retrieve).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: 'Codex 的套餐多少钱',
+      spaceIds: ['space-1'],
+    });
+    expect(onStage.mock.calls.map(([stage]) => stage)).toEqual([
+      'understanding',
+      'retrieval',
+      'generation',
+    ]);
+    expect(result.retrievalQuery).toBe('Codex 的套餐多少钱');
+  });
+
+  it('uses the original question when contextual query rewriting fails', async () => {
+    const retrieval = {
+      retrieve: jest.fn().mockResolvedValue({
+        mode: 'high_completeness',
+        chunks: [],
+        capsules: [],
+        completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+      }),
+    };
+    const service = createService({
+      retrieval,
+      answerProvider: {
+        rewriteQuery: jest.fn().mockRejectedValue(new Error('model timeout')),
+      } as never,
+    });
+
+    await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: '套餐多少钱',
+      spaceIds: ['space-1'],
+      chatContext: ['user: Codex 开通'],
+    });
+
+    expect(retrieval.retrieve).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: '套餐多少钱',
+      spaceIds: ['space-1'],
+    });
   });
 
   it('adds verified raw source evidence when the compiled summary omitted the requested URL', async () => {
@@ -530,7 +659,7 @@ describe('AiKnowledgeChatService', () => {
     );
   });
 
-  it('does not promote a cited retrieval result without verified source excerpts to trusted evidence', async () => {
+  it('uses general knowledge without promoting summary-only retrieval as trusted evidence', async () => {
     const citation = {
       sourcePageId: 'page-summary-only',
       title: 'Compiled summary only',
@@ -602,12 +731,17 @@ describe('AiKnowledgeChatService', () => {
     });
 
     expect(result).toMatchObject({
-      answerMode: 'no_match',
+      answerMode: 'general',
       citations: [],
       citationEvidence: [],
       retrievedSources: [],
     });
-    expect(answer).not.toHaveBeenCalled();
+    expect(answer).toHaveBeenCalledWith({
+      query: 'What is the exact fact?',
+      context: '',
+      chatContext: undefined,
+      mode: 'general',
+    });
   });
 
   it('returns a visible diagnostic answer when the configured model produces no text', async () => {
@@ -678,79 +812,6 @@ describe('AiKnowledgeChatService', () => {
         'Relevant knowledge was retrieved, but the answer model did not produce a response. Try again later or ask an administrator to check the AI model configuration.',
       answerMode: 'knowledge',
     });
-  });
-
-  it('keeps verified knowledge evidence within the context budget', async () => {
-    const answer = jest.fn().mockResolvedValue('Bounded answer.');
-    const oversizedEvidence = '证据'.repeat(20_000);
-    const sourceWindow = {
-      sourcePageId: 'page-large',
-      title: 'Large source',
-      url: '/p/large-source',
-      text: oversizedEvidence,
-      sourceRange: { startOffset: 0, endOffset: oversizedEvidence.length },
-      quoteHash: 'sha256:large-source',
-    };
-    const service = createService({
-      retrieval: {
-        retrieve: jest.fn().mockResolvedValue({
-          mode: 'high_completeness',
-          chunks: [chunk('chunk-large', 'kp-large', 'Compiled summary.')],
-          capsules: [],
-          diagnostics: {},
-        }),
-      },
-      citationResolver: {
-        resolveForChunks: jest.fn().mockResolvedValue([]),
-      },
-      contextPack: {
-        buildContextPack: jest.fn().mockReturnValue({
-          context: '# Large source\nCompiled summary.',
-          citations: [
-            {
-              sourcePageId: 'page-large',
-              title: 'Large source',
-              url: '/p/large-source',
-            },
-          ],
-          primary: [
-            {
-              id: 'chunk-large',
-              kind: 'chunk',
-              title: 'Large source',
-              text: 'Compiled summary.',
-              citationSourcePageIds: ['page-large'],
-              retrievalReasons: ['semantic'],
-              sourceWindows: [sourceWindow],
-            },
-          ],
-          warnings: [],
-          retrievalReasons: ['semantic'],
-          budget: {
-            maxContextLength: 12_000,
-            usedContextLength: 32,
-            remainingContextLength: 11_968,
-            includedItemCount: 1,
-            omittedItemCount: 0,
-            responseReserve: 0,
-            perItemMaxLength: 12_000,
-          },
-          completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
-        }),
-      },
-      answerProvider: { answer },
-    });
-
-    await service.chat({
-      workspaceId: 'workspace-1',
-      userId: 'user-1',
-      query: '总结证据',
-      spaceIds: ['space-1'],
-    });
-
-    const providerInput = answer.mock.calls[0][0];
-    expect(providerInput.context.length).toBeLessThanOrEqual(12_000);
-    expect(providerInput.context).toContain('[[cite:page-large]]');
   });
 
   it('enables chat when workspace ai.chat is enabled', () => {

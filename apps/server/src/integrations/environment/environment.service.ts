@@ -2,6 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import ms, { StringValue } from 'ms';
 
+const DEFAULT_AI_CHAT_MAX_INPUT_CHARS = 700_000;
+const MIN_AI_CHAT_MAX_INPUT_CHARS = 4_096;
+
 @Injectable()
 export class EnvironmentService {
   constructor(private configService: ConfigService) {}
@@ -295,6 +298,19 @@ export class EnvironmentService {
       this.configService.get<string>('AI_CHAT_MODEL') ||
       this.configService.get<string>('AI_COMPLETION_MODEL')
     );
+  }
+
+  getAiChatMaxInputChars(): number {
+    const configured = Number(
+      this.configService.get<string | number>(
+        'AI_CHAT_MAX_INPUT_CHARS',
+        DEFAULT_AI_CHAT_MAX_INPUT_CHARS,
+      ),
+    );
+    return Number.isFinite(configured) &&
+      configured >= MIN_AI_CHAT_MAX_INPUT_CHARS
+      ? Math.floor(configured)
+      : DEFAULT_AI_CHAT_MAX_INPUT_CHARS;
   }
 
   getAiVisionModel(): string {

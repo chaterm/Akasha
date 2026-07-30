@@ -427,6 +427,13 @@
   user-select: none;
 }
 
+.retrievalQueryText {
+  margin: 7px 0 0;
+  color: var(--mantine-color-text);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
 .retrievalDiagnostics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

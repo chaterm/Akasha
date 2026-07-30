@@ -71,6 +71,7 @@ describe('AiChatService', () => {
         retrievalReasons: ['lexical'],
         completenessNotice: 'notice',
         retrievalDiagnostics: diagnostics(),
+        retrievalQuery: 'rewritten hello',
       }),
     };
     const queryAuditRepo = {
@@ -118,6 +119,7 @@ describe('AiChatService', () => {
       retrievalReasons: ['lexical'],
       completenessNotice: 'notice',
       answerMode: 'knowledge',
+      retrievalQuery: 'rewritten hello',
     });
 
     expect(repo.createChat).toHaveBeenCalledWith({
@@ -180,6 +182,7 @@ describe('AiChatService', () => {
         retrievalReasons: ['lexical'],
         completenessNotice: 'notice',
         answerMode: 'knowledge',
+        retrievalQuery: 'rewritten hello',
         spaceIds: ['space-2'],
       },
     });
@@ -213,6 +216,176 @@ describe('AiChatService', () => {
       }),
     });
     expect(spaceMemberRepo.getUserSpaceIds).not.toHaveBeenCalled();
+  });
+
+  it('passes the latest 15 non-empty messages as multi-turn chat context', async () => {
+    const previousMessages = Array.from({ length: 18 }, (_, index) =>
+      message(
+        `previous-${index + 1}`,
+        index % 2 === 0 ? 'user' : 'assistant',
+        `turn-${index + 1}`,
+      ),
+    );
+    const repo = {
+      findChatByIdForUser: jest.fn().mockResolvedValue(chat('chat-1')),
+      findMessages: jest.fn().mockResolvedValue(previousMessages),
+      addMessage: jest
+        .fn()
+        .mockResolvedValueOnce(message('message-user-1', 'user', 'follow-up'))
+        .mockResolvedValueOnce(
+          message('message-assistant-1', 'assistant', 'answer'),
+        ),
+    };
+    const spaceRepo = {
+      getSpacesInWorkspace: jest.fn().mockResolvedValue({
+        items: [{ id: 'space-1' }],
+      }),
+    };
+    const knowledgeChat = {
+      chat: jest.fn().mockResolvedValue({
+        answer: 'answer',
+        answerMode: 'knowledge',
+        citations: [],
+        citationEvidence: [],
+        retrievedSources: [],
+        snippets: [],
+        retrievalReasons: [],
+        retrievalDiagnostics: undefined,
+      }),
+    };
+    const service = new AiChatService(
+      repo as unknown as AiChatRepo,
+      spaceRepo as unknown as SpaceRepo,
+      {} as SpaceMemberRepo,
+      knowledgeChat as unknown as AiKnowledgeChatService,
+      {} as KnowledgeQueryAuditRepo,
+    );
+
+    await service.sendMessage({
+      workspace: workspace() as never,
+      user: user('owner') as never,
+      chatId: 'chat-1',
+      content: 'follow-up',
+    });
+
+    expect(repo.findMessages).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      chatId: 'chat-1',
+      limit: 20,
+    });
+    expect(knowledgeChat.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatContext: previousMessages
+          .slice(-15)
+          .map((item) => `${item.role}: ${item.content}`),
+      }),
+    );
+  });
+
+  it('marks a scoped no-match as eligible for an all-space retry', async () => {
+    const repo = {
+      createChat: jest.fn().mockResolvedValue(chat('chat-1')),
+      addMessage: jest
+        .fn()
+        .mockResolvedValueOnce(message('message-user-1', 'user', 'weather'))
+        .mockResolvedValueOnce(
+          message('message-assistant-1', 'assistant', 'No knowledge'),
+        ),
+    };
+    const spaceRepo = {
+      getSpacesInWorkspace: jest.fn().mockResolvedValue({
+        items: [{ id: 'space-1' }, { id: 'space-2' }],
+      }),
+    };
+    const knowledgeChat = {
+      chat: jest.fn().mockResolvedValue({
+        answer: 'No knowledge',
+        answerMode: 'no_match',
+        citations: [],
+        citationEvidence: [],
+        retrievedSources: [],
+        snippets: [],
+        retrievalReasons: [],
+        retrievalDiagnostics: diagnostics(),
+      }),
+    };
+    const service = new AiChatService(
+      repo as unknown as AiChatRepo,
+      spaceRepo as unknown as SpaceRepo,
+      {} as SpaceMemberRepo,
+      knowledgeChat as unknown as AiKnowledgeChatService,
+      { recordQuery: jest.fn() } as unknown as KnowledgeQueryAuditRepo,
+    );
+
+    const result = await service.sendMessage({
+      workspace: workspace() as never,
+      user: user('owner') as never,
+      content: 'weather',
+      spaceIds: ['space-1'],
+    });
+
+    expect(result.canExpandScope).toBe(true);
+    expect(repo.addMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        metadata: expect.objectContaining({ canExpandScope: true }),
+      }),
+    );
+  });
+
+  it('passes an explicit general-answer mode without marking scope expansion', async () => {
+    const repo = {
+      createChat: jest.fn().mockResolvedValue(chat('chat-1')),
+      addMessage: jest
+        .fn()
+        .mockResolvedValueOnce(message('message-user-1', 'user', 'weather'))
+        .mockResolvedValueOnce(
+          message('message-assistant-1', 'assistant', 'General answer'),
+        ),
+    };
+    const spaceRepo = {
+      getSpacesInWorkspace: jest.fn().mockResolvedValue({
+        items: [{ id: 'space-1' }],
+      }),
+    };
+    const knowledgeChat = {
+      chat: jest.fn().mockResolvedValue({
+        answer: 'General answer',
+        answerMode: 'general',
+        citations: [],
+        citationEvidence: [],
+        retrievedSources: [],
+        snippets: [],
+        retrievalReasons: [],
+        retrievalDiagnostics: undefined,
+      }),
+    };
+    const service = new AiChatService(
+      repo as unknown as AiChatRepo,
+      spaceRepo as unknown as SpaceRepo,
+      {} as SpaceMemberRepo,
+      knowledgeChat as unknown as AiKnowledgeChatService,
+      {} as KnowledgeQueryAuditRepo,
+    );
+
+    const result = await service.sendMessage({
+      workspace: workspace() as never,
+      user: user('owner') as never,
+      content: 'weather',
+      responseMode: 'general',
+    });
+
+    expect(knowledgeChat.chat).toHaveBeenCalledWith(
+      expect.objectContaining({ responseMode: 'general' }),
+    );
+    expect(result.answerMode).toBe('general');
+    expect(result.canExpandScope).toBeUndefined();
+    expect(repo.addMessage).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        metadata: expect.objectContaining({ responseMode: 'general' }),
+      }),
+    );
   });
 
   it('loads every owner-readable space page when the scope is all spaces', async () => {

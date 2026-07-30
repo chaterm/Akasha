@@ -126,6 +126,7 @@ export class AiChatController {
         contextPageId: dto.contextPageId,
         attachmentIds: dto.attachmentIds,
         spaceIds: dto.spaceIds,
+        responseMode: dto.responseMode,
         onEvent: (event) => {
           if (event.type === 'chat_created') chatCreatedEmitted = true;
           if (event.type === 'content') contentEmitted = true;
@@ -149,6 +150,8 @@ export class AiChatController {
         retrievalReasons: result.retrievalReasons,
         completenessNotice: result.completenessNotice,
         answerMode: result.answerMode,
+        retrievalQuery: result.retrievalQuery,
+        canExpandScope: result.canExpandScope,
       });
       writeRaw(res, 'data: [DONE]\n\n');
     } catch (error) {

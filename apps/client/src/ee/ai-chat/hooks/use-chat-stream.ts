@@ -71,6 +71,7 @@ export function useChatStream(
       attachments: ChatAttachment[] = [],
       contextPageId?: string,
       spaceIds?: string[],
+      responseMode?: "knowledge" | "general",
     ) => {
       if (isStreaming || (!content.trim() && attachments.length === 0)) return;
 
@@ -119,6 +120,7 @@ export function useChatStream(
           ...(contextPageId && { contextPageId }),
           ...(attachmentIds.length && { attachmentIds }),
           ...(spaceIds && { spaceIds }),
+          ...(responseMode && { responseMode }),
         },
         (event: AiChatStreamEvent) => {
           switch (event.type) {
@@ -270,5 +272,9 @@ function buildAssistantMetadata(
     metadata.completenessNotice = event.completenessNotice;
   }
   if (event.answerMode) metadata.answerMode = event.answerMode;
+  if (event.retrievalQuery) metadata.retrievalQuery = event.retrievalQuery;
+  if (typeof event.canExpandScope === "boolean") {
+    metadata.canExpandScope = event.canExpandScope;
+  }
   return Object.keys(metadata).length ? metadata : null;
 }

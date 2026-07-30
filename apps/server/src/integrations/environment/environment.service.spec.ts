@@ -37,6 +37,30 @@ describe('EnvironmentService', () => {
     expect(configured.getKnowledgeCompilerTimeoutMs()).toBe(45_000);
   });
 
+  it('defaults the AI chat input safeguard to 700K characters', () => {
+    expect(service.getAiChatMaxInputChars()).toBe(700_000);
+  });
+
+  it('reads a configured AI chat input safeguard', () => {
+    const configured = new EnvironmentService({
+      get: jest.fn((key: string, fallback: unknown) =>
+        key === 'AI_CHAT_MAX_INPUT_CHARS' ? '500000' : fallback,
+      ),
+    } as unknown as ConfigService);
+
+    expect(configured.getAiChatMaxInputChars()).toBe(500_000);
+  });
+
+  it('rejects an AI chat input safeguard too small for the fixed prompt', () => {
+    const configured = new EnvironmentService({
+      get: jest.fn((key: string, fallback: unknown) =>
+        key === 'AI_CHAT_MAX_INPUT_CHARS' ? '1' : fallback,
+      ),
+    } as unknown as ConfigService);
+
+    expect(configured.getAiChatMaxInputChars()).toBe(700_000);
+  });
+
   it('defaults the image understanding model and timeout', () => {
     expect(service.getAiVisionModel()).toBe('qwen3.7-plus');
     expect(service.getKnowledgeImageTimeoutMs()).toBe(120_000);

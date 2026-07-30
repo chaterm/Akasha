@@ -184,6 +184,95 @@ describe("ChatMessage knowledge evidence", () => {
     expect(screen.getByText("No matching knowledge found")).toBeTruthy();
   });
 
+  it("uses only the inline disclaimer for a general-knowledge answer", () => {
+    render(
+      <MantineProvider>
+        <MemoryRouter>
+          <ChatMessage
+            message={{
+              id: "message-general",
+              chatId: "chat-1",
+              role: "assistant",
+              content:
+                "> 以下回答基于通用模型知识，未引用企业知识库。\n\nGeneral answer",
+              toolCalls: null,
+              metadata: {
+                answerMode: "general",
+              },
+              createdAt: "2026-07-30T00:00:00.000Z",
+            }}
+          />
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+
+    expect(screen.getByText(/以下回答基于通用模型知识/)).toBeTruthy();
+    expect(screen.queryByText("General knowledge answer")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Answer with general knowledge" }),
+    ).toBeNull();
+  });
+
+  it("shows contextual understanding as an observable progress stage", () => {
+    render(
+      <MantineProvider>
+        <MemoryRouter>
+          <ChatMessage
+            message={{
+              id: "message-streaming",
+              chatId: "chat-1",
+              role: "assistant",
+              content: null,
+              toolCalls: null,
+              metadata: null,
+              createdAt: "2026-07-29T00:00:00.000Z",
+            }}
+            isStreaming
+            streamingContent=""
+            progressStage="understanding"
+          />
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+
+    expect(screen.getByText("Understanding the conversation...")).toBeTruthy();
+  });
+
+  it("keeps a contextual retrieval query folded inside answer evidence", () => {
+    render(
+      <MantineProvider>
+        <MemoryRouter>
+          <ChatMessage
+            message={{
+              id: "message-rewritten-query",
+              chatId: "chat-1",
+              role: "assistant",
+              content: "Grounded answer",
+              toolCalls: null,
+              metadata: {
+                answerMode: "knowledge",
+                retrievalQuery: "Codex 的套餐价格是多少？",
+              },
+              createdAt: "2026-07-29T00:00:00.000Z",
+            }}
+          />
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+
+    const evidenceSummary = screen
+      .getByText("No verifiable citation was generated")
+      .closest("summary");
+    fireEvent.click(evidenceSummary!);
+
+    const querySummary = screen
+      .getByText("Contextual retrieval query")
+      .closest("summary");
+    const queryDetails = querySummary?.closest("details");
+    expect(queryDetails?.open).toBe(false);
+    expect(screen.getByText("Codex 的套餐价格是多少？")).toBeTruthy();
+  });
+
   it("keeps internal answer links in the app and preserves their location", () => {
     function LocationProbe() {
       const location = useLocation();
