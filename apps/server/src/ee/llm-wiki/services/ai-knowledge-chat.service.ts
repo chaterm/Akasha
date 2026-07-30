@@ -177,10 +177,7 @@ export class AiKnowledgeChatService {
     const streamed = Boolean(this.answerProvider.stream);
     input.onStage?.('generation');
     if (this.answerProvider.stream) {
-      const streamRouter = new KnowledgeAnswerStreamRouter(
-        input.onToken,
-        buildGeneralKnowledgeDisclaimer(input.query),
-      );
+      const streamRouter = new KnowledgeAnswerStreamRouter(input.onToken);
       for await (const token of this.answerProvider.stream(answerInput)) {
         rawAnswer += token;
         streamRouter.push(token);
@@ -191,31 +188,14 @@ export class AiKnowledgeChatService {
       rawAnswer = await this.answerProvider.answer(answerInput);
       generatedAnswer = parseGeneratedAnswer(rawAnswer);
     }
-    if (generatedAnswer.mode === 'no_match') {
+    if (
+      generatedAnswer.mode === 'no_match' ||
+      generatedAnswer.mode === 'general'
+    ) {
       const generalAnswer = await this.answerFromGeneralKnowledge({
         ...input,
         onStage: undefined,
       });
-      return {
-        ...generalAnswer,
-        ...(contextualRetrievalQuery
-          ? { retrievalQuery: contextualRetrievalQuery }
-          : {}),
-      };
-    }
-    if (generatedAnswer.mode === 'general') {
-      const cleanGeneralAnswer =
-        stripCitationMarkers(generatedAnswer.content) ||
-        buildGenerationUnavailableAnswer(input.query);
-      const generalAnswer = this.buildGeneralKnowledgeResult(
-        input.query,
-        cleanGeneralAnswer,
-      );
-      if (!streamed) {
-        input.onToken?.(generalAnswer.answer);
-      } else if (!generatedAnswer.content.trim()) {
-        input.onToken?.(cleanGeneralAnswer);
-      }
       return {
         ...generalAnswer,
         ...(contextualRetrievalQuery
@@ -659,16 +639,13 @@ class KnowledgeAnswerStreamRouter {
   private awaitingAnswerContent = false;
   private readonly sanitizer: CitationStreamSanitizer;
 
-  constructor(
-    private readonly emit?: (token: string) => void,
-    private readonly generalPrefix = '',
-  ) {
+  constructor(private readonly emit?: (token: string) => void) {
     this.sanitizer = new CitationStreamSanitizer(emit);
   }
 
   push(token: string): void {
-    if (this.decision === 'no_match') return;
-    if (this.decision === 'knowledge' || this.decision === 'general') {
+    if (this.decision === 'no_match' || this.decision === 'general') return;
+    if (this.decision === 'knowledge') {
       this.pushAnswerContent(token);
       return;
     }
@@ -702,16 +679,15 @@ class KnowledgeAnswerStreamRouter {
       this.buffer = '';
       this.startMode(parsed.mode, parsed.content);
     }
-    if (this.decision === 'knowledge' || this.decision === 'general') {
+    if (this.decision === 'knowledge') {
       this.sanitizer.finish();
     }
   }
 
   private startMode(mode: GeneratedAnswerMode, content: string): void {
     this.decision = mode;
-    if (mode === 'no_match') return;
+    if (mode !== 'knowledge') return;
     this.awaitingAnswerContent = true;
-    if (mode === 'general') this.emit?.(this.generalPrefix);
     this.pushAnswerContent(content);
   }
 

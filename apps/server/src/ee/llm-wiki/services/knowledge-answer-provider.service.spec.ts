@@ -128,7 +128,7 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
     expect(ollamaProvider).toHaveBeenCalledWith('llama3.2');
   });
 
-  it('instructs the model to choose and generate either a knowledge or general answer', async () => {
+  it('instructs the model to answer from knowledge or request a clean general fallback', async () => {
     const openaiProvider = jest.fn().mockReturnValue('openai-model');
     (createOpenAI as jest.Mock).mockReturnValue(openaiProvider);
 
@@ -150,6 +150,12 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
         ),
       }),
     );
+    const request = (generateText as jest.Mock).mock.calls[0][0] as {
+      system: string;
+    };
+    expect(request.system).toContain(
+      'output exactly [[answer:general]] and nothing else',
+    );
   });
 
   it('uses a separate general-knowledge prompt only when explicitly requested', async () => {
@@ -169,6 +175,9 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
     };
     expect(request.system).toContain('general model knowledge');
     expect(request.system).toContain('Do not claim that the answer comes from');
+    expect(request.system).toContain(
+      'private, organizational, personal, project-specific, or real-time facts',
+    );
     expect(request.system).not.toContain(
       'Answer only from the provided knowledge context',
     );

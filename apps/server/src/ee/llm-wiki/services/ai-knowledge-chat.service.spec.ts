@@ -225,6 +225,7 @@ describe('AiKnowledgeChatService', () => {
         '# Chaterm\nCitation IDs: [[cite:page-1]]\n登记批准日期：2026年06月05日\n## Verified source evidence 1: Kafka\nCitation ID: [[cite:page-1]]\n登记批准日期：2026年06月05日',
       chatContext: ['Previous turn'],
     });
+    expect(answerProvider.answer).toHaveBeenCalledTimes(1);
   });
 
   it('automatically answers with general knowledge when retrieval has no verified evidence', async () => {
@@ -249,6 +250,7 @@ describe('AiKnowledgeChatService', () => {
       chatContext: undefined,
       mode: 'general',
     });
+    expect(answer).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({
       answer:
         '> This answer uses general model knowledge and does not cite the workspace knowledge base.\n\nKafka is an event platform.',
@@ -262,16 +264,23 @@ describe('AiKnowledgeChatService', () => {
     );
   });
 
-  it('answers with general knowledge in the same streaming call when evidence is unrelated', async () => {
+  it('regenerates a clean streaming general answer without knowledge context', async () => {
     const onToken = jest.fn();
-    const stream = jest.fn().mockImplementation(() =>
-      (async function* () {
-        yield '[[answer:';
-        yield 'general]]\n';
-        yield '孙悟空是文学角色，';
-        yield '没有现实世界中的公司。';
-      })(),
-    );
+    const stream = jest
+      .fn()
+      .mockImplementationOnce(() =>
+        (async function* () {
+          yield '[[answer:';
+          yield 'general]]\n';
+          yield '知识库中提到了公司推荐接口。';
+        })(),
+      )
+      .mockImplementationOnce(() =>
+        (async function* () {
+          yield '孙悟空是文学角色，';
+          yield '没有现实世界中的公司。';
+        })(),
+      );
     const service = createService(
       verifiedKnowledgeOverrides({ stream } as never),
     );
@@ -298,20 +307,33 @@ describe('AiKnowledgeChatService', () => {
     expect(onToken.mock.calls.map(([text]) => text).join('')).not.toContain(
       '[[answer:general]]',
     );
-    expect(stream).toHaveBeenCalledTimes(1);
-    expect(stream).toHaveBeenCalledWith(
+    expect(onToken.mock.calls.map(([text]) => text).join('')).not.toContain(
+      '知识库中提到了公司推荐接口',
+    );
+    expect(stream).toHaveBeenCalledTimes(2);
+    expect(stream).toHaveBeenNthCalledWith(
+      1,
       expect.objectContaining({
         query: '孙悟空的公司是什么',
         context: expect.stringContaining('公司推荐接口'),
       }),
     );
+    expect(stream).toHaveBeenNthCalledWith(2, {
+      query: '孙悟空的公司是什么',
+      context: '',
+      chatContext: undefined,
+      mode: 'general',
+    });
   });
 
-  it('answers with general knowledge in the same non-streaming call when evidence is unrelated', async () => {
+  it('regenerates a clean non-streaming general answer without knowledge context', async () => {
     const onToken = jest.fn();
     const answer = jest
       .fn()
-      .mockResolvedValue('[[answer:general]]\n孙悟空没有现实世界中的公司。');
+      .mockResolvedValueOnce(
+        '[[answer:general]]\n知识库中提到了公司推荐接口。',
+      )
+      .mockResolvedValueOnce('孙悟空没有现实世界中的公司。');
     const service = createService(verifiedKnowledgeOverrides({ answer }));
 
     const result = await service.chat({
@@ -333,12 +355,20 @@ describe('AiKnowledgeChatService', () => {
     expect(onToken.mock.calls.map(([text]) => text).join('')).toBe(
       result.answer,
     );
-    expect(answer).toHaveBeenCalledTimes(1);
-    expect(answer).toHaveBeenCalledWith(
+    expect(result.answer).not.toContain('知识库中提到了公司推荐接口');
+    expect(answer).toHaveBeenCalledTimes(2);
+    expect(answer).toHaveBeenNthCalledWith(
+      1,
       expect.objectContaining({
         context: expect.stringContaining('公司推荐接口'),
       }),
     );
+    expect(answer).toHaveBeenNthCalledWith(2, {
+      query: '孙悟空的公司是什么',
+      context: '',
+      chatContext: undefined,
+      mode: 'general',
+    });
   });
 
   it('does not associate cited sources without an explicit knowledge marker', async () => {
@@ -406,6 +436,7 @@ describe('AiKnowledgeChatService', () => {
     });
 
     expect(retrieval.retrieve).not.toHaveBeenCalled();
+    expect(answer).toHaveBeenCalledTimes(1);
     expect(answer).toHaveBeenCalledWith({
       query: 'What is Shanghai weather like in July?',
       context: '',
