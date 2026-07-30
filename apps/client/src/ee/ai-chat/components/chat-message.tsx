@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { useTranslation } from "react-i18next";
 import DOMPurify from "dompurify";
@@ -9,6 +9,7 @@ import {
   IconDatabaseSearch,
   IconChevronRight,
   IconExternalLink,
+  IconPencil,
 } from "@tabler/icons-react";
 import { markdownToHtml } from "@docmost/editor-ext";
 import type {
@@ -76,6 +77,9 @@ type Props = {
   streamingContent?: string;
   streamingToolCalls?: AiChatToolCall[];
   progressStage?: AiQaProgressStage | null;
+  onEdit?: (messageId: string, content: string) => void;
+  editDisabled?: boolean;
+  onEditingChange?: (editing: boolean) => void;
 };
 
 export default function ChatMessage({
@@ -84,9 +88,37 @@ export default function ChatMessage({
   streamingContent,
   streamingToolCalls,
   progressStage,
+  onEdit,
+  editDisabled = false,
+  onEditingChange,
 }: Props) {
   const navigate = useNavigate();
   const { t } = useTranslation();
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState(message.content || "");
+
+  useEffect(() => {
+    if (!isEditing) setEditContent(message.content || "");
+  }, [isEditing, message.content]);
+
+  const closeEditor = useCallback(() => {
+    setIsEditing(false);
+    setEditContent(message.content || "");
+    onEditingChange?.(false);
+  }, [message.content, onEditingChange]);
+
+  const startEditing = useCallback(() => {
+    setEditContent(message.content || "");
+    setIsEditing(true);
+    onEditingChange?.(true);
+  }, [message.content, onEditingChange]);
+
+  const saveEdit = useCallback(() => {
+    const nextContent = editContent.trim();
+    if (!nextContent) return;
+    onEdit?.(message.id, nextContent);
+    closeEditor();
+  }, [closeEditor, editContent, message.id, onEdit]);
 
   const handleContentClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
@@ -127,23 +159,82 @@ export default function ChatMessage({
         className={classes.userMessage}
         role="article"
         aria-label={t("You said:")}
+        data-editing={isEditing || undefined}
       >
-        <div className={classes.userBubble}>
-          {attachments.length > 0 && (
-            <div className={classes.messageAttachments}>
-              {attachments.map((a) => (
-                <span key={a.id} className={classes.messageAttachmentChip}>
-                  {IMAGE_EXTENSIONS.includes(a.fileExt) ? (
-                    <IconPhoto size={13} />
-                  ) : (
-                    <IconFile size={13} />
+        <div className={classes.userMessageBody}>
+          <div className={classes.userBubble}>
+            {attachments.length > 0 && (
+              <div className={classes.messageAttachments}>
+                {attachments.map((a) => (
+                  <span key={a.id} className={classes.messageAttachmentChip}>
+                    {IMAGE_EXTENSIONS.includes(a.fileExt) ? (
+                      <IconPhoto size={13} />
+                    ) : (
+                      <IconFile size={13} />
+                    )}
+                    {a.fileName}
+                  </span>
+                ))}
+              </div>
+            )}
+            {isEditing ? (
+              <div className={classes.editMessageForm}>
+                <textarea
+                  aria-label={t("Edit message")}
+                  className={classes.editMessageTextarea}
+                  value={editContent}
+                  maxLength={4000}
+                  rows={Math.min(
+                    8,
+                    Math.max(2, editContent.split("\n").length),
                   )}
-                  {a.fileName}
-                </span>
-              ))}
-            </div>
+                  autoFocus
+                  onChange={(event) =>
+                    setEditContent(event.currentTarget.value)
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      closeEditor();
+                    } else if (
+                      event.key === "Enter" &&
+                      (event.metaKey || event.ctrlKey)
+                    ) {
+                      event.preventDefault();
+                      saveEdit();
+                    }
+                  }}
+                />
+                <div className={classes.editMessageActions}>
+                  <button type="button" onClick={closeEditor}>
+                    {t("Cancel")}
+                  </button>
+                  <button
+                    type="button"
+                    className={classes.editMessageSave}
+                    disabled={!editContent.trim()}
+                    onClick={saveEdit}
+                  >
+                    {t("Save and regenerate")}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              displayContent
+            )}
+          </div>
+          {onEdit && !isEditing && (
+            <button
+              type="button"
+              aria-label={t("Edit message")}
+              title={t("Edit message")}
+              className={classes.editMessageButton}
+              disabled={editDisabled}
+              onClick={startEditing}
+            >
+              <IconPencil size={15} stroke={1.8} />
+            </button>
           )}
-          {displayContent}
         </div>
       </div>
     );

@@ -8,7 +8,12 @@ import {
 import { AiChatRepo } from '@akasha/db/repos/ai-chat/ai-chat.repo';
 import { SpaceMemberRepo } from '@akasha/db/repos/space/space-member.repo';
 import { SpaceRepo } from '@akasha/db/repos/space/space.repo';
-import { AiChat, User, Workspace } from '@akasha/db/types/entity.types';
+import {
+  AiChat,
+  AiChatMessage,
+  User,
+  Workspace,
+} from '@akasha/db/types/entity.types';
 import { PaginationOptions } from '@akasha/db/pagination/pagination-options';
 import { UserRole } from '../../common/helpers/types/permission';
 import { AiKnowledgeChatService } from '../llm-wiki/services/ai-knowledge-chat.service';
@@ -19,10 +24,17 @@ import { createHash } from 'crypto';
 export type AiChatStreamEvent =
   | { type: 'chat_created'; chatId: string }
   | {
+      type: 'message_edited';
+      chatId: string;
+      messageId: string;
+      content: string;
+    }
+  | {
       type: 'progress';
       stage: 'permissions' | 'understanding' | 'retrieval' | 'generation';
     }
-  | { type: 'content'; text: string };
+  | { type: 'content'; text: string }
+  | { type: 'superseded'; chatId: string };
 
 export type SendAiChatMessageInput = {
   workspace: Workspace;
@@ -37,10 +49,20 @@ export type SendAiChatMessageInput = {
   onEvent?: (event: AiChatStreamEvent) => void;
 };
 
+export type EditAiChatMessageInput = {
+  workspace: Workspace;
+  user: User;
+  chatId: string;
+  messageId: string;
+  content: string;
+  onEvent?: (event: AiChatStreamEvent) => void;
+};
+
 export type SendAiChatMessageResult = {
   chatId: string;
-  assistantMessageId: string;
-  answer: string;
+  assistantMessageId?: string;
+  answer?: string;
+  superseded?: boolean;
   citations?: unknown[];
   citationEvidence?: unknown[];
   retrievedSources?: unknown[];
@@ -166,11 +188,8 @@ export class AiChatService {
       user: input.user,
     });
     const spaceIds = resolveRequestedSpaceIds(input.spaceIds, readableSpaceIds);
-    const canExpandScope =
-      Boolean(input.spaceIds?.length) &&
-      spaceIds.length < readableSpaceIds.length;
 
-    await this.aiChatRepo.addMessage({
+    const userMessage = await this.aiChatRepo.addMessage({
       workspaceId: input.workspace.id,
       chatId: chat.id,
       userId: input.user.id,
@@ -180,12 +199,107 @@ export class AiChatService {
       metadata: buildUserMetadata(input, spaceIds) as never,
     });
 
+    return this.generateAndPersistAnswer({
+      workspace: input.workspace,
+      user: input.user,
+      chatId: chat.id,
+      content,
+      previousMessages,
+      anchorMessage: userMessage,
+      spaceIds,
+      readableSpaceCount: readableSpaceIds.length,
+      requestedSpaceIds: input.spaceIds,
+      mentionedPageIds: input.mentionedPageIds,
+      contextPageId: input.contextPageId,
+      attachmentIds: input.attachmentIds,
+      responseMode: input.responseMode,
+      onEvent: input.onEvent,
+    });
+  }
+
+  async editMessage(
+    input: EditAiChatMessageInput,
+  ): Promise<SendAiChatMessageResult> {
+    const content = input.content.trim();
+    if (!content) {
+      throw new BadRequestException('Message content is required');
+    }
+
+    const edit = await this.aiChatRepo.editUserMessageAndSoftDeleteTail({
+      workspaceId: input.workspace.id,
+      userId: input.user.id,
+      chatId: input.chatId,
+      messageId: input.messageId,
+      content,
+    });
+    if (!edit) {
+      throw new NotFoundException('Message not found');
+    }
+
+    input.onEvent?.({
+      type: 'message_edited',
+      chatId: input.chatId,
+      messageId: input.messageId,
+      content,
+    });
+    input.onEvent?.({ type: 'progress', stage: 'permissions' });
+
+    const storedContext = readStoredUserContext(edit.message.metadata);
+    const readableSpaceIds = await this.getDefaultReadableSpaceIds({
+      workspaceId: input.workspace.id,
+      user: input.user,
+    });
+    const spaceIds = resolveRequestedSpaceIds(
+      storedContext.spaceIds,
+      readableSpaceIds,
+    );
+
+    return this.generateAndPersistAnswer({
+      workspace: input.workspace,
+      user: input.user,
+      chatId: input.chatId,
+      content,
+      previousMessages: edit.previousMessages,
+      anchorMessage: edit.message,
+      spaceIds,
+      readableSpaceCount: readableSpaceIds.length,
+      requestedSpaceIds: storedContext.spaceIds,
+      mentionedPageIds: storedContext.mentionedPageIds,
+      contextPageId: storedContext.contextPageId,
+      attachmentIds: storedContext.attachmentIds,
+      responseMode: storedContext.responseMode,
+      requireCurrentAnchor: true,
+      onEvent: input.onEvent,
+    });
+  }
+
+  private async generateAndPersistAnswer(input: {
+    workspace: Workspace;
+    user: User;
+    chatId: string;
+    content: string;
+    previousMessages: AiChatMessage[];
+    anchorMessage: AiChatMessage;
+    spaceIds: string[];
+    readableSpaceCount: number;
+    requestedSpaceIds?: string[];
+    mentionedPageIds?: string[];
+    contextPageId?: string;
+    attachmentIds?: string[];
+    responseMode?: 'knowledge' | 'general';
+    requireCurrentAnchor?: boolean;
+    onEvent?: (event: AiChatStreamEvent) => void;
+  }): Promise<SendAiChatMessageResult> {
+    const canExpandScope =
+      Boolean(input.requestedSpaceIds?.length) &&
+      input.spaceIds.length < input.readableSpaceCount;
+
     const answer = await this.knowledgeChat.chat({
       workspaceId: input.workspace.id,
       userId: input.user.id,
-      query: content,
-      spaceIds,
-      chatContext: previousMessages
+      query: input.content,
+      spaceIds: input.spaceIds,
+      chatContext: input.previousMessages
         .filter((message) => message.content)
         .slice(-15)
         .map((message) => `${message.role}: ${message.content}`),
@@ -198,34 +312,49 @@ export class AiChatService {
       onStage: (stage) => input.onEvent?.({ type: 'progress', stage }),
     });
 
-    const assistantMessage = await this.aiChatRepo.addMessage({
-      workspaceId: input.workspace.id,
-      chatId: chat.id,
-      userId: null,
-      role: 'assistant',
-      content: answer.answer,
-      toolCalls: null,
-      metadata: {
-        citations: answer.citations,
-        citationEvidence: answer.citationEvidence,
-        retrievedSources: answer.retrievedSources,
-        retrievalDiagnostics: answer.retrievalDiagnostics,
-        retrievalReasons: answer.retrievalReasons,
-        completenessNotice: answer.completenessNotice,
-        answerMode: answer.answerMode,
-        ...(answer.retrievalQuery
-          ? { retrievalQuery: answer.retrievalQuery }
-          : {}),
-        ...(answer.answerMode === 'no_match' ? { canExpandScope } : {}),
-        spaceIds,
-      } as never,
-    });
+    const assistantMetadata = {
+      citations: answer.citations,
+      citationEvidence: answer.citationEvidence,
+      retrievedSources: answer.retrievedSources,
+      retrievalDiagnostics: answer.retrievalDiagnostics,
+      retrievalReasons: answer.retrievalReasons,
+      completenessNotice: answer.completenessNotice,
+      answerMode: answer.answerMode,
+      ...(answer.retrievalQuery
+        ? { retrievalQuery: answer.retrievalQuery }
+        : {}),
+      ...(answer.answerMode === 'no_match' ? { canExpandScope } : {}),
+      spaceIds: input.spaceIds,
+    } as never;
+    const assistantMessage = input.requireCurrentAnchor
+      ? await this.aiChatRepo.addAssistantMessageIfCurrent({
+          workspaceId: input.workspace.id,
+          userId: input.user.id,
+          chatId: input.chatId,
+          anchorMessageId: input.anchorMessage.id,
+          anchorUpdatedAt: input.anchorMessage.updatedAt,
+          content: answer.answer,
+          metadata: assistantMetadata,
+        })
+      : await this.aiChatRepo.addMessage({
+          workspaceId: input.workspace.id,
+          chatId: input.chatId,
+          userId: null,
+          role: 'assistant',
+          content: answer.answer,
+          toolCalls: null,
+          metadata: assistantMetadata,
+        });
+    if (!assistantMessage) {
+      input.onEvent?.({ type: 'superseded', chatId: input.chatId });
+      return { chatId: input.chatId, superseded: true };
+    }
 
     await this.recordQueryAudit({
       workspaceId: input.workspace.id,
       userId: input.user.id,
-      query: content,
-      spaceIds,
+      query: input.content,
+      spaceIds: input.spaceIds,
       answerMode: answer.answerMode,
       citationCount: answer.citations.length,
       retrievedSourceCount: answer.retrievedSources.length,
@@ -237,7 +366,7 @@ export class AiChatService {
     });
 
     return {
-      chatId: chat.id,
+      chatId: input.chatId,
       assistantMessageId: assistantMessage.id,
       answer: answer.answer,
       citations: answer.citations,
@@ -427,4 +556,36 @@ function resolveRequestedSpaceIds(
   const readable = new Set(readableSpaceIds);
   const requested = requestedSpaceIds ?? readableSpaceIds;
   return [...new Set(requested)].filter((spaceId) => readable.has(spaceId));
+}
+
+function readStoredUserContext(metadata: AiChatMessage['metadata']): {
+  spaceIds?: string[];
+  mentionedPageIds?: string[];
+  contextPageId?: string;
+  attachmentIds?: string[];
+  responseMode?: 'knowledge' | 'general';
+} {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return {};
+  }
+
+  const record = metadata as Record<string, unknown>;
+  return {
+    spaceIds: readStringArray(record.spaceIds),
+    mentionedPageIds: readStringArray(record.mentionedPageIds),
+    contextPageId:
+      typeof record.contextPageId === 'string'
+        ? record.contextPageId
+        : undefined,
+    attachmentIds: readStringArray(record.attachmentIds),
+    responseMode:
+      record.responseMode === 'knowledge' || record.responseMode === 'general'
+        ? record.responseMode
+        : undefined,
+  };
+}
+
+function readStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((item): item is string => typeof item === 'string');
 }

@@ -10,6 +10,10 @@ const mentionMocks = vi.hoisted(() => ({
   renderItems: vi.fn((_options?: { pageOnly?: boolean }) => ({})),
 }));
 
+const editorMocks = vi.hoisted(() => ({
+  setEditable: vi.fn(),
+}));
+
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string) => key,
@@ -20,6 +24,7 @@ vi.mock("@tiptap/react", () => ({
   EditorContent: () => <div data-testid="editor-content" />,
   ReactNodeViewRenderer: () => undefined,
   useEditor: () => ({
+    setEditable: editorMocks.setEditable,
     getJSON: () => ({ type: "doc", content: [] }),
     getText: () => "",
     commands: {
@@ -81,6 +86,7 @@ describe("ChatInput", () => {
   beforeEach(() => {
     mentionMocks.configure.mockClear();
     mentionMocks.renderItems.mockClear();
+    editorMocks.setEditable.mockClear();
   });
 
   it("configures mention suggestions for pages only", () => {
@@ -108,5 +114,27 @@ describe("ChatInput", () => {
     const addFiles = await screen.findByRole("button", { name: /Add files/i });
     expect((addFiles as HTMLButtonElement).disabled).toBe(true);
     expect(addFiles.getAttribute("title")).toBe("正在快速开发中");
+  });
+
+  it("disables the composer while a history message is being edited", () => {
+    render(
+      <MantineProvider>
+        <ChatInput
+          isStreaming={false}
+          disabled
+          onSend={vi.fn()}
+          onStop={vi.fn()}
+          contextPages={[{ id: "page-1", title: "Page", slugId: "page" }]}
+        />
+      </MantineProvider>,
+    );
+
+    expect(editorMocks.setEditable).toHaveBeenLastCalledWith(false);
+    expect(
+      (screen.getByLabelText("Add content") as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByLabelText("Send message") as HTMLButtonElement).disabled,
+    ).toBe(true);
   });
 });

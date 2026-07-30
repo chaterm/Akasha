@@ -63,8 +63,15 @@ export type AiQaRetrievalDiagnostics = {
 
 export type AiChatStreamEvent =
   | { type: "chat_created"; chatId: string }
+  | {
+      type: "message_edited";
+      chatId: string;
+      messageId: string;
+      content: string;
+    }
   | { type: "progress"; stage: AiQaProgressStage }
   | { type: "content"; text: string }
+  | { type: "superseded"; chatId: string }
   | {
       type: "tool_call";
       id: string;

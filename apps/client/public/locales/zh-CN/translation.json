@@ -912,6 +912,8 @@
   "Chat transcript": "聊天记录",
   "Close": "关闭",
   "Copy assistant response": "复制助手回复",
+  "Edit message": "编辑消息",
+  "Save and regenerate": "发送",
   "Compilation content review": "编译内容审查",
   "Allow space administrators to review compiled knowledge content with AI.": "允许空间管理员使用 AI 审查本空间的已编译知识内容。",
   "Toggle compilation review": "切换编译内容审查",

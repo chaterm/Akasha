@@ -64,6 +64,77 @@ describe("ChatMessage knowledge evidence", () => {
     expect(answerContent?.contains(copyAction)).toBe(true);
   });
 
+  it("edits a user question inline and regenerates from it", () => {
+    const onEdit = vi.fn();
+    render(
+      <MantineProvider>
+        <MemoryRouter>
+          <ChatMessage
+            message={{
+              id: "message-user-1",
+              chatId: "chat-1",
+              role: "user",
+              content: "Original question",
+              toolCalls: null,
+              metadata: null,
+              createdAt: "2026-07-30T00:00:00.000Z",
+            }}
+            onEdit={onEdit}
+          />
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit message" }));
+
+    expect(
+      screen
+        .getByRole("article", { name: "You said:" })
+        .getAttribute("data-editing"),
+    ).toBe("true");
+    const editor = screen.getByRole("textbox", { name: "Edit message" });
+    expect((editor as HTMLTextAreaElement).value).toBe("Original question");
+    fireEvent.change(editor, { target: { value: "Edited question" } });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save and regenerate" }),
+    );
+
+    expect(onEdit).toHaveBeenCalledWith("message-user-1", "Edited question");
+    expect(screen.queryByRole("textbox", { name: "Edit message" })).toBeNull();
+  });
+
+  it("regenerates when the user saves an unchanged question", () => {
+    const onEdit = vi.fn();
+    render(
+      <MantineProvider>
+        <MemoryRouter>
+          <ChatMessage
+            message={{
+              id: "message-user-unchanged",
+              chatId: "chat-1",
+              role: "user",
+              content: "Original question",
+              toolCalls: null,
+              metadata: null,
+              createdAt: "2026-07-30T00:00:00.000Z",
+            }}
+            onEdit={onEdit}
+          />
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit message" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save and regenerate" }),
+    );
+
+    expect(onEdit).toHaveBeenCalledWith(
+      "message-user-unchanged",
+      "Original question",
+    );
+  });
+
   it("shows only verifiable answer sources and keeps retrieval counts in diagnostics", () => {
     render(
       <MantineProvider>

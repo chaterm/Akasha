@@ -914,6 +914,8 @@
   "Chat transcript": "Chat transcript",
   "Close": "Close",
   "Copy assistant response": "Copy assistant response",
+  "Edit message": "Edit message",
+  "Save and regenerate": "Save and regenerate",
   "Compilation content review": "Compilation content review",
   "Allow space administrators to review compiled knowledge content with AI.": "Allow space administrators to review compiled knowledge content with AI.",
   "Toggle compilation review": "Toggle compilation review",

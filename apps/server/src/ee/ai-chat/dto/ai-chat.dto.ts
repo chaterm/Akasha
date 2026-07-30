@@ -47,6 +47,16 @@ export class ChatIdDto {
   chatId: string;
 }
 
+export class EditAiChatMessageDto extends ChatIdDto {
+  @IsString()
+  messageId: string;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(4000)
+  content: string;
+}
+
 export class UpdateAiChatTitleDto extends ChatIdDto {
   @IsString()
   @MinLength(1)

@@ -105,6 +105,66 @@ describe('AiChatController', () => {
     );
   });
 
+  it('streams an edited user message and its regenerated answer', async () => {
+    const service = {
+      editMessage: jest.fn().mockImplementation(async (input) => {
+        input.onEvent({
+          type: 'message_edited',
+          chatId: 'chat-1',
+          messageId: 'message-user-1',
+          content: 'edited question',
+        });
+        input.onEvent({ type: 'content', text: 'regenerated answer' });
+        return {
+          chatId: 'chat-1',
+          assistantMessageId: 'message-assistant-2',
+          answer: 'regenerated answer',
+          answerMode: 'knowledge',
+        };
+      }),
+    };
+    const controller = new AiChatController(
+      service as unknown as AiChatService,
+    );
+    const response = mockSseResponse();
+
+    await (
+      controller as AiChatController & {
+        editMessage(
+          dto: Record<string, unknown>,
+          user: unknown,
+          workspace: unknown,
+          response: unknown,
+        ): Promise<void>;
+      }
+    ).editMessage(
+      {
+        chatId: 'chat-1',
+        messageId: 'message-user-1',
+        content: 'edited question',
+      },
+      user(),
+      workspace(),
+      response,
+    );
+
+    expect(service.editMessage).toHaveBeenCalledWith({
+      workspace: workspace(),
+      user: user(),
+      chatId: 'chat-1',
+      messageId: 'message-user-1',
+      content: 'edited question',
+      onEvent: expect.any(Function),
+    });
+    expect(response.write.mock.calls.map(([payload]) => payload)).toEqual([
+      'data: {"type":"message_edited","chatId":"chat-1","messageId":"message-user-1","content":"edited question"}\n\n',
+      'data: {"type":"content","text":"regenerated answer"}\n\n',
+      'data: {"type":"done","messageId":"message-assistant-2","answerMode":"knowledge"}\n\n',
+      'data: [DONE]\n\n',
+    ]);
+    expect(response.end).toHaveBeenCalledTimes(1);
+  });
+
   it('streams through Fastify raw response when Nest uses the Fastify adapter', async () => {
     const service = {
       sendMessage: jest.fn().mockResolvedValue({

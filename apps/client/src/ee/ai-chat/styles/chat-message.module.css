@@ -8,8 +8,27 @@
   justify-content: flex-end;
 }
 
-.userBubble {
+.userMessageBody {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   max-width: 75%;
+}
+
+.userMessage[data-editing="true"] .userMessageBody {
+  width: 100%;
+  max-width: none;
+  align-items: stretch;
+}
+
+.userMessage[data-editing="true"] .userBubble {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+}
+
+.userBubble {
+  max-width: 100%;
   padding: 10px 16px;
   border-radius: 18px;
   background: light-dark(
@@ -21,6 +40,103 @@
   line-height: 1.6;
   word-wrap: break-word;
   overflow-wrap: break-word;
+}
+
+.editMessageButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-top: 3px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--mantine-radius-sm);
+  background: transparent;
+  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
+  cursor: pointer;
+  opacity: 0;
+}
+
+.userMessageBody:hover .editMessageButton,
+.editMessageButton:focus-visible {
+  opacity: 1;
+}
+
+.editMessageButton:hover:not(:disabled) {
+  background: light-dark(
+    var(--mantine-color-gray-1),
+    var(--mantine-color-dark-5)
+  );
+}
+
+.editMessageButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.editMessageForm {
+  width: 100%;
+}
+
+.editMessageTextarea {
+  display: block;
+  width: 100%;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid
+    light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-3));
+  border-radius: var(--mantine-radius-md);
+  background: light-dark(
+    var(--mantine-color-white),
+    var(--mantine-color-dark-7)
+  );
+  color: inherit;
+  font: inherit;
+  line-height: 1.5;
+}
+
+.editMessageTextarea:focus {
+  border-color: var(--mantine-primary-color-filled);
+  outline: none;
+}
+
+.editMessageActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.editMessageActions button {
+  padding: 5px 10px;
+  border: 1px solid
+    light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  border-radius: var(--mantine-radius-sm);
+  background: light-dark(
+    var(--mantine-color-white),
+    var(--mantine-color-dark-6)
+  );
+  color: inherit;
+  cursor: pointer;
+  font-size: var(--mantine-font-size-xs);
+}
+
+.editMessageActions .editMessageSave {
+  border-color: var(--mantine-primary-color-filled);
+  background: var(--mantine-primary-color-filled);
+  color: var(--mantine-color-white);
+}
+
+.editMessageActions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+@media (hover: none) {
+  .editMessageButton {
+    opacity: 1;
+  }
 }
 
 [data-aside-chat] .userBubble {
