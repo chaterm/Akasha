@@ -169,27 +169,73 @@ export class AiKnowledgeChatService {
       chatContext: input.chatContext,
     };
     let rawAnswer = '';
+    let generatedAnswer: ParsedGeneratedAnswer = {
+      mode: 'knowledge',
+      content: '',
+      hasExplicitModeMarker: false,
+    };
+    const streamed = Boolean(this.answerProvider.stream);
     input.onStage?.('generation');
     if (this.answerProvider.stream) {
-      const sanitizer = new CitationStreamSanitizer(input.onToken);
+      const streamRouter = new KnowledgeAnswerStreamRouter(
+        input.onToken,
+        buildGeneralKnowledgeDisclaimer(input.query),
+      );
       for await (const token of this.answerProvider.stream(answerInput)) {
         rawAnswer += token;
-        sanitizer.push(token);
+        streamRouter.push(token);
       }
-      sanitizer.finish();
+      streamRouter.finish();
+      generatedAnswer = parseGeneratedAnswer(rawAnswer);
     } else {
       rawAnswer = await this.answerProvider.answer(answerInput);
-      input.onToken?.(stripCitationMarkers(rawAnswer));
+      generatedAnswer = parseGeneratedAnswer(rawAnswer);
     }
-    let cleanAnswer = stripCitationMarkers(rawAnswer);
+    if (generatedAnswer.mode === 'no_match') {
+      const generalAnswer = await this.answerFromGeneralKnowledge({
+        ...input,
+        onStage: undefined,
+      });
+      return {
+        ...generalAnswer,
+        ...(contextualRetrievalQuery
+          ? { retrievalQuery: contextualRetrievalQuery }
+          : {}),
+      };
+    }
+    if (generatedAnswer.mode === 'general') {
+      const cleanGeneralAnswer =
+        stripCitationMarkers(generatedAnswer.content) ||
+        buildGenerationUnavailableAnswer(input.query);
+      const generalAnswer = this.buildGeneralKnowledgeResult(
+        input.query,
+        cleanGeneralAnswer,
+      );
+      if (!streamed) {
+        input.onToken?.(generalAnswer.answer);
+      } else if (!generatedAnswer.content.trim()) {
+        input.onToken?.(cleanGeneralAnswer);
+      }
+      return {
+        ...generalAnswer,
+        ...(contextualRetrievalQuery
+          ? { retrievalQuery: contextualRetrievalQuery }
+          : {}),
+      };
+    }
+    let cleanAnswer = stripCitationMarkers(generatedAnswer.content);
     if (!cleanAnswer) {
       cleanAnswer = buildGenerationUnavailableAnswer(input.query);
+      input.onToken?.(cleanAnswer);
+    } else if (!streamed) {
       input.onToken?.(cleanAnswer);
     }
     const sourceWindows = pack.primary.flatMap((entry) => entry.sourceWindows);
     const citations = resolveAnswerCitations(
       allCitations,
-      extractCitedSourceIds(rawAnswer),
+      generatedAnswer.hasExplicitModeMarker
+        ? extractCitedSourceIds(rawAnswer)
+        : new Set<string>(),
       sourceWindows,
       explicit.citations.map((citation) => citation.sourcePageId),
     );
@@ -225,7 +271,6 @@ export class AiKnowledgeChatService {
   private async answerFromGeneralKnowledge(
     input: AiKnowledgeChatInput,
   ): Promise<AiKnowledgeChatResult> {
-    const pack = this.contextPack.buildContextPack({});
     const answerInput: KnowledgeAnswerProviderInput = {
       query: input.query,
       context: '',
@@ -256,8 +301,16 @@ export class AiKnowledgeChatService {
       input.onToken?.(cleanAnswer);
     }
 
+    return this.buildGeneralKnowledgeResult(input.query, cleanAnswer);
+  }
+
+  private buildGeneralKnowledgeResult(
+    query: string,
+    cleanAnswer: string,
+  ): AiKnowledgeChatResult {
+    const pack = this.contextPack.buildContextPack({});
     return {
-      answer: `${disclaimer}${cleanAnswer}`,
+      answer: `${buildGeneralKnowledgeDisclaimer(query)}${cleanAnswer}`,
       answerMode: 'general',
       citations: [],
       citationEvidence: [],
@@ -385,6 +438,25 @@ type KnowledgeContextPack = ReturnType<
 >;
 
 const CITATION_MARKER_PATTERN = /\[\[cite:([^\]\s]+)\]\]/g;
+const KNOWLEDGE_ANSWER_MARKER = '[[answer:knowledge]]';
+const GENERAL_ANSWER_MARKER = '[[answer:general]]';
+const KNOWLEDGE_NO_MATCH_MARKER = '[[knowledge:no_match]]';
+
+type GeneratedAnswerMode = 'knowledge' | 'general' | 'no_match';
+type ParsedGeneratedAnswer = {
+  mode: GeneratedAnswerMode;
+  content: string;
+  hasExplicitModeMarker: boolean;
+};
+
+const ANSWER_MODE_MARKERS: Array<{
+  marker: string;
+  mode: GeneratedAnswerMode;
+}> = [
+  { marker: KNOWLEDGE_ANSWER_MARKER, mode: 'knowledge' },
+  { marker: GENERAL_ANSWER_MARKER, mode: 'general' },
+  { marker: KNOWLEDGE_NO_MATCH_MARKER, mode: 'no_match' },
+];
 
 function buildAnswerContext(pack: KnowledgeContextPack): string {
   if (pack.primary.length === 0) {
@@ -432,6 +504,25 @@ function stripCitationMarkers(answer: string): string {
     .trim();
 }
 
+function parseGeneratedAnswer(answer: string): ParsedGeneratedAnswer {
+  const content = answer.trimStart();
+  const matchedMode = ANSWER_MODE_MARKERS.find(({ marker }) =>
+    content.startsWith(marker),
+  );
+  if (!matchedMode) {
+    return {
+      mode: 'knowledge',
+      content: answer,
+      hasExplicitModeMarker: false,
+    };
+  }
+  return {
+    mode: matchedMode.mode,
+    content: content.slice(matchedMode.marker.length).trimStart(),
+    hasExplicitModeMarker: true,
+  };
+}
+
 function filterCitationsByUsedSourceIds(
   citations: KnowledgeCitation[],
   citedSourceIds: Set<string>,
@@ -448,8 +539,6 @@ function filterCitationsByUsedSourceIds(
   );
 }
 
-const MAX_FALLBACK_CITATIONS = 5;
-
 function resolveAnswerCitations(
   citations: KnowledgeCitation[],
   citedSourceIds: Set<string>,
@@ -460,23 +549,9 @@ function resolveAnswerCitations(
     ...explicitSourceIds,
     ...sourceWindows.map((window) => window.sourcePageId),
   ]);
-  if (citedSourceIds.size > 0) {
-    return filterCitationsByUsedSourceIds(
-      citations,
-      citedSourceIds,
-      evidenceBackedSourceIds,
-    );
-  }
-
-  const fallbackSourceIds = new Set<string>();
-  for (const sourceWindow of sourceWindows) {
-    fallbackSourceIds.add(sourceWindow.sourcePageId);
-    if (fallbackSourceIds.size >= MAX_FALLBACK_CITATIONS) break;
-  }
-
   return filterCitationsByUsedSourceIds(
     citations,
-    fallbackSourceIds,
+    citedSourceIds,
     evidenceBackedSourceIds,
   );
 }
@@ -575,6 +650,80 @@ class CitationStreamSanitizer {
 
   private output(value: string): void {
     if (value) this.emit?.(value);
+  }
+}
+
+class KnowledgeAnswerStreamRouter {
+  private buffer = '';
+  private decision: 'pending' | GeneratedAnswerMode = 'pending';
+  private awaitingAnswerContent = false;
+  private readonly sanitizer: CitationStreamSanitizer;
+
+  constructor(
+    private readonly emit?: (token: string) => void,
+    private readonly generalPrefix = '',
+  ) {
+    this.sanitizer = new CitationStreamSanitizer(emit);
+  }
+
+  push(token: string): void {
+    if (this.decision === 'no_match') return;
+    if (this.decision === 'knowledge' || this.decision === 'general') {
+      this.pushAnswerContent(token);
+      return;
+    }
+
+    this.buffer += token;
+    const content = this.buffer.trimStart();
+    if (!content) return;
+    const matchedMode = ANSWER_MODE_MARKERS.find(({ marker }) =>
+      content.startsWith(marker),
+    );
+    if (matchedMode) {
+      const answerContent = content.slice(matchedMode.marker.length);
+      this.buffer = '';
+      this.startMode(matchedMode.mode, answerContent);
+      return;
+    }
+    if (
+      ANSWER_MODE_MARKERS.some(({ marker }) => marker.startsWith(content))
+    ) {
+      return;
+    }
+
+    this.decision = 'knowledge';
+    this.sanitizer.push(this.buffer);
+    this.buffer = '';
+  }
+
+  finish(): void {
+    if (this.decision === 'pending') {
+      const parsed = parseGeneratedAnswer(this.buffer);
+      this.buffer = '';
+      this.startMode(parsed.mode, parsed.content);
+    }
+    if (this.decision === 'knowledge' || this.decision === 'general') {
+      this.sanitizer.finish();
+    }
+  }
+
+  private startMode(mode: GeneratedAnswerMode, content: string): void {
+    this.decision = mode;
+    if (mode === 'no_match') return;
+    this.awaitingAnswerContent = true;
+    if (mode === 'general') this.emit?.(this.generalPrefix);
+    this.pushAnswerContent(content);
+  }
+
+  private pushAnswerContent(content: string): void {
+    if (this.awaitingAnswerContent) {
+      const trimmedContent = content.trimStart();
+      if (!trimmedContent) return;
+      this.awaitingAnswerContent = false;
+      this.sanitizer.push(trimmedContent);
+      return;
+    }
+    this.sanitizer.push(content);
   }
 }
 

@@ -128,7 +128,7 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
     expect(ollamaProvider).toHaveBeenCalledWith('llama3.2');
   });
 
-  it('instructs the model not to fill missing evidence with general knowledge', async () => {
+  it('instructs the model to choose and generate either a knowledge or general answer', async () => {
     const openaiProvider = jest.fn().mockReturnValue('openai-model');
     (createOpenAI as jest.Mock).mockReturnValue(openaiProvider);
 
@@ -142,8 +142,8 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
     expect(generateText).toHaveBeenCalledWith(
       expect.objectContaining({
         model: 'openai-model',
-        system: expect.stringContaining(
-          'Do not use general world knowledge to supply factual claims',
+        system: expect.stringMatching(
+          /\[\[answer:knowledge\]\][\s\S]*\[\[answer:general\]\]/,
         ),
         prompt: expect.stringContaining(
           'No workspace knowledge context was retrieved.',

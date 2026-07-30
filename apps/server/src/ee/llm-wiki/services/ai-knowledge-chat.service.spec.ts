@@ -10,7 +10,7 @@ import {
 } from './ai-knowledge-chat.service';
 
 describe('AiKnowledgeChatService', () => {
-  it('falls back to verified source evidence when the model omits citation markers', async () => {
+  it('does not associate sources when a knowledge answer omits citation markers', async () => {
     const retrieval = {
       retrieve: jest.fn().mockResolvedValue({
         mode: 'high_completeness',
@@ -79,7 +79,11 @@ describe('AiKnowledgeChatService', () => {
       }),
     };
     const answerProvider = {
-      answer: jest.fn().mockResolvedValue('Kafka is used for async events.'),
+      answer: jest
+        .fn()
+        .mockResolvedValue(
+          '[[answer:knowledge]]Kafka is used for async events.',
+        ),
     };
     const citationResolver = {
       resolveForCapsules: jest.fn(),
@@ -123,21 +127,8 @@ describe('AiKnowledgeChatService', () => {
     ).resolves.toEqual({
       answer: 'Kafka is used for async events.',
       answerMode: 'knowledge',
-      citations: [{ sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1' }],
-      citationEvidence: [
-        {
-          sourcePageId: 'page-1',
-          title: 'Kafka',
-          url: '/p/page-1',
-          excerpts: [
-            {
-              text: '登记批准日期：2026年06月05日',
-              sourceRange: { startOffset: 0, endOffset: 18 },
-              quoteHash: 'sha256:quote',
-            },
-          ],
-        },
-      ],
+      citations: [],
+      citationEvidence: [],
       retrievedSources: [
         { sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1' },
       ],
@@ -268,6 +259,130 @@ describe('AiKnowledgeChatService', () => {
     });
     expect(onToken.mock.calls.map(([text]) => text).join('')).toBe(
       result.answer,
+    );
+  });
+
+  it('answers with general knowledge in the same streaming call when evidence is unrelated', async () => {
+    const onToken = jest.fn();
+    const stream = jest.fn().mockImplementation(() =>
+      (async function* () {
+        yield '[[answer:';
+        yield 'general]]\n';
+        yield '孙悟空是文学角色，';
+        yield '没有现实世界中的公司。';
+      })(),
+    );
+    const service = createService(
+      verifiedKnowledgeOverrides({ stream } as never),
+    );
+
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: '孙悟空的公司是什么',
+      spaceIds: ['space-1'],
+      onToken,
+    });
+
+    expect(result).toMatchObject({
+      answer:
+        '> 以下回答基于通用模型知识，未引用企业知识库。\n\n孙悟空是文学角色，没有现实世界中的公司。',
+      answerMode: 'general',
+      citations: [],
+      citationEvidence: [],
+      retrievedSources: [],
+    });
+    expect(onToken.mock.calls.map(([text]) => text).join('')).toBe(
+      result.answer,
+    );
+    expect(onToken.mock.calls.map(([text]) => text).join('')).not.toContain(
+      '[[answer:general]]',
+    );
+    expect(stream).toHaveBeenCalledTimes(1);
+    expect(stream).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: '孙悟空的公司是什么',
+        context: expect.stringContaining('公司推荐接口'),
+      }),
+    );
+  });
+
+  it('answers with general knowledge in the same non-streaming call when evidence is unrelated', async () => {
+    const onToken = jest.fn();
+    const answer = jest
+      .fn()
+      .mockResolvedValue('[[answer:general]]\n孙悟空没有现实世界中的公司。');
+    const service = createService(verifiedKnowledgeOverrides({ answer }));
+
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: '孙悟空的公司是什么',
+      spaceIds: ['space-1'],
+      onToken,
+    });
+
+    expect(result).toMatchObject({
+      answer:
+        '> 以下回答基于通用模型知识，未引用企业知识库。\n\n孙悟空没有现实世界中的公司。',
+      answerMode: 'general',
+      citations: [],
+      citationEvidence: [],
+      retrievedSources: [],
+    });
+    expect(onToken.mock.calls.map(([text]) => text).join('')).toBe(
+      result.answer,
+    );
+    expect(answer).toHaveBeenCalledTimes(1);
+    expect(answer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.stringContaining('公司推荐接口'),
+      }),
+    );
+  });
+
+  it('does not associate cited sources without an explicit knowledge marker', async () => {
+    const service = createService(
+      verifiedKnowledgeOverrides({
+        answer: jest
+          .fn()
+          .mockResolvedValue(
+            '公司推荐接口用于推荐公司。 [[cite:page-company-api]]',
+          ),
+      }),
+    );
+
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: '公司推荐接口有什么作用？',
+      spaceIds: ['space-1'],
+    });
+
+    expect(result.answer).toBe('公司推荐接口用于推荐公司。');
+    expect(result.citations).toEqual([]);
+    expect(result.citationEvidence).toEqual([]);
+  });
+
+  it('keeps a second general generation only as a legacy no-match fallback', async () => {
+    const answer = jest
+      .fn()
+      .mockResolvedValueOnce('[[knowledge:no_match]]')
+      .mockResolvedValueOnce('孙悟空没有现实世界中的公司。');
+    const service = createService(verifiedKnowledgeOverrides({ answer }));
+
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: '孙悟空的公司是什么',
+      spaceIds: ['space-1'],
+    });
+
+    expect(result.answerMode).toBe('general');
+    expect(answer).toHaveBeenCalledTimes(2);
+    expect(answer).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ context: '', mode: 'general' }),
     );
   });
 
@@ -405,7 +520,7 @@ describe('AiKnowledgeChatService', () => {
       answer: jest
         .fn()
         .mockResolvedValue(
-          '接口 URL 是 /customized_query_sql，方法是 POST。 [[cite:page-dms]]',
+          '[[answer:knowledge]]接口 URL 是 /customized_query_sql，方法是 POST。 [[cite:page-dms]]',
         ),
     };
     const service = createService({
@@ -552,7 +667,7 @@ describe('AiKnowledgeChatService', () => {
       answer: jest
         .fn()
         .mockResolvedValue(
-          'Chaterm 的软件著作权生效时间是 2026 年 06 月 05 日。 [[cite:page-used]]',
+          '[[answer:knowledge]]Chaterm 的软件著作权生效时间是 2026 年 06 月 05 日。 [[cite:page-used]]',
         ),
     };
     const service = createService({
@@ -828,7 +943,9 @@ describe('AiKnowledgeChatService', () => {
   it('loads authorized current pages, mentions, and owned attachments as explicit context', async () => {
     const answer = jest
       .fn()
-      .mockResolvedValue('Use the current page. [[cite:page-current]]');
+      .mockResolvedValue(
+        '[[answer:knowledge]]Use the current page. [[cite:page-current]]',
+      );
     const service = createService({
       answerProvider: { answer },
       pageRepo: {
@@ -892,6 +1009,101 @@ describe('AiKnowledgeChatService', () => {
     ]);
   });
 });
+
+function verifiedKnowledgeOverrides(
+  answerProvider: Partial<KnowledgeAnswerProvider>,
+) {
+  const sourceWindow = {
+    sourcePageId: 'page-company-api',
+    title: 'CCC推荐公司',
+    url: '/p/company-api',
+    text: '公司推荐接口用于根据用户信息推荐公司。',
+    sourceRange: { startOffset: 0, endOffset: 20 },
+    quoteHash: 'sha256:company-api',
+  };
+  const knowledgePack = {
+    context: '# CCC推荐公司\n公司推荐接口用于根据用户信息推荐公司。',
+    citations: [
+      {
+        sourcePageId: sourceWindow.sourcePageId,
+        title: sourceWindow.title,
+        url: sourceWindow.url,
+      },
+    ],
+    primary: [
+      {
+        id: 'chunk-company-api',
+        kind: 'chunk' as const,
+        title: 'CCC推荐公司',
+        text: sourceWindow.text,
+        citationSourcePageIds: [sourceWindow.sourcePageId],
+        retrievalReasons: ['semantic'],
+        sourceWindows: [sourceWindow],
+      },
+    ],
+    warnings: [],
+    retrievalReasons: ['semantic'],
+    budget: {
+      maxContextLength: 12000,
+      usedContextLength: 30,
+      remainingContextLength: 11970,
+      includedItemCount: 1,
+      omittedItemCount: 0,
+      responseReserve: 0,
+      perItemMaxLength: 12000,
+    },
+    completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+  };
+  const emptyPack = {
+    ...knowledgePack,
+    context: '',
+    citations: [],
+    primary: [],
+    retrievalReasons: [],
+    budget: {
+      ...knowledgePack.budget,
+      usedContextLength: 0,
+      remainingContextLength: 12000,
+      includedItemCount: 0,
+    },
+  };
+
+  return {
+    retrieval: {
+      retrieve: jest.fn().mockResolvedValue({
+        mode: 'high_completeness',
+        chunks: [
+          chunk('chunk-company-api', 'kp-company-api', sourceWindow.text),
+        ],
+        capsules: [],
+        diagnostics: {},
+      }),
+    },
+    citationResolver: {
+      resolveForChunks: jest.fn().mockResolvedValue([
+        {
+          chunk: chunk(
+            'chunk-company-api',
+            'kp-company-api',
+            sourceWindow.text,
+          ),
+          pageTitle: 'CCC推荐公司',
+          retrievalReasons: ['semantic'],
+          sourceWindows: [sourceWindow],
+          warnings: [],
+          citations: knowledgePack.citations,
+        },
+      ]),
+    },
+    contextPack: {
+      buildContextPack: jest
+        .fn()
+        .mockReturnValueOnce(knowledgePack)
+        .mockReturnValueOnce(emptyPack),
+    },
+    answerProvider,
+  };
+}
 
 function createService(
   overrides: {
