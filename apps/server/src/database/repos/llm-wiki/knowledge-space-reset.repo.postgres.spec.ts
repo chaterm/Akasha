@@ -149,7 +149,13 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       aggregate_job_id varchar, imported_artifact_count integer not null default 0,
       quarantined_artifact_count integer not null default 0, error_code varchar, error_message varchar,
       queued_at timestamptz not null, started_at timestamptz, aggregate_started_at timestamptz,
-      finished_at timestamptz, created_at timestamptz not null default now(), updated_at timestamptz not null default now()
+      finished_at timestamptz, initialized_at timestamptz, space_job_id varchar,
+      space_job_dispatched_at timestamptz, space_job_sequence integer not null default 0,
+      space_job_queued_at timestamptz, space_job_recovery_count integer not null default 0,
+      execution_token varchar, execution_lease_expires_at timestamptz, worker_id varchar,
+      heartbeat_at timestamptz, last_yield_at timestamptz, last_yield_reason varchar,
+      rerun_requested boolean not null default false,
+      created_at timestamptz not null default now(), updated_at timestamptz not null default now()
     );
     create table knowledge_space_compile_run_pages (
       id varchar primary key default ('rp-' || nextval('run_page_seq')), run_id varchar not null,

@@ -4,6 +4,10 @@ import { JsonValue } from '@akasha/db/types/db';
 import { KyselyDB, KyselyTransaction } from '@akasha/db/types/kysely.types';
 import { executeTx } from '@akasha/db/utils';
 import { sql } from 'kysely';
+import {
+  buildSpaceSliceJobId,
+  runPhaseToJobPhase,
+} from './knowledge-space-execution.repo';
 
 export type KnowledgeSpaceCompileRunStatus =
   | 'queued'
@@ -102,6 +106,80 @@ const NONTERMINAL_RUN_STATUSES: KnowledgeSpaceCompileRunStatus[] = [
 @Injectable()
 export class KnowledgeSpaceCompilationRepo {
   constructor(@InjectKysely() private readonly db: KyselyDB) {}
+
+  async reserveNextSpaceSlice(input: { runId: string }) {
+    return executeTx(this.db, async (trx) => {
+      const scope = await trx
+        .selectFrom('knowledgeSpaceCompileRuns')
+        .select(['workspaceId', 'spaceId'])
+        .where('id', '=', input.runId)
+        .executeTakeFirst();
+      if (!scope) return undefined;
+
+      const space = await trx
+        .selectFrom('spaces')
+        .select('knowledgeGeneration')
+        .where('id', '=', scope.spaceId)
+        .where('workspaceId', '=', scope.workspaceId)
+        .where('deletedAt', 'is', null)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!space) return undefined;
+
+      const run = await trx
+        .selectFrom('knowledgeSpaceCompileRuns')
+        .selectAll()
+        .where('id', '=', input.runId)
+        .where('workspaceId', '=', scope.workspaceId)
+        .where('spaceId', '=', scope.spaceId)
+        .where('status', 'in', NONTERMINAL_RUN_STATUSES)
+        .forUpdate()
+        .executeTakeFirst();
+      if (
+        !run ||
+        run.spaceJobId !== null ||
+        run.knowledgeGeneration !== space.knowledgeGeneration
+      ) {
+        return undefined;
+      }
+
+      let jobPhase;
+      try {
+        jobPhase = runPhaseToJobPhase(
+          run.phase as KnowledgeSpaceCompileRunPhase,
+        );
+      } catch {
+        return undefined;
+      }
+      const spaceJobSequence = run.spaceJobSequence + 1;
+      const spaceJobId = buildSpaceSliceJobId(
+        run.id,
+        jobPhase,
+        spaceJobSequence,
+      );
+      const reserved = await trx
+        .updateTable('knowledgeSpaceCompileRuns')
+        .set({
+          spaceJobId,
+          spaceJobSequence,
+          spaceJobQueuedAt: run.spaceJobQueuedAt ?? new Date(),
+          updatedAt: new Date(),
+        })
+        .where('id', '=', run.id)
+        .where('spaceJobId', 'is', null)
+        .where('spaceJobSequence', '=', run.spaceJobSequence)
+        .returning(['id', 'knowledgeGeneration'])
+        .executeTakeFirst();
+      if (!reserved) return undefined;
+      return {
+        runId: reserved.id,
+        knowledgeGeneration: reserved.knowledgeGeneration,
+        jobPhase,
+        spaceJobSequence,
+        spaceJobId,
+      };
+    });
+  }
 
   async requestRuns(input: RequestRunsInput) {
     const results = [];
@@ -1290,23 +1368,40 @@ export class KnowledgeSpaceCompilationRepo {
     jobId: string;
   }): Promise<boolean> {
     return executeTx(this.db, async (trx) => {
+      const scope = await trx
+        .selectFrom('knowledgeSpaceCompileRuns')
+        .select(['workspaceId', 'spaceId'])
+        .where('id', '=', input.runId)
+        .executeTakeFirst();
+      if (!scope) return false;
+      const space = await trx
+        .selectFrom('spaces')
+        .select('id')
+        .where('id', '=', scope.spaceId)
+        .where('workspaceId', '=', scope.workspaceId)
+        .where('knowledgeGeneration', '=', input.knowledgeGeneration)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!space) return false;
+      const run = await trx
+        .selectFrom('knowledgeSpaceCompileRuns')
+        .select('id')
+        .where('id', '=', input.runId)
+        .where('workspaceId', '=', scope.workspaceId)
+        .where('spaceId', '=', scope.spaceId)
+        .where('phase', '=', 'images')
+        .where('status', '=', 'compiling')
+        .where('knowledgeGeneration', '=', input.knowledgeGeneration)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!run) return false;
       const active = await trx
-        .selectFrom('knowledgeSpaceCompileRunPages as rp')
-        .innerJoin('knowledgeSpaceCompileRuns as r', 'r.id', 'rp.runId')
-        .innerJoin('spaces as s', (join) =>
-          join
-            .onRef('s.id', '=', 'r.spaceId')
-            .onRef('s.workspaceId', '=', 'r.workspaceId'),
-        )
-        .select(['rp.id', 'rp.mergeStatus'])
-        .where('rp.runId', '=', input.runId)
-        .where('rp.sourcePageId', '=', input.sourcePageId)
-        .where('rp.expectedSourceVersion', '=', input.sourceVersion)
-        .where('rp.expectedSourceContentHash', '=', input.sourceContentHash)
-        .where('r.phase', '=', 'images')
-        .where('r.status', '=', 'compiling')
-        .where('r.knowledgeGeneration', '=', input.knowledgeGeneration)
-        .where('s.knowledgeGeneration', '=', input.knowledgeGeneration)
+        .selectFrom('knowledgeSpaceCompileRunPages')
+        .select(['id', 'mergeStatus'])
+        .where('runId', '=', input.runId)
+        .where('sourcePageId', '=', input.sourcePageId)
+        .where('expectedSourceVersion', '=', input.sourceVersion)
+        .where('expectedSourceContentHash', '=', input.sourceContentHash)
         .forUpdate()
         .executeTakeFirst();
       if (!active) return false;
