@@ -14,19 +14,17 @@ import { QueueName } from './constants';
 
 describe('queue injection boundaries', () => {
   it.each([
-    [
-      PageService,
-      [QueueName.ATTACHMENT_QUEUE, QueueName.GENERAL_QUEUE],
-    ],
-    [
-      WorkspaceService,
-      [QueueName.ATTACHMENT_QUEUE, QueueName.BILLING_QUEUE],
-    ],
+    [PageService, [QueueName.ATTACHMENT_QUEUE, QueueName.GENERAL_QUEUE]],
+    [WorkspaceService, [QueueName.ATTACHMENT_QUEUE, QueueName.BILLING_QUEUE]],
     [SpaceListener, [QueueName.SEARCH_QUEUE]],
     [WorkspaceListener, [QueueName.SEARCH_QUEUE]],
     [
       KnowledgeSpaceCompilationService,
-      [QueueName.KNOWLEDGE_TEXT_QUEUE, QueueName.KNOWLEDGE_IMAGE_QUEUE],
+      [
+        QueueName.KNOWLEDGE_TEXT_QUEUE,
+        QueueName.KNOWLEDGE_IMAGE_QUEUE,
+        QueueName.KNOWLEDGE_SPACE_QUEUE,
+      ],
     ],
     [
       KnowledgeSpaceResetService,

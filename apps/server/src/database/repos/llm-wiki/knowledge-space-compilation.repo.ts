@@ -107,6 +107,96 @@ const NONTERMINAL_RUN_STATUSES: KnowledgeSpaceCompileRunStatus[] = [
 export class KnowledgeSpaceCompilationRepo {
   constructor(@InjectKysely() private readonly db: KyselyDB) {}
 
+  async findSpaceSliceReservationCandidates(limit = 100) {
+    return this.db
+      .selectFrom('knowledgeSpaceCompileRuns')
+      .select(['id', 'workspaceId', 'spaceId', 'phase', 'spaceJobQueuedAt'])
+      .where('status', '=', 'queued')
+      .where('phase', 'in', [
+        'text',
+        'initial_aggregate',
+        'image_merge',
+        'final_aggregate',
+      ])
+      .where('spaceJobId', 'is', null)
+      .orderBy(
+        sql<number>`CASE WHEN phase IN ('image_merge', 'final_aggregate') THEN 1 ELSE 5 END`,
+        'asc',
+      )
+      .orderBy('spaceJobQueuedAt', 'asc')
+      .orderBy('id', 'asc')
+      .limit(limit)
+      .execute();
+  }
+
+  async findUndispatchedSpaceSlices(limit = 100) {
+    const rows = await this.db
+      .selectFrom('knowledgeSpaceCompileRuns')
+      .select([
+        'id',
+        'workspaceId',
+        'spaceId',
+        'phase',
+        'knowledgeGeneration',
+        'spaceJobSequence',
+        'spaceJobId',
+        'spaceJobQueuedAt',
+      ])
+      .where('status', '=', 'queued')
+      .where('phase', 'in', [
+        'text',
+        'initial_aggregate',
+        'image_merge',
+        'final_aggregate',
+      ])
+      .where('spaceJobId', 'is not', null)
+      .where('spaceJobDispatchedAt', 'is', null)
+      .orderBy(
+        sql<number>`CASE WHEN phase IN ('image_merge', 'final_aggregate') THEN 1 ELSE 5 END`,
+        'asc',
+      )
+      .orderBy('spaceJobQueuedAt', 'asc')
+      .orderBy('id', 'asc')
+      .limit(limit)
+      .execute();
+    return rows.map((run) => ({
+      runId: run.id,
+      workspaceId: run.workspaceId,
+      spaceId: run.spaceId,
+      knowledgeGeneration: run.knowledgeGeneration,
+      jobPhase: runPhaseToJobPhase(run.phase as KnowledgeSpaceCompileRunPhase),
+      spaceJobSequence: run.spaceJobSequence,
+      spaceJobId: run.spaceJobId!,
+      spaceJobQueuedAt: run.spaceJobQueuedAt,
+    }));
+  }
+
+  async markSpaceSliceDispatched(input: {
+    runId: string;
+    knowledgeGeneration: number;
+    jobPhase: 'text' | 'image_merge';
+    spaceJobSequence: number;
+    spaceJobId: string;
+  }): Promise<boolean> {
+    const phases =
+      input.jobPhase === 'text'
+        ? (['text', 'initial_aggregate'] as const)
+        : (['image_merge', 'final_aggregate'] as const);
+    const updated = await this.db
+      .updateTable('knowledgeSpaceCompileRuns')
+      .set({ spaceJobDispatchedAt: new Date(), updatedAt: new Date() })
+      .where('id', '=', input.runId)
+      .where('knowledgeGeneration', '=', input.knowledgeGeneration)
+      .where('phase', 'in', phases)
+      .where('status', '=', 'queued')
+      .where('spaceJobSequence', '=', input.spaceJobSequence)
+      .where('spaceJobId', '=', input.spaceJobId)
+      .where('spaceJobDispatchedAt', 'is', null)
+      .returning('id')
+      .executeTakeFirst();
+    return Boolean(updated);
+  }
+
   async reserveNextSpaceSlice(input: { runId: string }) {
     return executeTx(this.db, async (trx) => {
       const scope = await trx

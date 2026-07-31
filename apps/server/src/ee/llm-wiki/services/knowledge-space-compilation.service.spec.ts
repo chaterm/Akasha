@@ -18,6 +18,59 @@ import { KnowledgeArtifactCatalogService } from './knowledge-artifact-catalog.se
 import { KnowledgeSpaceCompilationService } from './knowledge-space-compilation.service';
 
 describe('KnowledgeSpaceCompilationService', () => {
+  it('dispatches a DB-reserved Space slice and never fans out page jobs', async () => {
+    const { service, repo, queue, spaceQueue } = createService({
+      enableSpaceQueue: true,
+      reservationCandidates: [
+        {
+          id: 'run-space',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          phase: 'text',
+        },
+      ],
+      undispatchedSpaceSlices: [
+        {
+          runId: 'run-space',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          knowledgeGeneration: 4,
+          jobPhase: 'text',
+          spaceJobSequence: 1,
+          spaceJobId: 'knowledge-space-text__run-space__text__1',
+        },
+      ],
+    });
+
+    await service.dispatchPending();
+
+    expect(repo.reserveNextSpaceSlice).toHaveBeenCalledWith({
+      runId: 'run-space',
+    });
+    expect(spaceQueue.add).toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_COMPILE_SPACE_TEXT,
+      expect.objectContaining({
+        spaceRunId: 'run-space',
+        phase: 'text',
+        spaceJobSequence: 1,
+      }),
+      {
+        jobId: 'knowledge-space-text__run-space__text__1',
+        priority: 5,
+      },
+    );
+    expect(repo.markSpaceSliceDispatched).toHaveBeenCalledWith(
+      expect.objectContaining({
+        spaceJobId: 'knowledge-space-text__run-space__text__1',
+      }),
+    );
+    expect(queue.add).not.toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_COMPILE_PAGES,
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
   it('requests a queued run without exporter, catalog, image, or LLM planning', async () => {
     const { service, repo, catalog, sourceExporter, imageQueue, queue } =
       createService({
@@ -1009,6 +1062,9 @@ function createService(
     executeRetirement?: boolean;
     remainingSourcesAffectedByRemoval?: string[];
     orphanedArtifactIds?: string[];
+    enableSpaceQueue?: boolean;
+    reservationCandidates?: unknown[];
+    undispatchedSpaceSlices?: unknown[];
   } = {},
 ) {
   const pendingPages = overrides.pendingPages ?? [
@@ -1063,6 +1119,14 @@ function createService(
     findLatestRunForAggregateReuse: jest
       .fn()
       .mockResolvedValue(overrides.latestAggregateRun),
+    findSpaceSliceReservationCandidates: jest
+      .fn()
+      .mockResolvedValue(overrides.reservationCandidates ?? []),
+    reserveNextSpaceSlice: jest.fn().mockResolvedValue(undefined),
+    findUndispatchedSpaceSlices: jest
+      .fn()
+      .mockResolvedValue(overrides.undispatchedSpaceSlices ?? []),
+    markSpaceSliceDispatched: jest.fn().mockResolvedValue(true),
   };
   const queue = {
     add: jest.fn().mockResolvedValue(undefined),
@@ -1075,6 +1139,10 @@ function createService(
       ),
   };
   const imageQueue = {
+    add: jest.fn().mockResolvedValue(undefined),
+    getJob: jest.fn().mockResolvedValue(undefined),
+  };
+  const spaceQueue = {
     add: jest.fn().mockResolvedValue(undefined),
     getJob: jest.fn().mockResolvedValue(undefined),
   };
@@ -1155,12 +1223,15 @@ function createService(
     contributionRepo as unknown as KnowledgeArtifactContributionRepo,
     environmentService as unknown as EnvironmentService,
     sourceExporter as never,
+    undefined,
+    overrides.enableSpaceQueue ? (spaceQueue as unknown as Queue) : undefined,
   );
   return {
     service,
     repo,
     queue,
     imageQueue,
+    spaceQueue,
     compilationRepo,
     catalog,
     sourceRepo,

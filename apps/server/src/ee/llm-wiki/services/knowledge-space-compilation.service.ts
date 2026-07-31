@@ -69,6 +69,8 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     private readonly environmentService: EnvironmentService,
     private readonly sourceExporter: KnowledgeSourceExporterService,
     executionRepo?: KnowledgeSpaceExecutionRepo,
+    @InjectQueue(QueueName.KNOWLEDGE_SPACE_QUEUE)
+    private readonly spaceQueue?: Queue,
   ) {
     this.executionRepo = executionRepo;
   }
@@ -794,7 +796,18 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     if (this.dispatching) return;
     this.dispatching = true;
     try {
-      const pages = await this.runRepo.findPendingPageDispatches();
+      if (this.spaceQueue) await this.dispatchPendingSpaceSlices();
+
+      // The legacy page/aggregate outbox remains reachable only in tests and
+      // until Task 8 removes the old queue consumers. Production always injects
+      // the shared Space queue and must never fan out a new Run by page.
+      const pages = this.spaceQueue
+        ? ([] as Awaited<
+            ReturnType<
+              KnowledgeSpaceCompilationRepo['findPendingPageDispatches']
+            >
+          >)
+        : await this.runRepo.findPendingPageDispatches();
       for (const page of pages) {
         const jobId = buildKnowledgeCompilePageJobId({
           workspaceId: page.workspaceId,
@@ -858,7 +871,13 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
         }
       }
 
-      const runs = await this.runRepo.findAggregatePendingRuns();
+      const runs = this.spaceQueue
+        ? ([] as Awaited<
+            ReturnType<
+              KnowledgeSpaceCompilationRepo['findAggregatePendingRuns']
+            >
+          >)
+        : await this.runRepo.findAggregatePendingRuns();
       for (const run of runs) {
         const phase =
           run.phase === 'final_aggregate'
@@ -1043,6 +1062,42 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       }
     } finally {
       this.dispatching = false;
+    }
+  }
+
+  private async dispatchPendingSpaceSlices(): Promise<void> {
+    const candidates = await this.runRepo.findSpaceSliceReservationCandidates();
+    for (const candidate of candidates) {
+      await this.runRepo.reserveNextSpaceSlice({ runId: candidate.id });
+    }
+    const slices = await this.runRepo.findUndispatchedSpaceSlices();
+    for (const slice of slices) {
+      const jobName =
+        slice.jobPhase === 'text'
+          ? QueueJob.KNOWLEDGE_COMPILE_SPACE_TEXT
+          : QueueJob.KNOWLEDGE_MERGE_SPACE_IMAGES;
+      try {
+        await this.spaceQueue!.add(
+          jobName,
+          {
+            workspaceId: slice.workspaceId,
+            spaceId: slice.spaceId,
+            spaceRunId: slice.runId,
+            knowledgeGeneration: slice.knowledgeGeneration,
+            phase: slice.jobPhase,
+            spaceJobSequence: slice.spaceJobSequence,
+          },
+          {
+            jobId: slice.spaceJobId,
+            priority: slice.jobPhase === 'image_merge' ? 1 : 5,
+          },
+        );
+        await this.runRepo.markSpaceSliceDispatched(slice);
+      } catch {
+        this.logger.warn(
+          `Knowledge Space outbox dispatch will retry reservation ${slice.spaceJobId}.`,
+        );
+      }
     }
   }
 
