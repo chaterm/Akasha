@@ -5,6 +5,19 @@ import { createRetryStrategy, parseRedisUrl } from '../../common/helpers';
 import { QueueName } from './constants';
 import { GeneralQueueProcessor } from './processors/general-queue.processor';
 
+export const SPACE_QUEUE_DEFAULT_JOB_OPTIONS = {
+  attempts: 3,
+  backoff: { type: 'exponential' as const, delay: 31_000 },
+  removeOnComplete: { count: 1_000 },
+  removeOnFail: { count: 1_000 },
+};
+
+export const IMAGE_QUEUE_DEFAULT_JOB_OPTIONS = {
+  removeOnComplete: { age: 3_600, count: 100_000 },
+  removeOnFail: { age: 86_400, count: 10_000 },
+  attempts: 1,
+};
+
 @Global()
 @Module({
   imports: [
@@ -62,6 +75,10 @@ import { GeneralQueueProcessor } from './processors/general-queue.processor';
       },
     }),
     BullModule.registerQueue({
+      name: QueueName.KNOWLEDGE_SPACE_QUEUE,
+      defaultJobOptions: SPACE_QUEUE_DEFAULT_JOB_OPTIONS,
+    }),
+    BullModule.registerQueue({
       name: QueueName.KNOWLEDGE_TEXT_QUEUE,
       defaultJobOptions: {
         removeOnComplete: true,
@@ -71,11 +88,7 @@ import { GeneralQueueProcessor } from './processors/general-queue.processor';
     }),
     BullModule.registerQueue({
       name: QueueName.KNOWLEDGE_IMAGE_QUEUE,
-      defaultJobOptions: {
-        removeOnComplete: true,
-        removeOnFail: true,
-        attempts: 1,
-      },
+      defaultJobOptions: IMAGE_QUEUE_DEFAULT_JOB_OPTIONS,
     }),
     BullModule.registerQueue({
       name: QueueName.HISTORY_QUEUE,

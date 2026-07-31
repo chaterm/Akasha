@@ -186,6 +186,48 @@ export class EnvironmentVariables {
   KNOWLEDGE_IMAGE_JOB_DEADLINE_MS: number;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  KNOWLEDGE_SPACE_CONCURRENCY: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  KNOWLEDGE_IMAGE_CONCURRENCY: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  KNOWLEDGE_SPACE_SLICE_MAX_PAGES: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(60_000)
+  @Max(900_000)
+  KNOWLEDGE_SPACE_SLICE_MAX_MS: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(10_000)
+  @Max(60_000)
+  KNOWLEDGE_SPACE_HEARTBEAT_MS: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(120_000)
+  @Max(600_000)
+  KNOWLEDGE_SPACE_LEASE_TTL_MS: number;
+
+  @IsOptional()
   @ValidateIf(
     (obj) =>
       obj.AI_DRIVER && ['openai', 'openai-compatible'].includes(obj.AI_DRIVER),
@@ -256,6 +298,26 @@ export function validate(config: Record<string, any>) {
   if (2 * compilerTimeout + 60_000 > aggregateDeadline) {
     console.error(
       'KNOWLEDGE_AGGREGATE_DEADLINE_MS must leave 60000ms after two compiler attempts.',
+    );
+    process.exit(1);
+  }
+
+  const heartbeat = validatedConfig.KNOWLEDGE_SPACE_HEARTBEAT_MS ?? 30_000;
+  const executionLeaseTtl =
+    validatedConfig.KNOWLEDGE_SPACE_LEASE_TTL_MS ?? 180_000;
+  if (heartbeat >= executionLeaseTtl) {
+    console.error(
+      'KNOWLEDGE_SPACE_HEARTBEAT_MS must be less than KNOWLEDGE_SPACE_LEASE_TTL_MS.',
+    );
+    process.exit(1);
+  }
+
+  const databaseMaxPool = validatedConfig.DATABASE_MAX_POOL ?? 25;
+  const spaceConcurrency = validatedConfig.KNOWLEDGE_SPACE_CONCURRENCY ?? 10;
+  const imageConcurrency = validatedConfig.KNOWLEDGE_IMAGE_CONCURRENCY ?? 5;
+  if (databaseMaxPool < spaceConcurrency + imageConcurrency + 10) {
+    console.error(
+      'DATABASE_MAX_POOL must be at least KNOWLEDGE_SPACE_CONCURRENCY + KNOWLEDGE_IMAGE_CONCURRENCY + 10.',
     );
     process.exit(1);
   }

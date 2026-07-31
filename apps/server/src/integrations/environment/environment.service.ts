@@ -373,6 +373,57 @@ export class EnvironmentService {
     );
   }
 
+  getKnowledgeSpaceConcurrency(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_SPACE_CONCURRENCY',
+        10,
+      ),
+    );
+  }
+
+  getKnowledgeImageConcurrency(): number {
+    return Number(
+      this.configService.get<string | number>('KNOWLEDGE_IMAGE_CONCURRENCY', 5),
+    );
+  }
+
+  getKnowledgeSpaceSliceMaxPages(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_SPACE_SLICE_MAX_PAGES',
+        5,
+      ),
+    );
+  }
+
+  getKnowledgeSpaceSliceMaxMs(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_SPACE_SLICE_MAX_MS',
+        300_000,
+      ),
+    );
+  }
+
+  getKnowledgeSpaceHeartbeatMs(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_SPACE_HEARTBEAT_MS',
+        30_000,
+      ),
+    );
+  }
+
+  getKnowledgeSpaceLeaseTtlMs(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_SPACE_LEASE_TTL_MS',
+        180_000,
+      ),
+    );
+  }
+
   getAiEmbeddingDimension(): number {
     return parseInt(
       this.configService.get<string>('AI_EMBEDDING_DIMENSION'),

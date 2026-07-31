@@ -175,6 +175,23 @@ export interface IKnowledgeAggregateSpaceJob {
   phase?: 'initial_aggregate' | 'final_aggregate';
 }
 
+export interface IKnowledgeSpaceSliceJob {
+  workspaceId: string;
+  spaceId: string;
+  spaceRunId: string;
+  knowledgeGeneration: number;
+  phase: 'text' | 'image_merge';
+  spaceJobSequence: number;
+}
+
+export interface IKnowledgeCompileImageJob {
+  workspaceId: string;
+  spaceId: string;
+  spaceRunId: string;
+  runImageId: string;
+  knowledgeGeneration: number;
+}
+
 export interface IKnowledgeRebuildEmbeddingsJob {
   workspaceId: string;
   spaceId: string;

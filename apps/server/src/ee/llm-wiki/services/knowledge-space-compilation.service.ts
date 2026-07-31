@@ -43,6 +43,7 @@ import {
   buildEffectiveKnowledgeHash,
   ReadyKnowledgeImage,
 } from './knowledge-effective-hash';
+import { knowledgeImageJobOptions } from './knowledge-worker-settings';
 
 @Injectable()
 export class KnowledgeSpaceCompilationService implements OnModuleInit {
@@ -481,7 +482,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
         knowledgeGeneration,
         images: source.images,
       },
-      imageJobOptions(jobId),
+      knowledgeImageJobOptions(jobId),
     );
     return jobId;
   }
@@ -720,7 +721,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
               knowledgeGeneration: page.knowledgeGeneration,
               images: source.images,
             },
-            imageJobOptions(jobId),
+            knowledgeImageJobOptions(jobId),
           );
           const accepted = await this.runRepo.markPageImageQueued({
             runId: page.runId,
@@ -912,17 +913,6 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       }),
     };
   }
-}
-
-function imageJobOptions(jobId: string) {
-  return {
-    jobId,
-    attempts: 3,
-    backoff: {
-      type: 'exponential' as const,
-      delay: KNOWLEDGE_COMPILE_RETRY_BACKOFF_MS,
-    },
-  };
 }
 
 function mergeJobOptions(jobId: string) {

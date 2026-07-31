@@ -96,6 +96,12 @@ describe('environment validation', () => {
       KNOWLEDGE_PAGE_DEADLINE_MS: '900000',
       KNOWLEDGE_AGGREGATE_DEADLINE_MS: '300000',
       KNOWLEDGE_IMAGE_JOB_DEADLINE_MS: '180000',
+      KNOWLEDGE_SPACE_CONCURRENCY: '10',
+      KNOWLEDGE_IMAGE_CONCURRENCY: '5',
+      KNOWLEDGE_SPACE_SLICE_MAX_PAGES: '5',
+      KNOWLEDGE_SPACE_SLICE_MAX_MS: '300000',
+      KNOWLEDGE_SPACE_HEARTBEAT_MS: '30000',
+      KNOWLEDGE_SPACE_LEASE_TTL_MS: '180000',
     });
 
     expect(config.DATABASE_MAX_POOL).toBe(25);
@@ -103,6 +109,12 @@ describe('environment validation', () => {
     expect(config.KNOWLEDGE_PAGE_DEADLINE_MS).toBe(900_000);
     expect(config.KNOWLEDGE_AGGREGATE_DEADLINE_MS).toBe(300_000);
     expect(config.KNOWLEDGE_IMAGE_JOB_DEADLINE_MS).toBe(180_000);
+    expect(config.KNOWLEDGE_SPACE_CONCURRENCY).toBe(10);
+    expect(config.KNOWLEDGE_IMAGE_CONCURRENCY).toBe(5);
+    expect(config.KNOWLEDGE_SPACE_SLICE_MAX_PAGES).toBe(5);
+    expect(config.KNOWLEDGE_SPACE_SLICE_MAX_MS).toBe(300_000);
+    expect(config.KNOWLEDGE_SPACE_HEARTBEAT_MS).toBe(30_000);
+    expect(config.KNOWLEDGE_SPACE_LEASE_TTL_MS).toBe(180_000);
   });
 
   it.each([
@@ -116,6 +128,19 @@ describe('environment validation', () => {
     ['KNOWLEDGE_AGGREGATE_DEADLINE_MS', '600001'],
     ['KNOWLEDGE_IMAGE_JOB_DEADLINE_MS', '119999'],
     ['KNOWLEDGE_IMAGE_JOB_DEADLINE_MS', '300001'],
+    ['KNOWLEDGE_SPACE_CONCURRENCY', '0'],
+    ['KNOWLEDGE_SPACE_CONCURRENCY', '11'],
+    ['KNOWLEDGE_SPACE_CONCURRENCY', '1.5'],
+    ['KNOWLEDGE_IMAGE_CONCURRENCY', '0'],
+    ['KNOWLEDGE_IMAGE_CONCURRENCY', '11'],
+    ['KNOWLEDGE_SPACE_SLICE_MAX_PAGES', '0'],
+    ['KNOWLEDGE_SPACE_SLICE_MAX_PAGES', '51'],
+    ['KNOWLEDGE_SPACE_SLICE_MAX_MS', '59999'],
+    ['KNOWLEDGE_SPACE_SLICE_MAX_MS', '900001'],
+    ['KNOWLEDGE_SPACE_HEARTBEAT_MS', '9999'],
+    ['KNOWLEDGE_SPACE_HEARTBEAT_MS', '60001'],
+    ['KNOWLEDGE_SPACE_LEASE_TTL_MS', '119999'],
+    ['KNOWLEDGE_SPACE_LEASE_TTL_MS', '600001'],
   ])('rejects invalid bounded setting %s=%s', (key, value) => {
     expectInvalidEnvironment({ [key]: value });
   });
@@ -124,6 +149,21 @@ describe('environment validation', () => {
     expectInvalidEnvironment({
       KNOWLEDGE_COMPILER_TIMEOUT_MS: '150000',
       KNOWLEDGE_AGGREGATE_DEADLINE_MS: '300000',
+    });
+  });
+
+  it('rejects heartbeat greater than or equal to the execution lease TTL', () => {
+    expectInvalidEnvironment({
+      KNOWLEDGE_SPACE_HEARTBEAT_MS: '60000',
+      KNOWLEDGE_SPACE_LEASE_TTL_MS: '60000',
+    });
+  });
+
+  it('rejects local worker concurrency above the database pool budget', () => {
+    expectInvalidEnvironment({
+      DATABASE_MAX_POOL: '24',
+      KNOWLEDGE_SPACE_CONCURRENCY: '10',
+      KNOWLEDGE_IMAGE_CONCURRENCY: '5',
     });
   });
 });
