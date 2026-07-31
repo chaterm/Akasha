@@ -108,6 +108,58 @@ export class KnowledgeImageEnrichmentService {
     private readonly imageProvider: KnowledgeImageUnderstandingProvider,
   ) {}
 
+  async enrichSingleImage(
+    input: {
+      workspaceId: string;
+      spaceId: string;
+      sourcePageId: string;
+      image: KnowledgeSourceImage;
+    },
+    abortSignal: AbortSignal,
+  ): Promise<{
+    status: 'succeeded' | 'failed' | 'skipped';
+    extractionId?: string;
+    retryable: boolean;
+    errorCode?: string;
+  }> {
+    const result = await this.enrichSource(
+      {
+        workspaceId: input.workspaceId,
+        spaceId: input.spaceId,
+        sourcePageId: input.sourcePageId,
+        sourceVersion: 'run-image',
+        contentHash: 'run-image',
+        title: input.image.fileName,
+        text: '',
+        images: [input.image],
+        references: [],
+      },
+      { abortSignal, formatPageKnowledge: false },
+    );
+    if (result.succeeded > 0) {
+      return {
+        status: 'succeeded',
+        extractionId: result.readyExtractionIds[0],
+        retryable: false,
+      };
+    }
+    const firstWarning = result.warnings.find(
+      (warning) => warning.attachmentId === input.image.attachmentId,
+    );
+    if (result.skipped > 0 && result.failed === 0) {
+      return {
+        status: 'skipped',
+        retryable: false,
+        errorCode: firstWarning?.code ?? 'image_skipped',
+      };
+    }
+    return {
+      status: 'failed',
+      retryable: result.retryableFailureCount > 0,
+      errorCode: firstWarning?.code ?? 'image_processing_failed',
+    };
+  }
+
   async readReadySource(source: KnowledgeSourceSnapshot): Promise<{
     source: KnowledgeSourceSnapshot;
     readyImages: ReadyKnowledgeImage[];
@@ -182,7 +234,10 @@ export class KnowledgeImageEnrichmentService {
 
   async enrichSource(
     source: KnowledgeSourceSnapshot,
-    options?: { abortSignal?: AbortSignal },
+    options?: {
+      abortSignal?: AbortSignal;
+      formatPageKnowledge?: boolean;
+    },
   ): Promise<KnowledgeImageEnrichmentResult> {
     options?.abortSignal?.throwIfAborted();
     const allSourceImages = source.images ?? [];
@@ -455,7 +510,10 @@ export class KnowledgeImageEnrichmentService {
     }
 
     options?.abortSignal?.throwIfAborted();
-    const formatted = formatImageKnowledge(extracted);
+    const formatted =
+      options?.formatPageKnowledge === false
+        ? { text: '', truncatedCount: 0 }
+        : formatImageKnowledge(extracted);
     if (formatted.truncatedCount > 0) {
       warnings.push({
         attachmentId: '',

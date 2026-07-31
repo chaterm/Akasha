@@ -182,7 +182,12 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       this.environmentService.getAiVisionModel().trim(),
     );
     const planned = sources.map((source) => {
-      const sourceImages = source.images ?? [];
+      const expectedImages = source.images ?? [];
+      const sourceImages = expectedImages.slice(0, 50);
+      const overflowImageCount = Math.max(
+        0,
+        expectedImages.length - sourceImages.length,
+      );
       const readyImages = sourceImages.flatMap(
         (image): ReadyKnowledgeImage[] => {
           const extraction = readyExtractionByAttachmentId.get(
@@ -226,6 +231,8 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       return {
         source,
         sourceImages,
+        expectedImageCount: expectedImages.length,
+        overflowImageCount,
         readyImages,
         reusable,
         effectiveKnowledgeHash,
@@ -251,23 +258,30 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
         sourcePageId: item.source.sourcePageId,
         expectedSourceVersion: item.source.sourceVersion,
         expectedSourceContentHash: item.source.contentHash,
-        expectedImageCount: item.sourceImages.length,
+        expectedImageCount: item.expectedImageCount,
         succeededImageCount: item.reusable
-          ? item.sourceImages.length
+          ? item.expectedImageCount
           : item.readyImages.length,
+        skippedImageCount: item.reusable ? 0 : item.overflowImageCount,
         status: item.reusable ? ('skipped' as const) : ('pending' as const),
         imageStatus:
-          item.sourceImages.length === 0
+          item.expectedImageCount === 0
             ? ('not_required' as const)
             : item.reusable
               ? ('succeeded' as const)
-              : ('pending' as const),
+              : item.readyImages.length === item.sourceImages.length
+                ? item.overflowImageCount > 0
+                  ? ('partial' as const)
+                  : ('succeeded' as const)
+                : ('pending' as const),
         mergeStatus:
-          item.sourceImages.length === 0
+          item.expectedImageCount === 0
             ? ('not_required' as const)
             : item.reusable
               ? ('succeeded' as const)
-              : ('waiting_images' as const),
+              : item.readyImages.length === item.sourceImages.length
+                ? ('pending' as const)
+                : ('waiting_images' as const),
         errorCode: item.reusable ? 'unchanged' : null,
         errorMessage: item.reusable
           ? 'Existing compiled knowledge is current.'
@@ -663,6 +677,20 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     return completed;
   }
 
+  async claimRunImage(
+    input: Parameters<KnowledgeSpaceCompilationRepo['claimRunImage']>[0],
+  ) {
+    return this.runRepo.claimRunImage(input);
+  }
+
+  async completeRunImage(
+    input: Parameters<KnowledgeSpaceCompilationRepo['completeRunImage']>[0],
+  ) {
+    const completed = await this.runRepo.completeRunImage(input);
+    if (completed) await this.dispatchPending();
+    return completed;
+  }
+
   async beginPageMerge(
     input: Parameters<KnowledgeSpaceCompilationRepo['beginPageMerge']>[0],
   ): Promise<boolean> {
@@ -796,7 +824,10 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     if (this.dispatching) return;
     this.dispatching = true;
     try {
-      if (this.spaceQueue) await this.dispatchPendingSpaceSlices();
+      if (this.spaceQueue) {
+        await this.dispatchPendingSpaceSlices();
+        await this.dispatchPendingRunImages();
+      }
 
       // The legacy page/aggregate outbox remains reachable only in tests and
       // until Task 8 removes the old queue consumers. Production always injects
@@ -918,7 +949,13 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
         }
       }
 
-      const imagePages = await this.runRepo.findPendingImageDispatches();
+      const imagePages = this.spaceQueue
+        ? ([] as Awaited<
+            ReturnType<
+              KnowledgeSpaceCompilationRepo['findPendingImageDispatches']
+            >
+          >)
+        : await this.runRepo.findPendingImageDispatches();
       for (const page of imagePages) {
         try {
           const sources = await this.sourceExporter.exportPageSources({
@@ -985,7 +1022,13 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
         }
       }
 
-      const mergePages = await this.runRepo.findPendingMergeDispatches();
+      const mergePages = this.spaceQueue
+        ? ([] as Awaited<
+            ReturnType<
+              KnowledgeSpaceCompilationRepo['findPendingMergeDispatches']
+            >
+          >)
+        : await this.runRepo.findPendingMergeDispatches();
       for (const page of mergePages) {
         try {
           const sources = await this.sourceExporter.exportPageSources({
@@ -1096,6 +1139,37 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       } catch {
         this.logger.warn(
           `Knowledge Space outbox dispatch will retry reservation ${slice.spaceJobId}.`,
+        );
+      }
+    }
+  }
+
+  private async dispatchPendingRunImages(): Promise<void> {
+    await this.runRepo.reserveRunImagesFairly({
+      maxOutstandingPerRun: 5,
+      runLimit: 100,
+    });
+    const images = await this.runRepo.findUndispatchedRunImages();
+    for (const image of images) {
+      try {
+        await this.imageQueue.add(
+          QueueJob.KNOWLEDGE_COMPILE_IMAGE,
+          {
+            workspaceId: image.workspaceId,
+            spaceId: image.spaceId,
+            spaceRunId: image.runId,
+            runImageId: image.runImageId,
+            knowledgeGeneration: image.knowledgeGeneration,
+          },
+          knowledgeImageJobOptions(image.jobId!),
+        );
+        await this.runRepo.markRunImageDispatched({
+          ...image,
+          jobId: image.jobId!,
+        });
+      } catch {
+        this.logger.warn(
+          `Knowledge image outbox dispatch will retry RunImage ${image.runImageId}.`,
         );
       }
     }

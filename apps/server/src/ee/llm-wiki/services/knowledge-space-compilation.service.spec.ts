@@ -1127,6 +1127,9 @@ function createService(
       .fn()
       .mockResolvedValue(overrides.undispatchedSpaceSlices ?? []),
     markSpaceSliceDispatched: jest.fn().mockResolvedValue(true),
+    reserveRunImagesFairly: jest.fn().mockResolvedValue([]),
+    findUndispatchedRunImages: jest.fn().mockResolvedValue([]),
+    markRunImageDispatched: jest.fn().mockResolvedValue(true),
   };
   const queue = {
     add: jest.fn().mockResolvedValue(undefined),

@@ -45,6 +45,7 @@ import { KnowledgePageCompilationService } from './services/knowledge-page-compi
 import { KnowledgeSpaceRunnerService } from './services/knowledge-space-runner.service';
 import { KnowledgeSpaceProcessor } from './processors/knowledge-space.processor';
 import { KnowledgeRunReaperService } from './services/knowledge-run-reaper.service';
+import { KnowledgeImageReaperService } from './services/knowledge-image-reaper.service';
 
 @Module({
   imports: [NoopAuditModule, ReviewModule],
@@ -79,6 +80,7 @@ import { KnowledgeRunReaperService } from './services/knowledge-run-reaper.servi
     KnowledgePageCompilationService,
     KnowledgeSpaceRunnerService,
     KnowledgeRunReaperService,
+    KnowledgeImageReaperService,
     KnowledgeTextJobHandler,
     KnowledgeLinkResolverService,
     {

@@ -237,7 +237,16 @@ export class KnowledgeSpaceExecutionRepo {
       .where('run.spaceJobSequence', '=', lease.spaceJobSequence)
       .where('run.spaceJobId', '=', lease.spaceJobId)
       .where('run.executionToken', '=', lease.executionToken)
-      .where('page.imageStatus', 'in', ['pending', 'queued', 'processing'])
+      .where((expression) =>
+        expression.or([
+          expression('page.imageStatus', 'in', [
+            'pending',
+            'queued',
+            'processing',
+          ]),
+          expression('page.mergeStatus', 'in', ['waiting_images', 'pending']),
+        ]),
+      )
       .limit(1)
       .executeTakeFirst();
     return Boolean(row);
@@ -672,6 +681,16 @@ export class KnowledgeSpaceExecutionRepo {
       const run = await this.lockLeasedRun(trx, lease);
       if (!run || run.phase !== 'initial_aggregate') return undefined;
       const now = new Date();
+      const pendingImage = input.imagesRequired
+        ? await trx
+            .selectFrom('knowledgeSpaceCompileRunImages')
+            .select('id')
+            .where('runId', '=', lease.runId)
+            .where('status', 'in', ['pending', 'queued', 'processing'])
+            .limit(1)
+            .executeTakeFirst()
+        : undefined;
+      const imagesAlreadyTerminal = input.imagesRequired && !pendingImage;
       return trx
         .updateTable('knowledgeSpaceCompileRuns')
         .set({
@@ -689,10 +708,11 @@ export class KnowledgeSpaceExecutionRepo {
             : {}),
           ...(input.imagesRequired
             ? {
-                phase: 'images',
-                status: 'compiling',
+                phase: imagesAlreadyTerminal ? 'image_merge' : 'images',
+                status: imagesAlreadyTerminal ? 'queued' : 'compiling',
                 spaceJobId: null,
                 spaceJobDispatchedAt: null,
+                ...(imagesAlreadyTerminal ? { spaceJobQueuedAt: now } : {}),
                 executionToken: null,
                 executionLeaseExpiresAt: null,
                 workerId: null,

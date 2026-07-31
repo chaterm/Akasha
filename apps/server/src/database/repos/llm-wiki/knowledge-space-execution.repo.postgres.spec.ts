@@ -217,6 +217,38 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
     `.execute(db);
     expect(state.rows).toEqual([{ recoveryCount: 1 }]);
   });
+
+  it('reserves at most five images per Run and replenishes from DB state', async () => {
+    const first = await compilationRepo.reserveRunImagesFairly({
+      maxOutstandingPerRun: 5,
+    });
+    expect(first.filter((image) => image.runId === 'run-images')).toHaveLength(
+      5,
+    );
+    const second = await compilationRepo.reserveRunImagesFairly({
+      maxOutstandingPerRun: 5,
+    });
+    expect(second.filter((image) => image.runId === 'run-images')).toHaveLength(
+      0,
+    );
+
+    const image = first.find((item) => item.runId === 'run-images')!;
+    await compilationRepo.claimRunImage({
+      ...image,
+      processingExpiresAt: new Date(Date.now() + 210_000),
+    });
+    await compilationRepo.completeRunImage({
+      ...image,
+      status: 'succeeded',
+      extractionId: 'extraction-1',
+    });
+    const replenished = await compilationRepo.reserveRunImagesFairly({
+      maxOutstandingPerRun: 5,
+    });
+    expect(
+      replenished.filter((item) => item.runId === 'run-images'),
+    ).toHaveLength(1);
+  });
 });
 
 async function claimedLease(
@@ -345,10 +377,15 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       alt_text text,
       expected_attachment_version timestamptz not null,
       status varchar not null default 'pending',
+      job_id varchar,
+      dispatched_at timestamptz,
+      processing_expires_at timestamptz,
       extraction_id varchar,
       attempt_count integer not null default 0,
       redis_recovery_count integer not null default 0,
       failure_class varchar,
+      error_code varchar,
+      error_message varchar,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     );
@@ -369,7 +406,8 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       ('space-text', 'workspace-1', 'Text'),
       ('space-finish', 'workspace-1', 'Finish'),
       ('space-yield', 'workspace-1', 'Yield'),
-      ('space-recovery', 'workspace-1', 'Recovery');
+      ('space-recovery', 'workspace-1', 'Recovery'),
+      ('space-images', 'workspace-1', 'Images');
     insert into knowledge_space_compile_runs (
       id, workspace_id, space_id, trigger, compiler_version, prompt_version,
       catalog_hash, space_job_queued_at
@@ -381,6 +419,31 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       ('run-yield', 'workspace-1', 'space-yield', 'manual', 'compiler-v1',
        'prompt-v1', 'pending-initialization', now()),
       ('run-recovery', 'workspace-1', 'space-recovery', 'manual', 'compiler-v1',
-       'prompt-v1', 'pending-initialization', now())
+       'prompt-v1', 'pending-initialization', now()),
+      ('run-images', 'workspace-1', 'space-images', 'manual', 'compiler-v1',
+       'prompt-v1', 'images', now());
+    update knowledge_space_compile_runs
+      set phase='images', status='compiling', initialized_at=now(),
+          expected_page_count=1
+      where id='run-images';
+    insert into knowledge_space_compile_run_pages (
+      id, run_id, workspace_id, space_id, source_page_id,
+      expected_source_version, expected_source_content_hash,
+      expected_image_count, image_status, merge_status, status
+    ) values (
+      'run-page-images', 'run-images', 'workspace-1', 'space-images',
+      'page-images', 'v1', 'sha256:page-images', 6,
+      'pending', 'waiting_images', 'succeeded'
+    );
+    insert into knowledge_space_compile_run_images (
+      id, run_id, run_page_id, workspace_id, space_id, source_page_id,
+      attachment_id, image_ordinal, file_name, mime_type,
+      expected_attachment_version
+    )
+    select 'run-image-' || ordinal, 'run-images', 'run-page-images',
+           'workspace-1', 'space-images', 'page-images',
+           'attachment-' || ordinal, ordinal, ordinal || '.png', 'image/png',
+           now()
+    from generate_series(0, 5) ordinal
   `.execute(db);
 }

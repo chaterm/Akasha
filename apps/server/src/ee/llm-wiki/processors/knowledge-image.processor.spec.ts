@@ -19,6 +19,46 @@ describe('KnowledgeImageProcessor', () => {
     ).toEqual(expect.objectContaining({ concurrency: 5 }));
   });
 
+  it('claims and compiles exactly one frozen RunImage', async () => {
+    const fixture = createFixture();
+    fixture.compilation.claimRunImage.mockResolvedValue({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageId: 'page-1',
+      attachmentId: 'image-1',
+      fileName: 'one.png',
+      mimeType: 'image/png',
+      fileSize: 10,
+      altText: null,
+      expectedAttachmentVersion: new Date('2026-07-27T00:00:00.000Z'),
+    });
+    fixture.enrichment.enrichSingleImage.mockResolvedValue({
+      status: 'succeeded',
+      extractionId: 'extraction-1',
+      retryable: false,
+    });
+
+    await expect(fixture.processor.process(runImageJob())).resolves.toEqual(
+      expect.objectContaining({ status: 'succeeded' }),
+    );
+
+    expect(fixture.enrichment.enrichSingleImage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourcePageId: 'page-1',
+        image: expect.objectContaining({ attachmentId: 'image-1' }),
+      }),
+      expect.any(AbortSignal),
+    );
+    expect(fixture.enrichment.enrichSource).not.toHaveBeenCalled();
+    expect(fixture.compilation.completeRunImage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runImageId: 'run-image-1',
+        status: 'succeeded',
+        extractionId: 'extraction-1',
+      }),
+    );
+  });
+
   it('persists page counters and continues after permanent image failures', async () => {
     const fixture = createFixture({
       result: pageResult({ expected: 3, failed: 1, skipped: 1 }),
@@ -163,6 +203,23 @@ function job(overrides: Partial<Job> = {}): Job {
   } as Job;
 }
 
+function runImageJob(overrides: Partial<Job> = {}): Job {
+  return {
+    id: 'knowledge-compile-image__run-1__run-image-1__4',
+    name: QueueJob.KNOWLEDGE_COMPILE_IMAGE,
+    data: {
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      spaceRunId: 'run-1',
+      runImageId: 'run-image-1',
+      knowledgeGeneration: 4,
+    },
+    attemptsMade: 0,
+    opts: { attempts: 3 },
+    ...overrides,
+  } as Job;
+}
+
 function createFixture(
   overrides: {
     beginAccepted?: boolean;
@@ -186,6 +243,7 @@ function createFixture(
   };
   const enrichment = {
     enrichSource: jest.fn().mockResolvedValue(overrides.result ?? pageResult()),
+    enrichSingleImage: jest.fn(),
   };
   const compilation = {
     beginPageImages: jest
@@ -195,6 +253,8 @@ function createFixture(
     recordPageImageAttempt: jest.fn().mockResolvedValue(true),
     completePageImages: jest.fn().mockResolvedValue(true),
     queueStandalonePageMerge: jest.fn().mockResolvedValue('merge-job-1'),
+    claimRunImage: jest.fn(),
+    completeRunImage: jest.fn().mockResolvedValue({ imageStatus: 'succeeded' }),
   };
   const processor = new KnowledgeImageProcessor(
     exporter as unknown as KnowledgeSourceExporterService,
