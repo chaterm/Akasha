@@ -30,13 +30,10 @@ export class KnowledgeTextProcessor
   }
 
   @OnWorkerEvent('failed')
-  async onError(job: Job) {
+  onError(job: Job) {
     this.logger.error(
       `Error processing ${job.name} job. Reason: ${job.failedReason}`,
     );
-    if (SUPPORTED_TEXT_JOBS.has(job.name as QueueJob)) {
-      await this.handler.onFailed(job);
-    }
   }
 
   @OnWorkerEvent('completed')

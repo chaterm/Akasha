@@ -40,7 +40,6 @@ import {
 import { AdminKnowledgeSpaceActionDto } from './dto/admin-space-action.dto';
 import { CompileSpacesDto } from './dto/compile-spaces.dto';
 import {
-  AdminKnowledgeDiagnosticsDto,
   AdminKnowledgeRunListDto,
   AdminKnowledgeRunPagesQueryDto,
   AdminKnowledgeRunSummaryDto,
@@ -349,45 +348,6 @@ export class LlmWikiController {
     });
 
     return result;
-  }
-
-  @HttpCode(HttpStatus.OK)
-  @Post('admin/diagnostics')
-  async getDiagnostics(
-    @Body() dto: AdminKnowledgeDiagnosticsDto,
-    @AuthUser() user: User,
-    @AuthWorkspace() workspace: Workspace,
-  ) {
-    if (!this.chatService.isEnabledForWorkspace(workspace)) {
-      throw new ForbiddenException('AI knowledge chat is disabled');
-    }
-
-    const candidateSpaceIds =
-      await this.diagnosticsService.findWorkspaceSpaceIds({
-        workspaceId: workspace.id,
-        requestedSpaceIds: dto.spaceIds,
-      });
-    const authorizedSpaceIds =
-      await this.spaceAuthorization.filterReadableSpaceIds({
-        user: {
-          id: user.id,
-          role: user.role ?? UserRole.MEMBER,
-          workspaceId: workspace.id,
-        },
-        spaceIds: candidateSpaceIds,
-      });
-
-    return this.diagnosticsService.getWorkspaceDiagnostics({
-      workspaceId: workspace.id,
-      spaceIds: authorizedSpaceIds,
-      enforceSpaceScope: true,
-      canViewGlobalQueues: user.role === UserRole.OWNER,
-      includeDetailedDiagnostics:
-        user.role === UserRole.OWNER || user.role === UserRole.ADMIN,
-      statuses: dto.statuses,
-      stages: dto.stages,
-      limit: dto.limit,
-    });
   }
 
   @HttpCode(HttpStatus.OK)

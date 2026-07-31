@@ -114,67 +114,6 @@ export interface IApprovalRejectedNotificationJob {
   comment?: string;
 }
 
-export interface IKnowledgeCompileSpaceJob {
-  workspaceId: string;
-  spaceId: string;
-  confirmationSpaceName?: string;
-  trigger?: 'manual_compile' | 'retry_compile' | 'page_update';
-}
-
-export interface IKnowledgeCompilePagesJob {
-  workspaceId: string;
-  spaceId: string;
-  sourcePageIds: string[];
-  sourceVersion?: string;
-  sourceContentHash?: string;
-  spaceRunId?: string;
-  knowledgeGeneration?: number;
-  trigger?:
-    | 'manual_compile'
-    | 'retry_compile'
-    | 'page_update'
-    | 'page_created'
-    | 'page_restored';
-}
-
-export interface IKnowledgeCompilePageImagesJob {
-  workspaceId: string;
-  spaceId: string;
-  sourcePageId: string;
-  sourceVersion: string;
-  sourceContentHash: string;
-  spaceRunId?: string;
-  knowledgeGeneration: number;
-  images: Array<{
-    attachmentId: string;
-    fileName: string;
-    mimeType:
-      | 'image/jpeg'
-      | 'image/png'
-      | 'image/apng'
-      | 'image/gif'
-      | 'image/webp'
-      | 'image/avif'
-      | 'image/tiff'
-      | 'image/bmp';
-    fileSize: number | null;
-    attachmentVersion: string;
-    altText?: string;
-  }>;
-}
-
-export interface IKnowledgeMergePageImagesJob extends IKnowledgeCompilePageImagesJob {
-  effectiveKnowledgeHash: string;
-}
-
-export interface IKnowledgeAggregateSpaceJob {
-  workspaceId: string;
-  spaceId: string;
-  spaceRunId: string;
-  knowledgeGeneration: number;
-  phase?: 'initial_aggregate' | 'final_aggregate';
-}
-
 export interface IKnowledgeSpaceSliceJob {
   workspaceId: string;
   spaceId: string;

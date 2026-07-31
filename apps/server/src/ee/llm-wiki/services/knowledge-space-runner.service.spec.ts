@@ -327,7 +327,7 @@ function settings() {
 
 function pageResult() {
   return {
-    type: 'compile-pages' as const,
+    type: 'text' as const,
     status: 'succeeded' as const,
     workspaceId: 'workspace-1',
     spaceId: 'space-1',

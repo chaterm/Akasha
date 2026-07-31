@@ -86,88 +86,6 @@ export interface KnowledgeRetryPagesResult {
   jobIds: string[];
 }
 
-export type KnowledgePageCompileStatus =
-  | "not_started"
-  | "queued"
-  | "running"
-  | "succeeded"
-  | "skipped"
-  | "failed";
-
-export type KnowledgePageCompileStage =
-  | "queued"
-  | "read_source"
-  | "image_enrichment"
-  | "analysis"
-  | "generation"
-  | "merge"
-  | "validation"
-  | "import"
-  | "completed";
-
-export interface KnowledgeDiagnosticsPage {
-  pageId: string;
-  slugId: string;
-  title: string;
-  spaceId: string;
-  spaceName: string;
-  spaceSlug: string;
-  updatedAt: string;
-  deletedAt: string | null;
-  textLength: number;
-  knowledgeSourceCount: number;
-  staleSourceCount: number;
-  oldestStaleSourceAt: string | null;
-  knowledgePageSourceCount: number;
-  knowledgeChunkCount: number;
-  missingEmbeddingChunkCount: number;
-  lastCompiledAt: string | null;
-  lastAccessPolicyIndexedAt: string | null;
-  staleAccessPolicyCount: number;
-  compileStatus: KnowledgePageCompileStatus;
-  compileStage: KnowledgePageCompileStage | null;
-  compileAttemptCount: number;
-  compileErrorCode: string | null;
-  compileErrorMessage: string | null;
-  lastSucceededAt: string | null;
-  servingLastSuccessfulVersion: boolean;
-}
-
-export interface KnowledgeDiagnosticsJob {
-  id: string;
-  name: string;
-  state: string;
-  workspaceId?: string;
-  spaceId?: string;
-  pageIds: string[];
-  timestamp?: number;
-  processedOn?: number;
-  finishedOn?: number;
-  failedReason?: string;
-}
-
-export interface KnowledgeCompileStatus {
-  spaceId: string;
-  status:
-    | "queued"
-    | "running"
-    | "succeeded"
-    | "partial"
-    | "failed"
-    | "superseded";
-  jobId: string;
-  lastRunId: string;
-  durationMs: number | null;
-  sourceCount: number;
-  succeededPageCount?: number;
-  failedPageCount?: number;
-  skippedPageCount?: number;
-  importedArtifactCount: number;
-  quarantinedArtifactCount: number;
-  failureReason?: string;
-  updatedAt?: number;
-}
-
 export interface KnowledgeQueueCounts {
   waiting: number;
   active: number;
@@ -179,15 +97,9 @@ export interface KnowledgeQueueCounts {
   completed: number;
 }
 
-export type KnowledgeQueueKind = "text" | "image";
-
 export interface KnowledgeQueueSnapshot extends KnowledgeQueueCounts {
   sampledAt: string | null;
 }
-
-export type KnowledgeQueueSnapshots = Partial<
-  Record<KnowledgeQueueKind, KnowledgeQueueSnapshot>
->;
 
 export type KnowledgeRunStatus =
   | "queued"
@@ -355,103 +267,6 @@ export interface KnowledgeWorkerDiagnostics {
   schedulingAuthority: "postgresql";
   space: KnowledgeWorkerCapacityEstimate;
   image: KnowledgeWorkerCapacityEstimate;
-}
-
-export interface KnowledgeCompilationStageProgress {
-  expected: number;
-  succeeded: number;
-  failed: number;
-  skipped: number;
-  pending: number;
-  waiting: number;
-  lastAttemptError?: string;
-}
-
-export interface KnowledgeCompileRunProgress {
-  runId: string;
-  spaceId: string;
-  spaceName: string;
-  status: KnowledgeCompileStatus["status"];
-  mode?: "update" | "force";
-  phase?: string;
-  generation?: number;
-  createdAt?: string;
-  updatedAt?: string;
-  completedAt?: string;
-  progress: {
-    text: KnowledgeCompilationStageProgress;
-    image: KnowledgeCompilationStageProgress;
-    merge: KnowledgeCompilationStageProgress;
-  };
-}
-
-export interface KnowledgeQuarantinedArtifact {
-  id: string;
-  workspaceId: string;
-  spaceId: string;
-  artifactId: string | null;
-  artifactKind: string | null;
-  compilerRunId: string | null;
-  compileTaskId: string | null;
-  reasonCodes: string[];
-  createdAt: string;
-}
-
-export interface KnowledgeDiagnosticsResult {
-  pages: KnowledgeDiagnosticsPage[];
-  jobs: KnowledgeDiagnosticsJob[];
-  queueCounts: KnowledgeQueueCounts;
-  compileStatuses: KnowledgeCompileStatus[];
-  canViewGlobalQueues?: boolean;
-  queueSnapshots?: KnowledgeQueueSnapshots;
-  compileRuns?: KnowledgeCompileRunProgress[];
-  retrieval?: KnowledgeRetrievalDiagnosticsSummary;
-  quarantines: KnowledgeQuarantinedArtifact[];
-  quality?: KnowledgeQualityReport;
-}
-
-export interface KnowledgeRetrievalDiagnosticsSummary {
-  sampleCount: number;
-  zeroHitRate: number;
-  embeddingFallbackRate: number;
-  accessPolicyFallbackRate: number;
-  averageAuthorizedCandidateCount: number;
-  averageFilteredCandidateCount: number;
-}
-
-export interface KnowledgeQualitySummary {
-  pageCount: number;
-  compiledPageCount: number;
-  stalePageCount: number;
-  missingSourcePageCount: number;
-  missingChunkPageCount: number;
-  missingEmbeddingPageCount: number;
-  healthScore: number;
-}
-
-export interface KnowledgeSpaceHealth {
-  spaceId: string;
-  spaceName: string;
-  pageCount: number;
-  compiledPageCount: number;
-  stalePageCount: number;
-  missingChunkPageCount: number;
-  missingEmbeddingPageCount: number;
-  oldestStaleSourceAgeHours: number | null;
-  healthScore: number;
-}
-
-export interface KnowledgeQualityIssue {
-  code: string;
-  severity: "high" | "medium" | "low";
-  message: string;
-  affectedPageCount: number;
-}
-
-export interface KnowledgeQualityReport {
-  summary: KnowledgeQualitySummary;
-  spaces: KnowledgeSpaceHealth[];
-  topIssues: KnowledgeQualityIssue[];
 }
 
 export interface KnowledgeGraphNode {

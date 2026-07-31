@@ -603,7 +603,7 @@ describe('LlmWikiController', () => {
       }),
     );
     expect(knowledgeQueue.add).not.toHaveBeenCalledWith(
-      QueueJob.KNOWLEDGE_COMPILE_SPACE,
+      'knowledge-compile-space',
       expect.objectContaining({ trigger: 'rebuild_embeddings' }),
       expect.anything(),
     );
@@ -639,119 +639,6 @@ describe('LlmWikiController', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(knowledgeQueue.add).not.toHaveBeenCalled();
-  });
-
-  it('returns knowledge diagnostics for admins', async () => {
-    const diagnosticsService = {
-      findWorkspaceSpaceIds: jest
-        .fn()
-        .mockResolvedValue(['space-1', 'space-private']),
-      getWorkspaceDiagnostics: jest.fn().mockResolvedValue({
-        pages: [{ pageId: 'page-1', title: 'Kafka', knowledgeChunkCount: 2 }],
-        jobs: [{ id: 'job-1', name: QueueJob.KNOWLEDGE_COMPILE_SPACE }],
-        compileStatuses: [],
-      }),
-    };
-    const spaceAuthorization = {
-      filterReadableSpaceIds: jest.fn().mockResolvedValue(['space-1']),
-    };
-    const controller = createController({
-      diagnosticsService,
-      spaceAuthorization,
-    });
-
-    await expect(
-      controller.getDiagnostics(
-        {
-          spaceIds: ['space-1'],
-          statuses: ['failed'],
-          stages: ['generation'],
-          limit: 20,
-        },
-        adminUser(),
-        workspace(),
-      ),
-    ).resolves.toEqual({
-      pages: [{ pageId: 'page-1', title: 'Kafka', knowledgeChunkCount: 2 }],
-      jobs: [{ id: 'job-1', name: QueueJob.KNOWLEDGE_COMPILE_SPACE }],
-      compileStatuses: [],
-    });
-
-    expect(diagnosticsService.getWorkspaceDiagnostics).toHaveBeenCalledWith({
-      workspaceId: 'workspace-1',
-      spaceIds: ['space-1'],
-      enforceSpaceScope: true,
-      canViewGlobalQueues: false,
-      includeDetailedDiagnostics: true,
-      statuses: ['failed'],
-      stages: ['generation'],
-      limit: 20,
-    });
-    expect(spaceAuthorization.filterReadableSpaceIds).toHaveBeenCalledWith({
-      user: expect.objectContaining({ id: 'user-1', role: UserRole.ADMIN }),
-      spaceIds: ['space-1', 'space-private'],
-    });
-  });
-
-  it('allows an authorized member to see durable progress without global queue details', async () => {
-    const diagnosticsService = {
-      findWorkspaceSpaceIds: jest
-        .fn()
-        .mockResolvedValue(['space-1', 'space-2']),
-      getWorkspaceDiagnostics: jest.fn().mockResolvedValue({ compileRuns: [] }),
-    };
-    const spaceAuthorization = {
-      filterReadableSpaceIds: jest.fn().mockResolvedValue(['space-2']),
-    };
-    const controller = createController({
-      diagnosticsService,
-      spaceAuthorization,
-    });
-
-    await expect(
-      controller.getDiagnostics({}, user(), workspace()),
-    ).resolves.toEqual({ compileRuns: [] });
-    expect(diagnosticsService.getWorkspaceDiagnostics).toHaveBeenCalledWith({
-      workspaceId: 'workspace-1',
-      spaceIds: ['space-2'],
-      enforceSpaceScope: true,
-      canViewGlobalQueues: false,
-      includeDetailedDiagnostics: false,
-      statuses: undefined,
-      stages: undefined,
-      limit: undefined,
-    });
-  });
-
-  it('allows only the workspace owner boundary to view instance-wide queue snapshots', async () => {
-    const diagnosticsService = {
-      findWorkspaceSpaceIds: jest.fn().mockResolvedValue(['space-1']),
-      getWorkspaceDiagnostics: jest.fn().mockResolvedValue({
-        canViewGlobalQueues: true,
-        includeDetailedDiagnostics: true,
-      }),
-    };
-    const spaceAuthorization = {
-      filterReadableSpaceIds: jest.fn().mockResolvedValue(['space-1']),
-    };
-    const controller = createController({
-      diagnosticsService,
-      spaceAuthorization,
-    });
-
-    await controller.getDiagnostics(
-      {},
-      user({ role: UserRole.OWNER }),
-      workspace(),
-    );
-
-    expect(diagnosticsService.getWorkspaceDiagnostics).toHaveBeenCalledWith(
-      expect.objectContaining({
-        canViewGlobalQueues: true,
-        spaceIds: ['space-1'],
-        enforceSpaceScope: true,
-      }),
-    );
   });
 
   it('scopes the scalable Run summary to readable Spaces and hides global queues from admins', async () => {
@@ -976,8 +863,7 @@ describe('LlmWikiController', () => {
     const diagnosticsService = { findRetryableFailedPageIds: jest.fn() };
     const sourceExporter = { exportPageSources: jest.fn() };
     const spaceCompilation = {
-      hasActiveRun: jest.fn(),
-      queuePageRetry: jest.fn(),
+      requestRuns: jest.fn(),
     };
     const controller = createController({
       pageRepo,
@@ -995,7 +881,7 @@ describe('LlmWikiController', () => {
       diagnosticsService.findRetryableFailedPageIds,
     ).not.toHaveBeenCalled();
     expect(sourceExporter.exportPageSources).not.toHaveBeenCalled();
-    expect(spaceCompilation.queuePageRetry).not.toHaveBeenCalled();
+    expect(spaceCompilation.requestRuns).not.toHaveBeenCalled();
   });
 
   describe('single-Space knowledge operations', () => {
@@ -1209,7 +1095,6 @@ function createController(
       ...overrides.importService,
     } as unknown as KnowledgeImportService,
     {
-      getWorkspaceDiagnostics: jest.fn(),
       findWorkspaceSpaceIds: jest.fn().mockResolvedValue([]),
       getRunDiagnosticsSummary: jest.fn(),
       listRunDiagnostics: jest.fn(),
@@ -1243,9 +1128,6 @@ function createController(
     } as unknown as KnowledgeSourceExporterService,
     {
       requestRuns: jest.fn(),
-      startSpaceRun: jest.fn(),
-      hasActiveRun: jest.fn().mockResolvedValue(false),
-      queuePageRetry: jest.fn(),
       ...overrides.spaceCompilation,
     } as unknown as KnowledgeSpaceCompilationService,
     {

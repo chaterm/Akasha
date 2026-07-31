@@ -143,6 +143,77 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
     ).resolves.toBe(false);
   });
 
+  it('physically retires fail-closed removed-source contributions during leased initialization', async () => {
+    await sql`
+      insert into knowledge_artifact_contributions (
+        id, workspace_id, space_id, source_page_id, artifact_id
+      ) values (
+        'retire-contribution', 'workspace-1', 'space-retire',
+        'removed-page', 'retire-artifact'
+      );
+      insert into knowledge_pages (id, workspace_id, space_id)
+      values ('retire-artifact', 'workspace-1', 'space-retire')
+    `.execute(db);
+    const lease = await claimedLease(
+      compilationRepo,
+      executionRepo,
+      'run-retire',
+      'retire-token',
+    );
+
+    await executionRepo.initializeRun(lease, {
+      catalogSnapshot: [],
+      catalogHash: 'sha256:retired',
+      pages: [],
+      images: [],
+      removedSourcePageIds: ['removed-page'],
+    });
+
+    const evidence = await sql<{
+      contributionCount: number;
+      artifactStale: boolean;
+    }>`
+      select
+        (select count(*)::integer from knowledge_artifact_contributions
+          where id = 'retire-contribution') as "contributionCount",
+        (select stale_at is not null from knowledge_pages
+          where id = 'retire-artifact') as "artifactStale"
+    `.execute(db);
+    expect(evidence.rows).toEqual([
+      { contributionCount: 0, artifactStale: true },
+    ]);
+  });
+
+  it('turns a force-run content update into one same-generation incremental follow-up', async () => {
+    await sql`
+      update spaces set knowledge_generation = 5 where id = 'space-force';
+      update knowledge_space_compile_runs
+      set mode = 'force_rebuild', knowledge_generation = 5,
+          rerun_requested = true
+      where id = 'run-force'
+    `.execute(db);
+    const lease = await claimedLease(
+      compilationRepo,
+      executionRepo,
+      'run-force',
+      'force-token',
+    );
+
+    const finished = await executionRepo.finishRun(lease, 'succeeded');
+
+    expect(finished?.run).toMatchObject({
+      mode: 'force_rebuild',
+      knowledgeGeneration: 5,
+      status: 'succeeded',
+    });
+    expect(finished?.followUp).toMatchObject({
+      mode: 'incremental',
+      knowledgeGeneration: 5,
+      status: 'queued',
+      phase: 'text',
+    });
+  });
+
   it('yields only at a checkpoint with remaining pages and preserves progress', async () => {
     const lease = await claimedLease(
       compilationRepo,
@@ -472,6 +543,8 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       ('space-finish', 'workspace-1', 'Finish'),
       ('space-yield', 'workspace-1', 'Yield'),
       ('space-recovery', 'workspace-1', 'Recovery'),
+      ('space-retire', 'workspace-1', 'Retire'),
+      ('space-force', 'workspace-1', 'Force'),
       ('space-images', 'workspace-1', 'Images'),
       ('space-merge', 'workspace-1', 'Merge');
     insert into knowledge_space_compile_runs (
@@ -485,6 +558,10 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       ('run-yield', 'workspace-1', 'space-yield', 'manual', 'compiler-v1',
        'prompt-v1', 'pending-initialization', now()),
       ('run-recovery', 'workspace-1', 'space-recovery', 'manual', 'compiler-v1',
+       'prompt-v1', 'pending-initialization', now()),
+      ('run-retire', 'workspace-1', 'space-retire', 'manual', 'compiler-v1',
+       'prompt-v1', 'pending-initialization', now()),
+      ('run-force', 'workspace-1', 'space-force', 'manual', 'compiler-v1',
        'prompt-v1', 'pending-initialization', now()),
       ('run-images', 'workspace-1', 'space-images', 'manual', 'compiler-v1',
        'prompt-v1', 'images', now()),

@@ -3,10 +3,7 @@ import {
   KnowledgeSpaceExecutionRepo,
   SpaceExecutionLease,
 } from '@akasha/db/repos/llm-wiki/knowledge-space-execution.repo';
-import {
-  IKnowledgeMergePageImagesJob,
-  IKnowledgeSpaceSliceJob,
-} from '../../../integrations/queue/constants/queue.interface';
+import { IKnowledgeSpaceSliceJob } from '../../../integrations/queue/constants/queue.interface';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import { KnowledgePageCompilationService } from './knowledge-page-compilation.service';
 import { KnowledgeSpaceCompilationService } from './knowledge-space-compilation.service';
@@ -15,6 +12,7 @@ import { createBoundedAbortSignal } from './knowledge-operation-budget';
 import { decideSpaceSliceCheckpoint } from './knowledge-space-slice-policy';
 import { KNOWLEDGE_WORKER_SETTINGS } from './knowledge-worker-settings';
 import { KnowledgeArtifactCatalogEntry } from '../types/compiler-artifact.types';
+import { KnowledgeImageMergePageData } from '../types/knowledge-page-compilation.types';
 
 export interface KnowledgeTextSliceInput extends IKnowledgeSpaceSliceJob {
   spaceJobId: string;
@@ -123,7 +121,6 @@ export class KnowledgeSpaceRunnerService {
                 sourceContentHash: page.expectedSourceContentHash,
                 spaceRunId: input.spaceRunId,
                 knowledgeGeneration: input.knowledgeGeneration,
-                trigger: 'manual_compile',
               },
               compileTaskId: `${input.spaceJobId}__${page.sourcePageId}`,
               finalAttempt: options.finalAttempt,
@@ -280,7 +277,7 @@ export class KnowledgeSpaceRunnerService {
                   page.expectedSourceContentHash,
                 spaceRunId: input.spaceRunId,
                 knowledgeGeneration: input.knowledgeGeneration,
-                images: page.images as IKnowledgeMergePageImagesJob['images'],
+                images: page.images as KnowledgeImageMergePageData['images'],
               },
               compileTaskId: `${input.spaceJobId}__${page.sourcePageId}`,
               finalAttempt: options.finalAttempt,

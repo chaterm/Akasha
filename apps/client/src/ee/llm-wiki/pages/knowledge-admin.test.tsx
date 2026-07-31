@@ -1,21 +1,11 @@
 import { MantineProvider } from "@mantine/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { HelmetProvider } from "react-helmet-async";
 import { BrowserRouter } from "react-router-dom";
-import { beforeAll, describe, expect, it, vi } from "vitest";
-import KnowledgeAdminPage, {
-  knowledgeDiagnosticsRefetchInterval,
-} from "./knowledge-admin";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   forceRebuildKnowledgeSpace,
-  getKnowledgeDiagnostics,
   getKnowledgeRunDiagnostics,
   getKnowledgeRunDiagnosticsSummary,
   getKnowledgeRunPageDiagnostics,
@@ -24,355 +14,40 @@ import {
   runKnowledgeAdminAction,
   updateKnowledgeSpace,
 } from "../services/knowledge-service";
+import KnowledgeAdminPage, {
+  knowledgeDiagnosticsRefetchInterval,
+} from "./knowledge-admin";
 
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (key: string) => key,
-  }),
+  useTranslation: () => ({ t: (key: string) => key }),
 }));
-
-vi.mock("@/lib/config", () => ({
-  getAppName: () => "Akasha",
-}));
-
+vi.mock("@/lib/config", () => ({ getAppName: () => "Akasha" }));
 vi.mock("@mantine/notifications", () => ({
-  notifications: {
-    show: vi.fn(),
-  },
+  notifications: { show: vi.fn() },
 }));
-
 vi.mock("@/features/space/queries/space-query", () => ({
   useGetSpacesQuery: () => ({
     data: {
       items: [
-        {
-          id: "space-1",
-          name: "AIM",
-          slug: "aim",
-        },
-        {
-          id: "space-2",
-          name: "General",
-          slug: "general",
-        },
+        { id: "space-1", name: "AIM", slug: "aim" },
+        { id: "space-2", name: "General", slug: "general" },
       ],
     },
     isLoading: false,
   }),
 }));
-
 vi.mock("@/hooks/use-user-role", () => ({
   default: () => ({ isAdmin: true, isOwner: true, isMember: false }),
 }));
-
 vi.mock("../services/knowledge-service", () => ({
-  compileKnowledgeSpaces: vi.fn().mockResolvedValue({
-    queuedSpaceCount: 1,
-    jobIds: ["knowledge-compile-space:workspace-1:space-1:run-1"],
-  }),
-  getKnowledgeDiagnostics: vi.fn().mockResolvedValue({
-    pages: [],
-    jobs: [],
-    queueCounts: {
-      waiting: 3,
-      active: 2,
-      delayed: 1,
-      prioritized: 4,
-      waitingChildren: 5,
-      paused: 6,
-      failed: 7,
-      completed: 8,
-    },
-    canViewGlobalQueues: true,
-    queueSnapshots: {
-      text: {
-        waiting: 9,
-        active: 1,
-        delayed: 0,
-        prioritized: 0,
-        waitingChildren: 0,
-        paused: 0,
-        failed: 2,
-        completed: 10,
-        sampledAt: "2026-07-28T06:00:01.000Z",
-      },
-      image: {
-        waiting: 4,
-        active: 2,
-        delayed: 1,
-        prioritized: 0,
-        waitingChildren: 0,
-        paused: 0,
-        failed: 1,
-        completed: 3,
-        sampledAt: "2026-07-28T06:00:02.000Z",
-      },
-    },
-    compileStatuses: [
-      {
-        spaceId: "space-1",
-        status: "failed",
-        jobId: "job-1",
-        lastRunId: "run-1",
-        durationMs: null,
-        sourceCount: 4,
-        importedArtifactCount: 1,
-        quarantinedArtifactCount: 2,
-        failureReason: "Compile job failed: Error",
-        updatedAt: 1000,
-      },
-    ],
-    compileRuns: [
-      {
-        runId: "run-1",
-        spaceId: "space-1",
-        spaceName: "AIM",
-        status: "running",
-        mode: "update",
-        phase: "image",
-        createdAt: "2026-07-28T05:00:00.000Z",
-        updatedAt: "2026-07-28T06:00:00.000Z",
-        progress: {
-          text: {
-            expected: 4,
-            succeeded: 2,
-            failed: 1,
-            skipped: 1,
-            pending: 0,
-            waiting: 0,
-          },
-          image: {
-            expected: 5,
-            succeeded: 2,
-            failed: 1,
-            skipped: 0,
-            pending: 2,
-            waiting: 1,
-            lastAttemptError: "Vision timed out",
-          },
-          merge: {
-            expected: 4,
-            succeeded: 2,
-            failed: 0,
-            skipped: 1,
-            pending: 1,
-            waiting: 1,
-          },
-        },
-      },
-    ],
-    retrieval: {
-      sampleCount: 2,
-      zeroHitRate: 0.5,
-      embeddingFallbackRate: 0.5,
-      accessPolicyFallbackRate: 0.25,
-      averageAuthorizedCandidateCount: 1.5,
-      averageFilteredCandidateCount: 2,
-    },
-    quarantines: [
-      {
-        id: "quarantine-1",
-        workspaceId: "workspace-1",
-        spaceId: "space-1",
-        artifactId: "artifact-1",
-        artifactKind: "source_summary",
-        compilerRunId: "run-1",
-        compileTaskId: "task-1",
-        reasonCodes: ["artifact_source_range_invalid"],
-        createdAt: "2026-06-18T08:00:00.000Z",
-      },
-    ],
-    quality: {
-      summary: {
-        pageCount: 1,
-        compiledPageCount: 0,
-        stalePageCount: 1,
-        missingSourcePageCount: 0,
-        missingChunkPageCount: 1,
-        missingEmbeddingPageCount: 0,
-        healthScore: 30,
-      },
-      spaces: [
-        {
-          spaceId: "space-1",
-          spaceName: "AIM",
-          pageCount: 1,
-          compiledPageCount: 0,
-          stalePageCount: 1,
-          missingChunkPageCount: 1,
-          missingEmbeddingPageCount: 0,
-          oldestStaleSourceAgeHours: 2,
-          healthScore: 30,
-        },
-      ],
-      topIssues: [],
-    },
-  }),
-  getKnowledgeRunDiagnosticsSummary: vi.fn().mockResolvedValue({
-    sampledAt: "2026-07-31T12:00:00.000Z",
-    activeRunCount: 43,
-    activeSpaceSlotRunCount: 27,
-    waitingInitializationCount: 18,
-    queuedRunCount: 70,
-    recentCompletedCount: 36,
-    recentFailedCount: 2,
-    recentYieldCount: 28,
-    longestCurrentSlotWaitMs: 480000,
-    statusCounts: { queued: 70, compiling: 25 },
-    phaseCounts: { text: 25, images: 18 },
-    imageStatusCounts: { processing: 12 },
-    dispatch: { spaceUnacknowledged: 1, imageUnacknowledged: 2 },
-    recovery: {
-      expiredExecutionLeases: 0,
-      spaceRecovering: 0,
-      spaceRecoveryExhausted: 0,
-      imageRecovering: 0,
-      imageRecoveryExhausted: 0,
-    },
-    failureCategories: {
-      budgetTimeout: 3,
-      provider: 1,
-      publication: 0,
-      infrastructure: 0,
-      other: 0,
-    },
-    queues: {
-      space: {
-        waiting: 70,
-        active: 27,
-        delayed: 0,
-        prioritized: 0,
-        waitingChildren: 0,
-        paused: 0,
-        failed: 1,
-        completed: 36,
-        sampledAt: "2026-07-31T12:00:00.000Z",
-      },
-      image: {
-        waiting: 5,
-        active: 12,
-        delayed: 0,
-        prioritized: 0,
-        waitingChildren: 0,
-        paused: 0,
-        failed: 0,
-        completed: 50,
-        sampledAt: "2026-07-31T12:00:00.000Z",
-      },
-    },
-    workerEvents: {
-      windowMs: 3600000,
-      stalled: 0,
-      lockRenewalFailed: 0,
-      source: "process_local",
-    },
-  }),
-  getKnowledgeRunDiagnostics: vi.fn().mockResolvedValue({
-    items: [
-      {
-        runId: "run-space-1",
-        spaceId: "space-1",
-        spaceName: "AIM",
-        status: "queued",
-        mode: "incremental",
-        phase: "text",
-        knowledgeGeneration: 4,
-        queueState: "text_continuation",
-        spaceJobSequence: 10,
-        lastYieldAt: "2026-07-31T11:59:00.000Z",
-        lastYieldReason: "page_limit",
-        workerId: null,
-        errorCode: null,
-        initializedAt: "2026-07-31T11:00:00.000Z",
-        queuedAt: "2026-07-31T11:00:00.000Z",
-        startedAt: "2026-07-31T11:01:00.000Z",
-        finishedAt: null,
-        createdAt: "2026-07-31T11:00:00.000Z",
-        updatedAt: "2026-07-31T12:00:00.000Z",
-        runDurationMs: 3600000,
-        currentSliceWaitMs: 120000,
-        progress: {
-          text: { expected: 100, succeeded: 45, failed: 0, skipped: 0 },
-          images: { expected: 20, succeeded: 0 },
-          merge: { expected: 20, succeeded: 0 },
-        },
-      },
-    ],
-    total: 100,
-    page: 1,
-    limit: 50,
-  }),
-  getKnowledgeRunPageDiagnostics: vi.fn().mockResolvedValue({
-    run: { runId: "run-space-1", spaceId: "space-1", spaceName: "AIM" },
-    items: [
-      {
-        runPageId: "run-page-1",
-        sourcePageId: "page-1",
-        title: "Large page",
-        slugId: "large-page",
-        status: "failed",
-        imageStatus: "partial",
-        mergeStatus: "pending",
-        expectedImageCount: 3,
-        succeededImageCount: 1,
-        failedImageCount: 2,
-        skippedImageCount: 0,
-        errorCode: "page_timeout",
-        errorCategory: "budget_timeout",
-        errorSummary: "Knowledge compilation exceeded its page budget.",
-        queuedAt: null,
-        startedAt: null,
-        finishedAt: null,
-        updatedAt: "2026-07-31T12:00:00.000Z",
-        imageFailures: { retryableExhausted: 1, permanent: 1 },
-      },
-    ],
-    total: 1,
-    page: 1,
-    limit: 50,
-  }),
-  getKnowledgeWorkerDiagnostics: vi.fn().mockResolvedValue({
-    sampledAt: "2026-07-31T12:00:00.000Z",
-    databaseMaxPool: 25,
-    schedulingAuthority: "postgresql",
-    space: {
-      workerCount: 3,
-      capacity: 30,
-      exact: false,
-      source: "bullmq_client_list",
-      concurrency: 10,
-      lockDuration: 120000,
-      stalledInterval: 30000,
-      maxStalledCount: 2,
-    },
-    image: {
-      workerCount: 3,
-      capacity: 15,
-      exact: false,
-      source: "bullmq_client_list",
-      concurrency: 5,
-      lockDuration: 120000,
-      stalledInterval: 30000,
-      maxStalledCount: 2,
-    },
-  }),
-  runKnowledgeAdminAction: vi.fn().mockResolvedValue({
-    action: "retry_compile",
-    queuedSpaceCount: 1,
-    jobIds: ["knowledge-compile-space:workspace-1:space-1:retry-1"],
-  }),
-  retryKnowledgePages: vi.fn().mockResolvedValue({
-    queuedPageCount: 1,
-    jobIds: ["knowledge-compile-pages:page-1:retry-1"],
-  }),
-  updateKnowledgeSpace: vi.fn().mockResolvedValue({
-    queuedSpaceCount: 1,
-    jobIds: ["knowledge-update-space:space-1"],
-  }),
-  forceRebuildKnowledgeSpace: vi.fn().mockResolvedValue({
-    queuedSpaceCount: 1,
-    jobIds: ["knowledge-force-rebuild-space:space-1"],
-  }),
+  getKnowledgeRunDiagnosticsSummary: vi.fn(),
+  getKnowledgeRunDiagnostics: vi.fn(),
+  getKnowledgeRunPageDiagnostics: vi.fn(),
+  getKnowledgeWorkerDiagnostics: vi.fn(),
+  retryKnowledgePages: vi.fn(),
+  runKnowledgeAdminAction: vi.fn(),
+  updateKnowledgeSpace: vi.fn(),
+  forceRebuildKnowledgeSpace: vi.fn(),
 }));
 
 describe("KnowledgeAdminPage", () => {
@@ -400,112 +75,107 @@ describe("KnowledgeAdminPage", () => {
     });
   });
 
-  it("shows per-space failures, queue snapshots, and run progress", async () => {
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <HelmetProvider>
-          <MantineProvider>
-            <BrowserRouter>
-              <KnowledgeAdminPage />
-            </BrowserRouter>
-          </MantineProvider>
-        </HelmetProvider>
-      </QueryClientProvider>,
-    );
-
-    expect(await screen.findByText("Compile job failed: Error")).toBeTruthy();
-    expect(screen.getByText("Zero-hit: 50%")).toBeTruthy();
-    expect(screen.getByText("Embedding fallback: 50%")).toBeTruthy();
-    expect(screen.getAllByText("failed").length).toBeGreaterThan(0);
-    expect(screen.getByText("Quarantined: 2")).toBeTruthy();
-    expect(screen.getByText("artifact_source_range_invalid")).toBeTruthy();
-    expect(screen.getByText("artifact-1")).toBeTruthy();
-    expect(screen.getByLabelText("Stale column help")).toBeTruthy();
-    expect(screen.getByText("Current queue tasks")).toBeTruthy();
-    expect(screen.getByText("Recent records")).toBeTruthy();
-    expect(screen.getByText("Text compilation queue")).toBeTruthy();
-    expect(screen.getByText("Image recognition queue")).toBeTruthy();
-    expect(screen.getByText("Waiting: 9")).toBeTruthy();
-    expect(screen.getByText("Waiting: 4")).toBeTruthy();
-    expect(screen.queryByText("AI queue")).toBeNull();
-    expect(screen.getByText("Compilation run history")).toBeTruthy();
-    expect(screen.getByText("Text progress")).toBeTruthy();
-    expect(screen.getByText("Image progress")).toBeTruthy();
-    expect(screen.getByText("Merge progress")).toBeTruthy();
-    expect(
-      screen.getByText("Last attempt error: Vision timed out"),
-    ).toBeTruthy();
-
-    expect(screen.queryByRole("button", { name: "Retry compile" })).toBeNull();
-    expect(getKnowledgeDiagnostics).toHaveBeenCalledWith({
-      spaceIds: ["space-1"],
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getKnowledgeRunDiagnosticsSummary).mockResolvedValue(summary());
+    vi.mocked(getKnowledgeRunDiagnostics).mockResolvedValue({
+      items: [run()],
+      total: 100,
+      page: 1,
       limit: 50,
     });
-
-    fireEvent.click(
-      document
-        .querySelector(".mantine-Pill-label")!
-        .parentElement!.querySelector("button")!,
-    );
-    await waitFor(() => {
-      expect(
-        (screen.getByRole("button", { name: "Refresh" }) as HTMLButtonElement)
-          .disabled,
-      ).toBe(true);
+    vi.mocked(getKnowledgeRunPageDiagnostics).mockResolvedValue({
+      run: { runId: "run-1", spaceId: "space-1", spaceName: "AIM" },
+      items: [failedPage()],
+      total: 1,
+      page: 1,
+      limit: 50,
+    });
+    vi.mocked(getKnowledgeWorkerDiagnostics).mockResolvedValue({
+      sampledAt: "2026-07-31T12:00:00.000Z",
+      databaseMaxPool: 25,
+      schedulingAuthority: "postgresql",
+      space: worker(10, 30),
+      image: worker(5, 15),
+    });
+    vi.mocked(retryKnowledgePages).mockResolvedValue({
+      queuedPageCount: 1,
+      jobIds: ["run-2"],
+    });
+    vi.mocked(runKnowledgeAdminAction).mockResolvedValue({
+      action: "rebuild_embeddings",
+      queuedSpaceCount: 1,
+      jobIds: ["maintenance-1"],
+    });
+    vi.mocked(updateKnowledgeSpace).mockResolvedValue({
+      runId: "run-2",
+      mode: "incremental",
+      knowledgeGeneration: 5,
+    });
+    vi.mocked(forceRebuildKnowledgeSpace).mockResolvedValue({
+      runId: "run-3",
+      mode: "force_rebuild",
+      knowledgeGeneration: 6,
     });
   });
 
-  it("shows the multi-space Run console and loads RunPage detail only after selection", async () => {
-    vi.mocked(getKnowledgeRunPageDiagnostics).mockClear();
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <HelmetProvider>
-          <MantineProvider>
-            <BrowserRouter>
-              <KnowledgeAdminPage />
-            </BrowserRouter>
-          </MantineProvider>
-        </HelmetProvider>
-      </QueryClientProvider>,
-    );
+  it("shows bounded Run diagnostics and loads RunPages only on demand", async () => {
+    renderPage();
 
     expect(await screen.findByText("Space compilation runs")).toBeTruthy();
-    expect(screen.getByText("Waiting initialization")).toBeTruthy();
-    expect(await screen.findByText("43")).toBeTruthy();
+    expect(await screen.findByText("Waiting initialization")).toBeTruthy();
     expect(await screen.findByText("text continuation")).toBeTruthy();
     expect(getKnowledgeRunPageDiagnostics).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "View pages" }));
+
     expect(await screen.findByText("Large page")).toBeTruthy();
     expect(screen.getByText("budget timeout")).toBeTruthy();
     expect(getKnowledgeRunPageDiagnostics).toHaveBeenCalledWith({
-      runId: "run-space-1",
+      runId: "run-1",
       page: 1,
       limit: 50,
     });
   });
 
-  it("hides global queue details while retaining authorized durable progress", async () => {
-    mockDiagnosticsWithAimSpace({ canViewGlobalQueues: false });
+  it("retries only explicitly selected failed RunPages", async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "View pages" }));
+    await screen.findByText("Large page");
 
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <HelmetProvider>
-          <MantineProvider>
-            <BrowserRouter>
-              <KnowledgeAdminPage />
-            </BrowserRouter>
-          </MantineProvider>
-        </HelmetProvider>
-      </QueryClientProvider>,
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Retry selected" }));
+
+    await waitFor(() =>
+      expect(retryKnowledgePages).toHaveBeenCalledWith(
+        { pageIds: ["page-1"] },
+        expect.anything(),
+      ),
     );
+  });
 
-    expect(await screen.findByText("Compilation run history")).toBeTruthy();
-    expect(screen.getByText("Text progress")).toBeTruthy();
-    expect(screen.queryByText("Current queue tasks")).toBeNull();
-    expect(screen.queryByText("AI queue")).toBeNull();
-    expect(screen.queryByText("Text compilation queue")).toBeNull();
-    expect(screen.queryByText("Image recognition queue")).toBeNull();
+  it("requires the exact Space name before requesting an update", async () => {
+    renderPage();
+    await screen.findByText("Space operations");
+    fireEvent.click(screen.getByRole("button", { name: "Update knowledge" }));
+
+    const input = await screen.findByLabelText(
+      "Type the space name to confirm",
+    );
+    const confirm = screen.getByRole("button", { name: "Confirm" });
+    fireEvent.change(input, { target: { value: " AIM" } });
+    expect((confirm as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(input, { target: { value: "AIM" } });
+    expect((confirm as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(confirm);
+
+    await waitFor(() =>
+      expect(updateKnowledgeSpace).toHaveBeenCalledWith({
+        spaceId: "space-1",
+        confirmationSpaceName: "AIM",
+      }),
+    );
   });
 
   it("stops diagnostics polling while the page is hidden", () => {
@@ -517,310 +187,150 @@ describe("KnowledgeAdminPage", () => {
       configurable: true,
       value: "hidden",
     });
-
     expect(knowledgeDiagnosticsRefetchInterval()).toBe(false);
-
     Object.defineProperty(document, "visibilityState", {
       configurable: true,
       value: "visible",
     });
-    expect(knowledgeDiagnosticsRefetchInterval()).toBe(5000);
-
-    if (original) {
-      Object.defineProperty(document, "visibilityState", original);
-    }
-  });
-
-  it("filters page attempts and retries one or selected failed pages", async () => {
-    vi.mocked(getKnowledgeDiagnostics).mockResolvedValue({
-      pages: [
-        {
-          pageId: "page-1",
-          slugId: "failed-page",
-          title: "Failed page",
-          spaceId: "space-1",
-          spaceName: "AIM",
-          spaceSlug: "aim",
-          updatedAt: "2026-07-20T11:00:00.000Z",
-          deletedAt: null,
-          textLength: 100,
-          knowledgeSourceCount: 1,
-          staleSourceCount: 0,
-          oldestStaleSourceAt: null,
-          knowledgePageSourceCount: 1,
-          knowledgeChunkCount: 2,
-          missingEmbeddingChunkCount: 0,
-          lastCompiledAt: "2026-07-20T10:00:00.000Z",
-          lastAccessPolicyIndexedAt: null,
-          staleAccessPolicyCount: 0,
-          compileStatus: "failed",
-          compileStage: "generation",
-          compileAttemptCount: 3,
-          compileErrorCode: "invalid_output",
-          compileErrorMessage: "Knowledge compiler returned invalid output.",
-          lastSucceededAt: "2026-07-20T10:00:00.000Z",
-          servingLastSuccessfulVersion: true,
-        },
-      ],
-      jobs: [],
-      queueCounts: EMPTY_TEST_QUEUE_COUNTS,
-      compileStatuses: [],
-      quarantines: [],
-    });
-
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <HelmetProvider>
-          <MantineProvider>
-            <BrowserRouter>
-              <KnowledgeAdminPage />
-            </BrowserRouter>
-          </MantineProvider>
-        </HelmetProvider>
-      </QueryClientProvider>,
-    );
-
-    expect(await screen.findByText("Last successful version")).toBeTruthy();
-    expect(
-      screen.getByRole("columnheader", { name: "Missing embeddings" }),
-    ).toBeTruthy();
-    expect(
-      screen.queryByRole("columnheader", { name: "Embedding" }),
-    ).toBeNull();
-    expect(
-      screen
-        .getAllByLabelText("Compile status")
-        .some((element) => element.tagName === "INPUT"),
-    ).toBe(true);
-    expect(
-      screen
-        .getAllByLabelText("Compile stage")
-        .some((element) => element.tagName === "INPUT"),
-    ).toBe(true);
-    expect(
-      screen.getByText("Knowledge compiler returned invalid output."),
-    ).toBeTruthy();
-
-    fireEvent.click(screen.getByLabelText("Select Failed page"));
-    fireEvent.click(screen.getByRole("button", { name: "Retry selected" }));
-    await waitFor(() => {
-      expect(retryKnowledgePages).toHaveBeenCalledWith(
-        {
-          pageIds: ["page-1"],
-        },
-        expect.anything(),
-      );
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Retry Failed page" }));
-    await waitFor(() => {
-      expect(retryKnowledgePages).toHaveBeenLastCalledWith(
-        {
-          pageIds: ["page-1"],
-        },
-        expect.anything(),
-      );
-    });
-  });
-
-  it("requires the exact space name before updating one space", async () => {
-    mockDiagnosticsWithAimSpace();
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <HelmetProvider>
-          <MantineProvider>
-            <BrowserRouter>
-              <KnowledgeAdminPage />
-            </BrowserRouter>
-          </MantineProvider>
-        </HelmetProvider>
-      </QueryClientProvider>,
-    );
-
-    await screen.findAllByText("AIM");
-    expect(
-      await screen.findAllByRole("button", { name: "Update knowledge" }),
-    ).toHaveLength(1);
-    const spaceRow = screen.getByRole("row", { name: /AIM.*Update knowledge/ });
-    const spaceCells = within(spaceRow).getAllByRole("cell");
-    expect(
-      within(spaceCells[spaceCells.length - 1]).getByRole("button", {
-        name: "Update knowledge",
-      }),
-    ).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Update knowledge" }));
-
-    expect(
-      await screen.findByText(
-        "Only changed pages are compiled. Unchanged pages reuse existing knowledge, and existing knowledge is not cleared.",
-      ),
-    ).toBeTruthy();
-    const confirmationInput = screen.getByLabelText(
-      "Type the space name to confirm",
-    );
-    const submit = screen.getByRole("button", {
-      name: "Confirm knowledge update",
-    });
-    fireEvent.change(confirmationInput, { target: { value: " AIM" } });
-    expect((submit as HTMLButtonElement).disabled).toBe(true);
-
-    fireEvent.change(confirmationInput, { target: { value: "AIM" } });
-    expect((submit as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(submit);
-
-    await waitFor(() => {
-      expect(updateKnowledgeSpace).toHaveBeenCalledWith({
-        spaceId: "space-1",
-        confirmationSpaceName: "AIM",
-      });
-    });
-    await waitFor(() => {
-      expect(
-        screen.queryByRole("dialog", { name: "Update knowledge" }),
-      ).toBeNull();
-    });
-  });
-
-  it("keeps the destructive force rebuild dialog open when confirmation is rejected", async () => {
-    mockDiagnosticsWithAimSpace();
-    vi.mocked(forceRebuildKnowledgeSpace).mockRejectedValueOnce(
-      new Error("Space name changed. Enter the current name."),
-    );
-
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <HelmetProvider>
-          <MantineProvider>
-            <BrowserRouter>
-              <KnowledgeAdminPage />
-            </BrowserRouter>
-          </MantineProvider>
-        </HelmetProvider>
-      </QueryClientProvider>,
-    );
-
-    await screen.findAllByText("AIM");
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Dangerous actions" }),
-    );
-    fireEvent.click(
-      await screen.findByRole("menuitem", { name: "Force rebuild knowledge" }),
-    );
-
-    expect(
-      await screen.findByText(
-        "This permanently clears all compiled knowledge, image recognition cache, vectors, and relationships for this space.",
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(
-        "Original pages and attachments are preserved. Knowledge is unavailable while rebuilding.",
-      ),
-    ).toBeTruthy();
-
-    fireEvent.change(screen.getByLabelText("Type the space name to confirm"), {
-      target: { value: "AIM" },
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Confirm force rebuild" }),
-    );
-
-    expect(
-      await screen.findByText("Space name changed. Enter the current name."),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("dialog", { name: "Force rebuild knowledge" }),
-    ).toBeTruthy();
-    expect(forceRebuildKnowledgeSpace).toHaveBeenCalledWith({
-      spaceId: "space-1",
-      confirmationSpaceName: "AIM",
-    });
+    expect(knowledgeDiagnosticsRefetchInterval()).toBe(5_000);
+    if (original) Object.defineProperty(document, "visibilityState", original);
   });
 });
 
-const EMPTY_TEST_QUEUE_COUNTS = {
-  waiting: 0,
-  active: 0,
-  delayed: 0,
-  prioritized: 0,
-  waitingChildren: 0,
-  paused: 0,
-  failed: 0,
-  completed: 0,
-};
-
-function mockDiagnosticsWithAimSpace(options?: {
-  canViewGlobalQueues?: boolean;
-}) {
-  vi.mocked(getKnowledgeDiagnostics).mockResolvedValue({
-    pages: [],
-    jobs: [],
-    queueCounts: EMPTY_TEST_QUEUE_COUNTS,
-    compileStatuses: [],
-    quarantines: [],
-    canViewGlobalQueues: options?.canViewGlobalQueues ?? false,
-    queueSnapshots: {
-      text: { ...EMPTY_TEST_QUEUE_COUNTS, sampledAt: null },
-      image: { ...EMPTY_TEST_QUEUE_COUNTS, sampledAt: null },
-    },
-    compileRuns: [
-      {
-        runId: "run-1",
-        spaceId: "space-1",
-        spaceName: "AIM",
-        status: "running",
-        progress: {
-          text: {
-            expected: 1,
-            succeeded: 0,
-            failed: 0,
-            skipped: 0,
-            pending: 1,
-            waiting: 1,
-          },
-          image: {
-            expected: 0,
-            succeeded: 0,
-            failed: 0,
-            skipped: 0,
-            pending: 0,
-            waiting: 0,
-          },
-          merge: {
-            expected: 0,
-            succeeded: 0,
-            failed: 0,
-            skipped: 0,
-            pending: 0,
-            waiting: 0,
-          },
-        },
-      },
-    ],
-    quality: {
-      summary: {
-        pageCount: 1,
-        compiledPageCount: 1,
-        stalePageCount: 0,
-        missingSourcePageCount: 0,
-        missingChunkPageCount: 0,
-        missingEmbeddingPageCount: 0,
-        healthScore: 100,
-      },
-      spaces: [
-        {
-          spaceId: "space-1",
-          spaceName: "AIM",
-          pageCount: 1,
-          compiledPageCount: 1,
-          stalePageCount: 0,
-          missingChunkPageCount: 0,
-          missingEmbeddingPageCount: 0,
-          oldestStaleSourceAgeHours: null,
-          healthScore: 100,
-        },
-      ],
-      topIssues: [],
-    },
+function renderPage() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+  return render(
+    <QueryClientProvider client={client}>
+      <HelmetProvider>
+        <MantineProvider>
+          <BrowserRouter>
+            <KnowledgeAdminPage />
+          </BrowserRouter>
+        </MantineProvider>
+      </HelmetProvider>
+    </QueryClientProvider>,
+  );
+}
+
+function summary() {
+  return {
+    sampledAt: "2026-07-31T12:00:00.000Z",
+    activeRunCount: 43,
+    activeSpaceSlotRunCount: 27,
+    waitingInitializationCount: 18,
+    queuedRunCount: 70,
+    recentCompletedCount: 36,
+    recentFailedCount: 2,
+    recentYieldCount: 28,
+    longestCurrentSlotWaitMs: 480_000,
+    statusCounts: { queued: 70 },
+    phaseCounts: { text: 25 },
+    imageStatusCounts: { processing: 12 },
+    dispatch: { spaceUnacknowledged: 1, imageUnacknowledged: 2 },
+    recovery: {
+      expiredExecutionLeases: 0,
+      spaceRecovering: 0,
+      spaceRecoveryExhausted: 0,
+      imageRecovering: 0,
+      imageRecoveryExhausted: 0,
+    },
+    failureCategories: {
+      budgetTimeout: 3,
+      provider: 1,
+      publication: 0,
+      infrastructure: 0,
+      other: 0,
+    },
+    queues: { space: queue(70, 27), image: queue(5, 12) },
+    workerEvents: {
+      windowMs: 3_600_000,
+      stalled: 0,
+      lockRenewalFailed: 0,
+      source: "process_local" as const,
+    },
+  };
+}
+
+function run() {
+  return {
+    runId: "run-1",
+    spaceId: "space-1",
+    spaceName: "AIM",
+    status: "queued" as const,
+    mode: "incremental" as const,
+    phase: "text" as const,
+    knowledgeGeneration: 4,
+    queueState: "text_continuation" as const,
+    spaceJobSequence: 10,
+    lastYieldAt: "2026-07-31T11:59:00.000Z",
+    lastYieldReason: "page_limit",
+    workerId: null,
+    errorCode: null,
+    initializedAt: "2026-07-31T11:00:00.000Z",
+    queuedAt: "2026-07-31T11:00:00.000Z",
+    startedAt: "2026-07-31T11:01:00.000Z",
+    finishedAt: null,
+    createdAt: "2026-07-31T11:00:00.000Z",
+    updatedAt: "2026-07-31T12:00:00.000Z",
+    runDurationMs: 3_600_000,
+    currentSliceWaitMs: 120_000,
+    progress: {
+      text: { expected: 100, succeeded: 45, failed: 0, skipped: 0 },
+      images: { expected: 20, succeeded: 0 },
+      merge: { expected: 20, succeeded: 0 },
+    },
+  };
+}
+
+function failedPage() {
+  return {
+    runPageId: "run-page-1",
+    sourcePageId: "page-1",
+    title: "Large page",
+    slugId: "large-page",
+    status: "failed",
+    imageStatus: "partial",
+    mergeStatus: "pending",
+    expectedImageCount: 3,
+    succeededImageCount: 1,
+    failedImageCount: 2,
+    skippedImageCount: 0,
+    errorCode: "page_timeout",
+    errorCategory: "budget_timeout" as const,
+    errorSummary: "Knowledge compilation exceeded its page budget.",
+    queuedAt: null,
+    startedAt: null,
+    finishedAt: null,
+    updatedAt: "2026-07-31T12:00:00.000Z",
+    imageFailures: { retryableExhausted: 1, permanent: 1 },
+  };
+}
+
+function queue(waiting: number, active: number) {
+  return {
+    waiting,
+    active,
+    delayed: 0,
+    prioritized: 0,
+    waitingChildren: 0,
+    paused: 0,
+    failed: 0,
+    completed: 0,
+    sampledAt: "2026-07-31T12:00:00.000Z",
+  };
+}
+
+function worker(concurrency: number, capacity: number) {
+  return {
+    workerCount: 3,
+    capacity,
+    exact: false as const,
+    source: "bullmq_client_list" as const,
+    concurrency,
+    lockDuration: 120_000,
+    stalledInterval: 30_000,
+    maxStalledCount: 2,
+  };
 }

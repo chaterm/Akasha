@@ -27,7 +27,7 @@ describe('PageListener knowledge jobs', () => {
       promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
     });
     expect(knowledgeQueue.add).not.toHaveBeenCalledWith(
-      QueueJob.KNOWLEDGE_COMPILE_PAGES,
+      'knowledge-compile-pages',
       expect.anything(),
       expect.anything(),
     );

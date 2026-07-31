@@ -12,7 +12,6 @@ import { KnowledgeRetrievalRankerService } from './services/knowledge-retrieval-
 import { KnowledgeContextPackService } from './services/knowledge-context-pack.service';
 import { KnowledgeCitationResolverService } from './services/knowledge-citation-resolver.service';
 import { KnowledgeDiagnosticsService } from './services/knowledge-diagnostics.service';
-import { KnowledgeQualityService } from './services/knowledge-quality.service';
 import { KnowledgeGraphService } from './services/knowledge-graph.service';
 import { AiKnowledgeChatService } from './services/ai-knowledge-chat.service';
 import { ConfiguredKnowledgeAnswerProvider } from './services/knowledge-answer-provider.service';
@@ -63,7 +62,6 @@ import { KnowledgeImageReaperService } from './services/knowledge-image-reaper.s
     KnowledgeContextPackService,
     KnowledgeCitationResolverService,
     KnowledgeDiagnosticsService,
-    KnowledgeQualityService,
     KnowledgeGraphService,
     AiKnowledgeChatService,
     ConfiguredKnowledgeEmbeddingProvider,
@@ -120,7 +118,6 @@ import { KnowledgeImageReaperService } from './services/knowledge-image-reaper.s
     KnowledgeContextPackService,
     KnowledgeCitationResolverService,
     KnowledgeDiagnosticsService,
-    KnowledgeQualityService,
     KnowledgeGraphService,
     AiKnowledgeChatService,
   ],

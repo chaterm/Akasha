@@ -1,6 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
 import {
   KnowledgeSpaceExecutionRepo,
   SpaceExecutionLease,
@@ -28,7 +27,6 @@ const MAX_AGGREGATE_PROMPT_CHARS = 120_000;
 @Injectable()
 export class KnowledgeSpaceAggregatorService {
   constructor(
-    private readonly runRepo: KnowledgeSpaceCompilationRepo,
     private readonly artifactCatalog: KnowledgeArtifactCatalogService,
     @Inject(KNOWLEDGE_COMPILER_LLM_PROVIDER)
     private readonly provider: KnowledgeCompilerLlmProvider,
@@ -41,38 +39,6 @@ export class KnowledgeSpaceAggregatorService {
   }
 
   private readonly executionRepo?: KnowledgeSpaceExecutionRepo;
-
-  async aggregate(input: {
-    runId: string;
-    workspaceId: string;
-    spaceId: string;
-    phase?: 'initial_aggregate' | 'final_aggregate';
-  }) {
-    const boundedSignal = createBoundedAbortSignal(
-      undefined,
-      this.environmentService?.getKnowledgeAggregateDeadlineMs?.() ?? 300_000,
-    );
-    try {
-      return await this.aggregateWithinDeadline(input, boundedSignal.signal);
-    } catch (error) {
-      if (
-        boundedSignal.signal.aborted &&
-        !(
-          error instanceof KnowledgeCompilerLlmError && error.code === 'timeout'
-        )
-      ) {
-        throw new KnowledgeCompilerLlmError(
-          'timeout',
-          'Knowledge aggregate phase timed out.',
-          true,
-          boundedSignal.signal.reason ?? error,
-        );
-      }
-      throw error;
-    } finally {
-      boundedSignal.dispose();
-    }
-  }
 
   async aggregateLeased(
     lease: SpaceExecutionLease,
@@ -225,183 +191,6 @@ export class KnowledgeSpaceAggregatorService {
     } finally {
       boundedSignal.dispose();
     }
-  }
-
-  private async aggregateWithinDeadline(
-    input: {
-      runId: string;
-      workspaceId: string;
-      spaceId: string;
-      phase?: 'initial_aggregate' | 'final_aggregate';
-    },
-    abortSignal: AbortSignal,
-  ) {
-    abortSignal.throwIfAborted();
-    const requestedPhase = input.phase ?? 'initial_aggregate';
-    const run = await this.runRepo.startAggregation(
-      input.runId,
-      requestedPhase,
-    );
-    if (!run) {
-      return emptyAggregateResult();
-    }
-    const aggregateInput = await this.artifactCatalog.aggregateInput({
-      workspaceId: input.workspaceId,
-      spaceId: input.spaceId,
-      abortSignal,
-    });
-    const { pages, sourceRefsByArtifact, allSourceRefs } = aggregateInput;
-
-    if (pages.length === 0 || allSourceRefs.length === 0) {
-      const retirement = await this.importService.importCompileResult({
-        input: {
-          workspaceId: input.workspaceId,
-          spaceId: input.spaceId,
-          compilerVersion: run.compilerVersion,
-          promptVersion: run.promptVersion,
-          compileMode: 'space',
-          sources: [],
-          operationBudget: new KnowledgeOperationBudget({
-            signal: abortSignal,
-          }),
-        },
-        artifacts: [],
-        upsertSources: false,
-        retireCompileScope: true,
-        publicationGuard: (trx) =>
-          this.runRepo.isRunActiveForPublication(
-            {
-              runId: input.runId,
-              workspaceId: input.workspaceId,
-              spaceId: input.spaceId,
-              knowledgeGeneration: run.knowledgeGeneration,
-              allowedPhases: ['text', 'initial_aggregate', 'final_aggregate'],
-            },
-            trx,
-          ),
-      });
-      if (retirement.skippedReason === 'run_superseded') {
-        return emptyAggregateResult();
-      }
-      abortSignal.throwIfAborted();
-      await this.runRepo.completeAggregation({
-        runId: input.runId,
-        importedArtifactCount: 0,
-        quarantinedArtifactCount: 0,
-        catalogHash: aggregateInput.fingerprint.hash,
-        phase: run.phase as 'initial_aggregate' | 'final_aggregate',
-      });
-      return { importedArtifactCount: 0, quarantinedArtifactCount: 0 };
-    }
-    if (!this.provider.completeMerge) {
-      throw new KnowledgeCompilerLlmError(
-        'configuration_error',
-        'Knowledge compiler aggregate provider is not configured.',
-        false,
-      );
-    }
-
-    let completion;
-    try {
-      completion = knowledgeSpaceAggregateSchema.parse(
-        JSON.parse(
-          await this.provider.completeMerge(
-            {
-              system: buildAggregateSystemPrompt(),
-              prompt: buildAggregatePrompt(pages),
-            },
-            { abortSignal },
-          ),
-        ),
-      );
-    } catch (error) {
-      if (error instanceof KnowledgeCompilerLlmError) throw error;
-      if (abortSignal.aborted) {
-        throw new KnowledgeCompilerLlmError(
-          'timeout',
-          'Knowledge aggregate phase timed out.',
-          true,
-          abortSignal.reason ?? error,
-        );
-      }
-      throw new KnowledgeCompilerLlmError(
-        'invalid_output',
-        'Knowledge compiler returned invalid aggregate output.',
-        false,
-        error,
-      );
-    }
-    if (!(await this.isRunActive(input.runId))) {
-      return emptyAggregateResult();
-    }
-    const overview = buildOverviewArtifact({
-      workspaceId: input.workspaceId,
-      spaceId: input.spaceId,
-      runId: input.runId,
-      compilerVersion: run.compilerVersion,
-      promptVersion: run.promptVersion,
-      title: completion.title,
-      narrative: completion.markdown,
-      pages,
-      sourceRefsByArtifact,
-      allSourceRefs,
-    });
-    const compileInput = {
-      workspaceId: input.workspaceId,
-      spaceId: input.spaceId,
-      compilerVersion: run.compilerVersion,
-      promptVersion: run.promptVersion,
-      compileMode: 'space' as const,
-      sources: allSourceRefs.map((source) => ({
-        workspaceId: source.workspaceId,
-        spaceId: source.spaceId,
-        sourcePageId: source.sourcePageId,
-        sourceVersion: source.sourceVersion,
-        contentHash: source.contentHash,
-        title: source.sourcePageId,
-        text: '',
-        references: [],
-      })),
-      operationBudget: new KnowledgeOperationBudget({ signal: abortSignal }),
-    };
-    const result = await this.importService.importCompileResult({
-      input: compileInput,
-      artifacts: [overview],
-      upsertSources: false,
-      publicationGuard: (trx) =>
-        this.runRepo.isRunActiveForPublication(
-          {
-            runId: input.runId,
-            workspaceId: input.workspaceId,
-            spaceId: input.spaceId,
-            knowledgeGeneration: run.knowledgeGeneration,
-            allowedPhases: ['text', 'initial_aggregate', 'final_aggregate'],
-          },
-          trx,
-        ),
-    });
-    if (result.skippedReason === 'run_superseded') {
-      return emptyAggregateResult();
-    }
-    await this.linkResolver.resolveSpace({
-      workspaceId: input.workspaceId,
-      spaceId: input.spaceId,
-      abortSignal,
-    });
-    abortSignal.throwIfAborted();
-    await this.runRepo.completeAggregation({
-      runId: input.runId,
-      importedArtifactCount: result.importedArtifactCount,
-      quarantinedArtifactCount: result.quarantinedArtifactCount,
-      catalogHash: aggregateInput.fingerprint.hash,
-      phase: run.phase as 'initial_aggregate' | 'final_aggregate',
-    });
-    return result;
-  }
-
-  private async isRunActive(runId: string): Promise<boolean> {
-    const run = await this.runRepo.findRun(runId);
-    return run?.status === 'aggregating';
   }
 }
 

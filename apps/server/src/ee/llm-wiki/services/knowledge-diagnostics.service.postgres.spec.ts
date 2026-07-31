@@ -20,9 +20,6 @@ describePostgres(
       getJobs: jest.fn(),
       getJobCounts: jest.fn(),
     }));
-    const quality = { evaluate: jest.fn().mockReturnValue({}) };
-    const queryAuditRepo = { summarizeWorkspace: jest.fn() };
-    const quarantineRepo = { findRecentByWorkspace: jest.fn() };
 
     beforeAll(async () => {
       client = postgres(normalizePostgresUrl(integrationDatabaseUrl!), {
@@ -38,12 +35,8 @@ describePostgres(
       await createFixture(db);
       service = new KnowledgeDiagnosticsService(
         db as never,
-        queueStubs[1] as never,
         queueStubs[2] as never,
-        quality as never,
-        queryAuditRepo as never,
-        quarantineRepo as never,
-        {} as never,
+        queueStubs[0] as never,
       );
     });
 
@@ -51,115 +44,6 @@ describePostgres(
       if (!db) return;
       await sql.raw(`drop schema if exists "${schema}" cascade`).execute(db);
       await db.destroy();
-    });
-
-    it('returns each authorized Space latest Run and aggregates durable RunPage progress without BullMQ jobs', async () => {
-      const rawRunError = await sql<{ errorMessage: string }>`
-      select error_message as "errorMessage"
-      from knowledge_space_compile_runs
-      where id = 'run-space-a-latest'
-    `.execute(db);
-      const rawPageError = await sql<{ errorMessage: string }>`
-      select error_message as "errorMessage"
-      from knowledge_space_compile_run_pages
-      where run_id = 'run-space-a-latest' and source_page_id = 'page-a-3'
-    `.execute(db);
-      expect(rawRunError.rows[0].errorMessage).toBe(
-        'raw provider response from durable Run',
-      );
-      expect(rawPageError.rows[0].errorMessage).toBe(
-        'raw provider response and private page content',
-      );
-
-      const diagnostics = await service.getWorkspaceDiagnostics({
-        workspaceId: 'workspace-1',
-        spaceIds: ['space-a', 'space-b'],
-        enforceSpaceScope: true,
-        canViewGlobalQueues: false,
-        includeDetailedDiagnostics: false,
-        limit: 2,
-      });
-
-      expect(diagnostics.jobs).toEqual([]);
-      expect(diagnostics.queueCounts).toEqual({
-        waiting: 0,
-        active: 0,
-        delayed: 0,
-        prioritized: 0,
-        waitingChildren: 0,
-        paused: 0,
-        failed: 0,
-        completed: 0,
-      });
-      for (const queue of queueStubs) {
-        expect(queue.getJobs).not.toHaveBeenCalled();
-        expect(queue.getJobCounts).not.toHaveBeenCalled();
-      }
-
-      expect(diagnostics.compileRuns.map((run) => run.runId)).toEqual([
-        'run-space-b-latest',
-        'run-space-a-latest',
-      ]);
-      expect(
-        diagnostics.compileStatuses.map((status) => status.lastRunId),
-      ).toEqual(['run-space-b-latest', 'run-space-a-latest']);
-      expect(diagnostics.compileStatuses).toContainEqual(
-        expect.objectContaining({
-          spaceId: 'space-a',
-          status: 'failed',
-          failureReason: 'Knowledge compiler provider request failed.',
-        }),
-      );
-      expect(diagnostics.compileRuns[1]).toEqual({
-        runId: 'run-space-a-latest',
-        spaceId: 'space-a',
-        spaceName: 'Space A',
-        status: 'failed',
-        mode: 'update',
-        phase: 'images',
-        generation: 4,
-        createdAt: '2026-07-28T07:00:00.000Z',
-        updatedAt: '2026-07-28T07:02:00.000Z',
-        completedAt: '2026-07-28T07:02:00.000Z',
-        progress: {
-          text: {
-            expected: 3,
-            succeeded: 1,
-            failed: 1,
-            skipped: 1,
-            pending: 0,
-            waiting: 0,
-            lastAttemptError: 'Knowledge compiler provider request failed.',
-          },
-          image: {
-            expected: 5,
-            succeeded: 3,
-            failed: 1,
-            skipped: 1,
-            pending: 0,
-            waiting: 0,
-            lastAttemptError: 'Image processing completed with failures.',
-          },
-          merge: {
-            expected: 2,
-            succeeded: 1,
-            failed: 0,
-            skipped: 0,
-            pending: 1,
-            waiting: 1,
-          },
-        },
-      });
-      expect(JSON.stringify(diagnostics)).not.toContain(
-        'raw provider response',
-      );
-      expect(JSON.stringify(diagnostics)).not.toContain('private page content');
-      logEvidence({
-        selectedRunIds: diagnostics.compileRuns.map((run) => run.runId),
-        durableProgress: diagnostics.compileRuns[1].progress,
-        bullJobs: diagnostics.jobs.length,
-        rawErrorsExposed: false,
-      });
     });
 
     it('uses fixed database aggregates and paginates Runs and on-demand RunPages', async () => {

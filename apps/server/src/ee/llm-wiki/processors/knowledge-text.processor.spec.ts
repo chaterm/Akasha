@@ -29,10 +29,10 @@ describe('KnowledgeTextProcessor', () => {
   });
 
   it.each([
-    QueueJob.KNOWLEDGE_COMPILE_SPACE,
-    QueueJob.KNOWLEDGE_COMPILE_PAGES,
-    QueueJob.KNOWLEDGE_MERGE_PAGE_IMAGES,
-    QueueJob.KNOWLEDGE_AGGREGATE_SPACE,
+    'knowledge-compile-space',
+    'knowledge-compile-pages',
+    'knowledge-merge-page-images',
+    'knowledge-aggregate-space',
   ])('rejects removed legacy compile job %s', async (name) => {
     const handler = { handle: jest.fn(), onFailed: jest.fn() };
     const processor = new KnowledgeTextProcessor(handler as never);
@@ -43,11 +43,8 @@ describe('KnowledgeTextProcessor', () => {
     expect(handler.handle).not.toHaveBeenCalled();
   });
 
-  it('delegates terminal worker failures so durable merge state cannot stall', async () => {
-    const handler = {
-      handle: jest.fn(),
-      onFailed: jest.fn().mockResolvedValue(undefined),
-    };
+  it('records maintenance worker failures without mutating compile Run state', () => {
+    const handler = { handle: jest.fn() };
     const processor = new KnowledgeTextProcessor(
       handler as unknown as KnowledgeTextJobHandler,
     );
@@ -56,8 +53,8 @@ describe('KnowledgeTextProcessor', () => {
       failedReason: 'worker stalled',
     } as Job;
 
-    await processor.onError(job);
+    expect(() => processor.onError(job)).not.toThrow();
 
-    expect(handler.onFailed).toHaveBeenCalledWith(job);
+    expect(handler.handle).not.toHaveBeenCalled();
   });
 });
