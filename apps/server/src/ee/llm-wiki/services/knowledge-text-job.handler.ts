@@ -37,13 +37,11 @@ import {
 import { KnowledgeAccessIndexerService } from './knowledge-access-indexer.service';
 import { KnowledgeSourceExporterService } from './knowledge-source-exporter.service';
 import {
-  buildKnowledgeCompileCoalesceKey,
   buildKnowledgeCompilePageJobId,
   buildKnowledgeRebuildEmbeddingsContinuationJobId,
   buildKnowledgeReindexAccessContinuationJobId,
   buildReviewDiscoverJobId,
   buildReviewNegotiateJobId,
-  KNOWLEDGE_COMPILE_DELAY_MS,
   KNOWLEDGE_COMPILE_RETRY_BACKOFF_MS,
   uniqueValues,
 } from './knowledge-queue.utils';
@@ -1326,49 +1324,10 @@ export class KnowledgeTextJobHandler {
       sourcePageIds: data.pageIds,
     });
 
-    const pageRefs = await this.pageRepo.findExistingPageRefs({
+    await this.spaceCompilation.requestIncrementalCompileForPages({
       workspaceId: data.workspaceId,
-      pageIds: data.pageIds,
+      sourcePageIds: uniqueValues(data.pageIds),
     });
-
-    for (const page of pageRefs) {
-      if (page.deletedAt) continue;
-      const jobId = buildKnowledgeCompilePageJobId({
-        workspaceId: data.workspaceId,
-        spaceId: page.spaceId,
-        sourcePageId: page.id,
-        runKey: buildKnowledgeCompileCoalesceKey(),
-      });
-      await this.compilationRepo.queueAttempt({
-        workspaceId: data.workspaceId,
-        spaceId: page.spaceId,
-        sourcePageId: page.id,
-        sourceVersion: undefined,
-        sourceContentHash: undefined,
-        compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
-        promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
-        compilerRunId: jobId,
-        compileTaskId: jobId,
-      });
-      await this.textQueue.add(
-        QueueJob.KNOWLEDGE_COMPILE_PAGES,
-        {
-          workspaceId: data.workspaceId,
-          spaceId: page.spaceId,
-          sourcePageIds: [page.id],
-          trigger: 'page_update',
-        },
-        {
-          delay: KNOWLEDGE_COMPILE_DELAY_MS,
-          attempts: 3,
-          backoff: {
-            type: 'exponential',
-            delay: KNOWLEDGE_COMPILE_RETRY_BACKOFF_MS,
-          },
-          jobId,
-        },
-      );
-    }
   }
 
   private async findSourcePageIdsForSpace(input: {

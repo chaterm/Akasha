@@ -55,14 +55,9 @@ import { KnowledgeSpaceCompilationService } from './services/knowledge-space-com
 import { KnowledgeSpaceResetService } from './services/knowledge-space-reset.service';
 import {
   buildKnowledgeAdminActionJobId,
-  buildKnowledgeCompileJobId,
-  buildKnowledgeRunKey,
   uniqueValues,
 } from './services/knowledge-queue.utils';
-import {
-  KnowledgeAdminSpaceAction,
-  KnowledgeCompileTrigger,
-} from './types/knowledge-queue.types';
+import { KnowledgeAdminSpaceAction } from './types/knowledge-queue.types';
 import { getPageTitle } from '../../common/helpers';
 import { jsonToMarkdown } from '../../collaboration/collaboration.util';
 
@@ -275,19 +270,43 @@ export class LlmWikiController {
 
     this.assertAdmin(user, 'AI knowledge compile is restricted to admins');
 
-    const result = await this.enqueueCompileSpaces({
-      workspaceId: workspace.id,
-      spaceIds: dto.spaceIds,
-      trigger: 'manual_compile',
-    });
+    const spaceIds = uniqueValues(dto.spaceIds);
+    const requests = await this.spaceCompilation.requestRuns(
+      spaceIds.map((spaceId) => ({
+        workspaceId: workspace.id,
+        spaceId,
+        trigger: 'manual_compile',
+        scanRemovedSources: true,
+      })),
+    );
+    const runs = requests.map((request, index) => ({
+      spaceId: request.run!.spaceId ?? spaceIds[index],
+      runId: request.run!.id,
+      disposition: request.disposition as
+        | 'created'
+        | 'coalesced'
+        | 'rerun_requested',
+    }));
+    const result = {
+      requestedSpaceCount: spaceIds.length,
+      acceptedRunCount: runs.length,
+      coalescedRunCount: runs.filter((run) => run.disposition === 'coalesced')
+        .length,
+      rerunRequestedCount: runs.filter(
+        (run) => run.disposition === 'rerun_requested',
+      ).length,
+      runs,
+    };
 
     this.auditService.log({
       event: AuditEvent.KNOWLEDGE_COMPILE_QUEUED,
       resourceType: AuditResource.KNOWLEDGE,
       resourceId: workspace.id,
       metadata: {
-        spaceIds: uniqueValues(dto.spaceIds),
-        queuedSpaceCount: result.queuedSpaceCount,
+        spaceIds,
+        acceptedRunCount: result.acceptedRunCount,
+        coalescedRunCount: result.coalescedRunCount,
+        rerunRequestedCount: result.rerunRequestedCount,
       },
     });
 
@@ -401,20 +420,6 @@ export class LlmWikiController {
       pages.push(page);
       pagesBySpace.set(page.spaceId, pages);
     }
-    const activeRuns = await Promise.all(
-      [...pagesBySpace.keys()].map((spaceId) =>
-        this.spaceCompilation.hasActiveRun({
-          workspaceId: workspace.id,
-          spaceId,
-        }),
-      ),
-    );
-    if (activeRuns.some(Boolean)) {
-      throw new ConflictException(
-        'Space knowledge compilation is currently running.',
-      );
-    }
-
     const retryablePageIds = new Set(
       await this.diagnosticsService.findRetryableFailedPageIds({
         workspaceId: workspace.id,
@@ -427,33 +432,14 @@ export class LlmWikiController {
       );
     }
 
-    const jobIds: string[] = [];
-    const retryGroups = [];
-    for (const [spaceId, pages] of pagesBySpace) {
-      const sources = await this.sourceExporter.exportPageSources({
+    const requests = await this.spaceCompilation.requestRuns(
+      [...pagesBySpace.keys()].map((spaceId) => ({
         workspaceId: workspace.id,
         spaceId,
-        sourcePageIds: pages.map((page) => page.id),
-      });
-      const sourceByPageId = new Map(
-        sources.map((source) => [source.sourcePageId, source] as const),
-      );
-      if (pages.some((page) => !sourceByPageId.has(page.id))) {
-        throw new BadRequestException(
-          'One or more source pages are unavailable for retry',
-        );
-      }
-      retryGroups.push({ spaceId, pages, sourceByPageId });
-    }
-    for (const { pages, sourceByPageId } of retryGroups) {
-      for (const page of pages) {
-        jobIds.push(
-          await this.spaceCompilation.queuePageRetry(
-            sourceByPageId.get(page.id)!,
-          ),
-        );
-      }
-    }
+        trigger: 'retry_compile',
+      })),
+    );
+    const jobIds = requests.map((request) => request.run!.id);
 
     this.auditService.log({
       event: AuditEvent.KNOWLEDGE_COMPILE_QUEUED,
@@ -538,35 +524,6 @@ export class LlmWikiController {
       resourceId: spaceId,
       metadata: result,
     });
-  }
-
-  private async enqueueCompileSpaces(input: {
-    workspaceId: string;
-    spaceIds: string[];
-    trigger: KnowledgeCompileTrigger;
-  }): Promise<{ queuedSpaceCount: number; jobIds: string[] }> {
-    const spaceIds = uniqueValues(input.spaceIds);
-    const jobIds: string[] = [];
-
-    for (const spaceId of spaceIds) {
-      const jobId = buildKnowledgeCompileJobId({
-        workspaceId: input.workspaceId,
-        spaceId,
-        runKey: buildKnowledgeRunKey(input.trigger),
-      });
-      await this.knowledgeQueue.add(
-        QueueJob.KNOWLEDGE_COMPILE_SPACE,
-        {
-          workspaceId: input.workspaceId,
-          spaceId,
-          trigger: input.trigger,
-        },
-        { jobId },
-      );
-      jobIds.push(jobId);
-    }
-
-    return { queuedSpaceCount: jobIds.length, jobIds };
   }
 
   private async enqueueAdminSpaceAction(input: {

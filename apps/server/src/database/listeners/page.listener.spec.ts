@@ -18,7 +18,7 @@ describe('PageListener knowledge jobs', () => {
       QueueJob.KNOWLEDGE_REINDEX_ACCESS,
       { workspaceId: 'workspace-1', sourcePageIds: ['page-1'] },
     );
-    expect(runRepo.requestRunsForSourcePages).toHaveBeenCalledWith({
+    expect(runRepo.requestIncrementalCompileForPages).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       sourcePageIds: ['page-1'],
       trigger: 'page_update',
@@ -46,7 +46,7 @@ describe('PageListener knowledge jobs', () => {
       QueueJob.KNOWLEDGE_REINDEX_ACCESS,
       { workspaceId: 'workspace-1', sourcePageIds: ['page-1'] },
     );
-    expect(runRepo.requestRunsForSourcePages).not.toHaveBeenCalled();
+    expect(runRepo.requestIncrementalCompileForPages).not.toHaveBeenCalled();
   });
 
   it('keeps last successful knowledge visible while requesting an update run', async () => {
@@ -61,7 +61,7 @@ describe('PageListener knowledge jobs', () => {
       QueueJob.KNOWLEDGE_MARK_SOURCES_STALE,
       expect.anything(),
     );
-    expect(runRepo.requestRunsForSourcePages).toHaveBeenCalledWith(
+    expect(runRepo.requestIncrementalCompileForPages).toHaveBeenCalledWith(
       expect.objectContaining({ removed: false }),
     );
   });
@@ -79,7 +79,7 @@ describe('PageListener knowledge jobs', () => {
         pageIds: ['page-1'],
       });
 
-      expect(runRepo.requestRunsForSourcePages).toHaveBeenCalledWith(
+      expect(runRepo.requestIncrementalCompileForPages).toHaveBeenCalledWith(
         expect.objectContaining({
           workspaceId: 'workspace-1',
           sourcePageIds: ['page-1'],
@@ -113,14 +113,14 @@ describe('PageListener knowledge jobs', () => {
       QueueJob.KNOWLEDGE_REINDEX_ACCESS,
       { workspaceId: 'workspace-1', sourcePageIds: ['page-2'] },
     );
-    expect(runRepo.requestRunsForSourcePages).toHaveBeenCalledWith(
+    expect(runRepo.requestIncrementalCompileForPages).toHaveBeenCalledWith(
       expect.objectContaining({ sourcePageIds: ['page-2'], removed: false }),
     );
   });
 
   it('always delegates active-run arbitration to the locked repository', async () => {
     const { listener, runRepo } = createListener();
-    runRepo.requestRunsForSourcePages.mockResolvedValue([
+    runRepo.requestIncrementalCompileForPages.mockResolvedValue([
       { disposition: 'rerun_requested', run: { id: 'run-1' } },
     ]);
 
@@ -129,7 +129,7 @@ describe('PageListener knowledge jobs', () => {
       pageIds: ['page-1'],
     });
 
-    expect(runRepo.requestRunsForSourcePages).toHaveBeenCalledTimes(1);
+    expect(runRepo.requestIncrementalCompileForPages).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -144,7 +144,7 @@ function createListener() {
     add: jest.fn().mockResolvedValue(undefined),
   };
   const runRepo = {
-    requestRunsForSourcePages: jest.fn().mockResolvedValue([]),
+    requestIncrementalCompileForPages: jest.fn().mockResolvedValue([]),
   };
 
   return {

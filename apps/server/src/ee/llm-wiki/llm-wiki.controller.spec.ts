@@ -464,16 +464,29 @@ describe('LlmWikiController', () => {
     );
   });
 
-  it('queues selected spaces for knowledge compilation from admins', async () => {
+  it('creates or coalesces durable runs without directly writing Redis', async () => {
     const knowledgeQueue = {
       add: jest.fn().mockResolvedValue(undefined),
     };
     const auditService = {
       log: jest.fn(),
     };
+    const spaceCompilation = {
+      requestRuns: jest.fn().mockResolvedValue([
+        {
+          disposition: 'created',
+          run: { id: 'run-1', spaceId: 'space-1' },
+        },
+        {
+          disposition: 'rerun_requested',
+          run: { id: 'run-2', spaceId: 'space-2' },
+        },
+      ]),
+    };
     const controller = createController({
       knowledgeQueue,
       auditService,
+      spaceCompilation,
     });
 
     await expect(
@@ -483,50 +496,44 @@ describe('LlmWikiController', () => {
         workspace(),
       ),
     ).resolves.toEqual({
-      queuedSpaceCount: 2,
-      jobIds: [
-        expect.stringMatching(
-          /^knowledge-compile-space__workspace-1__space-1__/,
-        ),
-        expect.stringMatching(
-          /^knowledge-compile-space__workspace-1__space-2__/,
-        ),
+      requestedSpaceCount: 2,
+      acceptedRunCount: 2,
+      coalescedRunCount: 0,
+      rerunRequestedCount: 1,
+      runs: [
+        { spaceId: 'space-1', runId: 'run-1', disposition: 'created' },
+        {
+          spaceId: 'space-2',
+          runId: 'run-2',
+          disposition: 'rerun_requested',
+        },
       ],
     });
 
-    expect(knowledgeQueue.add).toHaveBeenCalledWith(
-      QueueJob.KNOWLEDGE_COMPILE_SPACE,
+    expect(spaceCompilation.requestRuns).toHaveBeenCalledWith([
       {
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
         trigger: 'manual_compile',
+        scanRemovedSources: true,
       },
-      expect.objectContaining({
-        jobId: expect.stringMatching(
-          /^knowledge-compile-space__workspace-1__space-1__/,
-        ),
-      }),
-    );
-    expect(knowledgeQueue.add).toHaveBeenCalledWith(
-      QueueJob.KNOWLEDGE_COMPILE_SPACE,
       {
         workspaceId: 'workspace-1',
         spaceId: 'space-2',
         trigger: 'manual_compile',
+        scanRemovedSources: true,
       },
-      expect.objectContaining({
-        jobId: expect.stringMatching(
-          /^knowledge-compile-space__workspace-1__space-2__/,
-        ),
-      }),
-    );
+    ]);
+    expect(knowledgeQueue.add).not.toHaveBeenCalled();
     expect(auditService.log).toHaveBeenCalledWith({
       event: AuditEvent.KNOWLEDGE_COMPILE_QUEUED,
       resourceType: AuditResource.KNOWLEDGE,
       resourceId: 'workspace-1',
       metadata: {
         spaceIds: ['space-1', 'space-2'],
-        queuedSpaceCount: 2,
+        acceptedRunCount: 2,
+        coalescedRunCount: 0,
+        rerunRequestedCount: 1,
       },
     });
   });
@@ -747,7 +754,7 @@ describe('LlmWikiController', () => {
     );
   });
 
-  it('retries only selected pages without creating Space runs', async () => {
+  it('retries selected pages by requesting one durable Run per Space', async () => {
     const pageRepo = {
       findExistingPageRefs: jest.fn().mockResolvedValue([
         {
@@ -764,32 +771,14 @@ describe('LlmWikiController', () => {
         },
       ]),
     };
-    const sourceExporter = {
-      exportPageSources: jest
-        .fn()
-        .mockImplementation(({ spaceId, sourcePageIds }) =>
-          sourcePageIds.map((sourcePageId: string) => ({
-            workspaceId: 'workspace-1',
-            spaceId,
-            sourcePageId,
-            sourceVersion: `version-${sourcePageId}`,
-            contentHash: `hash-${sourcePageId}`,
-            title: sourcePageId,
-            text: `content-${sourcePageId}`,
-            references: [],
-          })),
-        ),
-    };
     const spaceCompilation = {
-      hasActiveRun: jest.fn().mockResolvedValue(false),
-      queuePageRetry: jest
-        .fn()
-        .mockImplementation(({ sourcePageId }) => `retry-${sourcePageId}`),
-      startSpaceRun: jest.fn(),
+      requestRuns: jest.fn().mockResolvedValue([
+        { disposition: 'created', run: { id: 'run-space-1' } },
+        { disposition: 'coalesced', run: { id: 'run-space-2' } },
+      ]),
     };
     const controller = createController({
       pageRepo,
-      sourceExporter,
       spaceCompilation,
       diagnosticsService: {
         findRetryableFailedPageIds: jest
@@ -806,29 +795,21 @@ describe('LlmWikiController', () => {
       ),
     ).resolves.toEqual({
       queuedPageCount: 2,
-      jobIds: ['retry-page-1', 'retry-page-2'],
+      jobIds: ['run-space-1', 'run-space-2'],
     });
 
-    expect(spaceCompilation.hasActiveRun).toHaveBeenCalledTimes(2);
-    expect(spaceCompilation.queuePageRetry).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
+    expect(spaceCompilation.requestRuns).toHaveBeenCalledWith([
+      {
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
-        sourcePageId: 'page-1',
-        contentHash: 'hash-page-1',
-      }),
-    );
-    expect(spaceCompilation.queuePageRetry).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
+        trigger: 'retry_compile',
+      },
+      {
         workspaceId: 'workspace-1',
         spaceId: 'space-2',
-        sourcePageId: 'page-2',
-        contentHash: 'hash-page-2',
-      }),
-    );
-    expect(spaceCompilation.startSpaceRun).not.toHaveBeenCalled();
+        trigger: 'retry_compile',
+      },
+    ]);
   });
 
   it('rejects the complete retry selection before export when any page is not currently failed', async () => {
@@ -850,8 +831,7 @@ describe('LlmWikiController', () => {
     };
     const sourceExporter = { exportPageSources: jest.fn() };
     const spaceCompilation = {
-      hasActiveRun: jest.fn(),
-      queuePageRetry: jest.fn(),
+      requestRuns: jest.fn(),
     };
     const controller = createController({
       pageRepo,
@@ -872,15 +852,11 @@ describe('LlmWikiController', () => {
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
 
-    expect(spaceCompilation.hasActiveRun).toHaveBeenCalledWith({
-      workspaceId: 'workspace-1',
-      spaceId: 'space-1',
-    });
     expect(sourceExporter.exportPageSources).not.toHaveBeenCalled();
-    expect(spaceCompilation.queuePageRetry).not.toHaveBeenCalled();
+    expect(spaceCompilation.requestRuns).not.toHaveBeenCalled();
   });
 
-  it('rejects all selected retries before exporting or dispatching when any Space run is active', async () => {
+  it('coalesces retry requests when a Space Run is already active', async () => {
     const pageRepo = {
       findExistingPageRefs: jest.fn().mockResolvedValue([
         {
@@ -904,12 +880,10 @@ describe('LlmWikiController', () => {
         .mockResolvedValue(['page-1', 'page-2']),
     };
     const spaceCompilation = {
-      hasActiveRun: jest
-        .fn()
-        .mockResolvedValueOnce(false)
-        .mockResolvedValueOnce(true),
-      queuePageRetry: jest.fn(),
-      startSpaceRun: jest.fn(),
+      requestRuns: jest.fn().mockResolvedValue([
+        { disposition: 'coalesced', run: { id: 'run-1' } },
+        { disposition: 'rerun_requested', run: { id: 'run-2' } },
+      ]),
     };
     const controller = createController({
       pageRepo,
@@ -924,15 +898,14 @@ describe('LlmWikiController', () => {
         adminUser(),
         workspace(),
       ),
-    ).rejects.toBeInstanceOf(ConflictException);
+    ).resolves.toEqual({
+      queuedPageCount: 2,
+      jobIds: ['run-1', 'run-2'],
+    });
 
-    expect(spaceCompilation.hasActiveRun).toHaveBeenCalledTimes(2);
-    expect(
-      diagnosticsService.findRetryableFailedPageIds,
-    ).not.toHaveBeenCalled();
+    expect(diagnosticsService.findRetryableFailedPageIds).toHaveBeenCalled();
     expect(sourceExporter.exportPageSources).not.toHaveBeenCalled();
-    expect(spaceCompilation.queuePageRetry).not.toHaveBeenCalled();
-    expect(spaceCompilation.startSpaceRun).not.toHaveBeenCalled();
+    expect(spaceCompilation.requestRuns).toHaveBeenCalledTimes(1);
   });
 
   it('rejects page retries from workspace members before reading or queueing pages', async () => {

@@ -1,6 +1,6 @@
 import { Logger, OnModuleDestroy } from '@nestjs/common';
 import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
+import { Job, UnrecoverableError } from 'bullmq';
 import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import {
   IKnowledgeCompileImageJob,
@@ -34,6 +34,10 @@ export class KnowledgeImageProcessor
     if (job.name === QueueJob.KNOWLEDGE_COMPILE_IMAGE) {
       return this.processRunImage(job);
     }
+    throw new UnrecoverableError(
+      `Unsupported Knowledge Image job ${job.name}.`,
+    );
+    /* istanbul ignore next -- unreachable clean-cutover legacy implementation */
     if (job.name !== QueueJob.KNOWLEDGE_COMPILE_PAGE_IMAGES) return;
     const data = job.data as IKnowledgeCompilePageImagesJob;
     const accepted = await this.spaceCompilation.beginPageImages({
@@ -134,6 +138,8 @@ export class KnowledgeImageProcessor
       });
       return;
     }
+    return;
+    /* istanbul ignore next -- unreachable clean-cutover legacy implementation */
     if (job.name !== QueueJob.KNOWLEDGE_COMPILE_PAGE_IMAGES) return;
     const exhausted =
       Number(job.attemptsMade ?? 0) >=

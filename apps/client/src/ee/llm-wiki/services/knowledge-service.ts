@@ -3,6 +3,9 @@ import type {
   KnowledgeAdminSpaceAction,
   KnowledgeContextBudget,
   KnowledgeCompileResult,
+  KnowledgeCompileSpacesResult,
+  KnowledgeCompileRunDisposition,
+  KnowledgeSpaceOperationResult,
   KnowledgeCompileRunProgress,
   KnowledgeCompileStatus,
   KnowledgeDiagnosticsResult,
@@ -40,7 +43,7 @@ export async function queryKnowledge(params: {
 
 export async function compileKnowledgeSpaces(params: {
   spaceIds: string[];
-}): Promise<KnowledgeCompileResult> {
+}): Promise<KnowledgeCompileSpacesResult> {
   const response = await fetch("/api/llm-wiki/admin/compile-spaces", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -54,27 +57,27 @@ export async function compileKnowledgeSpaces(params: {
   }
 
   const body = unwrapApiData(await response.json());
-  return normalizeCompileResult(body);
+  return normalizeCompileSpacesResult(body);
 }
 
 export async function updateKnowledgeSpace(params: {
   spaceId: string;
   confirmationSpaceName: string;
-}): Promise<KnowledgeCompileResult> {
+}): Promise<KnowledgeSpaceOperationResult> {
   return requestConfirmedSpaceCompilation(params, "update-knowledge");
 }
 
 export async function forceRebuildKnowledgeSpace(params: {
   spaceId: string;
   confirmationSpaceName: string;
-}): Promise<KnowledgeCompileResult> {
+}): Promise<KnowledgeSpaceOperationResult> {
   return requestConfirmedSpaceCompilation(params, "force-rebuild-knowledge");
 }
 
 async function requestConfirmedSpaceCompilation(
   params: { spaceId: string; confirmationSpaceName: string },
   endpoint: "update-knowledge" | "force-rebuild-knowledge",
-): Promise<KnowledgeCompileResult> {
+): Promise<KnowledgeSpaceOperationResult> {
   const response = await fetch(
     `/api/llm-wiki/admin/spaces/${encodeURIComponent(params.spaceId)}/${endpoint}`,
     {
@@ -92,7 +95,60 @@ async function requestConfirmedSpaceCompilation(
     throw new Error(message);
   }
 
-  return normalizeCompileResult(unwrapApiData(await response.json()));
+  return normalizeSpaceOperationResult(unwrapApiData(await response.json()));
+}
+
+function normalizeCompileSpacesResult(
+  value: unknown,
+): KnowledgeCompileSpacesResult {
+  const record = isRecord(value) ? value : {};
+  const runs = Array.isArray(record.runs)
+    ? record.runs.flatMap((value) => {
+        if (!isRecord(value)) return [];
+        if (
+          typeof value.spaceId !== "string" ||
+          typeof value.runId !== "string" ||
+          !isCompileRunDisposition(value.disposition)
+        ) {
+          return [];
+        }
+        return [
+          {
+            spaceId: value.spaceId,
+            runId: value.runId,
+            disposition: value.disposition,
+          },
+        ];
+      })
+    : [];
+  return {
+    requestedSpaceCount: numberOrZero(record.requestedSpaceCount),
+    acceptedRunCount: numberOrZero(record.acceptedRunCount),
+    coalescedRunCount: numberOrZero(record.coalescedRunCount),
+    rerunRequestedCount: numberOrZero(record.rerunRequestedCount),
+    runs,
+  };
+}
+
+function normalizeSpaceOperationResult(
+  value: unknown,
+): KnowledgeSpaceOperationResult {
+  const record = isRecord(value) ? value : {};
+  return {
+    runId: typeof record.runId === "string" ? record.runId : "",
+    mode: record.mode === "force_rebuild" ? "force_rebuild" : "incremental",
+    knowledgeGeneration: numberOrZero(record.knowledgeGeneration),
+  };
+}
+
+function isCompileRunDisposition(
+  value: unknown,
+): value is KnowledgeCompileRunDisposition {
+  return ["created", "coalesced", "rerun_requested"].includes(value as string);
+}
+
+function numberOrZero(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 export async function runKnowledgeAdminAction(params: {

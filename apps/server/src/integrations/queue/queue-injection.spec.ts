@@ -21,14 +21,13 @@ describe('queue injection boundaries', () => {
     [
       KnowledgeSpaceCompilationService,
       [
-        QueueName.KNOWLEDGE_TEXT_QUEUE,
         QueueName.KNOWLEDGE_IMAGE_QUEUE,
         QueueName.KNOWLEDGE_SPACE_QUEUE,
       ],
     ],
     [
       KnowledgeSpaceResetService,
-      [QueueName.KNOWLEDGE_TEXT_QUEUE, QueueName.KNOWLEDGE_IMAGE_QUEUE],
+      [QueueName.KNOWLEDGE_SPACE_QUEUE, QueueName.KNOWLEDGE_IMAGE_QUEUE],
     ],
   ])('%p injects only its supported queues', (target, expectedQueues) => {
     const dependencies =

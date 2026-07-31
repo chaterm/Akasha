@@ -55,8 +55,8 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
   private dispatching = false;
 
   constructor(
-    @InjectQueue(QueueName.KNOWLEDGE_TEXT_QUEUE)
-    private readonly knowledgeQueue: Queue,
+    @InjectQueue(QueueName.KNOWLEDGE_SPACE_QUEUE)
+    private readonly spaceQueue: Queue,
     @InjectQueue(QueueName.KNOWLEDGE_IMAGE_QUEUE)
     private readonly imageQueue: Queue,
     private readonly runRepo: KnowledgeSpaceCompilationRepo,
@@ -69,8 +69,6 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     private readonly environmentService: EnvironmentService,
     private readonly sourceExporter: KnowledgeSourceExporterService,
     executionRepo?: KnowledgeSpaceExecutionRepo,
-    @InjectQueue(QueueName.KNOWLEDGE_SPACE_QUEUE)
-    private readonly spaceQueue?: Queue,
   ) {
     this.executionRepo = executionRepo;
   }
@@ -110,6 +108,23 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       }
       throw new NotFoundException('Space not found.');
     }
+    await this.dispatchPending();
+    return results;
+  }
+
+  async requestIncrementalCompileForPages(input: {
+    workspaceId: string;
+    sourcePageIds: string[];
+    removed?: boolean;
+  }) {
+    const results = await this.runRepo.requestIncrementalCompileForPages({
+      workspaceId: input.workspaceId,
+      sourcePageIds: input.sourcePageIds,
+      trigger: 'page_update',
+      removed: input.removed ?? false,
+      compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+      promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+    });
     await this.dispatchPending();
     return results;
   }
@@ -576,7 +591,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       compilerRunId: jobId,
       compileTaskId: jobId,
     });
-    await this.knowledgeQueue.add(
+    await this.spaceQueue.add(
       QueueJob.KNOWLEDGE_COMPILE_PAGES,
       {
         workspaceId: source.workspaceId,
@@ -760,7 +775,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       effectiveKnowledgeHash: merge.effectiveKnowledgeHash,
       knowledgeGeneration,
     });
-    await this.knowledgeQueue.add(
+    await this.spaceQueue.add(
       QueueJob.KNOWLEDGE_MERGE_PAGE_IMAGES,
       {
         workspaceId: source.workspaceId,
@@ -824,10 +839,9 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     if (this.dispatching) return;
     this.dispatching = true;
     try {
-      if (this.spaceQueue) {
-        await this.dispatchPendingSpaceSlices();
-        await this.dispatchPendingRunImages();
-      }
+      await this.dispatchPendingSpaceSlices();
+      await this.dispatchPendingRunImages();
+      return;
 
       // The legacy page/aggregate outbox remains reachable only in tests and
       // until Task 8 removes the old queue consumers. Production always injects
@@ -858,7 +872,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
             compilerRunId: page.runId,
             compileTaskId: jobId,
           });
-          await this.knowledgeQueue.add(
+          await this.spaceQueue.add(
             QueueJob.KNOWLEDGE_COMPILE_PAGES,
             {
               workspaceId: page.workspaceId,
@@ -919,7 +933,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
           phase,
         });
         try {
-          await this.knowledgeQueue.add(
+          await this.spaceQueue.add(
             QueueJob.KNOWLEDGE_AGGREGATE_SPACE,
             {
               workspaceId: run.workspaceId,
@@ -1072,7 +1086,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
             effectiveKnowledgeHash: merge.effectiveKnowledgeHash,
             knowledgeGeneration: page.knowledgeGeneration,
           });
-          await this.knowledgeQueue.add(
+          await this.spaceQueue.add(
             QueueJob.KNOWLEDGE_MERGE_PAGE_IMAGES,
             {
               workspaceId: page.workspaceId,
@@ -1178,7 +1192,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
   private async removeSupersededJobs(jobIds: string[]): Promise<void> {
     for (const jobId of [...new Set(jobIds)]) {
       try {
-        for (const queue of [this.knowledgeQueue, this.imageQueue]) {
+        for (const queue of [this.spaceQueue, this.imageQueue]) {
           const job = await queue.getJob(jobId);
           if (!job) continue;
           const state = await job.getState();
@@ -1196,7 +1210,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
 
   private async removeRejectedOutboxJob(jobId: string): Promise<void> {
     try {
-      const job = await this.knowledgeQueue.getJob(jobId);
+      const job = await this.spaceQueue.getJob(jobId);
       if (!job) return;
       const state = await job.getState();
       if (isRemovableSupersededJobState(state)) {

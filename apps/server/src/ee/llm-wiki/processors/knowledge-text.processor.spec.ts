@@ -3,7 +3,7 @@ import {
   WORKER_METADATA,
 } from '@nestjs/bullmq/dist/bull.constants';
 import { Job } from 'bullmq';
-import { QueueName } from '../../../integrations/queue/constants';
+import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import { KnowledgeTextJobHandler } from '../services/knowledge-text-job.handler';
 import { KnowledgeTextProcessor } from './knowledge-text.processor';
 
@@ -22,10 +22,25 @@ describe('KnowledgeTextProcessor', () => {
     const processor = new KnowledgeTextProcessor(
       handler as unknown as KnowledgeTextJobHandler,
     );
-    const job = { name: 'knowledge-compile-pages' } as Job;
+    const job = { name: QueueJob.KNOWLEDGE_REINDEX_ACCESS } as Job;
 
     await expect(processor.process(job)).resolves.toEqual({ status: 'ok' });
     expect(handler.handle).toHaveBeenCalledWith(job);
+  });
+
+  it.each([
+    QueueJob.KNOWLEDGE_COMPILE_SPACE,
+    QueueJob.KNOWLEDGE_COMPILE_PAGES,
+    QueueJob.KNOWLEDGE_MERGE_PAGE_IMAGES,
+    QueueJob.KNOWLEDGE_AGGREGATE_SPACE,
+  ])('rejects removed legacy compile job %s', async (name) => {
+    const handler = { handle: jest.fn(), onFailed: jest.fn() };
+    const processor = new KnowledgeTextProcessor(handler as never);
+
+    await expect(processor.process({ name } as never)).rejects.toThrow(
+      'Unsupported Knowledge Text job',
+    );
+    expect(handler.handle).not.toHaveBeenCalled();
   });
 
   it('delegates terminal worker failures so durable merge state cannot stall', async () => {
@@ -37,7 +52,7 @@ describe('KnowledgeTextProcessor', () => {
       handler as unknown as KnowledgeTextJobHandler,
     );
     const job = {
-      name: 'knowledge-merge-page-images',
+      name: QueueJob.KNOWLEDGE_REINDEX_ACCESS,
       failedReason: 'worker stalled',
     } as Job;
 

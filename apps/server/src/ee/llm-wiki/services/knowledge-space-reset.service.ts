@@ -19,7 +19,7 @@ export class KnowledgeSpaceResetService {
   private readonly logger = new Logger(KnowledgeSpaceResetService.name);
 
   constructor(
-    @InjectQueue(QueueName.KNOWLEDGE_TEXT_QUEUE) private readonly queue: Queue,
+    @InjectQueue(QueueName.KNOWLEDGE_SPACE_QUEUE) private readonly queue: Queue,
     @InjectQueue(QueueName.KNOWLEDGE_IMAGE_QUEUE)
     private readonly imageQueue: Queue,
     private readonly runRepo: KnowledgeSpaceCompilationRepo,

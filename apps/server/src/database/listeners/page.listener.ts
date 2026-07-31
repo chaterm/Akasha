@@ -127,7 +127,7 @@ export class PageListener {
   ): Promise<void> {
     if (!workspaceId || pageIds.length === 0) return;
 
-    await this.runRepo.requestRunsForSourcePages({
+    await this.runRepo.requestIncrementalCompileForPages({
       workspaceId,
       sourcePageIds: pageIds,
       trigger: 'page_update',

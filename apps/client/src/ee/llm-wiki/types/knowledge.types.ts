@@ -48,6 +48,29 @@ export interface KnowledgeCompileResult {
   jobIds: string[];
 }
 
+export type KnowledgeCompileRunDisposition =
+  | "created"
+  | "coalesced"
+  | "rerun_requested";
+
+export interface KnowledgeCompileSpacesResult {
+  requestedSpaceCount: number;
+  acceptedRunCount: number;
+  coalescedRunCount: number;
+  rerunRequestedCount: number;
+  runs: Array<{
+    spaceId: string;
+    runId: string;
+    disposition: KnowledgeCompileRunDisposition;
+  }>;
+}
+
+export interface KnowledgeSpaceOperationResult {
+  runId: string;
+  mode: "incremental" | "force_rebuild";
+  knowledgeGeneration: number;
+}
+
 export type KnowledgeAdminSpaceAction =
   | "retry_compile"
   | "reindex_access"

@@ -170,7 +170,7 @@ export default function KnowledgeAdminPage() {
       setConfirmationError(null);
       notifications.show({
         message: t("Knowledge update queued", {
-          count: data.queuedSpaceCount,
+          count: data.runId ? 1 : 0,
         }),
       });
       void diagnosticsQuery.refetch();

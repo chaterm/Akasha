@@ -59,7 +59,7 @@ describe('KnowledgeImageProcessor', () => {
     );
   });
 
-  it('persists page counters and continues after permanent image failures', async () => {
+  it.skip('legacy: persists page counters and continues after permanent image failures', async () => {
     const fixture = createFixture({
       result: pageResult({ expected: 3, failed: 1, skipped: 1 }),
     });
@@ -84,7 +84,7 @@ describe('KnowledgeImageProcessor', () => {
     });
   });
 
-  it('retries only retryable image failures and keeps the run page nonterminal', async () => {
+  it.skip('legacy: retries only retryable image failures and keeps the run page nonterminal', async () => {
     const fixture = createFixture({
       result: pageResult({ failed: 1, retryableFailureCount: 1 }),
     });
@@ -102,7 +102,7 @@ describe('KnowledgeImageProcessor', () => {
     expect(fixture.compilation.completePageImages).not.toHaveBeenCalled();
   });
 
-  it('completes stale generation or changed source as a no-op without vision work', async () => {
+  it.skip('legacy: completes stale generation or changed source as a no-op without vision work', async () => {
     const fixture = createFixture({ beginAccepted: false });
 
     await expect(fixture.processor.process(job())).resolves.toEqual(
@@ -112,7 +112,7 @@ describe('KnowledgeImageProcessor', () => {
     expect(fixture.enrichment.enrichSource).not.toHaveBeenCalled();
   });
 
-  it('terminally skips a Run page when its source changes after dispatch', async () => {
+  it.skip('legacy: terminally skips a Run page when its source changes after dispatch', async () => {
     const fixture = createFixture({ sourceContentHash: 'sha256:new-page' });
 
     await expect(fixture.processor.process(job())).resolves.toEqual(
@@ -131,7 +131,7 @@ describe('KnowledgeImageProcessor', () => {
     );
   });
 
-  it('marks the durable image state failed when the final retry is exhausted', async () => {
+  it.skip('legacy: marks the durable image state failed when the final retry is exhausted', async () => {
     const fixture = createFixture({
       result: pageResult({ succeeded: 0, failed: 1, retryableFailureCount: 1 }),
     });
@@ -145,7 +145,7 @@ describe('KnowledgeImageProcessor', () => {
     );
   });
 
-  it('backfills a durable failed state when the worker fails outside the handler', async () => {
+  it.skip('legacy: backfills a durable failed state when the worker fails outside the handler', async () => {
     const fixture = createFixture();
     const failedJob = job({
       attemptsMade: 3,
@@ -168,7 +168,7 @@ describe('KnowledgeImageProcessor', () => {
     );
   });
 
-  it('queues a standalone page merge after usable image knowledge is ready', async () => {
+  it.skip('legacy: queues a standalone page merge after usable image knowledge is ready', async () => {
     const fixture = createFixture();
     const standalone = job({
       data: { ...job().data, spaceRunId: undefined },
@@ -180,6 +180,14 @@ describe('KnowledgeImageProcessor', () => {
       expect.objectContaining({ sourcePageId: 'page-1' }),
     );
     expect(fixture.compilation.completePageImages).not.toHaveBeenCalled();
+  });
+
+  it('rejects the removed page-sized image job', async () => {
+    const fixture = createFixture();
+    await expect(fixture.processor.process(job())).rejects.toThrow(
+      'Unsupported Knowledge Image job',
+    );
+    expect(fixture.enrichment.enrichSource).not.toHaveBeenCalled();
   });
 });
 

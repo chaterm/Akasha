@@ -2355,27 +2355,14 @@ describe('KnowledgeTextJobHandler', () => {
     });
   });
 
-  it('keeps content-updated pages available and enqueues isolated retryable jobs', async () => {
+  it('keeps content-updated pages available and requests durable space runs', async () => {
     const sourceRepo = createSourceRepo();
     const capsuleRepo = createCapsuleRepo();
     const accessIndexer = createAccessIndexer();
     const pageRepo = createPageRepo();
     const textQueue = createTextQueue();
     const compilationRepo = createCompilationRepo();
-    jest.mocked(pageRepo.findExistingPageRefs).mockResolvedValue([
-      {
-        id: 'page-1',
-        workspaceId: 'workspace-1',
-        spaceId: 'space-1',
-        deletedAt: null,
-      },
-      {
-        id: 'page-2',
-        workspaceId: 'workspace-1',
-        spaceId: 'space-2',
-        deletedAt: null,
-      },
-    ]);
+    const spaceCompilation = createSpaceCompilation();
     const processor = new KnowledgeTextJobHandler(
       createExporter(),
       createCompiler(),
@@ -2391,7 +2378,7 @@ describe('KnowledgeTextJobHandler', () => {
       createReviewApplicationRepo(),
       compilationRepo as never,
       createArtifactCatalog(),
-      createSpaceCompilation(),
+      spaceCompilation,
       createSpaceAggregator(),
       createImageEnrichment(),
     );
@@ -2409,57 +2396,19 @@ describe('KnowledgeTextJobHandler', () => {
       workspaceId: 'workspace-1',
       sourcePageIds: ['page-1', 'page-2'],
     });
-    expect(pageRepo.findExistingPageRefs).toHaveBeenCalledWith({
-      workspaceId: 'workspace-1',
-      pageIds: ['page-1', 'page-2'],
-    });
-    expect(textQueue.add).toHaveBeenCalledWith(
-      QueueJob.KNOWLEDGE_COMPILE_PAGES,
-      {
-        workspaceId: 'workspace-1',
-        spaceId: 'space-1',
-        sourcePageIds: ['page-1'],
-        trigger: 'page_update',
-      },
-      {
-        delay: 5000,
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 31000 },
-        jobId: expect.stringMatching(
-          /^knowledge-compile-pages__workspace-1__space-1__page-1__/,
-        ),
-      },
-    );
-    expect(compilationRepo.queueAttempt).toHaveBeenCalledTimes(2);
-    expect(compilationRepo.queueAttempt).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workspaceId: 'workspace-1',
-        spaceId: 'space-1',
-        sourcePageId: 'page-1',
-        sourceVersion: undefined,
-        sourceContentHash: undefined,
-      }),
-    );
     expect(
-      compilationRepo.queueAttempt.mock.invocationCallOrder[0],
-    ).toBeLessThan(textQueue.add.mock.invocationCallOrder[1]);
-    expect(textQueue.add).toHaveBeenCalledWith(
+      spaceCompilation.requestIncrementalCompileForPages,
+    ).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-1', 'page-2'],
+    });
+    expect(pageRepo.findExistingPageRefs).not.toHaveBeenCalled();
+    expect(textQueue.add).not.toHaveBeenCalledWith(
       QueueJob.KNOWLEDGE_COMPILE_PAGES,
-      {
-        workspaceId: 'workspace-1',
-        spaceId: 'space-2',
-        sourcePageIds: ['page-2'],
-        trigger: 'page_update',
-      },
-      {
-        delay: 5000,
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 31000 },
-        jobId: expect.stringMatching(
-          /^knowledge-compile-pages__workspace-1__space-2__page-2__/,
-        ),
-      },
+      expect.anything(),
+      expect.anything(),
     );
+    expect(compilationRepo.queueAttempt).not.toHaveBeenCalled();
   });
 
   it('routes embedding rebuild jobs directly to the vector service', async () => {
@@ -2693,6 +2642,7 @@ function createSpaceCompilation(): KnowledgeSpaceCompilationService {
     isRunActiveForPublication: jest.fn().mockResolvedValue(true),
     queueStandalonePageImages: jest.fn().mockResolvedValue('image-job-1'),
     dispatchPending: jest.fn().mockResolvedValue(undefined),
+    requestIncrementalCompileForPages: jest.fn().mockResolvedValue([]),
   } as unknown as KnowledgeSpaceCompilationService;
 }
 

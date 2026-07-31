@@ -369,7 +369,7 @@ export class KnowledgeSpaceCompilationRepo {
     return results;
   }
 
-  async requestRunsForSourcePages(input: {
+  async requestIncrementalCompileForPages(input: {
     workspaceId: string;
     sourcePageIds: string[];
     trigger: string;
@@ -424,6 +424,14 @@ export class KnowledgeSpaceCompilationRepo {
       compilerVersion: input.compilerVersion,
       promptVersion: input.promptVersion,
     });
+  }
+
+  async requestRunsForSourcePages(
+    input: Parameters<
+      KnowledgeSpaceCompilationRepo['requestIncrementalCompileForPages']
+    >[0],
+  ) {
+    return this.requestIncrementalCompileForPages(input);
   }
 
   private async resolveRemovedSourcePageIds(

@@ -79,13 +79,39 @@ describe("queryKnowledge", () => {
   it("queues selected spaces for compilation", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ queuedSpaceCount: 2 }),
+      json: async () => ({
+        requestedSpaceCount: 2,
+        acceptedRunCount: 2,
+        coalescedRunCount: 0,
+        rerunRequestedCount: 1,
+        runs: [
+          { spaceId: "space-1", runId: "run-1", disposition: "created" },
+          {
+            spaceId: "space-2",
+            runId: "run-2",
+            disposition: "rerun_requested",
+          },
+        ],
+      }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
       compileKnowledgeSpaces({ spaceIds: ["space-1", "space-2"] }),
-    ).resolves.toEqual({ queuedSpaceCount: 2, jobIds: [] });
+    ).resolves.toEqual({
+      requestedSpaceCount: 2,
+      acceptedRunCount: 2,
+      coalescedRunCount: 0,
+      rerunRequestedCount: 1,
+      runs: [
+        { spaceId: "space-1", runId: "run-1", disposition: "created" },
+        {
+          spaceId: "space-2",
+          runId: "run-2",
+          disposition: "rerun_requested",
+        },
+      ],
+    });
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/llm-wiki/admin/compile-spaces",
@@ -103,7 +129,19 @@ describe("queryKnowledge", () => {
       vi.fn().mockResolvedValue({
         ok: true,
         json: async () => ({
-          data: { queuedSpaceCount: 1 },
+          data: {
+            requestedSpaceCount: 1,
+            acceptedRunCount: 1,
+            coalescedRunCount: 1,
+            rerunRequestedCount: 0,
+            runs: [
+              {
+                spaceId: "space-1",
+                runId: "run-1",
+                disposition: "coalesced",
+              },
+            ],
+          },
           success: true,
           status: 200,
         }),
@@ -112,13 +150,31 @@ describe("queryKnowledge", () => {
 
     await expect(
       compileKnowledgeSpaces({ spaceIds: ["space-1"] }),
-    ).resolves.toEqual({ queuedSpaceCount: 1, jobIds: [] });
+    ).resolves.toEqual({
+      requestedSpaceCount: 1,
+      acceptedRunCount: 1,
+      coalescedRunCount: 1,
+      rerunRequestedCount: 0,
+      runs: [
+        {
+          spaceId: "space-1",
+          runId: "run-1",
+          disposition: "coalesced",
+        },
+      ],
+    });
   });
 
   it("updates one space through the incremental knowledge endpoint", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ data: { queuedSpaceCount: 1, jobIds: ["job-1"] } }),
+      json: async () => ({
+        data: {
+          runId: "run-1",
+          mode: "incremental",
+          knowledgeGeneration: 4,
+        },
+      }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -127,7 +183,11 @@ describe("queryKnowledge", () => {
         spaceId: "space-1",
         confirmationSpaceName: "AIM",
       }),
-    ).resolves.toEqual({ queuedSpaceCount: 1, jobIds: ["job-1"] });
+    ).resolves.toEqual({
+      runId: "run-1",
+      mode: "incremental",
+      knowledgeGeneration: 4,
+    });
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/llm-wiki/admin/spaces/space-1/update-knowledge",
@@ -142,7 +202,13 @@ describe("queryKnowledge", () => {
   it("force rebuilds one space without sending a mode field", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ data: { queuedSpaceCount: 1 } }),
+      json: async () => ({
+        data: {
+          runId: "run-force",
+          mode: "force_rebuild",
+          knowledgeGeneration: 5,
+        },
+      }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -151,7 +217,11 @@ describe("queryKnowledge", () => {
         spaceId: "space/with slash",
         confirmationSpaceName: " AIM ",
       }),
-    ).resolves.toEqual({ queuedSpaceCount: 1, jobIds: [] });
+    ).resolves.toEqual({
+      runId: "run-force",
+      mode: "force_rebuild",
+      knowledgeGeneration: 5,
+    });
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/llm-wiki/admin/spaces/space%2Fwith%20slash/force-rebuild-knowledge",
