@@ -132,6 +132,71 @@ export class KnowledgeSpaceExecutionRepo {
       .execute();
   }
 
+  async findSpaceRecoveryCandidates(input: {
+    leaseExpiredBefore: Date;
+    queuedDispatchedBefore: Date;
+    limit?: number;
+  }) {
+    const rows = await this.db
+      .selectFrom('knowledgeSpaceCompileRuns')
+      .select([
+        'id',
+        'knowledgeGeneration',
+        'phase',
+        'spaceJobSequence',
+        'spaceJobId',
+        'spaceJobRecoveryCount',
+        'executionLeaseExpiresAt',
+        'status',
+      ])
+      .where('spaceJobId', 'is not', null)
+      .where((expression) =>
+        expression.or([
+          expression.and([
+            expression('status', 'in', ['compiling', 'aggregating']),
+            expression(
+              'executionLeaseExpiresAt',
+              '<',
+              input.leaseExpiredBefore,
+            ),
+          ]),
+          expression.and([
+            expression('status', '=', 'queued'),
+            expression('spaceJobDispatchedAt', 'is not', null),
+            expression(
+              'spaceJobDispatchedAt',
+              '<',
+              input.queuedDispatchedBefore,
+            ),
+          ]),
+        ]),
+      )
+      .orderBy('updatedAt', 'asc')
+      .orderBy('id', 'asc')
+      .limit(input.limit ?? 100)
+      .execute();
+    return rows.flatMap((run) => {
+      try {
+        return [
+          {
+            runId: run.id,
+            knowledgeGeneration: run.knowledgeGeneration,
+            jobPhase: runPhaseToJobPhase(
+              run.phase as KnowledgeSpaceCompileRunPhase,
+            ),
+            spaceJobSequence: run.spaceJobSequence,
+            spaceJobId: run.spaceJobId!,
+            spaceJobRecoveryCount: run.spaceJobRecoveryCount,
+            executionLeaseExpiresAt: run.executionLeaseExpiresAt,
+            status: run.status,
+          },
+        ];
+      } catch {
+        return [];
+      }
+    });
+  }
+
   async isLeaseActiveForPublication(
     lease: SpaceExecutionLease,
     input: {
@@ -232,8 +297,7 @@ export class KnowledgeSpaceExecutionRepo {
         !locked ||
         (!input.allowUnexpired &&
           (!locked.executionLeaseExpiresAt ||
-            locked.executionLeaseExpiresAt >= input.leaseExpiredBefore)) ||
-        locked.spaceJobRecoveryCount >= 3
+            locked.executionLeaseExpiresAt >= input.leaseExpiredBefore))
       ) {
         return undefined;
       }
