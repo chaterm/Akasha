@@ -16,6 +16,10 @@ import KnowledgeAdminPage, {
 import {
   forceRebuildKnowledgeSpace,
   getKnowledgeDiagnostics,
+  getKnowledgeRunDiagnostics,
+  getKnowledgeRunDiagnosticsSummary,
+  getKnowledgeRunPageDiagnostics,
+  getKnowledgeWorkerDiagnostics,
   retryKnowledgePages,
   runKnowledgeAdminAction,
   updateKnowledgeSpace,
@@ -55,6 +59,10 @@ vi.mock("@/features/space/queries/space-query", () => ({
     },
     isLoading: false,
   }),
+}));
+
+vi.mock("@/hooks/use-user-role", () => ({
+  default: () => ({ isAdmin: true, isOwner: true, isMember: false }),
 }));
 
 vi.mock("../services/knowledge-service", () => ({
@@ -200,6 +208,154 @@ vi.mock("../services/knowledge-service", () => ({
       topIssues: [],
     },
   }),
+  getKnowledgeRunDiagnosticsSummary: vi.fn().mockResolvedValue({
+    sampledAt: "2026-07-31T12:00:00.000Z",
+    activeRunCount: 43,
+    activeSpaceSlotRunCount: 27,
+    waitingInitializationCount: 18,
+    queuedRunCount: 70,
+    recentCompletedCount: 36,
+    recentFailedCount: 2,
+    recentYieldCount: 28,
+    longestCurrentSlotWaitMs: 480000,
+    statusCounts: { queued: 70, compiling: 25 },
+    phaseCounts: { text: 25, images: 18 },
+    imageStatusCounts: { processing: 12 },
+    dispatch: { spaceUnacknowledged: 1, imageUnacknowledged: 2 },
+    recovery: {
+      expiredExecutionLeases: 0,
+      spaceRecovering: 0,
+      spaceRecoveryExhausted: 0,
+      imageRecovering: 0,
+      imageRecoveryExhausted: 0,
+    },
+    failureCategories: {
+      budgetTimeout: 3,
+      provider: 1,
+      publication: 0,
+      infrastructure: 0,
+      other: 0,
+    },
+    queues: {
+      space: {
+        waiting: 70,
+        active: 27,
+        delayed: 0,
+        prioritized: 0,
+        waitingChildren: 0,
+        paused: 0,
+        failed: 1,
+        completed: 36,
+        sampledAt: "2026-07-31T12:00:00.000Z",
+      },
+      image: {
+        waiting: 5,
+        active: 12,
+        delayed: 0,
+        prioritized: 0,
+        waitingChildren: 0,
+        paused: 0,
+        failed: 0,
+        completed: 50,
+        sampledAt: "2026-07-31T12:00:00.000Z",
+      },
+    },
+    workerEvents: {
+      windowMs: 3600000,
+      stalled: 0,
+      lockRenewalFailed: 0,
+      source: "process_local",
+    },
+  }),
+  getKnowledgeRunDiagnostics: vi.fn().mockResolvedValue({
+    items: [
+      {
+        runId: "run-space-1",
+        spaceId: "space-1",
+        spaceName: "AIM",
+        status: "queued",
+        mode: "incremental",
+        phase: "text",
+        knowledgeGeneration: 4,
+        queueState: "text_continuation",
+        spaceJobSequence: 10,
+        lastYieldAt: "2026-07-31T11:59:00.000Z",
+        lastYieldReason: "page_limit",
+        workerId: null,
+        errorCode: null,
+        initializedAt: "2026-07-31T11:00:00.000Z",
+        queuedAt: "2026-07-31T11:00:00.000Z",
+        startedAt: "2026-07-31T11:01:00.000Z",
+        finishedAt: null,
+        createdAt: "2026-07-31T11:00:00.000Z",
+        updatedAt: "2026-07-31T12:00:00.000Z",
+        runDurationMs: 3600000,
+        currentSliceWaitMs: 120000,
+        progress: {
+          text: { expected: 100, succeeded: 45, failed: 0, skipped: 0 },
+          images: { expected: 20, succeeded: 0 },
+          merge: { expected: 20, succeeded: 0 },
+        },
+      },
+    ],
+    total: 100,
+    page: 1,
+    limit: 50,
+  }),
+  getKnowledgeRunPageDiagnostics: vi.fn().mockResolvedValue({
+    run: { runId: "run-space-1", spaceId: "space-1", spaceName: "AIM" },
+    items: [
+      {
+        runPageId: "run-page-1",
+        sourcePageId: "page-1",
+        title: "Large page",
+        slugId: "large-page",
+        status: "failed",
+        imageStatus: "partial",
+        mergeStatus: "pending",
+        expectedImageCount: 3,
+        succeededImageCount: 1,
+        failedImageCount: 2,
+        skippedImageCount: 0,
+        errorCode: "page_timeout",
+        errorCategory: "budget_timeout",
+        errorSummary: "Knowledge compilation exceeded its page budget.",
+        queuedAt: null,
+        startedAt: null,
+        finishedAt: null,
+        updatedAt: "2026-07-31T12:00:00.000Z",
+        imageFailures: { retryableExhausted: 1, permanent: 1 },
+      },
+    ],
+    total: 1,
+    page: 1,
+    limit: 50,
+  }),
+  getKnowledgeWorkerDiagnostics: vi.fn().mockResolvedValue({
+    sampledAt: "2026-07-31T12:00:00.000Z",
+    databaseMaxPool: 25,
+    schedulingAuthority: "postgresql",
+    space: {
+      workerCount: 3,
+      capacity: 30,
+      exact: false,
+      source: "bullmq_client_list",
+      concurrency: 10,
+      lockDuration: 120000,
+      stalledInterval: 30000,
+      maxStalledCount: 2,
+    },
+    image: {
+      workerCount: 3,
+      capacity: 15,
+      exact: false,
+      source: "bullmq_client_list",
+      concurrency: 5,
+      lockDuration: 120000,
+      stalledInterval: 30000,
+      maxStalledCount: 2,
+    },
+  }),
   runKnowledgeAdminAction: vi.fn().mockResolvedValue({
     action: "retry_compile",
     queuedSpaceCount: 1,
@@ -296,6 +452,36 @@ describe("KnowledgeAdminPage", () => {
         (screen.getByRole("button", { name: "Refresh" }) as HTMLButtonElement)
           .disabled,
       ).toBe(true);
+    });
+  });
+
+  it("shows the multi-space Run console and loads RunPage detail only after selection", async () => {
+    vi.mocked(getKnowledgeRunPageDiagnostics).mockClear();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <HelmetProvider>
+          <MantineProvider>
+            <BrowserRouter>
+              <KnowledgeAdminPage />
+            </BrowserRouter>
+          </MantineProvider>
+        </HelmetProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Space compilation runs")).toBeTruthy();
+    expect(screen.getByText("Waiting initialization")).toBeTruthy();
+    expect(await screen.findByText("43")).toBeTruthy();
+    expect(await screen.findByText("text continuation")).toBeTruthy();
+    expect(getKnowledgeRunPageDiagnostics).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "View pages" }));
+    expect(await screen.findByText("Large page")).toBeTruthy();
+    expect(screen.getByText("budget timeout")).toBeTruthy();
+    expect(getKnowledgeRunPageDiagnostics).toHaveBeenCalledWith({
+      runId: "run-space-1",
+      page: 1,
+      limit: 50,
     });
   });
 

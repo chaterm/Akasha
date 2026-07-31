@@ -11,6 +11,7 @@ import {
   Menu,
   Modal,
   MultiSelect,
+  Pagination,
   Select,
   Stack,
   Table,
@@ -34,9 +35,14 @@ import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { getAppName } from "@/lib/config";
 import { useGetSpacesQuery } from "@/features/space/queries/space-query";
+import useUserRole from "@/hooks/use-user-role";
 import {
   forceRebuildKnowledgeSpace,
   getKnowledgeDiagnostics,
+  getKnowledgeRunDiagnostics,
+  getKnowledgeRunDiagnosticsSummary,
+  getKnowledgeRunPageDiagnostics,
+  getKnowledgeWorkerDiagnostics,
   retryKnowledgePages,
   runKnowledgeAdminAction,
   updateKnowledgeSpace,
@@ -50,6 +56,9 @@ import type {
   KnowledgePageCompileStage,
   KnowledgePageCompileStatus,
   KnowledgeQueueSnapshot,
+  KnowledgeRunDiagnostic,
+  KnowledgeRunPhase,
+  KnowledgeRunStatus,
 } from "../types/knowledge.types";
 
 const DIAGNOSTICS_LIMIT = 50;
@@ -99,6 +108,26 @@ const COMPILE_STAGE_OPTIONS: Array<{
   "completed",
 ].map((value) => ({ value: value as KnowledgePageCompileStage, label: value }));
 
+const RUN_STATUS_OPTIONS = [
+  "queued",
+  "compiling",
+  "aggregate_pending",
+  "aggregating",
+  "succeeded",
+  "partial",
+  "failed",
+  "superseded",
+].map((value) => ({ value, label: value.replace(/_/g, " ") }));
+
+const RUN_PHASE_OPTIONS = [
+  "text",
+  "initial_aggregate",
+  "images",
+  "image_merge",
+  "final_aggregate",
+  "complete",
+].map((value) => ({ value, label: value.replace(/_/g, " ") }));
+
 type ConfirmedSpaceCompilation = {
   mode: "update" | "force";
   spaceId: string;
@@ -107,12 +136,19 @@ type ConfirmedSpaceCompilation = {
 
 export default function KnowledgeAdminPage() {
   const { t } = useTranslation();
+  const { isOwner } = useUserRole();
   const [spaceIds, setSpaceIds] = useState<string[]>([]);
   const [compileStatus, setCompileStatus] =
     useState<KnowledgePageCompileStatus | null>(null);
   const [compileStage, setCompileStage] =
     useState<KnowledgePageCompileStage | null>(null);
   const [selectedPageIds, setSelectedPageIds] = useState<string[]>([]);
+  const [runStatus, setRunStatus] = useState<KnowledgeRunStatus | null>(null);
+  const [runPhase, setRunPhase] = useState<KnowledgeRunPhase | null>(null);
+  const [runSearch, setRunSearch] = useState("");
+  const [runPage, setRunPage] = useState(1);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [runPageDetailPage, setRunPageDetailPage] = useState(1);
   const [confirmedCompilation, setConfirmedCompilation] =
     useState<ConfirmedSpaceCompilation | null>(null);
   const [confirmationSpaceName, setConfirmationSpaceName] = useState("");
@@ -146,7 +182,61 @@ export default function KnowledgeAdminPage() {
         limit: DIAGNOSTICS_LIMIT,
       }),
     enabled: spaceIds.length > 0,
+    refetchInterval: false,
+    refetchIntervalInBackground: false,
+  });
+
+  const runSummaryQuery = useQuery({
+    queryKey: ["knowledge-run-summary", spaceIds],
+    queryFn: () => getKnowledgeRunDiagnosticsSummary({ spaceIds }),
+    enabled: spaceIds.length > 0,
     refetchInterval: knowledgeDiagnosticsRefetchInterval,
+    refetchIntervalInBackground: false,
+  });
+
+  const runListQuery = useQuery({
+    queryKey: [
+      "knowledge-runs",
+      spaceIds,
+      runStatus,
+      runPhase,
+      runSearch,
+      runPage,
+    ],
+    queryFn: () =>
+      getKnowledgeRunDiagnostics({
+        spaceIds,
+        ...(runStatus ? { statuses: [runStatus] } : {}),
+        ...(runPhase ? { phases: [runPhase] } : {}),
+        ...(runSearch.trim() ? { search: runSearch.trim() } : {}),
+        page: runPage,
+        limit: DIAGNOSTICS_LIMIT,
+      }),
+    enabled: spaceIds.length > 0,
+    refetchInterval: knowledgeDiagnosticsRefetchInterval,
+    refetchIntervalInBackground: false,
+  });
+
+  const workerQuery = useQuery({
+    queryKey: ["knowledge-workers"],
+    queryFn: getKnowledgeWorkerDiagnostics,
+    enabled: isOwner,
+    refetchInterval: isOwner ? 30000 : false,
+    refetchIntervalInBackground: false,
+  });
+
+  const runPageDetailQuery = useQuery({
+    queryKey: ["knowledge-run-pages", selectedRunId, runPageDetailPage],
+    queryFn: () =>
+      getKnowledgeRunPageDiagnostics({
+        runId: selectedRunId!,
+        page: runPageDetailPage,
+        limit: DIAGNOSTICS_LIMIT,
+      }),
+    enabled: selectedRunId !== null,
+    refetchInterval: selectedRunId
+      ? knowledgeDiagnosticsRefetchInterval
+      : false,
     refetchIntervalInBackground: false,
   });
 
@@ -174,6 +264,8 @@ export default function KnowledgeAdminPage() {
         }),
       });
       void diagnosticsQuery.refetch();
+      void runSummaryQuery.refetch();
+      void runListQuery.refetch();
     },
     onError: (error) => {
       setConfirmationError(error.message);
@@ -190,6 +282,8 @@ export default function KnowledgeAdminPage() {
         }),
       });
       void diagnosticsQuery.refetch();
+      void runSummaryQuery.refetch();
+      void runListQuery.refetch();
     },
     onError: (error) => {
       notifications.show({
@@ -209,6 +303,8 @@ export default function KnowledgeAdminPage() {
         }),
       });
       void diagnosticsQuery.refetch();
+      void runSummaryQuery.refetch();
+      void runListQuery.refetch();
     },
     onError: (error) => {
       notifications.show({ color: "red", message: error.message });
@@ -238,6 +334,16 @@ export default function KnowledgeAdminPage() {
     [diagnosticsQuery.data?.compileStatuses],
   );
   const quality = diagnosticsQuery.data?.quality;
+  const runSummary = runSummaryQuery.data;
+  const runDiagnostics = runListQuery.data?.items ?? [];
+  const runPageCount = Math.max(
+    1,
+    Math.ceil((runListQuery.data?.total ?? 0) / DIAGNOSTICS_LIMIT),
+  );
+  const runDetailPageCount = Math.max(
+    1,
+    Math.ceil((runPageDetailQuery.data?.total ?? 0) / DIAGNOSTICS_LIMIT),
+  );
   const runSpaceAction = (
     action: KnowledgeAdminSpaceAction,
     targetSpaceId: string,
@@ -304,9 +410,18 @@ export default function KnowledgeAdminPage() {
               <Button
                 variant="default"
                 leftSection={<IconRefresh size={16} />}
-                loading={diagnosticsQuery.isFetching}
+                loading={
+                  diagnosticsQuery.isFetching ||
+                  runSummaryQuery.isFetching ||
+                  runListQuery.isFetching
+                }
                 disabled={spaceIds.length === 0}
-                onClick={() => void diagnosticsQuery.refetch()}
+                onClick={() => {
+                  void diagnosticsQuery.refetch();
+                  void runSummaryQuery.refetch();
+                  void runListQuery.refetch();
+                  if (selectedRunId) void runPageDetailQuery.refetch();
+                }}
               >
                 {t("Refresh")}
               </Button>
@@ -398,12 +513,137 @@ export default function KnowledgeAdminPage() {
             )}
           </Modal>
 
+          <Modal
+            opened={selectedRunId !== null}
+            onClose={() => {
+              setSelectedRunId(null);
+              setRunPageDetailPage(1);
+            }}
+            title={t("Run pages")}
+            size="xl"
+          >
+            {runPageDetailQuery.isError && (
+              <Alert color="red" icon={<IconAlertTriangle size={18} />}>
+                {runPageDetailQuery.error.message}
+              </Alert>
+            )}
+            {runPageDetailQuery.isLoading ? (
+              <Loader size="sm" />
+            ) : (
+              <Stack gap="md">
+                <Table.ScrollContainer minWidth={960}>
+                  <Table highlightOnHover verticalSpacing="sm">
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>{t("Page")}</Table.Th>
+                        <Table.Th>{t("Text")}</Table.Th>
+                        <Table.Th>{t("Images")}</Table.Th>
+                        <Table.Th>{t("Merge")}</Table.Th>
+                        <Table.Th>{t("Failure category")}</Table.Th>
+                        <Table.Th>{t("Updated")}</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {(runPageDetailQuery.data?.items ?? []).length === 0 ? (
+                        <Table.Tr>
+                          <Table.Td colSpan={6}>
+                            <Text className={classes.emptyText}>
+                              {t("No Run pages")}
+                            </Text>
+                          </Table.Td>
+                        </Table.Tr>
+                      ) : (
+                        runPageDetailQuery.data?.items.map((page) => (
+                          <Table.Tr key={page.runPageId}>
+                            <Table.Td>
+                              <Text fw={600}>
+                                {page.title || page.sourcePageId}
+                              </Text>
+                              <Text className={classes.mono} c="dimmed">
+                                {page.sourcePageId}
+                              </Text>
+                            </Table.Td>
+                            <Table.Td>
+                              <Badge
+                                color={compileStatusColor(page.status)}
+                                variant="light"
+                              >
+                                {humanizeState(page.status)}
+                              </Badge>
+                            </Table.Td>
+                            <Table.Td>
+                              <Stack gap={4} align="flex-start">
+                                <Badge variant="light">
+                                  {page.succeededImageCount}/
+                                  {page.expectedImageCount}
+                                </Badge>
+                                {(page.imageFailures.retryableExhausted > 0 ||
+                                  page.imageFailures.permanent > 0) && (
+                                  <Text size="xs" c="dimmed">
+                                    {t("Retry exhausted")}:{" "}
+                                    {page.imageFailures.retryableExhausted} ·{" "}
+                                    {t("Permanent")}:{" "}
+                                    {page.imageFailures.permanent}
+                                  </Text>
+                                )}
+                              </Stack>
+                            </Table.Td>
+                            <Table.Td>
+                              <Badge variant="outline">
+                                {humanizeState(page.mergeStatus)}
+                              </Badge>
+                            </Table.Td>
+                            <Table.Td>
+                              {page.errorCategory ? (
+                                <Stack gap={4} align="flex-start">
+                                  <Badge
+                                    color={
+                                      page.errorCategory === "budget_timeout"
+                                        ? "orange"
+                                        : "red"
+                                    }
+                                    variant="light"
+                                  >
+                                    {humanizeState(page.errorCategory)}
+                                  </Badge>
+                                  {page.errorSummary && (
+                                    <Text size="xs" c="dimmed">
+                                      {page.errorSummary}
+                                    </Text>
+                                  )}
+                                </Stack>
+                              ) : (
+                                "-"
+                              )}
+                            </Table.Td>
+                            <Table.Td>{formatDate(page.updatedAt)}</Table.Td>
+                          </Table.Tr>
+                        ))
+                      )}
+                    </Table.Tbody>
+                  </Table>
+                </Table.ScrollContainer>
+                {runDetailPageCount > 1 && (
+                  <Pagination
+                    value={runPageDetailPage}
+                    onChange={setRunPageDetailPage}
+                    total={runDetailPageCount}
+                  />
+                )}
+              </Stack>
+            )}
+          </Modal>
+
           <section className={classes.panel}>
             <Group align="end" grow>
               <MultiSelect
                 data={spaceOptions}
                 value={spaceIds}
-                onChange={setSpaceIds}
+                onChange={(value) => {
+                  setSpaceIds(value);
+                  setRunPage(1);
+                  setSelectedRunId(null);
+                }}
                 label={t("Spaces")}
                 searchable
                 clearable
@@ -435,6 +675,202 @@ export default function KnowledgeAdminPage() {
               {diagnosticsQuery.error.message}
             </Alert>
           )}
+
+          {(runSummaryQuery.isError || runListQuery.isError) && (
+            <Alert color="red" icon={<IconAlertTriangle size={18} />}>
+              {runSummaryQuery.error?.message ?? runListQuery.error?.message}
+            </Alert>
+          )}
+
+          <section className={classes.panel}>
+            <Group justify="space-between" align="flex-start" mb="md">
+              <div>
+                <Title order={2} size="h4">
+                  {t("Space compilation runs")}
+                </Title>
+                <Text size="sm" c="dimmed">
+                  {t(
+                    "PostgreSQL is the scheduling authority. Redis worker and capacity values are estimates only.",
+                  )}
+                </Text>
+              </div>
+              {(runSummaryQuery.isFetching || runListQuery.isFetching) && (
+                <Loader size="sm" />
+              )}
+            </Group>
+
+            <div className={classes.metricGrid}>
+              <Metric
+                label={t("Active runs")}
+                value={runSummary?.activeRunCount ?? 0}
+              />
+              <Metric
+                label={t("Active space slots")}
+                value={runSummary?.activeSpaceSlotRunCount ?? 0}
+              />
+              <Metric
+                label={t("Queued runs")}
+                value={runSummary?.queuedRunCount ?? 0}
+              />
+              <Metric
+                label={t("Waiting initialization")}
+                value={runSummary?.waitingInitializationCount ?? 0}
+              />
+              <Metric
+                label={t("Longest current slot wait")}
+                value={formatRunDuration(
+                  runSummary?.longestCurrentSlotWaitMs ?? null,
+                )}
+              />
+              <Metric
+                label={t("Recent yields")}
+                value={runSummary?.recentYieldCount ?? 0}
+              />
+              <Metric
+                label={t("Recent completed")}
+                value={runSummary?.recentCompletedCount ?? 0}
+              />
+              <Metric
+                label={t("Recent failed")}
+                value={runSummary?.recentFailedCount ?? 0}
+              />
+              <Metric
+                label={t("Dispatch unacknowledged")}
+                value={
+                  (runSummary?.dispatch.spaceUnacknowledged ?? 0) +
+                  (runSummary?.dispatch.imageUnacknowledged ?? 0)
+                }
+              />
+              <Metric
+                label={t("Expired leases")}
+                value={runSummary?.recovery.expiredExecutionLeases ?? 0}
+              />
+              <Metric
+                label={t("Budget timeouts")}
+                value={runSummary?.failureCategories.budgetTimeout ?? 0}
+              />
+              {isOwner && (
+                <Metric
+                  label={t("Estimated space capacity")}
+                  value={workerQuery.data?.space.capacity ?? t("Unknown")}
+                />
+              )}
+            </div>
+
+            <Group gap="xs" mt="md">
+              {Object.entries(runSummary?.phaseCounts ?? {}).map(
+                ([phase, count]) => (
+                  <Badge key={phase} variant="light">
+                    {humanizeState(phase)}: {count}
+                  </Badge>
+                ),
+              )}
+              <Badge color="orange" variant="outline">
+                {t("Lock renewal failed")}:{" "}
+                {runSummary?.workerEvents.lockRenewalFailed ?? 0}
+              </Badge>
+              <Badge color="red" variant="outline">
+                {t("Stalled")}: {runSummary?.workerEvents.stalled ?? 0}
+              </Badge>
+            </Group>
+
+            {isOwner && runSummary?.queues && (
+              <div className={classes.queueGrid}>
+                <QueueSnapshotCard
+                  title={t("Space work queue")}
+                  snapshot={runSummary.queues.space}
+                />
+                <QueueSnapshotCard
+                  title={t("Shared image queue")}
+                  snapshot={runSummary.queues.image}
+                />
+              </div>
+            )}
+
+            <Group align="end" grow mt="lg">
+              <TextInput
+                label={t("Search Space or Run")}
+                value={runSearch}
+                onChange={(event) => {
+                  setRunSearch(event.currentTarget.value);
+                  setRunPage(1);
+                }}
+              />
+              <Select
+                data={RUN_STATUS_OPTIONS}
+                value={runStatus}
+                onChange={(value) => {
+                  setRunStatus(value as KnowledgeRunStatus | null);
+                  setRunPage(1);
+                }}
+                label={t("Run status")}
+                clearable
+              />
+              <Select
+                data={RUN_PHASE_OPTIONS}
+                value={runPhase}
+                onChange={(value) => {
+                  setRunPhase(value as KnowledgeRunPhase | null);
+                  setRunPage(1);
+                }}
+                label={t("Run phase")}
+                clearable
+              />
+            </Group>
+
+            <Table.ScrollContainer minWidth={1240}>
+              <Table mt="md" highlightOnHover verticalSpacing="sm">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>{t("Space")}</Table.Th>
+                    <Table.Th>{t("State")}</Table.Th>
+                    <Table.Th>{t("Slice")}</Table.Th>
+                    <Table.Th>{t("Text")}</Table.Th>
+                    <Table.Th>{t("Images")}</Table.Th>
+                    <Table.Th>{t("Merge")}</Table.Th>
+                    <Table.Th>{t("Current wait")}</Table.Th>
+                    <Table.Th>{t("Run duration")}</Table.Th>
+                    <Table.Th>{t("Worker")}</Table.Th>
+                    <Table.Th>{t("Details")}</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {runDiagnostics.length === 0 ? (
+                    <Table.Tr>
+                      <Table.Td colSpan={10}>
+                        <Text className={classes.emptyText}>
+                          {t("No compilation runs")}
+                        </Text>
+                      </Table.Td>
+                    </Table.Tr>
+                  ) : (
+                    runDiagnostics.map((run) => (
+                      <ScalableRunRow
+                        key={run.runId}
+                        run={run}
+                        onViewPages={() => {
+                          setSelectedRunId(run.runId);
+                          setRunPageDetailPage(1);
+                        }}
+                      />
+                    ))
+                  )}
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+            <Group justify="space-between" mt="md">
+              <Text size="sm" c="dimmed">
+                {t("Runs")}: {runListQuery.data?.total ?? 0}
+              </Text>
+              {runPageCount > 1 && (
+                <Pagination
+                  value={runPage}
+                  onChange={setRunPage}
+                  total={runPageCount}
+                />
+              )}
+            </Group>
+          </section>
 
           {quality && (
             <section className={classes.panel}>
@@ -1115,6 +1551,70 @@ function QueueSnapshotCard({
   );
 }
 
+function ScalableRunRow({
+  run,
+  onViewPages,
+}: {
+  run: KnowledgeRunDiagnostic;
+  onViewPages: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Table.Tr>
+      <Table.Td>
+        <Text fw={600}>{run.spaceName || run.spaceId}</Text>
+        <Text className={classes.mono} c="dimmed">
+          {run.runId}
+        </Text>
+      </Table.Td>
+      <Table.Td>
+        <Stack gap={4} align="flex-start">
+          <Badge color={compileStatusColor(run.status)} variant="light">
+            {humanizeState(run.status)}
+          </Badge>
+          <Text size="xs" c="dimmed">
+            {humanizeState(run.phase)}
+          </Text>
+          {run.queueState && (
+            <Badge variant="outline">{humanizeState(run.queueState)}</Badge>
+          )}
+        </Stack>
+      </Table.Td>
+      <Table.Td>
+        <Text fw={600}>#{run.spaceJobSequence}</Text>
+        <Text size="xs" c="dimmed">
+          {run.lastYieldReason ? humanizeState(run.lastYieldReason) : "-"}
+        </Text>
+      </Table.Td>
+      <Table.Td>
+        {run.progress.text.succeeded}/{run.progress.text.expected}
+        {(run.progress.text.failed > 0 || run.progress.text.skipped > 0) && (
+          <Text size="xs" c="dimmed">
+            {run.progress.text.failed} failed · {run.progress.text.skipped}{" "}
+            skipped
+          </Text>
+        )}
+      </Table.Td>
+      <Table.Td>
+        {run.progress.images.succeeded}/{run.progress.images.expected}
+      </Table.Td>
+      <Table.Td>
+        {run.progress.merge.succeeded}/{run.progress.merge.expected}
+      </Table.Td>
+      <Table.Td>{formatRunDuration(run.currentSliceWaitMs)}</Table.Td>
+      <Table.Td>{formatRunDuration(run.runDurationMs)}</Table.Td>
+      <Table.Td>
+        <Text className={classes.mono}>{run.workerId ?? "-"}</Text>
+      </Table.Td>
+      <Table.Td>
+        <Button size="compact-xs" variant="light" onClick={onViewPages}>
+          {t("View pages")}
+        </Button>
+      </Table.Td>
+    </Table.Tr>
+  );
+}
+
 function CompilationRunRow({ run }: { run: KnowledgeCompileRunProgress }) {
   return (
     <Table.Tr>
@@ -1260,7 +1760,7 @@ function CompileStatusCell({ status }: { status?: KnowledgeCompileStatus }) {
   );
 }
 
-function Metric({ label, value }: { label: string; value: number }) {
+function Metric({ label, value }: { label: string; value: number | string }) {
   return (
     <div className={classes.metricItem}>
       <Text className={classes.metricLabel}>{label}</Text>
@@ -1295,7 +1795,13 @@ function compileStatusColor(status?: string): string {
   if (status === "partial") return "yellow";
   if (status === "superseded" || status === "skipped") return "gray";
   if (status === "failed") return "red";
-  if (status === "running") return "blue";
+  if (
+    status === "running" ||
+    status === "compiling" ||
+    status === "aggregating" ||
+    status === "aggregate_pending"
+  )
+    return "blue";
   if (status === "queued") return "yellow";
   return "gray";
 }
@@ -1320,6 +1826,18 @@ function formatAgeHours(hours: number): string {
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   return `${Math.round(ms / 1000)}s`;
+}
+
+function formatRunDuration(ms: number | null): string {
+  if (ms === null) return "-";
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
+  return `${(ms / 3_600_000).toFixed(1)}h`;
+}
+
+function humanizeState(value: string): string {
+  return value.replace(/_/g, " ");
 }
 
 function formatPercent(value: number): string {

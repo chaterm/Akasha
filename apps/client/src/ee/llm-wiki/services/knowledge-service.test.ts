@@ -8,6 +8,10 @@ import {
   runKnowledgeAdminAction,
   updateKnowledgeSpace,
   forceRebuildKnowledgeSpace,
+  getKnowledgeRunDiagnostics,
+  getKnowledgeRunDiagnosticsSummary,
+  getKnowledgeRunPageDiagnostics,
+  getKnowledgeWorkerDiagnostics,
 } from "./knowledge-service";
 
 describe("queryKnowledge", () => {
@@ -502,6 +506,137 @@ describe("queryKnowledge", () => {
         credentials: "include",
         body: JSON.stringify({ spaceIds: ["space-1"], limit: 20 }),
       }),
+    );
+  });
+
+  it("loads bounded Run summary and paginated Run diagnostics", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          activeRunCount: 43,
+          activeSpaceSlotRunCount: 27,
+          waitingInitializationCount: 18,
+          statusCounts: { queued: 70 },
+          phaseCounts: { text: 25, images: 18 },
+          dispatch: { spaceUnacknowledged: 1, imageUnacknowledged: 2 },
+          recovery: { expiredExecutionLeases: 0 },
+          failureCategories: { budgetTimeout: 3, provider: 1 },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [
+            {
+              runId: "run-1",
+              spaceId: "space-1",
+              spaceName: "AIM",
+              status: "queued",
+              phase: "text",
+              queueState: "text_continuation",
+              spaceJobSequence: 10,
+              runDurationMs: 60000,
+              currentSliceWaitMs: 10000,
+              progress: {
+                text: { expected: 100, succeeded: 45 },
+                images: { expected: 20, succeeded: 0 },
+                merge: { expected: 20, succeeded: 0 },
+              },
+            },
+          ],
+          total: 100,
+          page: 2,
+          limit: 50,
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      getKnowledgeRunDiagnosticsSummary({ spaceIds: ["space-1"] }),
+    ).resolves.toMatchObject({
+      activeRunCount: 43,
+      activeSpaceSlotRunCount: 27,
+      failureCategories: { budgetTimeout: 3, provider: 1 },
+    });
+    await expect(
+      getKnowledgeRunDiagnostics({
+        spaceIds: ["space-1"],
+        statuses: ["queued"],
+        page: 2,
+        limit: 50,
+      }),
+    ).resolves.toMatchObject({
+      total: 100,
+      page: 2,
+      items: [
+        expect.objectContaining({
+          runId: "run-1",
+          queueState: "text_continuation",
+        }),
+      ],
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/llm-wiki/admin/diagnostics/summary",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/llm-wiki/admin/diagnostics/runs",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("loads RunPage detail on demand and worker estimates separately", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          run: { runId: "run-1", spaceId: "space-1", spaceName: "AIM" },
+          items: [
+            {
+              runPageId: "run-page-1",
+              sourcePageId: "page-1",
+              title: "Page 1",
+              status: "failed",
+              errorCode: "page_timeout",
+              errorCategory: "budget_timeout",
+              imageFailures: { retryableExhausted: 1, permanent: 2 },
+            },
+          ],
+          total: 1,
+          page: 1,
+          limit: 50,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          databaseMaxPool: 25,
+          schedulingAuthority: "postgresql",
+          space: { workerCount: 3, capacity: 30, exact: false },
+          image: { workerCount: null, capacity: null, exact: false },
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      getKnowledgeRunPageDiagnostics({ runId: "run-1", page: 1, limit: 50 }),
+    ).resolves.toMatchObject({
+      items: [expect.objectContaining({ errorCategory: "budget_timeout" })],
+    });
+    await expect(getKnowledgeWorkerDiagnostics()).resolves.toMatchObject({
+      databaseMaxPool: 25,
+      space: { workerCount: 3, capacity: 30, exact: false },
+    });
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      "/admin/diagnostics/runs/run-1/pages?page=1&limit=50",
+    );
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "/api/llm-wiki/admin/diagnostics/workers",
     );
   });
 

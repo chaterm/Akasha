@@ -189,6 +189,174 @@ export type KnowledgeQueueSnapshots = Partial<
   Record<KnowledgeQueueKind, KnowledgeQueueSnapshot>
 >;
 
+export type KnowledgeRunStatus =
+  | "queued"
+  | "compiling"
+  | "aggregate_pending"
+  | "aggregating"
+  | "succeeded"
+  | "partial"
+  | "failed"
+  | "superseded";
+
+export type KnowledgeRunPhase =
+  | "text"
+  | "initial_aggregate"
+  | "images"
+  | "image_merge"
+  | "final_aggregate"
+  | "complete";
+
+export interface KnowledgeRunDiagnosticsSummary {
+  sampledAt: string;
+  activeRunCount: number;
+  activeSpaceSlotRunCount: number;
+  waitingInitializationCount: number;
+  queuedRunCount: number;
+  recentCompletedCount: number;
+  recentFailedCount: number;
+  recentYieldCount: number;
+  longestCurrentSlotWaitMs: number | null;
+  statusCounts: Record<string, number>;
+  phaseCounts: Record<string, number>;
+  imageStatusCounts: Record<string, number>;
+  dispatch: {
+    spaceUnacknowledged: number;
+    imageUnacknowledged: number;
+  };
+  recovery: {
+    expiredExecutionLeases: number;
+    spaceRecovering: number;
+    spaceRecoveryExhausted: number;
+    imageRecovering: number;
+    imageRecoveryExhausted: number;
+  };
+  failureCategories: {
+    budgetTimeout: number;
+    provider: number;
+    publication: number;
+    infrastructure: number;
+    other: number;
+  };
+  queues?: {
+    space: KnowledgeQueueSnapshot;
+    image: KnowledgeQueueSnapshot;
+  };
+  workerEvents: {
+    windowMs: number;
+    stalled: number;
+    lockRenewalFailed: number;
+    source: "process_local";
+  };
+}
+
+export interface KnowledgeRunDiagnostic {
+  runId: string;
+  spaceId: string;
+  spaceName: string;
+  status: KnowledgeRunStatus;
+  mode: "incremental" | "force_rebuild";
+  phase: KnowledgeRunPhase;
+  knowledgeGeneration: number;
+  queueState:
+    | "waiting_initialization"
+    | "text_continuation"
+    | "image_merge_continuation"
+    | "queued"
+    | null;
+  spaceJobSequence: number;
+  lastYieldAt: string | null;
+  lastYieldReason: string | null;
+  workerId: string | null;
+  errorCode: string | null;
+  initializedAt: string | null;
+  queuedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  runDurationMs: number;
+  currentSliceWaitMs: number | null;
+  progress: {
+    text: KnowledgeRunProgressCount;
+    images: Pick<KnowledgeRunProgressCount, "expected" | "succeeded">;
+    merge: Pick<KnowledgeRunProgressCount, "expected" | "succeeded">;
+  };
+}
+
+export interface KnowledgeRunProgressCount {
+  expected: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+}
+
+export interface KnowledgeRunDiagnosticsPage {
+  items: KnowledgeRunDiagnostic[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface KnowledgeRunPageDiagnostic {
+  runPageId: string;
+  sourcePageId: string;
+  title: string;
+  slugId: string | null;
+  status: string;
+  imageStatus: string;
+  mergeStatus: string;
+  expectedImageCount: number;
+  succeededImageCount: number;
+  failedImageCount: number;
+  skippedImageCount: number;
+  errorCode: string | null;
+  errorCategory:
+    | "budget_timeout"
+    | "provider"
+    | "publication"
+    | "infrastructure"
+    | "other"
+    | null;
+  errorSummary: string | null;
+  errorDetail?: string;
+  queuedAt: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  updatedAt: string;
+  imageFailures: {
+    retryableExhausted: number;
+    permanent: number;
+  };
+}
+
+export interface KnowledgeRunPageDiagnosticsPage {
+  run: { runId: string; spaceId: string; spaceName: string };
+  items: KnowledgeRunPageDiagnostic[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface KnowledgeWorkerCapacityEstimate {
+  workerCount: number | null;
+  capacity: number | null;
+  exact: false;
+  source: "bullmq_client_list" | "unsupported" | "unavailable";
+  concurrency: number;
+  lockDuration: number;
+  stalledInterval: number;
+  maxStalledCount: number;
+}
+
+export interface KnowledgeWorkerDiagnostics {
+  sampledAt: string;
+  databaseMaxPool: number;
+  schedulingAuthority: "postgresql";
+  space: KnowledgeWorkerCapacityEstimate;
+  image: KnowledgeWorkerCapacityEstimate;
+}
+
 export interface KnowledgeCompilationStageProgress {
   expected: number;
   succeeded: number;

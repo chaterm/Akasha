@@ -18,7 +18,14 @@ import type {
   KnowledgeQueryResult,
   KnowledgeQueueSnapshot,
   KnowledgeRetryPagesResult,
+  KnowledgeRunDiagnostic,
+  KnowledgeRunDiagnosticsPage,
+  KnowledgeRunDiagnosticsSummary,
+  KnowledgeRunPageDiagnosticsPage,
+  KnowledgeRunPhase,
+  KnowledgeRunStatus,
   KnowledgeSourceWindow,
+  KnowledgeWorkerDiagnostics,
 } from "../types/knowledge.types";
 
 export async function queryKnowledge(params: {
@@ -213,6 +220,70 @@ export async function getKnowledgeDiagnostics(params: {
   }
 
   return normalizeKnowledgeDiagnostics(unwrapApiData(await response.json()));
+}
+
+export async function getKnowledgeRunDiagnosticsSummary(params: {
+  spaceIds?: string[];
+}): Promise<KnowledgeRunDiagnosticsSummary> {
+  const value = await postKnowledgeDiagnostics(
+    "/api/llm-wiki/admin/diagnostics/summary",
+    params,
+  );
+  return normalizeRunDiagnosticsSummary(value);
+}
+
+export async function getKnowledgeRunDiagnostics(params: {
+  spaceIds?: string[];
+  statuses?: KnowledgeRunStatus[];
+  phases?: KnowledgeRunPhase[];
+  search?: string;
+  page?: number;
+  limit?: number;
+}): Promise<KnowledgeRunDiagnosticsPage> {
+  const value = await postKnowledgeDiagnostics(
+    "/api/llm-wiki/admin/diagnostics/runs",
+    params,
+  );
+  return normalizeRunDiagnosticsPage(value);
+}
+
+export async function getKnowledgeRunPageDiagnostics(params: {
+  runId: string;
+  page?: number;
+  limit?: number;
+}): Promise<KnowledgeRunPageDiagnosticsPage> {
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    limit: String(params.limit ?? 50),
+  });
+  const response = await fetch(
+    `/api/llm-wiki/admin/diagnostics/runs/${encodeURIComponent(params.runId)}/pages?${query}`,
+    { credentials: "include" },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response));
+  return normalizeRunPageDiagnosticsPage(unwrapApiData(await response.json()));
+}
+
+export async function getKnowledgeWorkerDiagnostics(): Promise<KnowledgeWorkerDiagnostics> {
+  const response = await fetch("/api/llm-wiki/admin/diagnostics/workers", {
+    credentials: "include",
+  });
+  if (!response.ok) throw new Error(await readErrorMessage(response));
+  return normalizeWorkerDiagnostics(unwrapApiData(await response.json()));
+}
+
+async function postKnowledgeDiagnostics(
+  endpoint: string,
+  params: unknown,
+): Promise<unknown> {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(params),
+  });
+  if (!response.ok) throw new Error(await readErrorMessage(response));
+  return unwrapApiData(await response.json());
 }
 
 export async function retryKnowledgePages(params: {
@@ -461,6 +532,269 @@ function normalizeKnowledgeDiagnostics(
     quarantines: quarantines.filter(isRecord).map(normalizeQuarantinedArtifact),
     quality: normalizeKnowledgeQuality(record.quality),
   };
+}
+
+function normalizeRunDiagnosticsSummary(
+  value: unknown,
+): KnowledgeRunDiagnosticsSummary {
+  const record = isRecord(value) ? value : {};
+  const dispatch = isRecord(record.dispatch) ? record.dispatch : {};
+  const recovery = isRecord(record.recovery) ? record.recovery : {};
+  const failures = isRecord(record.failureCategories)
+    ? record.failureCategories
+    : {};
+  const events = isRecord(record.workerEvents) ? record.workerEvents : {};
+  const queues = isRecord(record.queues) ? record.queues : undefined;
+  return {
+    sampledAt: readString(record.sampledAt),
+    activeRunCount: readNumber(record.activeRunCount),
+    activeSpaceSlotRunCount: readNumber(record.activeSpaceSlotRunCount),
+    waitingInitializationCount: readNumber(record.waitingInitializationCount),
+    queuedRunCount: readNumber(record.queuedRunCount),
+    recentCompletedCount: readNumber(record.recentCompletedCount),
+    recentFailedCount: readNumber(record.recentFailedCount),
+    recentYieldCount: readNumber(record.recentYieldCount),
+    longestCurrentSlotWaitMs:
+      typeof record.longestCurrentSlotWaitMs === "number"
+        ? record.longestCurrentSlotWaitMs
+        : null,
+    statusCounts: normalizeNumberRecord(record.statusCounts),
+    phaseCounts: normalizeNumberRecord(record.phaseCounts),
+    imageStatusCounts: normalizeNumberRecord(record.imageStatusCounts),
+    dispatch: {
+      spaceUnacknowledged: readNumber(dispatch.spaceUnacknowledged),
+      imageUnacknowledged: readNumber(dispatch.imageUnacknowledged),
+    },
+    recovery: {
+      expiredExecutionLeases: readNumber(recovery.expiredExecutionLeases),
+      spaceRecovering: readNumber(recovery.spaceRecovering),
+      spaceRecoveryExhausted: readNumber(recovery.spaceRecoveryExhausted),
+      imageRecovering: readNumber(recovery.imageRecovering),
+      imageRecoveryExhausted: readNumber(recovery.imageRecoveryExhausted),
+    },
+    failureCategories: {
+      budgetTimeout: readNumber(failures.budgetTimeout),
+      provider: readNumber(failures.provider),
+      publication: readNumber(failures.publication),
+      infrastructure: readNumber(failures.infrastructure),
+      other: readNumber(failures.other),
+    },
+    ...(queues
+      ? {
+          queues: {
+            space: normalizeKnowledgeQueueSnapshot(queues.space),
+            image: normalizeKnowledgeQueueSnapshot(queues.image),
+          },
+        }
+      : {}),
+    workerEvents: {
+      windowMs: readNumber(events.windowMs),
+      stalled: readNumber(events.stalled),
+      lockRenewalFailed: readNumber(events.lockRenewalFailed),
+      source: "process_local",
+    },
+  };
+}
+
+function normalizeRunDiagnosticsPage(
+  value: unknown,
+): KnowledgeRunDiagnosticsPage {
+  const record = isRecord(value) ? value : {};
+  return {
+    items: Array.isArray(record.items)
+      ? record.items.filter(isRecord).map(normalizeRunDiagnostic)
+      : [],
+    total: readNumber(record.total),
+    page: Math.max(readNumber(record.page), 1),
+    limit: Math.max(readNumber(record.limit), 1),
+  };
+}
+
+function normalizeRunDiagnostic(
+  value: Record<string, unknown>,
+): KnowledgeRunDiagnostic {
+  const progress = isRecord(value.progress) ? value.progress : {};
+  const text = isRecord(progress.text) ? progress.text : {};
+  const images = isRecord(progress.images) ? progress.images : {};
+  const merge = isRecord(progress.merge) ? progress.merge : {};
+  const queueState = [
+    "waiting_initialization",
+    "text_continuation",
+    "image_merge_continuation",
+    "queued",
+  ].includes(value.queueState as string)
+    ? (value.queueState as KnowledgeRunDiagnostic["queueState"])
+    : null;
+  return {
+    runId: readString(value.runId),
+    spaceId: readString(value.spaceId),
+    spaceName: readString(value.spaceName),
+    status: normalizeRunStatus(value.status),
+    mode: value.mode === "force_rebuild" ? "force_rebuild" : "incremental",
+    phase: normalizeRunPhase(value.phase),
+    knowledgeGeneration: readNumber(value.knowledgeGeneration),
+    queueState,
+    spaceJobSequence: readNumber(value.spaceJobSequence),
+    lastYieldAt: readNullableString(value.lastYieldAt),
+    lastYieldReason: readNullableString(value.lastYieldReason),
+    workerId: readNullableString(value.workerId),
+    errorCode: readNullableString(value.errorCode),
+    initializedAt: readNullableString(value.initializedAt),
+    queuedAt: readString(value.queuedAt),
+    startedAt: readNullableString(value.startedAt),
+    finishedAt: readNullableString(value.finishedAt),
+    createdAt: readString(value.createdAt),
+    updatedAt: readString(value.updatedAt),
+    runDurationMs: readNumber(value.runDurationMs),
+    currentSliceWaitMs:
+      typeof value.currentSliceWaitMs === "number"
+        ? value.currentSliceWaitMs
+        : null,
+    progress: {
+      text: {
+        expected: readNumber(text.expected),
+        succeeded: readNumber(text.succeeded),
+        failed: readNumber(text.failed),
+        skipped: readNumber(text.skipped),
+      },
+      images: {
+        expected: readNumber(images.expected),
+        succeeded: readNumber(images.succeeded),
+      },
+      merge: {
+        expected: readNumber(merge.expected),
+        succeeded: readNumber(merge.succeeded),
+      },
+    },
+  };
+}
+
+function normalizeRunPageDiagnosticsPage(
+  value: unknown,
+): KnowledgeRunPageDiagnosticsPage {
+  const record = isRecord(value) ? value : {};
+  const run = isRecord(record.run) ? record.run : {};
+  return {
+    run: {
+      runId: readString(run.runId),
+      spaceId: readString(run.spaceId),
+      spaceName: readString(run.spaceName),
+    },
+    items: Array.isArray(record.items)
+      ? record.items.filter(isRecord).map((item) => {
+          const imageFailures = isRecord(item.imageFailures)
+            ? item.imageFailures
+            : {};
+          const errorCategory = [
+            "budget_timeout",
+            "provider",
+            "publication",
+            "infrastructure",
+            "other",
+          ].includes(item.errorCategory as string)
+            ? (item.errorCategory as KnowledgeRunPageDiagnosticsPage["items"][number]["errorCategory"])
+            : null;
+          return {
+            runPageId: readString(item.runPageId),
+            sourcePageId: readString(item.sourcePageId),
+            title: readString(item.title),
+            slugId: readNullableString(item.slugId),
+            status: readString(item.status),
+            imageStatus: readString(item.imageStatus),
+            mergeStatus: readString(item.mergeStatus),
+            expectedImageCount: readNumber(item.expectedImageCount),
+            succeededImageCount: readNumber(item.succeededImageCount),
+            failedImageCount: readNumber(item.failedImageCount),
+            skippedImageCount: readNumber(item.skippedImageCount),
+            errorCode: readNullableString(item.errorCode),
+            errorCategory,
+            errorSummary: readNullableString(item.errorSummary),
+            ...(typeof item.errorDetail === "string"
+              ? { errorDetail: item.errorDetail }
+              : {}),
+            queuedAt: readNullableString(item.queuedAt),
+            startedAt: readNullableString(item.startedAt),
+            finishedAt: readNullableString(item.finishedAt),
+            updatedAt: readString(item.updatedAt),
+            imageFailures: {
+              retryableExhausted: readNumber(imageFailures.retryableExhausted),
+              permanent: readNumber(imageFailures.permanent),
+            },
+          };
+        })
+      : [],
+    total: readNumber(record.total),
+    page: Math.max(readNumber(record.page), 1),
+    limit: Math.max(readNumber(record.limit), 1),
+  };
+}
+
+function normalizeWorkerDiagnostics(
+  value: unknown,
+): KnowledgeWorkerDiagnostics {
+  const record = isRecord(value) ? value : {};
+  return {
+    sampledAt: readString(record.sampledAt),
+    databaseMaxPool: readNumber(record.databaseMaxPool),
+    schedulingAuthority: "postgresql",
+    space: normalizeWorkerCapacity(record.space),
+    image: normalizeWorkerCapacity(record.image),
+  };
+}
+
+function normalizeWorkerCapacity(value: unknown) {
+  const record = isRecord(value) ? value : {};
+  const source = ["bullmq_client_list", "unsupported", "unavailable"].includes(
+    record.source as string,
+  )
+    ? (record.source as "bullmq_client_list" | "unsupported" | "unavailable")
+    : "unavailable";
+  return {
+    workerCount:
+      typeof record.workerCount === "number" ? record.workerCount : null,
+    capacity: typeof record.capacity === "number" ? record.capacity : null,
+    exact: false as const,
+    source,
+    concurrency: readNumber(record.concurrency),
+    lockDuration: readNumber(record.lockDuration),
+    stalledInterval: readNumber(record.stalledInterval),
+    maxStalledCount: readNumber(record.maxStalledCount),
+  };
+}
+
+function normalizeNumberRecord(value: unknown): Record<string, number> {
+  if (!isRecord(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).map(([key, count]) => [key, readNumber(count)]),
+  );
+}
+
+function normalizeRunStatus(value: unknown): KnowledgeRunStatus {
+  return [
+    "queued",
+    "compiling",
+    "aggregate_pending",
+    "aggregating",
+    "succeeded",
+    "partial",
+    "failed",
+    "superseded",
+  ].includes(value as string)
+    ? (value as KnowledgeRunStatus)
+    : "queued";
+}
+
+function normalizeRunPhase(value: unknown): KnowledgeRunPhase {
+  return [
+    "text",
+    "initial_aggregate",
+    "images",
+    "image_merge",
+    "final_aggregate",
+    "complete",
+  ].includes(value as string)
+    ? (value as KnowledgeRunPhase)
+    : "text";
 }
 
 function normalizeKnowledgeQueueCounts(value: unknown) {
@@ -868,6 +1202,10 @@ function unwrapApiData(value: unknown): unknown {
 
 function readString(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function readNullableString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
 }
 
 function readNumber(value: unknown): number {
