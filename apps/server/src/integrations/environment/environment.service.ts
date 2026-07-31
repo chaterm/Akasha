@@ -53,7 +53,18 @@ export class EnvironmentService {
   }
 
   getDatabaseMaxPool(): number {
-    return parseInt(this.configService.get<string>('DATABASE_MAX_POOL', '10'));
+    return Number(
+      this.configService.get<string | number>('DATABASE_MAX_POOL', 25),
+    );
+  }
+
+  getDatabaseStatementTimeoutMs(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'DATABASE_STATEMENT_TIMEOUT_MS',
+        30_000,
+      ),
+    );
   }
 
   getRedisUrl(): string {
@@ -331,6 +342,33 @@ export class EnvironmentService {
       this.configService.get<string | number>(
         'KNOWLEDGE_IMAGE_TIMEOUT_MS',
         120_000,
+      ),
+    );
+  }
+
+  getKnowledgePageDeadlineMs(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_PAGE_DEADLINE_MS',
+        900_000,
+      ),
+    );
+  }
+
+  getKnowledgeAggregateDeadlineMs(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_AGGREGATE_DEADLINE_MS',
+        300_000,
+      ),
+    );
+  }
+
+  getKnowledgeImageJobDeadlineMs(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_IMAGE_JOB_DEADLINE_MS',
+        180_000,
       ),
     );
   }

@@ -6,6 +6,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { embed, EmbeddingModel } from 'ai';
 import { createOllama } from 'ai-sdk-ollama';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
+import { createBoundedAbortSignal } from './knowledge-operation-budget';
 
 export type KnowledgeEmbedding = {
   vector: number[];
@@ -15,7 +16,10 @@ export type KnowledgeEmbedding = {
 };
 
 export interface KnowledgeEmbeddingProvider {
-  embedQuery(query: string): Promise<KnowledgeEmbedding | null>;
+  embedQuery(
+    query: string,
+    options?: { abortSignal?: AbortSignal },
+  ): Promise<KnowledgeEmbedding | null>;
 }
 
 export function buildKnowledgeEmbeddingProfile(input: {
@@ -35,12 +39,13 @@ export function buildKnowledgeEmbeddingProfile(input: {
 }
 
 @Injectable()
-export class ConfiguredKnowledgeEmbeddingProvider
-  implements KnowledgeEmbeddingProvider
-{
+export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingProvider {
   constructor(private readonly environmentService: EnvironmentService) {}
 
-  async embedQuery(query: string): Promise<KnowledgeEmbedding | null> {
+  async embedQuery(
+    query: string,
+    options?: { abortSignal?: AbortSignal },
+  ): Promise<KnowledgeEmbedding | null> {
     const driver = this.environmentService.getAiDriver();
     const modelName = this.environmentService.getAiEmbeddingModel();
     const model = this.createEmbeddingModel(driver);
@@ -48,10 +53,15 @@ export class ConfiguredKnowledgeEmbeddingProvider
       return null;
     }
 
+    const boundedSignal = createBoundedAbortSignal(
+      options?.abortSignal,
+      30_000,
+    );
     try {
       const result = await embed({
         model,
         value: query,
+        abortSignal: boundedSignal.signal,
       });
       const vector = result.embedding;
       if (
@@ -72,8 +82,13 @@ export class ConfiguredKnowledgeEmbeddingProvider
         model: modelName,
         dimensions: vector.length,
       };
-    } catch {
+    } catch (error) {
+      if (options?.abortSignal?.aborted) {
+        throw options.abortSignal.reason ?? error;
+      }
       return null;
+    } finally {
+      boundedSignal.dispose();
     }
   }
 

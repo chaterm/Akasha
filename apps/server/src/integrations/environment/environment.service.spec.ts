@@ -29,6 +29,35 @@ describe('EnvironmentService', () => {
     expect(service.getKnowledgeCompilerTimeoutMs()).toBe(120_000);
   });
 
+  it('defaults database and compilation execution limits', () => {
+    expect(service.getDatabaseMaxPool()).toBe(25);
+    expect(service.getDatabaseStatementTimeoutMs()).toBe(30_000);
+    expect(service.getKnowledgePageDeadlineMs()).toBe(900_000);
+    expect(service.getKnowledgeAggregateDeadlineMs()).toBe(300_000);
+    expect(service.getKnowledgeImageJobDeadlineMs()).toBe(180_000);
+  });
+
+  it('reads configured database and compilation execution limits', () => {
+    const configuredValues: Record<string, string> = {
+      DATABASE_MAX_POOL: '40',
+      DATABASE_STATEMENT_TIMEOUT_MS: '45000',
+      KNOWLEDGE_PAGE_DEADLINE_MS: '600000',
+      KNOWLEDGE_AGGREGATE_DEADLINE_MS: '360000',
+      KNOWLEDGE_IMAGE_JOB_DEADLINE_MS: '240000',
+    };
+    const configured = new EnvironmentService({
+      get: jest.fn((key: string, fallback: unknown) =>
+        key in configuredValues ? configuredValues[key] : fallback,
+      ),
+    } as unknown as ConfigService);
+
+    expect(configured.getDatabaseMaxPool()).toBe(40);
+    expect(configured.getDatabaseStatementTimeoutMs()).toBe(45_000);
+    expect(configured.getKnowledgePageDeadlineMs()).toBe(600_000);
+    expect(configured.getKnowledgeAggregateDeadlineMs()).toBe(360_000);
+    expect(configured.getKnowledgeImageJobDeadlineMs()).toBe(240_000);
+  });
+
   it('reads a configured knowledge compiler timeout', () => {
     const configured = new EnvironmentService({
       get: jest.fn(() => '45000'),

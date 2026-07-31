@@ -10,10 +10,7 @@ describe('KnowledgeAccessIndexerService', () => {
     };
     const service = createService({
       accessPolicyRepo,
-      pages: [
-        pageRef('page-1', 'space-1'),
-        pageRef('page-2', 'space-1'),
-      ],
+      pages: [pageRef('page-1', 'space-1'), pageRef('page-2', 'space-1')],
       restrictedRequirements: [
         {
           sourcePageId: 'page-1',
@@ -94,7 +91,9 @@ describe('KnowledgeAccessIndexerService', () => {
 
   it('drops deleted or missing pages before computing requirements', async () => {
     const pagePermissionRepo = {
-      findRestrictedAncestorRequirementsForPages: jest.fn().mockResolvedValue([]),
+      findRestrictedAncestorRequirementsForPages: jest
+        .fn()
+        .mockResolvedValue([]),
     };
     const accessPolicyRepo = {
       replacePolicySnapshot: jest.fn(),
@@ -104,7 +103,11 @@ describe('KnowledgeAccessIndexerService', () => {
       pagePermissionRepo,
       pages: [
         pageRef('page-1', 'space-1'),
-        pageRef('deleted-page', 'space-1', new Date('2026-06-16T00:00:00.000Z')),
+        pageRef(
+          'deleted-page',
+          'space-1',
+          new Date('2026-06-16T00:00:00.000Z'),
+        ),
       ],
     });
 
@@ -121,49 +124,64 @@ describe('KnowledgeAccessIndexerService', () => {
     expect(accessPolicyRepo.replacePolicySnapshot).toHaveBeenCalledTimes(1);
   });
 
-  it('marks a scope stale when exact affected source pages are unknown', async () => {
-    const accessPolicyRepo = {
-      markScopeStale: jest.fn().mockResolvedValue(undefined),
+  it('never sends more than 200 source pages into the recursive ancestor query', async () => {
+    const sourcePageIds = Array.from(
+      { length: 401 },
+      (_, index) => `page-${index}`,
+    );
+    const pageRepo = {
+      findExistingPageRefs: jest
+        .fn()
+        .mockImplementation(async ({ pageIds }) =>
+          pageIds.map((id) => pageRef(id, 'space-1')),
+        ),
     };
-    const service = createService({ accessPolicyRepo });
+    const pagePermissionRepo = {
+      findRestrictedAncestorRequirementsForPages: jest
+        .fn()
+        .mockResolvedValue([]),
+    };
+    const service = createService({ pageRepo, pagePermissionRepo });
 
-    await service.markScopeStale({
-      workspaceId: 'workspace-1',
-      spaceId: 'space-1',
-    });
+    await expect(
+      service.reindexSourcePages({ workspaceId: 'workspace-1', sourcePageIds }),
+    ).resolves.toEqual({ indexedCount: 401 });
 
-    expect(accessPolicyRepo.markScopeStale).toHaveBeenCalledWith({
-      workspaceId: 'workspace-1',
-      spaceId: 'space-1',
-    });
+    expect(
+      pagePermissionRepo.findRestrictedAncestorRequirementsForPages.mock.calls.map(
+        ([ids]) => ids.length,
+      ),
+    ).toEqual([200, 200, 1]);
   });
 });
 
-function createService(overrides: {
-  pages?: Array<{
-    id: string;
-    workspaceId: string;
-    spaceId: string;
-    deletedAt: Date | null;
-  }>;
-  restrictedRequirements?: Array<{
-    sourcePageId: string;
-    sourceSpaceId: string;
-    restrictedAncestors: Array<{
-      pageAccessId: string;
-      restrictedPageId: string;
-      depth: number;
-      permissions: Array<{
-        userId: string | null;
-        groupId: string | null;
-        role: string;
+function createService(
+  overrides: {
+    pages?: Array<{
+      id: string;
+      workspaceId: string;
+      spaceId: string;
+      deletedAt: Date | null;
+    }>;
+    restrictedRequirements?: Array<{
+      sourcePageId: string;
+      sourceSpaceId: string;
+      restrictedAncestors: Array<{
+        pageAccessId: string;
+        restrictedPageId: string;
+        depth: number;
+        permissions: Array<{
+          userId: string | null;
+          groupId: string | null;
+          role: string;
+        }>;
       }>;
     }>;
-  }>;
-  pageRepo?: Partial<PageRepo>;
-  pagePermissionRepo?: Partial<PagePermissionRepo>;
-  accessPolicyRepo?: Partial<KnowledgeAccessPolicyRepo>;
-} = {}) {
+    pageRepo?: Partial<PageRepo>;
+    pagePermissionRepo?: Partial<PagePermissionRepo>;
+    accessPolicyRepo?: Partial<KnowledgeAccessPolicyRepo>;
+  } = {},
+) {
   const pageRepo = {
     findExistingPageRefs: jest.fn().mockResolvedValue(overrides.pages ?? []),
     ...overrides.pageRepo,
@@ -176,7 +194,6 @@ function createService(overrides: {
   };
   const accessPolicyRepo = {
     replacePolicySnapshot: jest.fn(),
-    markScopeStale: jest.fn(),
     ...overrides.accessPolicyRepo,
   };
 
@@ -187,11 +204,7 @@ function createService(overrides: {
   );
 }
 
-function pageRef(
-  id: string,
-  spaceId: string,
-  deletedAt: Date | null = null,
-) {
+function pageRef(id: string, spaceId: string, deletedAt: Date | null = null) {
   return {
     id,
     workspaceId: 'workspace-1',

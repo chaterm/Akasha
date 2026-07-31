@@ -88,14 +88,24 @@ export class KnowledgeArtifactCatalogService {
     return aggregateInput.fingerprint;
   }
 
-  async aggregateInput(input: { workspaceId: string; spaceId: string }) {
+  async aggregateInput(input: {
+    workspaceId: string;
+    spaceId: string;
+    abortSignal?: AbortSignal;
+  }) {
+    input.abortSignal?.throwIfAborted();
+    const scope = {
+      workspaceId: input.workspaceId,
+      spaceId: input.spaceId,
+    };
     const [candidates, totalArtifactCount] = await Promise.all([
       this.capsuleRepo.findAggregateCandidatesForSpace({
-        ...input,
+        ...scope,
         limit: AGGREGATE_FINGERPRINT_LIMIT,
       }),
-      this.capsuleRepo.countActiveAggregateArtifacts(input),
+      this.capsuleRepo.countActiveAggregateArtifacts(scope),
     ]);
+    input.abortSignal?.throwIfAborted();
     const pages = candidates.pages
       .filter(
         (page) =>

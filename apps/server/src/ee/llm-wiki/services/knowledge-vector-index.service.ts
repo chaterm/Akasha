@@ -7,6 +7,7 @@ import {
   ConfiguredKnowledgeEmbeddingProvider,
   KnowledgeEmbedding,
 } from './knowledge-embedding-provider.service';
+import { mapKnowledgeOperations } from './knowledge-operation-budget';
 
 export type KnowledgeVectorIndexResult = 'created' | 'exists' | 'exact-only';
 
@@ -29,24 +30,47 @@ export class KnowledgeVectorIndexService {
   async rebuildSpaceEmbeddings(input: {
     workspaceId: string;
     spaceId: string;
-  }): Promise<{ rebuiltChunkCount: number }> {
-    const chunks = await this.findActiveChunksForSpace(input);
+    afterChunkId?: string;
+    abortSignal?: AbortSignal;
+  }): Promise<{
+    rebuiltChunkCount: number;
+    failedChunkIds?: string[];
+    nextCursor?: string;
+  }> {
+    const chunks = await this.findActiveChunksForSpace({
+      workspaceId: input.workspaceId,
+      spaceId: input.spaceId,
+      afterChunkId: input.afterChunkId,
+      limit: 50,
+    });
     if (chunks.length === 0) return { rebuiltChunkCount: 0 };
-    const rebuilt: Array<KnowledgeEmbedding & { id: string }> = [];
+    const outcomes = await mapKnowledgeOperations(chunks, async (chunk) => {
+      const embedding = input.abortSignal
+        ? await this.embeddingProvider.embedQuery(embeddingInput(chunk), {
+            abortSignal: input.abortSignal,
+          })
+        : await this.embeddingProvider.embedQuery(embeddingInput(chunk));
+      return { chunk, embedding };
+    });
+    const rebuilt: Array<KnowledgeEmbedding & { id: string }> = outcomes
+      .filter(
+        (
+          outcome,
+        ): outcome is typeof outcome & { embedding: KnowledgeEmbedding } =>
+          Boolean(outcome.embedding),
+      )
+      .map(({ chunk, embedding }) => ({ id: chunk.id, ...embedding }));
+    const failedChunkIds = outcomes
+      .filter((outcome) => !outcome.embedding)
+      .map((outcome) => outcome.chunk.id);
 
-    for (const chunk of chunks) {
-      const embedding = await this.embeddingProvider.embedQuery(
-        embeddingInput(chunk),
-      );
-      if (!embedding) {
-        throw new Error(
-          `Unable to rebuild embedding for knowledge chunk ${chunk.id}`,
-        );
-      }
-      rebuilt.push({ id: chunk.id, ...embedding });
+    if (rebuilt.length > 0) {
+      await this.persistRebuiltEmbeddings({
+        workspaceId: input.workspaceId,
+        spaceId: input.spaceId,
+        chunks: rebuilt,
+      });
     }
-
-    await this.persistRebuiltEmbeddings({ ...input, chunks: rebuilt });
 
     const profiles = new Map<string, number>();
     for (const chunk of rebuilt) {
@@ -58,12 +82,20 @@ export class KnowledgeVectorIndexService {
       ),
     );
 
-    return { rebuiltChunkCount: rebuilt.length };
+    return {
+      rebuiltChunkCount: rebuilt.length,
+      ...(failedChunkIds.length > 0 ? { failedChunkIds } : {}),
+      ...(chunks.length === 50
+        ? { nextCursor: chunks[chunks.length - 1].id }
+        : {}),
+    };
   }
 
   protected async findActiveChunksForSpace(input: {
     workspaceId: string;
     spaceId: string;
+    afterChunkId?: string;
+    limit: number;
   }): Promise<Array<{ id: string; text: string; headingPath: unknown }>> {
     return this.db
       .selectFrom('knowledgeChunks')
@@ -71,7 +103,11 @@ export class KnowledgeVectorIndexService {
       .where('workspaceId', '=', input.workspaceId)
       .where('spaceId', '=', input.spaceId)
       .where('staleAt', 'is', null)
+      .$if(Boolean(input.afterChunkId), (query) =>
+        query.where('id', '>', input.afterChunkId!),
+      )
       .orderBy('id', 'asc')
+      .limit(input.limit)
       .execute();
   }
 

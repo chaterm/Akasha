@@ -110,10 +110,13 @@ export class BacklinkRepo {
     return rows.map((r) => r.relatedId);
   }
 
-  async findOutgoingPageReferences(input: {
-    workspaceId: string;
-    sourcePageIds: string[];
-  }): Promise<
+  async findOutgoingPageReferences(
+    input: {
+      workspaceId: string;
+      sourcePageIds: string[];
+    },
+    trx?: KyselyTransaction,
+  ): Promise<
     Array<{
       sourcePageId: string;
       targetPageId: string;
@@ -122,7 +125,8 @@ export class BacklinkRepo {
   > {
     if (input.sourcePageIds.length === 0) return [];
 
-    return this.db
+    const db = dbOrTx(this.db, trx);
+    return db
       .selectFrom('backlinks')
       .innerJoin(
         'pages as targetPage',

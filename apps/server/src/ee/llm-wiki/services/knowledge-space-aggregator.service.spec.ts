@@ -29,6 +29,101 @@ describe('KnowledgeSpaceAggregatorService', () => {
     expect(prompt).toContain('concept-0990');
   });
 
+  it('uses one 300 second phase deadline and never completes after timeout', async () => {
+    jest.useFakeTimers();
+    const runRepo = {
+      startAggregation: jest.fn().mockResolvedValue({
+        id: 'run-timeout',
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+        knowledgeGeneration: 1,
+      }),
+      completeAggregation: jest.fn(),
+    };
+    const provider = {
+      completeMerge: jest.fn(
+        (_messages, options) =>
+          new Promise((_resolve, reject) => {
+            options.abortSignal.addEventListener(
+              'abort',
+              () => reject(options.abortSignal.reason),
+              { once: true },
+            );
+          }),
+      ),
+    };
+    const service = new KnowledgeSpaceAggregatorService(
+      runRepo as never,
+      {
+        aggregateInput: jest
+          .fn()
+          .mockResolvedValue(aggregateInputFixture('sha256:timeout')),
+      } as never,
+      provider as never,
+      { importCompileResult: jest.fn() } as never,
+      { resolveSpace: jest.fn() } as never,
+      { getKnowledgeAggregateDeadlineMs: jest.fn(() => 300_000) } as never,
+    );
+
+    const operation = service.aggregate({
+      runId: 'run-timeout',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    jest.advanceTimersByTime(300_000);
+
+    await expect(operation).rejects.toMatchObject({ code: 'timeout' });
+    expect(runRepo.completeAggregation).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  it('classifies a deadline reached during catalog loading as aggregate timeout', async () => {
+    jest.useFakeTimers();
+    const service = new KnowledgeSpaceAggregatorService(
+      {
+        startAggregation: jest.fn().mockResolvedValue({
+          id: 'run-catalog-timeout',
+          compilerVersion: 'compiler-v1',
+          promptVersion: 'prompt-v1',
+        }),
+      } as never,
+      {
+        aggregateInput: jest.fn(
+          ({ abortSignal }) =>
+            new Promise((_resolve, reject) => {
+              abortSignal.addEventListener(
+                'abort',
+                () => reject(abortSignal.reason),
+                { once: true },
+              );
+            }),
+        ),
+      } as never,
+      { completeMerge: jest.fn() } as never,
+      { importCompileResult: jest.fn() } as never,
+      { resolveSpace: jest.fn() } as never,
+      { getKnowledgeAggregateDeadlineMs: jest.fn(() => 300_000) } as never,
+    );
+
+    const operation = service.aggregate({
+      runId: 'run-catalog-timeout',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    jest.advanceTimersByTime(300_000);
+
+    await expect(operation).rejects.toMatchObject({
+      code: 'timeout',
+      message: 'Knowledge aggregate phase timed out.',
+    });
+    jest.useRealTimers();
+  });
+
   it('publishes an LLM overview plus a deterministic complete catalog', async () => {
     const runRepo = {
       startAggregation: jest.fn().mockResolvedValue({
@@ -101,6 +196,7 @@ describe('KnowledgeSpaceAggregatorService', () => {
         system: expect.stringContaining('untrusted'),
         prompt: expect.stringContaining('Alpha body'),
       }),
+      { abortSignal: expect.any(AbortSignal) },
     );
     const importCall = importer.importCompileResult.mock.calls[0][0];
     expect(importCall.upsertSources).toBe(false);
@@ -135,6 +231,7 @@ describe('KnowledgeSpaceAggregatorService', () => {
     expect(linkResolver.resolveSpace).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
+      abortSignal: expect.any(AbortSignal),
     });
   });
 

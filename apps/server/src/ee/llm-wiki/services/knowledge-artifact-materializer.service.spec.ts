@@ -84,10 +84,7 @@ describe('KnowledgeArtifactMaterializerService', () => {
         sourcePageId: 'page-1',
         previousSourceContributions: [],
         affectedContributions: [
-          contribution(
-            'page-2',
-            artifact('page-2', 'Shared', 'Existing body'),
-          ),
+          contribution('page-2', artifact('page-2', 'Shared', 'Existing body')),
         ],
         incomingArtifacts: [artifact('page-1', 'Shared', 'Incoming body')],
       }),
@@ -114,6 +111,43 @@ describe('KnowledgeArtifactMaterializerService', () => {
       compilerRunId: 'run-page-2',
       compileTaskId: 'task-page-2',
     });
+  });
+
+  it('stops before a ninth canonical LLM materialization', async () => {
+    const provider = createProvider();
+    provider.completeMerge.mockResolvedValue(
+      JSON.stringify({ title: 'Shared', markdown: 'Merged body' }),
+    );
+    const service = new KnowledgeArtifactMaterializerService(provider);
+    const incomingArtifacts = Array.from({ length: 9 }, (_, index) =>
+      artifact(
+        'page-1',
+        `Shared ${index}`,
+        'Incoming body',
+        `artifact-${index}`,
+      ),
+    );
+    const affectedContributions = incomingArtifacts.map((incoming, index) =>
+      contribution(
+        'page-2',
+        artifact(
+          'page-2',
+          `Shared ${index}`,
+          'Existing body',
+          incoming.artifactId,
+        ),
+      ),
+    );
+
+    await expect(
+      service.materializeSourceUpdate({
+        sourcePageId: 'page-1',
+        previousSourceContributions: [],
+        affectedContributions,
+        incomingArtifacts,
+      }),
+    ).rejects.toMatchObject({ code: 'page_complexity_limit' });
+    expect(provider.completeMerge).toHaveBeenCalledTimes(8);
   });
 });
 

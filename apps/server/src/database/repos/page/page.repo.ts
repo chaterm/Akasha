@@ -223,10 +223,15 @@ export class PageRepo {
     return pages.map((page) => page.id);
   }
 
-  async findPagesForKnowledgeExport(input: {
-    workspaceId: string;
-    spaceId: string;
-  }): Promise<
+  async findPagesForKnowledgeExport(
+    input: {
+      workspaceId: string;
+      spaceId: string;
+      limit: number;
+      after?: { updatedAt: Date; id: string };
+    },
+    trx?: KyselyTransaction,
+  ): Promise<
     Array<{
       id: string;
       workspaceId: string;
@@ -237,7 +242,8 @@ export class PageRepo {
       updatedAt: Date;
     }>
   > {
-    return this.db
+    const db = dbOrTx(this.db, trx);
+    return db
       .selectFrom('pages')
       .select([
         'id',
@@ -251,14 +257,31 @@ export class PageRepo {
       .where('workspaceId', '=', input.workspaceId)
       .where('spaceId', '=', input.spaceId)
       .where('deletedAt', 'is', null)
+      .$if(Boolean(input.after), (query) =>
+        query.where((eb) =>
+          eb.or([
+            eb('updatedAt', '>', input.after!.updatedAt),
+            eb.and([
+              eb('updatedAt', '=', input.after!.updatedAt),
+              eb('id', '>', input.after!.id),
+            ]),
+          ]),
+        ),
+      )
+      .orderBy('updatedAt', 'asc')
+      .orderBy('id', 'asc')
+      .limit(input.limit)
       .execute();
   }
 
-  async findPagesByIdsForKnowledgeExport(input: {
-    workspaceId: string;
-    spaceId: string;
-    pageIds: string[];
-  }): Promise<
+  async findPagesByIdsForKnowledgeExport(
+    input: {
+      workspaceId: string;
+      spaceId: string;
+      pageIds: string[];
+    },
+    trx?: KyselyTransaction,
+  ): Promise<
     Array<{
       id: string;
       workspaceId: string;
@@ -271,7 +294,8 @@ export class PageRepo {
   > {
     if (input.pageIds.length === 0) return [];
 
-    return this.db
+    const db = dbOrTx(this.db, trx);
+    return db
       .selectFrom('pages')
       .select([
         'id',

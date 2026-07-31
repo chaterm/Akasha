@@ -219,6 +219,7 @@ describe('KnowledgeTextJobHandler', () => {
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
       sourcePageIds: ['page-1'],
+      abortSignal: expect.any(AbortSignal),
     });
     expect(compiler.compileSpace).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2006,19 +2007,19 @@ describe('KnowledgeTextJobHandler', () => {
       workspaceId: 'workspace-1',
       sourcePageIds: ['page-1', 'page-2'],
     });
-    expect(accessIndexer.markScopeStale).not.toHaveBeenCalled();
   });
 
-  it('reindexes all known source access when a space id is provided', async () => {
+  it('reindexes one 200-page space batch and enqueues a deterministic continuation', async () => {
     const accessIndexer = createAccessIndexer();
     const sourceRepo = createSourceRepo();
+    const textQueue = createTextQueue();
+    const sourcePageIds = Array.from(
+      { length: 200 },
+      (_, index) => `page-${String(index).padStart(3, '0')}`,
+    );
     jest
-      .mocked(sourceRepo.findSourcesBySpace)
-      .mockResolvedValue([
-        { sourcePageId: 'page-1' },
-        { sourcePageId: 'page-2' },
-        { sourcePageId: 'page-1' },
-      ] as never);
+      .mocked(sourceRepo.findSourcePageIdsBySpaceBatch)
+      .mockResolvedValue(sourcePageIds);
     const processor = new KnowledgeTextJobHandler(
       createExporter(),
       createCompiler(),
@@ -2027,7 +2028,7 @@ describe('KnowledgeTextJobHandler', () => {
       sourceRepo,
       createCapsuleRepo(),
       createPageRepo(),
-      createTextQueue(),
+      textQueue,
       createReviewService(),
       createReviewSnapshotService(),
       createAuditService(),
@@ -2040,15 +2041,28 @@ describe('KnowledgeTextJobHandler', () => {
       data: { workspaceId: 'workspace-1', spaceId: 'space-1' },
     } as Job);
 
-    expect(sourceRepo.findSourcesBySpace).toHaveBeenCalledWith({
+    expect(sourceRepo.findSourcePageIdsBySpaceBatch).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
+      limit: 200,
     });
     expect(accessIndexer.reindexSourcePages).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
-      sourcePageIds: ['page-1', 'page-2'],
+      sourcePageIds,
     });
-    expect(accessIndexer.markScopeStale).not.toHaveBeenCalled();
+    expect(textQueue.add).toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_REINDEX_ACCESS,
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        afterSourcePageId: 'page-199',
+      },
+      {
+        jobId: expect.stringMatching(
+          /^knowledge-reindex-access__workspace-1__space-1__/,
+        ),
+      },
+    );
   });
 
   it('marks sources and dependent capsules stale for source invalidation jobs', async () => {
@@ -2489,6 +2503,106 @@ describe('KnowledgeTextJobHandler', () => {
       capsuleRepo.markSourceArtifactsStaleBySourcePageIds,
     ).not.toHaveBeenCalled();
   });
+
+  it('cancels a page at the 15 minute budget and records page_timeout without publication', async () => {
+    jest.useFakeTimers();
+    const compiler = createCompiler();
+    jest.mocked(compiler.compileSpace).mockImplementation(
+      (input) =>
+        new Promise((_resolve, reject) => {
+          input.operationBudget?.signal?.addEventListener(
+            'abort',
+            () => reject(input.operationBudget?.signal?.reason),
+            { once: true },
+          );
+        }),
+    );
+    const importer = createImporter();
+    const compilationRepo = createCompilationRepo();
+    const processor = createProcessor({
+      compiler,
+      importer,
+      compilationRepo,
+      exporter: {
+        exportPageSources: jest.fn().mockResolvedValue([sourceSnapshot()]),
+      },
+      environmentService: {
+        getKnowledgePageDeadlineMs: jest.fn(() => 900_000),
+      },
+    });
+
+    const operation = processor.handle({
+      id: 'page-deadline-job',
+      name: QueueJob.KNOWLEDGE_COMPILE_PAGES,
+      data: {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageIds: ['page-1'],
+      },
+      opts: { attempts: 1 },
+      attemptsMade: 0,
+    } as Job);
+    for (
+      let index = 0;
+      index < 20 && jest.mocked(compiler.compileSpace).mock.calls.length === 0;
+      index += 1
+    ) {
+      await Promise.resolve();
+    }
+    jest.advanceTimersByTime(900_000);
+
+    await expect(operation).rejects.toThrow('page execution deadline');
+    expect(compilationRepo.failAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: 'page_timeout' }),
+    );
+    expect(importer.importCompileResult).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  it('checkpoints embedding rebuilds with a deterministic continuation job', async () => {
+    const textQueue = createTextQueue();
+    const vectorIndex = {
+      rebuildSpaceEmbeddings: jest.fn().mockResolvedValue({
+        rebuiltChunkCount: 49,
+        failedChunkIds: ['chunk-010'],
+        nextCursor: 'chunk-049',
+      }),
+    };
+    const processor = createProcessor({ vectorIndex, textQueue });
+
+    await expect(
+      processor.handle({
+        id: 'rebuild-embeddings-1',
+        name: QueueJob.KNOWLEDGE_REBUILD_EMBEDDINGS,
+        data: {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          afterChunkId: 'chunk-before',
+        },
+      } as Job),
+    ).resolves.toMatchObject({ rebuiltChunkCount: 49 });
+
+    expect(vectorIndex.rebuildSpaceEmbeddings).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      afterChunkId: 'chunk-before',
+    });
+    expect(textQueue.add).toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_REBUILD_EMBEDDINGS,
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        afterChunkId: 'chunk-049',
+      },
+      {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5_000 },
+        jobId: expect.stringMatching(
+          /^knowledge-rebuild-embeddings__workspace-1__space-1__/,
+        ),
+      },
+    );
+  });
 });
 
 function createExporter(): KnowledgeSourceExporterService {
@@ -2511,6 +2625,8 @@ function createProcessor(
     capsuleRepo?: KnowledgeCapsuleRepo;
     imageEnrichment?: Partial<KnowledgeImageEnrichmentService>;
     vectorIndex?: Partial<KnowledgeVectorIndexService>;
+    textQueue?: Queue;
+    environmentService?: { getKnowledgePageDeadlineMs: jest.Mock };
   } = {},
 ): KnowledgeTextJobHandler {
   return new KnowledgeTextJobHandler(
@@ -2521,7 +2637,7 @@ function createProcessor(
     overrides.sourceRepo ?? createSourceRepo(),
     overrides.capsuleRepo ?? createCapsuleRepo(),
     createPageRepo(),
-    createTextQueue(),
+    overrides.textQueue ?? createTextQueue(),
     createReviewService(),
     createReviewSnapshotService(),
     createAuditService(),
@@ -2540,6 +2656,7 @@ function createProcessor(
     (overrides.vectorIndex ?? {
       rebuildSpaceEmbeddings: jest.fn(),
     }) as KnowledgeVectorIndexService,
+    overrides.environmentService as never,
   );
 }
 
@@ -2671,7 +2788,6 @@ function createImporter(): KnowledgeImportService {
 function createAccessIndexer(): KnowledgeAccessIndexerService {
   return {
     reindexSourcePages: jest.fn().mockResolvedValue({ indexedCount: 0 }),
-    markScopeStale: jest.fn().mockResolvedValue(undefined),
   } as unknown as KnowledgeAccessIndexerService;
 }
 
@@ -2679,6 +2795,7 @@ function createSourceRepo(): KnowledgeSourceRepo {
   return {
     markSourcesStale: jest.fn().mockResolvedValue(undefined),
     findSourcesBySpace: jest.fn().mockResolvedValue([]),
+    findSourcePageIdsBySpaceBatch: jest.fn().mockResolvedValue([]),
     findLatestActiveSourceByPageId: jest.fn().mockResolvedValue(undefined),
   } as unknown as KnowledgeSourceRepo;
 }

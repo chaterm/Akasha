@@ -6,6 +6,7 @@ import * as dotenv from 'dotenv';
 import { envPath, normalizePostgresUrl } from '../common/helpers';
 import { PostgresJSDialect } from 'kysely-postgres-js';
 import postgres from 'postgres';
+import { buildMigrationPostgresOptions } from './database-postgres-options';
 
 dotenv.config({ path: envPath });
 
@@ -13,7 +14,10 @@ const migrationFolder = path.join(__dirname, './migrations');
 
 const db = new Kysely<any>({
   dialect: new PostgresJSDialect({
-    postgres: postgres(normalizePostgresUrl(process.env.DATABASE_URL)),
+    postgres: postgres(
+      normalizePostgresUrl(process.env.DATABASE_URL),
+      buildMigrationPostgresOptions(),
+    ),
   }),
 });
 

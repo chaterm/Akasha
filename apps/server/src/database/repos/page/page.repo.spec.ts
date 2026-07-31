@@ -40,6 +40,15 @@ class FakeKyselyQuery {
     return this;
   }
 
+  orderBy(...args: unknown[]) {
+    this.calls.push({ method: 'orderBy', args });
+    return this;
+  }
+
+  $if(condition: boolean, callback: (query: this) => this) {
+    return condition ? callback(this) : this;
+  }
+
   innerJoin(...args: unknown[]) {
     this.calls.push({ method: 'innerJoin', args });
     return this;
@@ -202,6 +211,7 @@ describe('PageRepo', () => {
         repo.findPagesForKnowledgeExport({
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
+          limit: 200,
         }),
       ).resolves.toEqual(rows);
 
@@ -224,6 +234,9 @@ describe('PageRepo', () => {
         { method: 'where', args: ['workspaceId', '=', 'workspace-1'] },
         { method: 'where', args: ['spaceId', '=', 'space-1'] },
         { method: 'where', args: ['deletedAt', 'is', null] },
+        { method: 'orderBy', args: ['updatedAt', 'asc'] },
+        { method: 'orderBy', args: ['id', 'asc'] },
+        { method: 'limit', args: [200] },
         { method: 'execute', args: [] },
       ]);
     });

@@ -72,6 +72,15 @@ class FakeKyselyQuery {
     return this;
   }
 
+  distinct(...args: unknown[]) {
+    this.calls.push({ method: 'distinct', args });
+    return this;
+  }
+
+  $if(condition: boolean, callback: (query: this) => this) {
+    return condition ? callback(this) : this;
+  }
+
   where(...args: unknown[]) {
     this.calls.push({ method: 'where', args });
     return this;
@@ -113,6 +122,36 @@ function createRepo(query: FakeKyselyQuery) {
 }
 
 describe('KnowledgeSourceRepo', () => {
+  it('keyset-paginates source page ids for space maintenance', async () => {
+    const query = new FakeKyselyQuery([
+      { sourcePageId: 'page-201' },
+      { sourcePageId: 'page-202' },
+    ]);
+    const repo = createRepo(query);
+
+    await expect(
+      repo.findSourcePageIdsBySpaceBatch({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        afterSourcePageId: 'page-200',
+        limit: 200,
+      }),
+    ).resolves.toEqual(['page-201', 'page-202']);
+
+    expect(query.calls).toEqual([
+      { method: 'selectFrom', args: ['knowledgeSources'] },
+      { method: 'select', args: ['sourcePageId'] },
+      { method: 'distinct', args: [] },
+      { method: 'where', args: ['workspaceId', '=', 'workspace-1'] },
+      { method: 'where', args: ['sourceSpaceId', '=', 'space-1'] },
+      { method: 'where', args: ['deletedAt', 'is', null] },
+      { method: 'where', args: ['sourcePageId', '>', 'page-200'] },
+      { method: 'orderBy', args: ['sourcePageId', 'asc'] },
+      { method: 'limit', args: [200] },
+      { method: 'execute', args: [] },
+    ]);
+  });
+
   it('upserts page sources into the knowledgeSources table', async () => {
     const row = { id: 'source-1', workspaceId: 'workspace-1' };
     const query = new FakeKyselyQuery([row]);

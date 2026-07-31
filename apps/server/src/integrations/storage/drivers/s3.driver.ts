@@ -100,16 +100,21 @@ export class S3Driver implements StorageDriver {
     }
   }
 
-  async read(filePath: string): Promise<Buffer> {
+  async read(
+    filePath: string,
+    options?: { abortSignal?: AbortSignal },
+  ): Promise<Buffer> {
     try {
       const command = new GetObjectCommand({
         Bucket: this.config.bucket,
         Key: filePath,
       });
 
-      const response = await this.s3Client.send(command);
+      const response = await this.s3Client.send(command, {
+        abortSignal: options?.abortSignal,
+      });
 
-      return streamToBuffer(response.Body as Readable);
+      return streamToBuffer(response.Body as Readable, options?.abortSignal);
     } catch (err) {
       throw new Error(`Failed to read file from S3: ${(err as Error).message}`);
     }

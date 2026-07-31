@@ -146,6 +146,38 @@ export function buildKnowledgeAdminActionJobId(input: {
   });
 }
 
+export function buildKnowledgeRebuildEmbeddingsContinuationJobId(input: {
+  workspaceId: string;
+  spaceId: string;
+  afterChunkId: string;
+}): string {
+  const cursorKey = createHash('sha256')
+    .update(input.afterChunkId)
+    .digest('hex');
+  return [
+    'knowledge-rebuild-embeddings',
+    input.workspaceId,
+    input.spaceId,
+    cursorKey,
+  ].join('__');
+}
+
+export function buildKnowledgeReindexAccessContinuationJobId(input: {
+  workspaceId: string;
+  spaceId: string;
+  afterSourcePageId: string;
+}): string {
+  const cursorKey = createHash('sha256')
+    .update(input.afterSourcePageId)
+    .digest('hex');
+  return [
+    'knowledge-reindex-access',
+    input.workspaceId,
+    input.spaceId,
+    cursorKey,
+  ].join('__');
+}
+
 export function buildReviewDiscoverJobId(input: {
   workspaceId: string;
   spaceId: string;

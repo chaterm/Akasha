@@ -74,9 +74,7 @@ describe('ConfiguredKnowledgeImageUnderstandingProvider', () => {
     (generateText as jest.Mock).mockResolvedValue({
       output: { ocrText: '  OCR result  ', caption: '  Caption result  ' },
     });
-    const timeoutSpy = jest
-      .spyOn(AbortSignal, 'timeout')
-      .mockReturnValue(new AbortController().signal);
+    const timeoutSpy = jest.spyOn(global, 'setTimeout');
 
     const result = await createProvider({ timeoutMs: 45_000 }).describe({
       bytes: imageBytes,
@@ -89,7 +87,7 @@ describe('ConfiguredKnowledgeImageUnderstandingProvider', () => {
       ocrText: 'OCR result',
       caption: 'Caption result',
     });
-    expect(timeoutSpy).toHaveBeenCalledWith(45_000);
+    expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 45_000);
     expect(generateText).toHaveBeenCalledWith({
       model: 'vision-model-instance',
       system: expect.stringContaining(
@@ -121,6 +119,25 @@ describe('ConfiguredKnowledgeImageUnderstandingProvider', () => {
     });
     expect(Output.json).toHaveBeenCalled();
     timeoutSpy.mockRestore();
+  });
+
+  it('passes parent cancellation into the bounded vision request', async () => {
+    (createOpenAI as jest.Mock).mockReturnValue(
+      jest.fn().mockReturnValue('vision-model-instance'),
+    );
+    (generateText as jest.Mock).mockResolvedValue({
+      output: { ocrText: 'Visible', caption: 'Caption' },
+    });
+    const parent = new AbortController();
+
+    await createProvider().describe(
+      { bytes: imageBytes, mimeType: 'image/png' },
+      parent.signal,
+    );
+
+    expect(generateText).toHaveBeenCalledWith(
+      expect.objectContaining({ abortSignal: expect.any(AbortSignal) }),
+    );
   });
 
   it('normalizes common JSON field aliases and fenced output', async () => {

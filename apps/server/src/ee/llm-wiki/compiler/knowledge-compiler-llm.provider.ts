@@ -21,6 +21,7 @@ import {
   semanticGenerationSchema,
 } from './semantic-compiler.schema';
 import { SemanticCompilerMessages } from './semantic-compiler.prompts';
+import { createBoundedAbortSignal } from '../services/knowledge-operation-budget';
 
 const mergeCompletionSchema = z
   .object({
@@ -64,13 +65,24 @@ export class KnowledgeCompilerLlmError extends Error {
 }
 
 export interface KnowledgeCompilerLlmProvider {
-  analyze(messages: SemanticCompilerMessages): Promise<SemanticAnalysis>;
+  analyze(
+    messages: SemanticCompilerMessages,
+    options?: KnowledgeCompilerRequestOptions,
+  ): Promise<SemanticAnalysis>;
   generate(
     messages: SemanticCompilerMessages,
     fallback?: KnowledgeCompilerGenerationFallback,
+    options?: KnowledgeCompilerRequestOptions,
   ): Promise<SemanticGenerationResult>;
-  completeMerge?(messages: SemanticCompilerMessages): Promise<string>;
+  completeMerge?(
+    messages: SemanticCompilerMessages,
+    options?: KnowledgeCompilerRequestOptions,
+  ): Promise<string>;
 }
+
+export type KnowledgeCompilerRequestOptions = {
+  abortSignal?: AbortSignal;
+};
 
 export type SemanticGenerationResult = SemanticGeneration & {
   compilerRecovery?:
@@ -89,18 +101,24 @@ export type KnowledgeCompilerGenerationFallback = {
 export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompilerLlmProvider {
   constructor(private readonly environmentService: EnvironmentService) {}
 
-  async analyze(messages: SemanticCompilerMessages): Promise<SemanticAnalysis> {
+  async analyze(
+    messages: SemanticCompilerMessages,
+    options?: KnowledgeCompilerRequestOptions,
+  ): Promise<SemanticAnalysis> {
     return this.completeStructured(
       messages,
       semanticAnalysisSchema,
       'analysis',
       'knowledge_compiler_analysis_v1',
+      undefined,
+      options,
     );
   }
 
   async generate(
     messages: SemanticCompilerMessages,
     fallback?: KnowledgeCompilerGenerationFallback,
+    options?: KnowledgeCompilerRequestOptions,
   ): Promise<SemanticGenerationResult> {
     return this.completeStructured(
       messages,
@@ -108,15 +126,21 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
       'generation',
       'knowledge_compiler_generation_v1',
       fallback,
+      options,
     );
   }
 
-  async completeMerge(messages: SemanticCompilerMessages): Promise<string> {
+  async completeMerge(
+    messages: SemanticCompilerMessages,
+    options?: KnowledgeCompilerRequestOptions,
+  ): Promise<string> {
     const result = await this.completeStructured(
       messages,
       mergeCompletionSchema,
       'merge',
       'knowledge_compiler_merge_v1',
+      undefined,
+      options,
     );
     return JSON.stringify(result);
   }
@@ -127,6 +151,7 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
     stage: 'analysis' | 'generation' | 'merge',
     name: string,
     fallback?: KnowledgeCompilerGenerationFallback,
+    options?: KnowledgeCompilerRequestOptions,
   ): Promise<T> {
     const model = this.createModel();
     const initial = await this.requestStructuredOutput({
@@ -134,6 +159,7 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
       messages,
       stage,
       name,
+      abortSignal: options?.abortSignal,
     });
     const initialParsed = parseStructuredCandidate({
       value: initial.value,
@@ -159,6 +185,7 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
       messages: retryMessages,
       stage,
       name: `${name}_repair`,
+      abortSignal: options?.abortSignal,
     });
     const retryParsed = parseStructuredCandidate({
       value: retry.value,
@@ -191,16 +218,19 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
     messages: SemanticCompilerMessages;
     stage: 'analysis' | 'generation' | 'merge';
     name: string;
+    abortSignal?: AbortSignal;
   }): Promise<{ value: unknown; hadNoOutput: boolean }> {
+    const boundedSignal = createBoundedAbortSignal(
+      input.abortSignal,
+      this.environmentService.getKnowledgeCompilerTimeoutMs(),
+    );
     try {
       const result = await generateText({
         model: input.model,
         system: input.messages.system,
         prompt: input.messages.prompt,
         temperature: 0.1,
-        abortSignal: AbortSignal.timeout(
-          this.environmentService.getKnowledgeCompilerTimeoutMs(),
-        ),
+        abortSignal: boundedSignal.signal,
         output: Output.json({
           name: input.name,
           description: `Akasha knowledge compiler ${input.stage} output`,
@@ -216,6 +246,8 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
       }
       if (error instanceof KnowledgeCompilerLlmError) throw error;
       throw classifyProviderError(error, input.stage);
+    } finally {
+      boundedSignal.dispose();
     }
   }
 

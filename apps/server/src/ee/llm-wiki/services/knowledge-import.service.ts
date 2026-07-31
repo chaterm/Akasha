@@ -26,6 +26,10 @@ import {
 import { KnowledgeVectorIndexService } from './knowledge-vector-index.service';
 import { KnowledgeArtifactMaterializerService } from './knowledge-artifact-materializer.service';
 import { chunkKnowledgeSource } from '../chunking/knowledge-structural-chunker';
+import {
+  KnowledgeOperationBudget,
+  mapKnowledgeOperations,
+} from './knowledge-operation-budget';
 
 export interface KnowledgeImportResult {
   importedArtifactCount: number;
@@ -70,8 +74,19 @@ export class KnowledgeImportService {
     publicationGuard?: (trx: KyselyTransaction) => Promise<boolean>;
     publicationComplete?: (trx: KyselyTransaction) => Promise<void>;
   }): Promise<KnowledgeImportResult> {
+    const operationBudget =
+      input.input.operationBudget ?? new KnowledgeOperationBudget();
+    input.input.operationBudget = operationBudget;
+    operationBudget.throwIfAborted();
     await input.onStage?.('validation');
     const validation = this.validator.validateCompileResult(input);
+    operationBudget.assertArtifactCount(validation.accepted.length);
+    operationBudget.assertChunkCount(
+      validation.accepted.reduce(
+        (count, artifact) => count + (artifact.chunks?.length ?? 0),
+        0,
+      ),
+    );
 
     const quarantineInputs = validation.quarantined.map((quarantined) => ({
       artifactId: quarantined.artifact.artifactId,
@@ -142,8 +157,15 @@ export class KnowledgeImportService {
         previousSourceContributions,
         affectedContributions,
         incomingArtifacts: validation.accepted,
+        operationBudget,
       });
       artifactsToPublish = materialized.artifacts;
+      operationBudget.assertChunkCount(
+        artifactsToPublish.reduce(
+          (count, artifact) => count + (artifact.chunks?.length ?? 0),
+          0,
+        ),
+      );
       contributionPublication = {
         sourcePageId: source.sourcePageId,
         removedArtifactIds: materialized.removedArtifactIds,
@@ -180,22 +202,29 @@ export class KnowledgeImportService {
     const artifactInputs: UpsertCompiledArtifactInput[] = [];
 
     for (const artifact of artifactsToPublish) {
-      const artifactChunks = await Promise.all(
-        (artifact.chunks ?? []).map(async (chunk) => {
+      const artifactChunks = await mapKnowledgeOperations(
+        artifact.chunks ?? [],
+        async (chunk) => {
           const suppliedEmbedding = compilerEmbedding(
             chunk.embedding,
             artifact.compilerVersion,
           );
 
+          const embedding = suppliedEmbedding
+            ? suppliedEmbedding
+            : operationBudget.signal
+              ? await this.embeddingProvider.embedQuery(
+                  chunk.embeddingText ?? chunk.text,
+                  { abortSignal: operationBudget.signal },
+                )
+              : await this.embeddingProvider.embedQuery(
+                  chunk.embeddingText ?? chunk.text,
+                );
           return {
             ...chunk,
-            embedding:
-              suppliedEmbedding ??
-              (await this.embeddingProvider.embedQuery(
-                chunk.embeddingText ?? chunk.text,
-              )),
+            embedding,
           };
-        }),
+        },
       );
       const claims = (artifact.claims ?? []).map((claim, index) => ({
         id: stableUuid(`${artifact.artifactId}:claim:${index}`),
@@ -460,6 +489,7 @@ export class KnowledgeImportService {
       input.retireSources === true ||
       input.retireCompileScope === true
     ) {
+      operationBudget.throwIfAborted();
       await executeTx(this.db, async (trx) => {
         if (input.publicationGuard && !(await input.publicationGuard(trx))) {
           publicationRejected = true;
@@ -603,6 +633,7 @@ export class KnowledgeImportService {
           await this.capsuleRepo.upsertCompiledArtifacts(artifactInputs, trx);
         }
 
+        operationBudget.throwIfAborted();
         await input.publicationComplete?.(trx);
       });
     }

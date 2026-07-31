@@ -12,6 +12,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createOllama } from 'ai-sdk-ollama';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
+import { createBoundedAbortSignal } from './knowledge-operation-budget';
 
 const supportedDrivers = new Set([
   'openai',
@@ -61,6 +62,7 @@ export interface KnowledgeImageUnderstandingProvider {
   getCacheIdentity(): string;
   describe(
     input: KnowledgeImageUnderstandingInput,
+    abortSignal?: AbortSignal,
   ): Promise<KnowledgeImageUnderstandingResult>;
 }
 
@@ -118,10 +120,15 @@ export class ConfiguredKnowledgeImageUnderstandingProvider implements KnowledgeI
 
   async describe(
     input: KnowledgeImageUnderstandingInput,
+    abortSignal?: AbortSignal,
   ): Promise<KnowledgeImageUnderstandingResult> {
     validateInput(input);
 
     let value: unknown;
+    const boundedSignal = createBoundedAbortSignal(
+      abortSignal,
+      this.environmentService.getKnowledgeImageTimeoutMs(),
+    );
     try {
       const result = await generateText({
         model: this.createModel(),
@@ -144,9 +151,7 @@ export class ConfiguredKnowledgeImageUnderstandingProvider implements KnowledgeI
         ],
         temperature: 0,
         maxOutputTokens: 8_000,
-        abortSignal: AbortSignal.timeout(
-          this.environmentService.getKnowledgeImageTimeoutMs(),
-        ),
+        abortSignal: boundedSignal.signal,
         output: Output.json({
           name: 'knowledge_image_understanding_v1',
           description:
@@ -164,6 +169,8 @@ export class ConfiguredKnowledgeImageUnderstandingProvider implements KnowledgeI
       } else {
         throw classifyProviderError(error);
       }
+    } finally {
+      boundedSignal.dispose();
     }
 
     return parseImageUnderstandingOutput(value);

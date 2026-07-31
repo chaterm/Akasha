@@ -178,12 +178,14 @@ export interface IKnowledgeAggregateSpaceJob {
 export interface IKnowledgeRebuildEmbeddingsJob {
   workspaceId: string;
   spaceId: string;
+  afterChunkId?: string;
 }
 
 export interface IKnowledgeReindexAccessJob {
   workspaceId: string;
   spaceId?: string;
   sourcePageIds?: string[];
+  afterSourcePageId?: string;
 }
 
 export interface IKnowledgeMarkSourcesStaleJob {

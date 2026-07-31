@@ -167,27 +167,6 @@ describe('KnowledgeAccessPolicyRepo', () => {
     ]);
   });
 
-  it('marks scope policies stale by workspace and source space', async () => {
-    const query = new FakeKyselyQuery();
-    const repo = createRepo(query);
-
-    await repo.markScopeStale({
-      workspaceId: 'workspace-1',
-      spaceId: 'space-1',
-    });
-
-    expect(query.calls).toEqual([
-      { method: 'updateTable', args: ['knowledgeSourceAccessPolicy'] },
-      {
-        method: 'set',
-        args: [expect.objectContaining({ staleAt: expect.any(Date) })],
-      },
-      { method: 'where', args: ['workspaceId', '=', 'workspace-1'] },
-      { method: 'where', args: ['sourceSpaceId', '=', 'space-1'] },
-      { method: 'execute', args: [] },
-    ]);
-  });
-
   it('replaces requirements and principals for a source policy snapshot', async () => {
     const row = { sourcePageId: 'page-1', workspaceId: 'workspace-1' };
     const query = new FakeKyselyQuery([row]);

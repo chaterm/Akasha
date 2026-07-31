@@ -143,6 +143,32 @@ describe('KnowledgeImageEnrichmentService', () => {
     expect(result.source.text).toContain('Error rate 8%');
   });
 
+  it('forwards cancellation to storage and VLM and never publishes after abort', async () => {
+    const fixture = createFixture();
+    const parent = new AbortController();
+    fixture.provider.describe.mockImplementation(async () => {
+      parent.abort(new Error('page deadline'));
+      throw parent.signal.reason;
+    });
+
+    await expect(
+      fixture.service.enrichSource(source(), {
+        abortSignal: parent.signal,
+      }),
+    ).rejects.toThrow('page deadline');
+
+    expect(fixture.storageService.read).toHaveBeenCalledWith(
+      'workspace-1/image-1/dashboard.png',
+      { abortSignal: parent.signal },
+    );
+    expect(fixture.provider.describe).toHaveBeenCalledWith(
+      expect.objectContaining({ mimeType: 'image/png' }),
+      parent.signal,
+    );
+    expect(fixture.extractionRepo.completeSuccess).not.toHaveBeenCalled();
+    expect(fixture.extractionRepo.completeFailure).not.toHaveBeenCalled();
+  });
+
   it('converts a GIF first frame to PNG before calling the vision model', async () => {
     const fixture = createFixture({ bytes: gifBytes });
     fixture.provider.describe.mockResolvedValue({

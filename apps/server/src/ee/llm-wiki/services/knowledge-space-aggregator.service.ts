@@ -12,6 +12,11 @@ import { KnowledgeSourceRef } from '../types/knowledge.types';
 import { KnowledgeImportService } from './knowledge-import.service';
 import { KnowledgeArtifactCatalogService } from './knowledge-artifact-catalog.service';
 import { KnowledgeLinkResolverService } from './knowledge-link-resolver.service';
+import { EnvironmentService } from '../../../integrations/environment/environment.service';
+import {
+  KnowledgeOperationBudget,
+  createBoundedAbortSignal,
+} from './knowledge-operation-budget';
 
 const MAX_AGGREGATE_PROMPT_ARTIFACTS = 100;
 const MAX_AGGREGATE_PROMPT_CHARS = 120_000;
@@ -25,6 +30,7 @@ export class KnowledgeSpaceAggregatorService {
     private readonly provider: KnowledgeCompilerLlmProvider,
     private readonly importService: KnowledgeImportService,
     private readonly linkResolver: KnowledgeLinkResolverService,
+    private readonly environmentService: EnvironmentService = undefined as never,
   ) {}
 
   async aggregate(input: {
@@ -33,6 +39,42 @@ export class KnowledgeSpaceAggregatorService {
     spaceId: string;
     phase?: 'initial_aggregate' | 'final_aggregate';
   }) {
+    const boundedSignal = createBoundedAbortSignal(
+      undefined,
+      this.environmentService?.getKnowledgeAggregateDeadlineMs?.() ?? 300_000,
+    );
+    try {
+      return await this.aggregateWithinDeadline(input, boundedSignal.signal);
+    } catch (error) {
+      if (
+        boundedSignal.signal.aborted &&
+        !(
+          error instanceof KnowledgeCompilerLlmError && error.code === 'timeout'
+        )
+      ) {
+        throw new KnowledgeCompilerLlmError(
+          'timeout',
+          'Knowledge aggregate phase timed out.',
+          true,
+          boundedSignal.signal.reason ?? error,
+        );
+      }
+      throw error;
+    } finally {
+      boundedSignal.dispose();
+    }
+  }
+
+  private async aggregateWithinDeadline(
+    input: {
+      runId: string;
+      workspaceId: string;
+      spaceId: string;
+      phase?: 'initial_aggregate' | 'final_aggregate';
+    },
+    abortSignal: AbortSignal,
+  ) {
+    abortSignal.throwIfAborted();
     const requestedPhase = input.phase ?? 'initial_aggregate';
     const run = await this.runRepo.startAggregation(
       input.runId,
@@ -44,6 +86,7 @@ export class KnowledgeSpaceAggregatorService {
     const aggregateInput = await this.artifactCatalog.aggregateInput({
       workspaceId: input.workspaceId,
       spaceId: input.spaceId,
+      abortSignal,
     });
     const { pages, sourceRefsByArtifact, allSourceRefs } = aggregateInput;
 
@@ -56,6 +99,9 @@ export class KnowledgeSpaceAggregatorService {
           promptVersion: run.promptVersion,
           compileMode: 'space',
           sources: [],
+          operationBudget: new KnowledgeOperationBudget({
+            signal: abortSignal,
+          }),
         },
         artifacts: [],
         upsertSources: false,
@@ -75,6 +121,7 @@ export class KnowledgeSpaceAggregatorService {
       if (retirement.skippedReason === 'run_superseded') {
         return emptyAggregateResult();
       }
+      abortSignal.throwIfAborted();
       await this.runRepo.completeAggregation({
         runId: input.runId,
         importedArtifactCount: 0,
@@ -96,14 +143,25 @@ export class KnowledgeSpaceAggregatorService {
     try {
       completion = knowledgeSpaceAggregateSchema.parse(
         JSON.parse(
-          await this.provider.completeMerge({
-            system: buildAggregateSystemPrompt(),
-            prompt: buildAggregatePrompt(pages),
-          }),
+          await this.provider.completeMerge(
+            {
+              system: buildAggregateSystemPrompt(),
+              prompt: buildAggregatePrompt(pages),
+            },
+            { abortSignal },
+          ),
         ),
       );
     } catch (error) {
       if (error instanceof KnowledgeCompilerLlmError) throw error;
+      if (abortSignal.aborted) {
+        throw new KnowledgeCompilerLlmError(
+          'timeout',
+          'Knowledge aggregate phase timed out.',
+          true,
+          abortSignal.reason ?? error,
+        );
+      }
       throw new KnowledgeCompilerLlmError(
         'invalid_output',
         'Knowledge compiler returned invalid aggregate output.',
@@ -142,6 +200,7 @@ export class KnowledgeSpaceAggregatorService {
         text: '',
         references: [],
       })),
+      operationBudget: new KnowledgeOperationBudget({ signal: abortSignal }),
     };
     const result = await this.importService.importCompileResult({
       input: compileInput,
@@ -165,7 +224,9 @@ export class KnowledgeSpaceAggregatorService {
     await this.linkResolver.resolveSpace({
       workspaceId: input.workspaceId,
       spaceId: input.spaceId,
+      abortSignal,
     });
+    abortSignal.throwIfAborted();
     await this.runRepo.completeAggregation({
       runId: input.runId,
       importedArtifactCount: result.importedArtifactCount,

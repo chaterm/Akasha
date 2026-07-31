@@ -39,6 +39,8 @@ import { KnowledgeSourceExporterService } from './knowledge-source-exporter.serv
 import {
   buildKnowledgeCompileCoalesceKey,
   buildKnowledgeCompilePageJobId,
+  buildKnowledgeRebuildEmbeddingsContinuationJobId,
+  buildKnowledgeReindexAccessContinuationJobId,
   buildReviewDiscoverJobId,
   buildReviewNegotiateJobId,
   KNOWLEDGE_COMPILE_DELAY_MS,
@@ -63,6 +65,12 @@ import {
 } from './knowledge-effective-hash';
 import { KnowledgeVectorIndexService } from './knowledge-vector-index.service';
 import { KnowledgeSourceSnapshot } from '../types/source-snapshot.types';
+import { EnvironmentService } from '../../../integrations/environment/environment.service';
+import {
+  KnowledgeComplexityLimitError,
+  KnowledgeOperationBudget,
+  createBoundedAbortSignal,
+} from './knowledge-operation-budget';
 
 type ReviewProcessorJobResult = {
   type: 'review-discover' | 'review-negotiate';
@@ -76,6 +84,8 @@ type ReviewProcessorJobResult = {
 
 type KnowledgeEmbeddingRebuildJobResult = {
   rebuiltChunkCount: number;
+  failedChunkIds?: string[];
+  nextCursor?: string;
 };
 
 class SourceChangedDuringCompilationError extends Error {
@@ -117,6 +127,7 @@ export class KnowledgeTextJobHandler {
     private readonly spaceAggregator: KnowledgeSpaceAggregatorService,
     private readonly imageEnrichment: KnowledgeImageEnrichmentService,
     private readonly vectorIndex: KnowledgeVectorIndexService = undefined as never,
+    private readonly environmentService: EnvironmentService = undefined as never,
   ) {}
 
   async handle(
@@ -270,6 +281,13 @@ export class KnowledgeTextJobHandler {
           });
           return noOpPageResult(data, startedAt);
         }
+        const pageDeadline = createBoundedAbortSignal(
+          undefined,
+          this.environmentService?.getKnowledgePageDeadlineMs?.() ?? 900_000,
+        );
+        const operationBudget = new KnowledgeOperationBudget({
+          signal: pageDeadline.signal,
+        });
         try {
           if (data.spaceRunId) {
             await this.spaceCompilation.markPageRunning({
@@ -292,6 +310,7 @@ export class KnowledgeTextJobHandler {
             workspaceId: data.workspaceId,
             spaceId: data.spaceId,
             sourcePageIds,
+            abortSignal: pageDeadline.signal,
           });
           if (
             sources.length !== 1 ||
@@ -528,6 +547,7 @@ export class KnowledgeTextJobHandler {
                     ),
                 }
               : {}),
+            operationBudget,
           };
           const compileResult = await this.compiler.compileSpace(compileInput);
           await this.compilationRepo.updateStage({
@@ -540,6 +560,7 @@ export class KnowledgeTextJobHandler {
             workspaceId: data.workspaceId,
             spaceId: data.spaceId,
             sourcePageIds,
+            abortSignal: pageDeadline.signal,
           });
           if (!isSameSourceSnapshot(exportedSource, latestSources[0])) {
             throw new SourceChangedDuringCompilationError();
@@ -636,7 +657,9 @@ export class KnowledgeTextJobHandler {
             });
             return noOpPageResult(data, startedAt);
           }
-          const failure = classifyCompilationFailure(error);
+          const failure = pageDeadline.signal.aborted
+            ? pageTimeoutFailure()
+            : classifyCompilationFailure(error);
           this.logProviderFailure(error, {
             workspaceId: data.workspaceId,
             spaceId: data.spaceId,
@@ -667,10 +690,23 @@ export class KnowledgeTextJobHandler {
             throw new UnrecoverableError(failure.message);
           }
           throw error;
+        } finally {
+          pageDeadline.dispose();
         }
       }
       case QueueJob.KNOWLEDGE_MERGE_PAGE_IMAGES: {
-        return this.handlePageImageMerge(job);
+        const pageDeadline = createBoundedAbortSignal(
+          undefined,
+          this.environmentService?.getKnowledgePageDeadlineMs?.() ?? 900_000,
+        );
+        const operationBudget = new KnowledgeOperationBudget({
+          signal: pageDeadline.signal,
+        });
+        try {
+          return await this.handlePageImageMerge(job, operationBudget);
+        } finally {
+          pageDeadline.dispose();
+        }
       }
       case QueueJob.KNOWLEDGE_REINDEX_ACCESS: {
         const data = job.data as IKnowledgeReindexAccessJob;
@@ -680,23 +716,67 @@ export class KnowledgeTextJobHandler {
             sourcePageIds: uniqueValues(data.sourcePageIds),
           });
         } else if (data.spaceId) {
-          const sourcePageIds = await this.findSourcePageIdsForSpace({
-            workspaceId: data.workspaceId,
-            spaceId: data.spaceId,
-          });
+          const sourcePageIds =
+            await this.sourceRepo.findSourcePageIdsBySpaceBatch({
+              workspaceId: data.workspaceId,
+              spaceId: data.spaceId,
+              ...(data.afterSourcePageId
+                ? { afterSourcePageId: data.afterSourcePageId }
+                : {}),
+              limit: 200,
+            });
           await this.accessIndexer.reindexSourcePages({
             workspaceId: data.workspaceId,
             sourcePageIds,
           });
+          if (sourcePageIds.length === 200) {
+            const afterSourcePageId = sourcePageIds[sourcePageIds.length - 1];
+            await this.textQueue.add(
+              QueueJob.KNOWLEDGE_REINDEX_ACCESS,
+              {
+                workspaceId: data.workspaceId,
+                spaceId: data.spaceId,
+                afterSourcePageId,
+              } satisfies IKnowledgeReindexAccessJob,
+              {
+                jobId: buildKnowledgeReindexAccessContinuationJobId({
+                  workspaceId: data.workspaceId,
+                  spaceId: data.spaceId,
+                  afterSourcePageId,
+                }),
+              },
+            );
+          }
         }
         break;
       }
       case QueueJob.KNOWLEDGE_REBUILD_EMBEDDINGS: {
         const data = job.data as IKnowledgeRebuildEmbeddingsJob;
-        return this.vectorIndex.rebuildSpaceEmbeddings({
+        const result = await this.vectorIndex.rebuildSpaceEmbeddings({
           workspaceId: data.workspaceId,
           spaceId: data.spaceId,
+          ...(data.afterChunkId ? { afterChunkId: data.afterChunkId } : {}),
         });
+        if (result.nextCursor) {
+          await this.textQueue.add(
+            QueueJob.KNOWLEDGE_REBUILD_EMBEDDINGS,
+            {
+              workspaceId: data.workspaceId,
+              spaceId: data.spaceId,
+              afterChunkId: result.nextCursor,
+            } satisfies IKnowledgeRebuildEmbeddingsJob,
+            {
+              attempts: 3,
+              backoff: { type: 'exponential', delay: 5_000 },
+              jobId: buildKnowledgeRebuildEmbeddingsContinuationJobId({
+                workspaceId: data.workspaceId,
+                spaceId: data.spaceId,
+                afterChunkId: result.nextCursor,
+              }),
+            },
+          );
+        }
+        return result;
       }
       case QueueJob.KNOWLEDGE_MARK_SOURCES_STALE: {
         const data = job.data as IKnowledgeMarkSourcesStaleJob;
@@ -829,6 +909,7 @@ export class KnowledgeTextJobHandler {
 
   private async handlePageImageMerge(
     job: Job,
+    operationBudget: KnowledgeOperationBudget,
   ): Promise<KnowledgeCompileJobResult> {
     const data = job.data as IKnowledgeMergePageImagesJob;
     const startedAt = Date.now();
@@ -851,6 +932,7 @@ export class KnowledgeTextJobHandler {
       workspaceId: data.workspaceId,
       spaceId: data.spaceId,
       sourcePageIds: [data.sourcePageId],
+      abortSignal: operationBudget.signal,
     });
     const exportedSource = sources[0];
     if (!isSameImageMergeSnapshot(data, exportedSource)) {
@@ -922,12 +1004,14 @@ export class KnowledgeTextJobHandler {
         compileMode: 'pages' as const,
         catalog,
         sources: [source],
+        operationBudget,
       };
       const compileResult = await this.compiler.compileSpace(compileInput);
       const latest = await this.sourceExporter.exportPageSources({
         workspaceId: data.workspaceId,
         spaceId: data.spaceId,
         sourcePageIds: [data.sourcePageId],
+        abortSignal: operationBudget.signal,
       });
       if (!isSameImageMergeSnapshot(data, latest[0])) {
         throw new SourceChangedDuringCompilationError();
@@ -1030,7 +1114,9 @@ export class KnowledgeTextJobHandler {
         }
         return noOpMergeResult(data, startedAt);
       }
-      const failure = classifyCompilationFailure(error);
+      const failure = operationBudget.signal?.aborted
+        ? pageTimeoutFailure()
+        : classifyCompilationFailure(error);
       await this.compilationRepo.failAttempt({
         workspaceId: data.workspaceId,
         sourcePageId: data.sourcePageId,
@@ -1424,10 +1510,33 @@ function classifyCompilationFailure(error: unknown): {
       retryable: error.retryable,
     };
   }
+  if (error instanceof KnowledgeComplexityLimitError) {
+    return {
+      code: error.code,
+      message: error.message,
+      retryable: error.retryable,
+    };
+  }
+  if (error instanceof Error && error.name === 'TimeoutError') {
+    return pageTimeoutFailure();
+  }
   return {
     code: 'compile_failed',
     message: 'Knowledge compilation failed.',
     retryable: true,
+  };
+}
+
+function pageTimeoutFailure(): {
+  code: string;
+  message: string;
+  retryable: boolean;
+  stage?: 'image_enrichment';
+} {
+  return {
+    code: 'page_timeout',
+    message: 'Knowledge page execution deadline exceeded.',
+    retryable: false,
   };
 }
 

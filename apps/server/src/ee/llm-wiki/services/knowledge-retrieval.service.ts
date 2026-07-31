@@ -70,6 +70,7 @@ export class KnowledgeRetrievalService {
     query: string;
     spaceIds: string[];
     candidateLimit?: number;
+    abortSignal?: AbortSignal;
   }): Promise<KnowledgeRetrievalResult> {
     const candidateLimit = input.candidateLimit ?? 20;
     const user = await this.userRepo.findById(input.userId, input.workspaceId);
@@ -86,7 +87,11 @@ export class KnowledgeRetrievalService {
       return emptyResult();
     }
 
-    const queryEmbedding = await this.embeddingProvider.embedQuery(input.query);
+    const queryEmbedding = input.abortSignal
+      ? await this.embeddingProvider.embedQuery(input.query, {
+          abortSignal: input.abortSignal,
+        })
+      : await this.embeddingProvider.embedQuery(input.query);
     const queryEmbeddingAvailable = Boolean(queryEmbedding);
     const sourceCandidateLimit = candidateLimit * 10;
     const groupIds = await this.groupUserRepo.getUserGroupIds(input.userId);
