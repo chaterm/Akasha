@@ -22,7 +22,7 @@ describe('KnowledgeSpaceResetService', () => {
       getJob: jest.fn().mockResolvedValue(undefined),
     };
     const runRepo = {
-      forceResetAndCreateRun: jest.fn().mockResolvedValue({
+      forceResetAndRequestRun: jest.fn().mockResolvedValue({
         reset: true,
         generation: 8,
         run: { id: 'force-run', mode: 'force_rebuild' },
@@ -42,36 +42,17 @@ describe('KnowledgeSpaceResetService', () => {
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
         confirmationSpaceName: 'Exact Space',
-        sources: [
-          {
-            workspaceId: 'workspace-1',
-            spaceId: 'space-1',
-            sourcePageId: 'page-1',
-            sourceVersion: 'v1',
-            contentHash: 'sha256:page',
-            title: 'Page',
-            text: 'content',
-            references: [],
-            images: [{ attachmentId: 'attachment-1' }] as never,
-          },
-        ],
       }),
     ).resolves.toEqual({
       generation: 8,
       run: { id: 'force-run', mode: 'force_rebuild' },
     });
 
-    expect(runRepo.forceResetAndCreateRun).toHaveBeenCalledWith(
+    expect(runRepo.forceResetAndRequestRun).toHaveBeenCalledWith(
       expect.objectContaining({
         confirmationSpaceName: 'Exact Space',
-        catalogSnapshot: [],
-        catalogHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
-        sources: [
-          expect.objectContaining({
-            sourcePageId: 'page-1',
-            expectedImageCount: 1,
-          }),
-        ],
+        compilerVersion: expect.any(String),
+        promptVersion: expect.any(String),
       }),
     );
     expect(queue.getJob).toHaveBeenCalledTimes(2);
@@ -87,7 +68,7 @@ describe('KnowledgeSpaceResetService', () => {
   ])('rejects %s without Redis or dispatch', async (reason, errorType) => {
     const queue = { getJob: jest.fn() };
     const runRepo = {
-      forceResetAndCreateRun: jest.fn().mockResolvedValue({
+      forceResetAndRequestRun: jest.fn().mockResolvedValue({
         reset: false,
         reason,
       }),
@@ -105,7 +86,6 @@ describe('KnowledgeSpaceResetService', () => {
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
         confirmationSpaceName: 'Wrong',
-        sources: [],
       }),
     ).rejects.toBeInstanceOf(errorType);
     expect(queue.getJob).not.toHaveBeenCalled();

@@ -75,6 +75,34 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     await this.dispatchPending();
   }
 
+  async requestRuns(
+    requests: Array<{
+      workspaceId: string;
+      spaceId: string;
+      trigger: string;
+      confirmationSpaceName?: string;
+      removedSourcePageIds?: string[];
+      scanRemovedSources?: boolean;
+    }>,
+  ) {
+    const results = await this.runRepo.requestRuns({
+      requests,
+      compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+      promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+    });
+    for (const result of results) {
+      if (result.disposition !== 'rejected') continue;
+      if (result.reason === 'space_name_mismatch') {
+        throw new ConflictException(
+          'Space name confirmation no longer matches.',
+        );
+      }
+      throw new NotFoundException('Space not found.');
+    }
+    await this.dispatchPending();
+    return results;
+  }
+
   async startSpaceRun(input: {
     workspaceId: string;
     spaceId: string;

@@ -21,8 +21,49 @@ export type KnowledgeSpaceCompileRunPhase =
   | 'text'
   | 'initial_aggregate'
   | 'images'
+  | 'image_merge'
   | 'final_aggregate'
   | 'complete';
+
+export type SpaceRunRequestDisposition =
+  | 'created'
+  | 'coalesced'
+  | 'rerun_requested';
+
+export interface SpaceRunRequest {
+  workspaceId: string;
+  spaceId: string;
+  trigger: string;
+  confirmationSpaceName?: string;
+  removedSourcePageIds?: string[];
+  scanRemovedSources?: boolean;
+}
+
+export interface RequestRunsInput {
+  requests: SpaceRunRequest[];
+  compilerVersion: string;
+  promptVersion: string;
+}
+
+type ActiveRunForRequest = {
+  status: string;
+  phase: string;
+  initializedAt: Date | null;
+};
+
+export function decideSpaceRunRequest(
+  activeRun: ActiveRunForRequest | undefined,
+): SpaceRunRequestDisposition {
+  if (!activeRun) return 'created';
+  if (
+    activeRun.status === 'queued' &&
+    activeRun.phase === 'text' &&
+    activeRun.initializedAt === null
+  ) {
+    return 'coalesced';
+  }
+  return 'rerun_requested';
+}
 
 export type KnowledgeSpaceCompileRunPageImageStatus =
   | 'not_required'
@@ -61,6 +102,322 @@ const NONTERMINAL_RUN_STATUSES: KnowledgeSpaceCompileRunStatus[] = [
 @Injectable()
 export class KnowledgeSpaceCompilationRepo {
   constructor(@InjectKysely() private readonly db: KyselyDB) {}
+
+  async requestRuns(input: RequestRunsInput) {
+    const results = [];
+    for (const request of input.requests) {
+      results.push(
+        await executeTx(this.db, async (trx) => {
+          const now = new Date();
+          const space = await trx
+            .selectFrom('spaces')
+            .select(['id', 'name', 'knowledgeGeneration'])
+            .where('id', '=', request.spaceId)
+            .where('workspaceId', '=', request.workspaceId)
+            .where('deletedAt', 'is', null)
+            .forUpdate()
+            .executeTakeFirst();
+          if (!space) {
+            return {
+              disposition: 'rejected' as const,
+              reason: 'space_not_found' as const,
+              run: null,
+            };
+          }
+          if (
+            request.confirmationSpaceName !== undefined &&
+            request.confirmationSpaceName !== space.name
+          ) {
+            return {
+              disposition: 'rejected' as const,
+              reason: 'space_name_mismatch' as const,
+              run: null,
+            };
+          }
+
+          let activeRun = await trx
+            .selectFrom('knowledgeSpaceCompileRuns')
+            .selectAll()
+            .where('workspaceId', '=', request.workspaceId)
+            .where('spaceId', '=', request.spaceId)
+            .where('status', 'in', NONTERMINAL_RUN_STATUSES)
+            .forUpdate()
+            .executeTakeFirst();
+
+          const removedSourcePageIds = await this.resolveRemovedSourcePageIds(
+            trx,
+            request,
+          );
+          if (removedSourcePageIds.length > 0) {
+            activeRun = await this.invalidateRemovedSourcesAndReplanInTx(
+              trx,
+              request,
+              removedSourcePageIds,
+              activeRun,
+              now,
+            );
+          }
+
+          const disposition = decideSpaceRunRequest(activeRun);
+          if (disposition === 'coalesced') {
+            return { disposition, run: activeRun! };
+          }
+          if (disposition === 'rerun_requested') {
+            const run = await trx
+              .updateTable('knowledgeSpaceCompileRuns')
+              .set({ rerunRequested: true, updatedAt: now })
+              .where('id', '=', activeRun!.id)
+              .where('status', 'in', NONTERMINAL_RUN_STATUSES)
+              .returningAll()
+              .executeTakeFirst();
+            return { disposition, run: run ?? activeRun! };
+          }
+
+          const run = await trx
+            .insertInto('knowledgeSpaceCompileRuns')
+            .values({
+              workspaceId: request.workspaceId,
+              spaceId: request.spaceId,
+              trigger: request.trigger,
+              mode: 'incremental',
+              knowledgeGeneration: space.knowledgeGeneration,
+              phase: 'text',
+              status: 'queued',
+              expectedPageCount: 0,
+              compilerVersion: input.compilerVersion,
+              promptVersion: input.promptVersion,
+              catalogSnapshot: [] as JsonValue,
+              catalogHash: 'pending-initialization',
+              queuedAt: now,
+              spaceJobQueuedAt: now,
+              updatedAt: now,
+            })
+            .returningAll()
+            .executeTakeFirstOrThrow();
+          return { disposition, run };
+        }),
+      );
+    }
+    return results;
+  }
+
+  async requestRunsForSourcePages(input: {
+    workspaceId: string;
+    sourcePageIds: string[];
+    trigger: string;
+    removed: boolean;
+    compilerVersion: string;
+    promptVersion: string;
+  }) {
+    if (input.sourcePageIds.length === 0) return [];
+    const scopes = input.removed
+      ? await sql<{ sourcePageId: string; spaceId: string }>`
+          SELECT DISTINCT scope.source_page_id AS "sourcePageId",
+                          scope.space_id AS "spaceId"
+          FROM (
+            SELECT id AS source_page_id, space_id
+            FROM pages
+            WHERE workspace_id = ${input.workspaceId}
+              AND id IN (${sql.join(input.sourcePageIds)})
+            UNION
+            SELECT source_page_id, source_space_id AS space_id
+            FROM knowledge_sources
+            WHERE workspace_id = ${input.workspaceId}
+              AND source_page_id IN (${sql.join(input.sourcePageIds)})
+            UNION
+            SELECT source_page_id, space_id
+            FROM knowledge_artifact_contributions
+            WHERE workspace_id = ${input.workspaceId}
+              AND source_page_id IN (${sql.join(input.sourcePageIds)})
+          ) AS scope
+        `.execute(this.db)
+      : await sql<{ sourcePageId: string; spaceId: string }>`
+          SELECT id AS "sourcePageId", space_id AS "spaceId"
+          FROM pages
+          WHERE workspace_id = ${input.workspaceId}
+            AND id IN (${sql.join(input.sourcePageIds)})
+            AND deleted_at IS NULL
+        `.execute(this.db);
+    const pagesBySpace = new Map<string, string[]>();
+    for (const row of scopes.rows) {
+      const pages = pagesBySpace.get(row.spaceId) ?? [];
+      pages.push(row.sourcePageId);
+      pagesBySpace.set(row.spaceId, pages);
+    }
+    return this.requestRuns({
+      requests: [...pagesBySpace].map(([spaceId, sourcePageIds]) => ({
+        workspaceId: input.workspaceId,
+        spaceId,
+        trigger: input.trigger,
+        ...(input.removed
+          ? { removedSourcePageIds: [...new Set(sourcePageIds)] }
+          : {}),
+      })),
+      compilerVersion: input.compilerVersion,
+      promptVersion: input.promptVersion,
+    });
+  }
+
+  private async resolveRemovedSourcePageIds(
+    trx: KyselyTransaction,
+    request: SpaceRunRequest,
+  ): Promise<string[]> {
+    const explicit = [...new Set(request.removedSourcePageIds ?? [])];
+    if (!request.scanRemovedSources) return explicit;
+    const discovered = await sql<{ sourcePageId: string }>`
+      SELECT DISTINCT known.source_page_id AS "sourcePageId"
+      FROM (
+        SELECT source_page_id
+        FROM knowledge_sources
+        WHERE workspace_id = ${request.workspaceId}
+          AND source_space_id = ${request.spaceId}
+        UNION
+        SELECT source_page_id
+        FROM knowledge_artifact_contributions
+        WHERE workspace_id = ${request.workspaceId}
+          AND space_id = ${request.spaceId}
+      ) AS known
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM pages page
+        WHERE page.workspace_id = ${request.workspaceId}
+          AND page.space_id = ${request.spaceId}
+          AND page.id = known.source_page_id
+          AND page.deleted_at IS NULL
+      )
+    `.execute(trx);
+    return [
+      ...new Set([
+        ...explicit,
+        ...discovered.rows.map((row) => row.sourcePageId),
+      ]),
+    ];
+  }
+
+  private async invalidateRemovedSourcesAndReplanInTx(
+    trx: KyselyTransaction,
+    request: SpaceRunRequest,
+    removedSourcePageIds: string[],
+    activeRun:
+      | Awaited<ReturnType<KnowledgeSpaceCompilationRepo['findActiveRun']>>
+      | undefined,
+    now: Date,
+  ) {
+    await trx
+      .updateTable('knowledgeSources')
+      .set({ staleAt: now })
+      .where('workspaceId', '=', request.workspaceId)
+      .where('sourceSpaceId', '=', request.spaceId)
+      .where('sourcePageId', 'in', removedSourcePageIds)
+      .execute();
+
+    const affectedArtifacts = await trx
+      .selectFrom('knowledgeArtifactContributions')
+      .select('artifactId')
+      .distinct()
+      .where('workspaceId', '=', request.workspaceId)
+      .where('spaceId', '=', request.spaceId)
+      .where('sourcePageId', 'in', removedSourcePageIds)
+      .execute();
+    const overviews = await trx
+      .selectFrom('knowledgePages')
+      .select('id')
+      .where('workspaceId', '=', request.workspaceId)
+      .where('spaceId', '=', request.spaceId)
+      .where('compileScope', '=', 'space')
+      .where('pageType', '=', 'overview')
+      .where('staleAt', 'is', null)
+      .execute();
+    const artifactIds = [
+      ...new Set([
+        ...affectedArtifacts.map((row) => row.artifactId),
+        ...overviews.map((row) => row.id),
+      ]),
+    ];
+    if (artifactIds.length > 0) {
+      await trx
+        .updateTable('knowledgePages')
+        .set({ staleAt: now })
+        .where('workspaceId', '=', request.workspaceId)
+        .where('spaceId', '=', request.spaceId)
+        .where('id', 'in', artifactIds)
+        .execute();
+      for (const [table, ownerColumn] of [
+        ['knowledgeParentSections', 'knowledgePageId'],
+        ['knowledgeClaims', 'knowledgePageId'],
+        ['knowledgeChunks', 'knowledgePageId'],
+        ['knowledgeLinks', 'fromKnowledgePageId'],
+        ['knowledgeGraphEdges', 'fromKnowledgePageId'],
+      ] as const) {
+        await trx
+          .updateTable(table)
+          .set({ staleAt: now })
+          .where('workspaceId', '=', request.workspaceId)
+          .where(ownerColumn, 'in', artifactIds)
+          .execute();
+      }
+    }
+
+    if (!activeRun?.initializedAt) return activeRun;
+    const runPages = await trx
+      .selectFrom('knowledgeSpaceCompileRunPages')
+      .select('id')
+      .where('runId', '=', activeRun.id)
+      .forUpdate()
+      .execute();
+    if (runPages.length > 0) {
+      await trx
+        .selectFrom('knowledgeSpaceCompileRunImages')
+        .select('id')
+        .where('runId', '=', activeRun.id)
+        .forUpdate()
+        .execute();
+      await trx
+        .deleteFrom('knowledgeSpaceCompileRunImages')
+        .where('runId', '=', activeRun.id)
+        .execute();
+      await trx
+        .deleteFrom('knowledgeSpaceCompileRunPages')
+        .where('runId', '=', activeRun.id)
+        .execute();
+    }
+    return trx
+      .updateTable('knowledgeSpaceCompileRuns')
+      .set({
+        status: 'queued',
+        phase: 'text',
+        initializedAt: null,
+        expectedPageCount: 0,
+        succeededPageCount: 0,
+        failedPageCount: 0,
+        skippedPageCount: 0,
+        importedArtifactCount: 0,
+        quarantinedArtifactCount: 0,
+        catalogSnapshot: [] as JsonValue,
+        catalogHash: 'pending-initialization',
+        aggregateJobId: null,
+        aggregateStartedAt: null,
+        startedAt: null,
+        finishedAt: null,
+        errorCode: null,
+        errorMessage: null,
+        spaceJobId: null,
+        spaceJobDispatchedAt: null,
+        spaceJobQueuedAt: now,
+        spaceJobRecoveryCount: 0,
+        executionToken: null,
+        executionLeaseExpiresAt: null,
+        workerId: null,
+        heartbeatAt: null,
+        lastYieldAt: null,
+        lastYieldReason: null,
+        updatedAt: now,
+      })
+      .where('id', '=', activeRun.id)
+      .where('status', 'in', NONTERMINAL_RUN_STATUSES)
+      .returningAll()
+      .executeTakeFirst();
+  }
 
   async createRun(input: {
     workspaceId: string;
@@ -245,6 +602,7 @@ export class KnowledgeSpaceCompilationRepo {
           promptVersion: input.promptVersion,
           catalogSnapshot: input.catalogSnapshot,
           catalogHash: input.catalogHash,
+          initializedAt: now,
           queuedAt: input.requestedAt ?? now,
           startedAt: completesWithoutWork ? now : null,
           finishedAt: completesWithoutWork ? now : null,
@@ -325,6 +683,7 @@ export class KnowledgeSpaceCompilationRepo {
       expectedImageCount?: number;
       targetEffectiveKnowledgeHash?: string | null;
     }>;
+    deferInitialization?: boolean;
   }) {
     return executeTx(this.db, async (trx) => {
       const now = new Date();
@@ -506,18 +865,30 @@ export class KnowledgeSpaceCompilationRepo {
           mode: 'force_rebuild',
           knowledgeGeneration: generation,
           phase: 'text',
-          status: input.sources.length === 0 ? 'aggregate_pending' : 'queued',
-          expectedPageCount: input.sources.length,
+          status: input.deferInitialization
+            ? 'queued'
+            : input.sources.length === 0
+              ? 'aggregate_pending'
+              : 'queued',
+          expectedPageCount: input.deferInitialization
+            ? 0
+            : input.sources.length,
           compilerVersion: input.compilerVersion,
           promptVersion: input.promptVersion,
-          catalogSnapshot: input.catalogSnapshot,
-          catalogHash: input.catalogHash,
+          catalogSnapshot: input.deferInitialization
+            ? ([] as JsonValue)
+            : input.catalogSnapshot,
+          catalogHash: input.deferInitialization
+            ? 'pending-initialization'
+            : input.catalogHash,
+          initializedAt: input.deferInitialization ? null : now,
           queuedAt: now,
+          spaceJobQueuedAt: now,
           updatedAt: now,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
-      if (input.sources.length > 0) {
+      if (!input.deferInitialization && input.sources.length > 0) {
         await trx
           .insertInto('knowledgeSpaceCompileRunPages')
           .values(
@@ -563,6 +934,23 @@ export class KnowledgeSpaceCompilationRepo {
         supersededRunIds: oldRunIds,
         supersededJobIds: [...new Set(supersededJobIds)],
       };
+    });
+  }
+
+  async forceResetAndRequestRun(input: {
+    workspaceId: string;
+    spaceId: string;
+    confirmationSpaceName: string;
+    trigger: string;
+    compilerVersion: string;
+    promptVersion: string;
+  }) {
+    return this.forceResetAndCreateRun({
+      ...input,
+      catalogSnapshot: [] as JsonValue,
+      catalogHash: 'pending-initialization',
+      sources: [],
+      deferInitialization: true,
     });
   }
 
@@ -657,6 +1045,7 @@ export class KnowledgeSpaceCompilationRepo {
   async findLatestRunForAggregateReuse(input: {
     workspaceId: string;
     spaceId: string;
+    currentRunId?: string;
   }) {
     return this.db
       .selectFrom('knowledgeSpaceCompileRuns as run')
@@ -677,8 +1066,21 @@ export class KnowledgeSpaceCompilationRepo {
       ])
       .where('run.workspaceId', '=', input.workspaceId)
       .where('run.spaceId', '=', input.spaceId)
+      .where('run.status', 'in', ['succeeded', 'partial'])
+      .where('run.phase', '=', 'complete')
+      .$if(input.currentRunId !== undefined, (query) =>
+        query.where('run.id', '!=', input.currentRunId!),
+      )
       .orderBy('run.createdAt', 'desc')
       .executeTakeFirst();
+  }
+
+  async findLatestCompletedRunForAggregateReuse(input: {
+    workspaceId: string;
+    spaceId: string;
+    currentRunId: string;
+  }) {
+    return this.findLatestRunForAggregateReuse(input);
   }
 
   async hasActiveRun(input: {

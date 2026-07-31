@@ -220,23 +220,16 @@ export class LlmWikiController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     this.assertKnowledgeOperationAllowed(user, workspace);
-    const sources = await this.sourceExporter.exportSpaceSources({
-      workspaceId: workspace.id,
-      spaceId,
-    });
-    const run = await this.spaceCompilation.startSpaceRun({
-      workspaceId: workspace.id,
-      spaceId,
-      trigger: 'manual_compile',
-      mode: 'incremental',
-      confirmationSpaceName: dto.confirmationSpaceName,
-      sources,
-    });
-    if (!run) {
-      throw new ConflictException(
-        'A newer knowledge update has already replaced this request.',
-      );
-    }
+    const [request] = await this.spaceCompilation.requestRuns([
+      {
+        workspaceId: workspace.id,
+        spaceId,
+        trigger: 'manual_compile',
+        confirmationSpaceName: dto.confirmationSpaceName,
+        scanRemovedSources: true,
+      },
+    ]);
+    const run = request.run!;
     const result = {
       runId: run.id,
       mode: 'incremental' as const,
@@ -255,15 +248,10 @@ export class LlmWikiController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     this.assertKnowledgeOperationAllowed(user, workspace);
-    const sources = await this.sourceExporter.exportSpaceSources({
-      workspaceId: workspace.id,
-      spaceId,
-    });
     const reset = await this.spaceReset.forceRebuild({
       workspaceId: workspace.id,
       spaceId,
       confirmationSpaceName: dto.confirmationSpaceName,
-      sources,
     });
     const result = {
       runId: reset.run.id,

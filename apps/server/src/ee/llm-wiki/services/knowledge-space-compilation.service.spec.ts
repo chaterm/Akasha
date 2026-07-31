@@ -18,6 +18,43 @@ import { KnowledgeArtifactCatalogService } from './knowledge-artifact-catalog.se
 import { KnowledgeSpaceCompilationService } from './knowledge-space-compilation.service';
 
 describe('KnowledgeSpaceCompilationService', () => {
+  it('requests a queued run without exporter, catalog, image, or LLM planning', async () => {
+    const { service, repo, catalog, sourceExporter, imageQueue, queue } =
+      createService({
+        pendingPages: [],
+        pendingImages: [],
+        pendingMerges: [],
+        pendingAggregates: [],
+      });
+    repo.requestRuns.mockResolvedValue([
+      {
+        disposition: 'created',
+        run: { id: 'queued-run', status: 'queued', initializedAt: null },
+      },
+    ]);
+
+    await expect(
+      service.requestRuns([
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          trigger: 'manual_compile',
+          scanRemovedSources: true,
+        },
+      ]),
+    ).resolves.toEqual([expect.objectContaining({ disposition: 'created' })]);
+
+    expect(repo.requestRuns).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requests: [expect.objectContaining({ spaceId: 'space-1' })],
+      }),
+    );
+    expect(catalog.snapshot).not.toHaveBeenCalled();
+    expect(sourceExporter.exportPageSources).not.toHaveBeenCalled();
+    expect(queue.add).not.toHaveBeenCalled();
+    expect(imageQueue.add).not.toHaveBeenCalled();
+  });
+
   it('persists a catalog/source snapshot and dispatches idempotent page jobs', async () => {
     const { service, repo, queue, compilationRepo, catalog } = createService();
 
@@ -988,6 +1025,7 @@ function createService(
     },
   ];
   const repo = {
+    requestRuns: jest.fn().mockResolvedValue([]),
     createRun: jest.fn().mockImplementation(async (input) => {
       if (overrides.executeRetirement && input.retireRemovedSources) {
         await input.retireRemovedSources({ transaction: true });
@@ -1130,6 +1168,7 @@ function createService(
     capsuleRepo,
     contributionRepo,
     environmentService,
+    sourceExporter,
   };
 }
 

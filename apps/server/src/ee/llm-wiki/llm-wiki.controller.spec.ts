@@ -979,11 +979,16 @@ describe('LlmWikiController', () => {
         ]),
       };
       const spaceCompilation = {
-        startSpaceRun: jest.fn().mockResolvedValue({
-          id: 'run-1',
-          mode: 'incremental',
-          knowledgeGeneration: 4,
-        }),
+        requestRuns: jest.fn().mockResolvedValue([
+          {
+            disposition: 'created',
+            run: {
+              id: 'run-1',
+              mode: 'incremental',
+              knowledgeGeneration: 4,
+            },
+          },
+        ]),
       };
       const knowledgeQueue = { add: jest.fn() };
       const auditService = { log: jest.fn() };
@@ -1007,15 +1012,15 @@ describe('LlmWikiController', () => {
         knowledgeGeneration: 4,
       });
 
-      expect(spaceCompilation.startSpaceRun).toHaveBeenCalledWith(
+      expect(spaceCompilation.requestRuns).toHaveBeenCalledWith([
         expect.objectContaining({
           workspaceId: 'workspace-1',
           spaceId: '11111111-1111-4111-8111-111111111111',
-          mode: 'incremental',
           confirmationSpaceName: 'AIM-运维-公共文档',
-          sources: expect.any(Array),
+          scanRemovedSources: true,
         }),
-      );
+      ]);
+      expect(sourceExporter.exportSpaceSources).not.toHaveBeenCalled();
       expect(knowledgeQueue.add).not.toHaveBeenCalled();
       expect(auditService.log).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1040,7 +1045,7 @@ describe('LlmWikiController', () => {
         exportSpaceSources: jest.fn().mockResolvedValue([]),
       };
       const spaceCompilation = {
-        startSpaceRun: jest.fn().mockRejectedValue(mismatch),
+        requestRuns: jest.fn().mockRejectedValue(mismatch),
       };
       const knowledgeQueue = { add: jest.fn() };
       const auditService = { log: jest.fn() };
@@ -1104,6 +1109,7 @@ describe('LlmWikiController', () => {
           confirmationSpaceName: 'AIM-运维-公共文档',
         }),
       );
+      expect(sourceExporter.exportSpaceSources).not.toHaveBeenCalled();
       expect(knowledgeQueue.add).not.toHaveBeenCalled();
     });
 
@@ -1194,6 +1200,7 @@ function createController(
       ...overrides.sourceExporter,
     } as unknown as KnowledgeSourceExporterService,
     {
+      requestRuns: jest.fn(),
       startSpaceRun: jest.fn(),
       hasActiveRun: jest.fn().mockResolvedValue(false),
       queuePageRetry: jest.fn(),
