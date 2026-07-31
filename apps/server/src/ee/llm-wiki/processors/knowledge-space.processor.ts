@@ -27,11 +27,20 @@ export class KnowledgeSpaceProcessor
   }
 
   async process(job: Job) {
-    if (job.name !== QueueJob.KNOWLEDGE_COMPILE_SPACE_TEXT) {
+    if (
+      ![
+        QueueJob.KNOWLEDGE_COMPILE_SPACE_TEXT,
+        QueueJob.KNOWLEDGE_MERGE_SPACE_IMAGES,
+      ].includes(job.name as QueueJob)
+    ) {
       throw new Error(`Unsupported Knowledge Space job ${job.name}.`);
     }
     const data = job.data as IKnowledgeSpaceSliceJob;
-    return this.runner.runTextSlice(
+    const runSlice =
+      job.name === QueueJob.KNOWLEDGE_MERGE_SPACE_IMAGES
+        ? this.runner.runImageMergeSlice.bind(this.runner)
+        : this.runner.runTextSlice.bind(this.runner);
+    return runSlice(
       {
         ...data,
         spaceJobId: String(job.id),

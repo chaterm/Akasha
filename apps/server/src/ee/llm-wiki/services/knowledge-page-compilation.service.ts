@@ -69,6 +69,22 @@ export interface ImagePageMergeInput {
   compileTaskId: string;
   finalAttempt: boolean;
   startedAt?: number;
+  execution?: ImagePageExecutionContext;
+}
+
+export interface ImagePageExecutionContext {
+  isActive(): Promise<boolean>;
+  completePage(input: {
+    status: 'failed' | 'skipped';
+    errorCode?: string | null;
+    errorMessage?: string | null;
+  }): Promise<unknown>;
+  catalog(): Promise<KnowledgeArtifactCatalogEntry[]>;
+  publicationGuard(trx: KyselyTransaction): Promise<boolean>;
+  publicationComplete(
+    trx: KyselyTransaction,
+    effectiveKnowledgeHash: string,
+  ): Promise<boolean>;
 }
 
 class SourceChangedDuringCompilationError extends Error {
@@ -457,7 +473,11 @@ export class KnowledgePageCompilationService {
     const operationBudget = new KnowledgeOperationBudget({
       signal: abortSignal,
     });
-    if (data.spaceRunId) {
+    if (input.execution) {
+      if (!(await input.execution.isActive())) {
+        return { outcome: 'noop', result: noOpMergeResult(data, startedAt) };
+      }
+    } else if (data.spaceRunId) {
       const accepted = await this.spaceCompilation.beginPageMerge({
         runId: data.spaceRunId,
         sourcePageId: data.sourcePageId,
@@ -480,10 +500,14 @@ export class KnowledgePageCompilationService {
       abortSignal,
     });
     const exportedSource = sources[0];
-    if (!isSameImageMergeSnapshot(data, exportedSource)) {
-      if (data.spaceRunId) {
-        await this.spaceCompilation.failPageMerge(mergeRunIdentity(data));
-      }
+    if (
+      !isSameImageMergeSnapshot(data, exportedSource, Boolean(input.execution))
+    ) {
+      await this.completeImageMergePage(input, {
+        status: 'failed',
+        errorCode: 'source_changed',
+        errorMessage: 'Page source or frozen image snapshot changed.',
+      });
       return { outcome: 'noop', result: noOpMergeResult(data, startedAt) };
     }
 
@@ -501,7 +525,10 @@ export class KnowledgePageCompilationService {
     });
 
     try {
-      const ready = await this.imageEnrichment.readReadySource(exportedSource);
+      const frozenSource = input.execution
+        ? { ...exportedSource, images: data.images }
+        : exportedSource;
+      const ready = await this.imageEnrichment.readReadySource(frozenSource);
       const effectiveKnowledgeHash = buildEffectiveKnowledgeHash({
         sourceContentHash: exportedSource.contentHash,
         compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
@@ -510,7 +537,8 @@ export class KnowledgePageCompilationService {
       });
       if (
         ready.readyImages.length === 0 ||
-        effectiveKnowledgeHash !== data.effectiveKnowledgeHash
+        (!input.execution &&
+          effectiveKnowledgeHash !== data.effectiveKnowledgeHash)
       ) {
         await this.compilationRepo.skipAttempt({
           workspaceId: data.workspaceId,
@@ -519,24 +547,28 @@ export class KnowledgePageCompilationService {
           reasonCode: 'image_snapshot_changed',
           reasonMessage: 'Page image knowledge changed before merge.',
         });
-        if (data.spaceRunId) {
-          await this.spaceCompilation.failPageMerge(mergeRunIdentity(data));
-        }
+        await this.completeImageMergePage(input, {
+          status: 'skipped',
+          errorCode: 'image_snapshot_changed',
+          errorMessage: 'Page image knowledge changed before merge.',
+        });
         return { outcome: 'noop', result: noOpMergeResult(data, startedAt) };
       }
       const source = { ...ready.source, effectiveKnowledgeHash };
-      const catalog = data.spaceRunId
-        ? await this.spaceCompilation.catalogForPage({
-            runId: data.spaceRunId,
-            workspaceId: data.workspaceId,
-            spaceId: data.spaceId,
-          })
-        : (
-            await this.artifactCatalog.snapshot({
+      const catalog = input.execution
+        ? await input.execution.catalog()
+        : data.spaceRunId
+          ? await this.spaceCompilation.catalogForPage({
+              runId: data.spaceRunId,
               workspaceId: data.workspaceId,
               spaceId: data.spaceId,
             })
-          ).entries;
+          : (
+              await this.artifactCatalog.snapshot({
+                workspaceId: data.workspaceId,
+                spaceId: data.spaceId,
+              })
+            ).entries;
       const compileInput = {
         workspaceId: data.workspaceId,
         spaceId: data.spaceId,
@@ -555,28 +587,17 @@ export class KnowledgePageCompilationService {
         sourcePageIds: [data.sourcePageId],
         abortSignal,
       });
-      if (!isSameImageMergeSnapshot(data, latest[0])) {
+      if (
+        !isSameImageMergeSnapshot(data, latest[0], Boolean(input.execution))
+      ) {
         throw new SourceChangedDuringCompilationError();
       }
       const importResult = await this.importService.importCompileResult({
         input: compileInput,
         artifacts: compileResult.artifacts,
-        ...(data.spaceRunId
+        ...(data.spaceRunId || input.execution
           ? {
-              publicationGuard: (trx: KyselyTransaction) =>
-                this.spaceCompilation.isRunActiveForPublication(
-                  {
-                    runId: data.spaceRunId!,
-                    workspaceId: data.workspaceId,
-                    spaceId: data.spaceId,
-                    knowledgeGeneration: data.knowledgeGeneration,
-                    allowedPhases: ['images'],
-                    sourcePageId: data.sourcePageId,
-                    sourceVersion: data.sourceVersion,
-                    sourceContentHash: data.sourceContentHash,
-                  },
-                  trx,
-                ),
+              publicationGuard: this.imageMergePublicationGuard(input),
               publicationComplete: async (trx: KyselyTransaction) => {
                 await this.compilationRepo.succeedAttempt(
                   {
@@ -589,18 +610,22 @@ export class KnowledgePageCompilationService {
                   },
                   trx,
                 );
-                const completed =
-                  await this.spaceCompilation.completePageMergePublication(
-                    {
-                      runId: data.spaceRunId!,
-                      sourcePageId: data.sourcePageId,
-                      sourceVersion: data.sourceVersion,
-                      sourceContentHash: data.sourceContentHash,
-                      knowledgeGeneration: data.knowledgeGeneration,
-                      mergedEffectiveKnowledgeHash: effectiveKnowledgeHash,
-                    },
-                    trx,
-                  );
+                const completed = input.execution
+                  ? await input.execution.publicationComplete(
+                      trx,
+                      effectiveKnowledgeHash,
+                    )
+                  : await this.spaceCompilation.completePageMergePublication(
+                      {
+                        runId: data.spaceRunId!,
+                        sourcePageId: data.sourcePageId,
+                        sourceVersion: data.sourceVersion,
+                        sourceContentHash: data.sourceContentHash,
+                        knowledgeGeneration: data.knowledgeGeneration,
+                        mergedEffectiveKnowledgeHash: effectiveKnowledgeHash,
+                      },
+                      trx,
+                    );
                 if (!completed) throw new SourceChangedDuringCompilationError();
               },
             }
@@ -630,7 +655,9 @@ export class KnowledgePageCompilationService {
         workspaceId: data.workspaceId,
         sourcePageIds: [data.sourcePageId],
       });
-      if (data.spaceRunId) await this.spaceCompilation.dispatchPending();
+      if (data.spaceRunId && !input.execution) {
+        await this.spaceCompilation.dispatchPending();
+      }
       return {
         outcome: 'succeeded',
         result: {
@@ -654,9 +681,11 @@ export class KnowledgePageCompilationService {
           reasonCode: 'source_changed',
           reasonMessage: error.message,
         });
-        if (data.spaceRunId) {
-          await this.spaceCompilation.failPageMerge(mergeRunIdentity(data));
-        }
+        await this.completeImageMergePage(input, {
+          status: 'failed',
+          errorCode: 'source_changed',
+          errorMessage: error.message,
+        });
         return { outcome: 'noop', result: noOpMergeResult(data, startedAt) };
       }
       const failure = abortSignal.aborted
@@ -669,8 +698,15 @@ export class KnowledgePageCompilationService {
         errorCode: failure.code,
         errorMessage: failure.message,
       });
-      if (data.spaceRunId && (!failure.retryable || input.finalAttempt)) {
-        await this.spaceCompilation.failPageMerge(mergeRunIdentity(data));
+      if (
+        (data.spaceRunId || input.execution) &&
+        (!failure.retryable || input.finalAttempt)
+      ) {
+        await this.completeImageMergePage(input, {
+          status: 'failed',
+          errorCode: failure.code,
+          errorMessage: failure.message,
+        });
       }
       return failureOutcome(
         failure.retryable,
@@ -701,6 +737,42 @@ export class KnowledgePageCompilationService {
         },
         trx,
       );
+  }
+
+  private imageMergePublicationGuard(input: ImagePageMergeInput) {
+    if (input.execution) return input.execution.publicationGuard;
+    const { data } = input;
+    return (trx: KyselyTransaction) =>
+      this.spaceCompilation.isRunActiveForPublication(
+        {
+          runId: data.spaceRunId!,
+          workspaceId: data.workspaceId,
+          spaceId: data.spaceId,
+          knowledgeGeneration: data.knowledgeGeneration,
+          allowedPhases: ['images'],
+          sourcePageId: data.sourcePageId,
+          sourceVersion: data.sourceVersion,
+          sourceContentHash: data.sourceContentHash,
+        },
+        trx,
+      );
+  }
+
+  private async completeImageMergePage(
+    input: ImagePageMergeInput,
+    outcome: {
+      status: 'failed' | 'skipped';
+      errorCode?: string | null;
+      errorMessage?: string | null;
+    },
+  ): Promise<void> {
+    if (input.execution) {
+      await input.execution.completePage(outcome);
+      return;
+    }
+    if (input.data.spaceRunId) {
+      await this.spaceCompilation.failPageMerge(mergeRunIdentity(input.data));
+    }
   }
 
   private async isSpaceRunActive(
@@ -784,6 +856,7 @@ function isSameSourceSnapshot(
 function isSameImageMergeSnapshot(
   expected: IKnowledgeMergePageImagesJob,
   actual: KnowledgeSourceSnapshot | undefined,
+  allowAdditionalImages = false,
 ): boolean {
   if (
     !actual ||
@@ -796,7 +869,9 @@ function isSameImageMergeSnapshot(
   const expectedImages = expected.images ?? [];
   const actualImages = actual.images ?? [];
   return (
-    expectedImages.length === actualImages.length &&
+    (allowAdditionalImages
+      ? actualImages.length >= expectedImages.length
+      : expectedImages.length === actualImages.length) &&
     expectedImages.every(
       (image, index) =>
         image.attachmentId === actualImages[index]?.attachmentId &&

@@ -89,7 +89,10 @@ export class KnowledgeSpaceAggregatorService {
     );
     try {
       const run = await this.executionRepo.findLeasedRun(lease);
-      if (!run || run.phase !== 'initial_aggregate') {
+      if (
+        !run ||
+        !['initial_aggregate', 'final_aggregate'].includes(run.phase)
+      ) {
         return { ...emptyAggregateResult(), catalogHash: run?.catalogHash };
       }
       const aggregateInput = await this.artifactCatalog.aggregateInput({

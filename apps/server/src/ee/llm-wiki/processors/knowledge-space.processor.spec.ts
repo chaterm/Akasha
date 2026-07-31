@@ -105,6 +105,40 @@ describe('KnowledgeSpaceProcessor', () => {
       expect.objectContaining({ errorCode: 'space_job_failed' }),
     );
   });
+
+  it('delegates image merge slices to the image merge runner', async () => {
+    const runner = {
+      runTextSlice: jest.fn(),
+      runImageMergeSlice: jest
+        .fn()
+        .mockResolvedValue({ outcome: 'completed', completedPages: 2 }),
+    };
+    const processor = new KnowledgeSpaceProcessor(
+      runner as never,
+      createExecutionRepo() as never,
+    );
+    const job = {
+      ...textJob(),
+      name: QueueJob.KNOWLEDGE_MERGE_SPACE_IMAGES,
+      data: {
+        ...textJob().data,
+        phase: 'image_merge',
+      },
+    } as Job;
+
+    await expect(processor.process(job)).resolves.toEqual({
+      outcome: 'completed',
+      completedPages: 2,
+    });
+    expect(runner.runImageMergeSlice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: 'image_merge',
+        spaceJobId: 'space-job-2',
+      }),
+      expect.objectContaining({ finalAttempt: false }),
+    );
+    expect(runner.runTextSlice).not.toHaveBeenCalled();
+  });
 });
 
 function createExecutionRepo() {

@@ -126,10 +126,119 @@ describe('KnowledgeSpaceRunnerService', () => {
     await running;
     jest.useRealTimers();
   });
+
+  it('merges image pages strictly serially and yields after five terminal pages', async () => {
+    let activeMerges = 0;
+    let maxActiveMerges = 0;
+    const completed: string[] = [];
+    const pages = Array.from({ length: 6 }, (_, index) => ({
+      id: `run-page-${index + 1}`,
+      sourcePageId: `page-${index + 1}`,
+      expectedSourceVersion: 'v1',
+      expectedSourceContentHash: `sha256:page-${index + 1}`,
+      targetEffectiveKnowledgeHash: null,
+      createdAt: new Date(index),
+      images: [],
+    }));
+    const lease = mergeLeaseFixture();
+    const executionRepo = createExecutionRepo(lease, []);
+    executionRepo.findPendingMergePages = jest.fn().mockResolvedValue(pages);
+    executionRepo.completeMergePagePublicationInTransaction = jest
+      .fn()
+      .mockResolvedValue(true);
+    executionRepo.isLeaseActiveForMergePublication = jest
+      .fn()
+      .mockResolvedValue(true);
+    executionRepo.failMergePage = jest.fn().mockResolvedValue({});
+    const pageCompilation = {
+      mergePageImages: jest.fn(async (input) => {
+        activeMerges += 1;
+        maxActiveMerges = Math.max(maxActiveMerges, activeMerges);
+        await Promise.resolve();
+        completed.push(input.data.sourcePageId);
+        activeMerges -= 1;
+        executionRepo.findPendingMergePages.mockResolvedValue(
+          pages.slice(completed.length),
+        );
+        return { outcome: 'succeeded', result: pageResult() };
+      }),
+    };
+    const aggregator = { aggregateLeased: jest.fn() };
+    const runner = new KnowledgeSpaceRunnerService(
+      executionRepo as never,
+      { initializeLeasedRun: jest.fn() } as never,
+      pageCompilation as never,
+      aggregator as never,
+      { getKnowledgePageDeadlineMs: () => 900_000 } as never,
+    );
+
+    await expect(
+      runner.runImageMergeSlice(mergeSliceInput(), {
+        workerId: 'worker-1',
+        finalAttempt: false,
+        settings: settings(),
+        monotonicNow: () => 0,
+      }),
+    ).resolves.toEqual({ outcome: 'yielded', completedPages: 5 });
+    expect(maxActiveMerges).toBe(1);
+    expect(completed).toEqual([
+      'page-1',
+      'page-2',
+      'page-3',
+      'page-4',
+      'page-5',
+    ]);
+    expect(executionRepo.yieldSpaceSlice).toHaveBeenCalledWith(lease, {
+      reason: 'page_limit',
+    });
+    expect(aggregator.aggregateLeased).not.toHaveBeenCalled();
+  });
+
+  it('runs the final aggregate only after the image merge barrier', async () => {
+    const lease = mergeLeaseFixture();
+    const executionRepo = createExecutionRepo(lease, []);
+    executionRepo.findPendingMergePages = jest.fn().mockResolvedValue([]);
+    executionRepo.advanceMergeBarrier = jest
+      .fn()
+      .mockResolvedValue({ barrierComplete: true });
+    executionRepo.hasPartialOutcome = jest.fn().mockResolvedValue(true);
+    const aggregator = {
+      aggregateLeased: jest.fn().mockResolvedValue({
+        importedArtifactCount: 2,
+        quarantinedArtifactCount: 1,
+        catalogHash: 'sha256:final-catalog',
+      }),
+    };
+    const runner = new KnowledgeSpaceRunnerService(
+      executionRepo as never,
+      { initializeLeasedRun: jest.fn() } as never,
+      { mergePageImages: jest.fn() } as never,
+      aggregator as never,
+      { getKnowledgePageDeadlineMs: () => 900_000 } as never,
+    );
+
+    await expect(
+      runner.runImageMergeSlice(mergeSliceInput(), {
+        workerId: 'worker-1',
+        finalAttempt: false,
+        settings: settings(),
+      }),
+    ).resolves.toEqual({ outcome: 'completed', completedPages: 0 });
+    expect(executionRepo.advanceMergeBarrier).toHaveBeenCalledWith(lease);
+    expect(aggregator.aggregateLeased).toHaveBeenCalledWith(lease, {
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+    });
+    expect(executionRepo.finishRun).toHaveBeenCalledWith(lease, 'partial', {
+      importedArtifactCount: 2,
+      quarantinedArtifactCount: 1,
+      catalogHash: 'sha256:final-catalog',
+    });
+  });
 });
 
 function createExecutionRepo(
-  lease: ReturnType<typeof leaseFixture>,
+  lease: ReturnType<typeof leaseFixture> | ReturnType<typeof mergeLeaseFixture>,
   pages: unknown[],
 ) {
   return {
@@ -141,15 +250,35 @@ function createExecutionRepo(
       failedPageCount: 0,
     }),
     findPendingTextPages: jest.fn().mockResolvedValue(pages),
+    findPendingMergePages: jest.fn().mockResolvedValue([]),
     isLeaseActive: jest.fn().mockResolvedValue(true),
     isLeaseActiveForPublication: jest.fn().mockResolvedValue(true),
+    isLeaseActiveForMergePublication: jest.fn().mockResolvedValue(true),
+    completeMergePagePublicationInTransaction: jest
+      .fn()
+      .mockResolvedValue(true),
+    failMergePage: jest.fn().mockResolvedValue({}),
     completeTextPage: jest.fn().mockResolvedValue({ barrierComplete: false }),
     heartbeatSpaceSlice: jest.fn().mockResolvedValue(true),
     yieldSpaceSlice: jest.fn().mockResolvedValue(true),
     advanceTextBarrier: jest.fn().mockResolvedValue({ barrierComplete: true }),
     hasImageWork: jest.fn().mockResolvedValue(false),
     completeInitialAggregate: jest.fn().mockResolvedValue({}),
+    advanceMergeBarrier: jest.fn().mockResolvedValue({ barrierComplete: true }),
+    hasPartialOutcome: jest.fn().mockResolvedValue(false),
     finishRun: jest.fn().mockResolvedValue({ run: { status: 'succeeded' } }),
+  };
+}
+
+function mergeSliceInput() {
+  return {
+    workspaceId: 'workspace-1',
+    spaceId: 'space-1',
+    spaceRunId: 'run-1',
+    knowledgeGeneration: 0,
+    phase: 'image_merge' as const,
+    spaceJobSequence: 2,
+    spaceJobId: 'knowledge-space-image-merge__run-1__image_merge__2',
   };
 }
 
@@ -173,6 +302,17 @@ function leaseFixture() {
     spaceJobSequence: 1,
     spaceJobId: 'knowledge-space-text__run-1__text__1',
     executionToken: 'token-1',
+  };
+}
+
+function mergeLeaseFixture() {
+  return {
+    runId: 'run-1',
+    knowledgeGeneration: 0,
+    jobPhase: 'image_merge' as const,
+    spaceJobSequence: 2,
+    spaceJobId: 'knowledge-space-image-merge__run-1__image_merge__2',
+    executionToken: 'token-2',
   };
 }
 

@@ -249,6 +249,71 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
       replenished.filter((item) => item.runId === 'run-images'),
     ).toHaveLength(1);
   });
+
+  it('publishes merge pages in snapshot order and advances the final barrier once', async () => {
+    const lease = await claimedLease(
+      compilationRepo,
+      executionRepo,
+      'run-merge',
+      'merge-token',
+    );
+    const pages = await executionRepo.findPendingMergePages(lease);
+    expect(pages.map((page) => page.sourcePageId)).toEqual([
+      'merge-page-1',
+      'merge-page-2',
+    ]);
+    expect(pages[0].images.map((image) => image.attachmentId)).toEqual([
+      'merge-attachment-0',
+      'merge-attachment-1',
+    ]);
+
+    await db.transaction().execute((trx) =>
+      executionRepo.completeMergePagePublicationInTransaction(
+        lease,
+        {
+          sourcePageId: 'merge-page-1',
+          sourceVersion: 'v1',
+          sourceContentHash: 'sha256:merge-page-1',
+          effectiveKnowledgeHash: 'sha256:effective-1',
+        },
+        trx as never,
+      ),
+    );
+    const afterFirst = await executionRepo.findLeasedRun(lease);
+    expect(afterFirst?.phase).toBe('image_merge');
+    await expect(
+      db.transaction().execute((trx) =>
+        executionRepo.completeMergePagePublicationInTransaction(
+          lease,
+          {
+            sourcePageId: 'merge-page-1',
+            sourceVersion: 'v1',
+            sourceContentHash: 'sha256:merge-page-1',
+            effectiveKnowledgeHash: 'sha256:duplicate',
+          },
+          trx as never,
+        ),
+      ),
+    ).resolves.toBe(false);
+
+    await db.transaction().execute((trx) =>
+      executionRepo.completeMergePagePublicationInTransaction(
+        lease,
+        {
+          sourcePageId: 'merge-page-2',
+          sourceVersion: 'v1',
+          sourceContentHash: 'sha256:merge-page-2',
+          effectiveKnowledgeHash: 'sha256:effective-2',
+        },
+        trx as never,
+      ),
+    );
+    const afterSecond = await executionRepo.findLeasedRun(lease);
+    expect(afterSecond?.phase).toBe('final_aggregate');
+    await expect(executionRepo.advanceMergeBarrier(lease)).resolves.toEqual({
+      barrierComplete: true,
+    });
+  });
 });
 
 async function claimedLease(
@@ -407,7 +472,8 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       ('space-finish', 'workspace-1', 'Finish'),
       ('space-yield', 'workspace-1', 'Yield'),
       ('space-recovery', 'workspace-1', 'Recovery'),
-      ('space-images', 'workspace-1', 'Images');
+      ('space-images', 'workspace-1', 'Images'),
+      ('space-merge', 'workspace-1', 'Merge');
     insert into knowledge_space_compile_runs (
       id, workspace_id, space_id, trigger, compiler_version, prompt_version,
       catalog_hash, space_job_queued_at
@@ -421,11 +487,17 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       ('run-recovery', 'workspace-1', 'space-recovery', 'manual', 'compiler-v1',
        'prompt-v1', 'pending-initialization', now()),
       ('run-images', 'workspace-1', 'space-images', 'manual', 'compiler-v1',
-       'prompt-v1', 'images', now());
+       'prompt-v1', 'images', now()),
+      ('run-merge', 'workspace-1', 'space-merge', 'manual', 'compiler-v1',
+       'prompt-v1', 'merge', now());
     update knowledge_space_compile_runs
       set phase='images', status='compiling', initialized_at=now(),
           expected_page_count=1
       where id='run-images';
+    update knowledge_space_compile_runs
+      set phase='image_merge', status='queued', initialized_at=now(),
+          expected_page_count=2
+      where id='run-merge';
     insert into knowledge_space_compile_run_pages (
       id, run_id, workspace_id, space_id, source_page_id,
       expected_source_version, expected_source_content_hash,
@@ -445,5 +517,32 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
            'attachment-' || ordinal, ordinal, ordinal || '.png', 'image/png',
            now()
     from generate_series(0, 5) ordinal
+    ;
+    insert into knowledge_space_compile_run_pages (
+      id, run_id, workspace_id, space_id, source_page_id,
+      expected_source_version, expected_source_content_hash,
+      expected_image_count, succeeded_image_count,
+      image_status, merge_status, status, created_at
+    ) values
+      ('run-page-merge-1', 'run-merge', 'workspace-1', 'space-merge',
+       'merge-page-1', 'v1', 'sha256:merge-page-1', 2, 2,
+       'succeeded', 'pending', 'succeeded', now() - interval '1 second'),
+      ('run-page-merge-2', 'run-merge', 'workspace-1', 'space-merge',
+       'merge-page-2', 'v1', 'sha256:merge-page-2', 1, 1,
+       'succeeded', 'pending', 'succeeded', now());
+    insert into knowledge_space_compile_run_images (
+      id, run_id, run_page_id, workspace_id, space_id, source_page_id,
+      attachment_id, image_ordinal, file_name, mime_type,
+      expected_attachment_version, status
+    ) values
+      ('run-image-merge-0', 'run-merge', 'run-page-merge-1',
+       'workspace-1', 'space-merge', 'merge-page-1', 'merge-attachment-0',
+       0, '0.png', 'image/png', now(), 'succeeded'),
+      ('run-image-merge-1', 'run-merge', 'run-page-merge-1',
+       'workspace-1', 'space-merge', 'merge-page-1', 'merge-attachment-1',
+       1, '1.png', 'image/png', now(), 'succeeded'),
+      ('run-image-merge-2', 'run-merge', 'run-page-merge-2',
+       'workspace-1', 'space-merge', 'merge-page-2', 'merge-attachment-2',
+       0, '2.png', 'image/png', now(), 'succeeded')
   `.execute(db);
 }

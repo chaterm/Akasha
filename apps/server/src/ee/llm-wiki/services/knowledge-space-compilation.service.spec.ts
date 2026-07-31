@@ -71,6 +71,32 @@ describe('KnowledgeSpaceCompilationService', () => {
     );
   });
 
+  it('gives image merge slices priority over newly queued text slices', async () => {
+    const { service, spaceQueue } = createService({
+      enableSpaceQueue: true,
+      undispatchedSpaceSlices: [
+        {
+          runId: 'run-image-merge',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          knowledgeGeneration: 4,
+          jobPhase: 'image_merge',
+          spaceJobSequence: 3,
+          spaceJobId:
+            'knowledge-space-image-merge__run-image-merge__image_merge__3',
+        },
+      ],
+    });
+
+    await service.dispatchPending();
+
+    expect(spaceQueue.add).toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_MERGE_SPACE_IMAGES,
+      expect.objectContaining({ phase: 'image_merge' }),
+      expect.objectContaining({ priority: 1 }),
+    );
+  });
+
   it('requests a queued run without exporter, catalog, image, or LLM planning', async () => {
     const { service, repo, catalog, sourceExporter, imageQueue, queue } =
       createService({

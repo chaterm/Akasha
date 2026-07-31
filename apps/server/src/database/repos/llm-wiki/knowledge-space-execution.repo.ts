@@ -132,6 +132,69 @@ export class KnowledgeSpaceExecutionRepo {
       .execute();
   }
 
+  async findPendingMergePages(lease: SpaceExecutionLease) {
+    const pages = await this.db
+      .selectFrom('knowledgeSpaceCompileRunPages as page')
+      .innerJoin('knowledgeSpaceCompileRuns as run', 'run.id', 'page.runId')
+      .select([
+        'page.id',
+        'page.sourcePageId',
+        'page.expectedSourceVersion',
+        'page.expectedSourceContentHash',
+        'page.targetEffectiveKnowledgeHash',
+        'page.createdAt',
+      ])
+      .where('run.id', '=', lease.runId)
+      .where('run.knowledgeGeneration', '=', lease.knowledgeGeneration)
+      .where('run.spaceJobSequence', '=', lease.spaceJobSequence)
+      .where('run.spaceJobId', '=', lease.spaceJobId)
+      .where('run.executionToken', '=', lease.executionToken)
+      .where('run.phase', '=', 'image_merge')
+      .where('run.status', 'in', NONTERMINAL_RUN_STATUSES)
+      .where('page.mergeStatus', 'in', ['pending', 'queued', 'running'])
+      .orderBy('page.createdAt', 'asc')
+      .orderBy('page.sourcePageId', 'asc')
+      .execute();
+    if (pages.length === 0) return [];
+    const images = await this.db
+      .selectFrom('knowledgeSpaceCompileRunImages')
+      .select([
+        'runPageId',
+        'attachmentId',
+        'imageOrdinal',
+        'fileName',
+        'mimeType',
+        'fileSize',
+        'altText',
+        'expectedAttachmentVersion',
+      ])
+      .where(
+        'runPageId',
+        'in',
+        pages.map((page) => page.id),
+      )
+      .orderBy('runPageId', 'asc')
+      .orderBy('imageOrdinal', 'asc')
+      .execute();
+    const imagesByPage = new Map<string, typeof images>();
+    for (const image of images) {
+      const pageImages = imagesByPage.get(image.runPageId) ?? [];
+      pageImages.push(image);
+      imagesByPage.set(image.runPageId, pageImages);
+    }
+    return pages.map((page) => ({
+      ...page,
+      images: (imagesByPage.get(page.id) ?? []).map((image) => ({
+        attachmentId: image.attachmentId,
+        fileName: image.fileName,
+        mimeType: image.mimeType,
+        fileSize: image.fileSize === null ? null : Number(image.fileSize),
+        attachmentVersion: image.expectedAttachmentVersion.toISOString(),
+        ...(image.altText ? { altText: image.altText } : {}),
+      })),
+    }));
+  }
+
   async findSpaceRecoveryCandidates(input: {
     leaseExpiredBefore: Date;
     queuedDispatchedBefore: Date;
@@ -225,6 +288,146 @@ export class KnowledgeSpaceExecutionRepo {
     trx: KyselyTransaction,
   ): Promise<boolean> {
     return Boolean(await this.lockLeasedRun(trx, lease));
+  }
+
+  async isLeaseActiveForMergePublication(
+    lease: SpaceExecutionLease,
+    input: {
+      sourcePageId: string;
+      sourceVersion: string;
+      sourceContentHash: string;
+    },
+    trx: KyselyTransaction,
+  ): Promise<boolean> {
+    const run = await this.lockLeasedRun(trx, lease);
+    if (!run || run.phase !== 'image_merge') return false;
+    const page = await trx
+      .selectFrom('knowledgeSpaceCompileRunPages')
+      .select('id')
+      .where('runId', '=', lease.runId)
+      .where('sourcePageId', '=', input.sourcePageId)
+      .where('expectedSourceVersion', '=', input.sourceVersion)
+      .where('expectedSourceContentHash', '=', input.sourceContentHash)
+      .where('mergeStatus', 'in', ['pending', 'queued', 'running'])
+      .forUpdate()
+      .executeTakeFirst();
+    return Boolean(page);
+  }
+
+  async completeMergePagePublicationInTransaction(
+    lease: SpaceExecutionLease,
+    input: {
+      sourcePageId: string;
+      sourceVersion: string;
+      sourceContentHash: string;
+      effectiveKnowledgeHash: string;
+    },
+    trx: KyselyTransaction,
+  ): Promise<boolean> {
+    const run = await this.lockLeasedRun(trx, lease);
+    if (!run || run.phase !== 'image_merge') return false;
+    const page = await trx
+      .selectFrom('knowledgeSpaceCompileRunPages')
+      .selectAll()
+      .where('runId', '=', lease.runId)
+      .where('sourcePageId', '=', input.sourcePageId)
+      .where('expectedSourceVersion', '=', input.sourceVersion)
+      .where('expectedSourceContentHash', '=', input.sourceContentHash)
+      .where('mergeStatus', 'in', ['pending', 'queued', 'running'])
+      .forUpdate()
+      .executeTakeFirst();
+    if (!page) return false;
+    await trx
+      .updateTable('knowledgeSpaceCompileRunPages')
+      .set({
+        mergeStatus: 'succeeded',
+        mergedEffectiveKnowledgeHash: input.effectiveKnowledgeHash,
+        updatedAt: new Date(),
+      })
+      .where('id', '=', page.id)
+      .where('mergeStatus', 'in', ['pending', 'queued', 'running'])
+      .execute();
+    const remaining = await trx
+      .selectFrom('knowledgeSpaceCompileRunPages')
+      .select('id')
+      .where('runId', '=', lease.runId)
+      .where('mergeStatus', 'in', [
+        'waiting_images',
+        'pending',
+        'queued',
+        'running',
+      ])
+      .limit(1)
+      .executeTakeFirst();
+    if (!remaining) {
+      await trx
+        .updateTable('knowledgeSpaceCompileRuns')
+        .set({
+          phase: 'final_aggregate',
+          status: 'aggregating',
+          updatedAt: new Date(),
+        })
+        .$call((query) => this.whereLease(query, lease))
+        .where('phase', '=', 'image_merge')
+        .execute();
+    }
+    return true;
+  }
+
+  async advanceMergeBarrier(lease: SpaceExecutionLease) {
+    return executeTx(this.db, async (trx) => {
+      const run = await this.lockLeasedRun(trx, lease);
+      if (!run) return undefined;
+      if (run.phase === 'final_aggregate') return { barrierComplete: true };
+      if (run.phase !== 'image_merge') return undefined;
+      const remaining = await trx
+        .selectFrom('knowledgeSpaceCompileRunPages')
+        .select('id')
+        .where('runId', '=', lease.runId)
+        .where('mergeStatus', 'in', [
+          'waiting_images',
+          'pending',
+          'queued',
+          'running',
+        ])
+        .limit(1)
+        .executeTakeFirst();
+      if (remaining) return { barrierComplete: false };
+      const updated = await trx
+        .updateTable('knowledgeSpaceCompileRuns')
+        .set({
+          phase: 'final_aggregate',
+          status: 'aggregating',
+          updatedAt: new Date(),
+        })
+        .$call((query) => this.whereLease(query, lease))
+        .where('phase', '=', 'image_merge')
+        .returning('id')
+        .executeTakeFirst();
+      return updated ? { barrierComplete: true } : undefined;
+    });
+  }
+
+  async hasPartialOutcome(lease: SpaceExecutionLease): Promise<boolean> {
+    const row = await this.db
+      .selectFrom('knowledgeSpaceCompileRunPages as page')
+      .innerJoin('knowledgeSpaceCompileRuns as run', 'run.id', 'page.runId')
+      .select('page.id')
+      .where('run.id', '=', lease.runId)
+      .where('run.knowledgeGeneration', '=', lease.knowledgeGeneration)
+      .where('run.spaceJobSequence', '=', lease.spaceJobSequence)
+      .where('run.spaceJobId', '=', lease.spaceJobId)
+      .where('run.executionToken', '=', lease.executionToken)
+      .where((expression) =>
+        expression.or([
+          expression('page.status', '=', 'failed'),
+          expression('page.imageStatus', 'in', ['partial', 'failed']),
+          expression('page.mergeStatus', 'in', ['skipped', 'failed']),
+        ]),
+      )
+      .limit(1)
+      .executeTakeFirst();
+    return Boolean(row);
   }
 
   async hasImageWork(lease: SpaceExecutionLease): Promise<boolean> {
@@ -739,6 +942,7 @@ export class KnowledgeSpaceExecutionRepo {
       errorMessage?: string | null;
       importedArtifactCount?: number;
       quarantinedArtifactCount?: number;
+      catalogHash?: string;
     } = {},
   ) {
     return executeTx(this.db, async (trx) => {
@@ -758,6 +962,9 @@ export class KnowledgeSpaceExecutionRepo {
             : {}),
           ...(input.quarantinedArtifactCount !== undefined
             ? { quarantinedArtifactCount: input.quarantinedArtifactCount }
+            : {}),
+          ...(input.catalogHash !== undefined
+            ? { catalogHash: input.catalogHash }
             : {}),
           executionToken: null,
           executionLeaseExpiresAt: null,
@@ -859,6 +1066,11 @@ export class KnowledgeSpaceExecutionRepo {
         .set({
           ...(barrierComplete
             ? { phase: 'final_aggregate', status: 'aggregating' }
+            : {}),
+          ...(['source_changed', 'image_snapshot_changed'].includes(
+            input.errorCode ?? '',
+          )
+            ? { rerunRequested: true }
             : {}),
           updatedAt: new Date(),
         })
