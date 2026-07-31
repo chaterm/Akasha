@@ -671,6 +671,34 @@ export interface KnowledgeSpaceCompileRunPages {
   workspaceId: string;
 }
 
+export interface KnowledgeSpaceCompileRunImages {
+  altText: string | null;
+  attachmentId: string;
+  attemptCount: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  dispatchedAt: Timestamp | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  expectedAttachmentVersion: Timestamp;
+  extractionId: string | null;
+  failureClass: string | null;
+  fileName: string;
+  fileSize: Int8 | null;
+  id: Generated<string>;
+  imageOrdinal: number;
+  jobId: string | null;
+  mimeType: string;
+  processingExpiresAt: Timestamp | null;
+  redisRecoveryCount: Generated<number>;
+  runId: string;
+  runPageId: string;
+  sourcePageId: string;
+  spaceId: string;
+  status: Generated<string>;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
 export interface KnowledgeSpaceCompileRuns {
   aggregateJobId: string | null;
   aggregateStartedAt: Timestamp | null;
@@ -680,24 +708,37 @@ export interface KnowledgeSpaceCompileRuns {
   createdAt: Generated<Timestamp>;
   errorCode: string | null;
   errorMessage: string | null;
+  executionLeaseExpiresAt: Timestamp | null;
+  executionToken: string | null;
   expectedPageCount: Generated<number>;
   failedPageCount: Generated<number>;
   finishedAt: Timestamp | null;
+  heartbeatAt: Timestamp | null;
   id: Generated<string>;
   importedArtifactCount: Generated<number>;
+  initializedAt: Timestamp | null;
   knowledgeGeneration: Generated<number>;
+  lastYieldAt: Timestamp | null;
+  lastYieldReason: string | null;
   mode: Generated<string>;
   phase: Generated<string>;
   promptVersion: string;
   quarantinedArtifactCount: Generated<number>;
   queuedAt: Generated<Timestamp>;
+  rerunRequested: Generated<boolean>;
   skippedPageCount: Generated<number>;
   spaceId: string;
+  spaceJobDispatchedAt: Timestamp | null;
+  spaceJobId: string | null;
+  spaceJobQueuedAt: Timestamp | null;
+  spaceJobRecoveryCount: Generated<number>;
+  spaceJobSequence: Generated<number>;
   startedAt: Timestamp | null;
   status: Generated<string>;
   succeededPageCount: Generated<number>;
   trigger: string;
   updatedAt: Generated<Timestamp>;
+  workerId: string | null;
   workspaceId: string;
 }
 
@@ -1082,6 +1123,7 @@ export interface DB {
   knowledgeSourceChunks: KnowledgeSourceChunks;
   knowledgeSources: KnowledgeSources;
   knowledgeSpaceCompileRunPages: KnowledgeSpaceCompileRunPages;
+  knowledgeSpaceCompileRunImages: KnowledgeSpaceCompileRunImages;
   knowledgeSpaceCompileRuns: KnowledgeSpaceCompileRuns;
   labels: Labels;
   notifications: Notifications;
