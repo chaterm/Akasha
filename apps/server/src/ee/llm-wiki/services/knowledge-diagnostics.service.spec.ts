@@ -3,6 +3,7 @@ import {
   buildWorkerCapacityEstimate,
   classifyRunPageError,
   classifyRunQueueState,
+  sanitizeRunPageErrorDetail,
 } from './knowledge-diagnostics.service';
 
 describe('scalable Knowledge Run diagnostics', () => {
@@ -76,6 +77,12 @@ describe('scalable Knowledge Run diagnostics', () => {
     expect(classifyRunPageError(null)).toBeNull();
   });
 
+  it('removes control characters from authorized error details', () => {
+    expect(sanitizeRunPageErrorDetail('provider\u0000error\u001f detail')).toBe(
+      'provider error detail',
+    );
+  });
+
   it('reports configured worker options without treating CLIENT LIST as scheduling authority', async () => {
     const imageQueue = {
       getWorkers: jest
@@ -89,6 +96,9 @@ describe('scalable Knowledge Run diagnostics', () => {
       {} as never,
       imageQueue as never,
       spaceQueue as never,
+      {} as never,
+      {} as never,
+      {} as never,
     );
 
     await expect(service.getWorkerDiagnostics()).resolves.toMatchObject({
@@ -114,6 +124,9 @@ describe('scalable Knowledge Run diagnostics', () => {
       { selectFrom: jest.fn() } as never,
       {} as never,
       {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
     );
 
     await expect(
@@ -130,5 +143,58 @@ describe('scalable Knowledge Run diagnostics', () => {
         allowedSpaceIds: [],
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it('loads quality, quarantine, and retrieval only through independent diagnostics calls', async () => {
+    const qualityService = {
+      getReport: jest.fn().mockResolvedValue('quality'),
+    };
+    const quarantineRepo = {
+      listDiagnosticsPage: jest.fn().mockResolvedValue('quarantine'),
+    };
+    const queryAuditRepo = {
+      summarizeWorkspace: jest.fn().mockResolvedValue('retrieval'),
+    };
+    const service = new KnowledgeDiagnosticsService(
+      {} as never,
+      {} as never,
+      {} as never,
+      qualityService as never,
+      quarantineRepo as never,
+      queryAuditRepo as never,
+    );
+
+    await expect(
+      service.getQualityDiagnostics({
+        workspaceId: 'workspace-1',
+        spaceIds: ['space-1'],
+      }),
+    ).resolves.toBe('quality');
+    await expect(
+      service.listQuarantineDiagnostics({
+        workspaceId: 'workspace-1',
+        spaceIds: ['space-1'],
+        page: 2,
+        limit: 20,
+      }),
+    ).resolves.toBe('quarantine');
+    await expect(
+      service.getRetrievalDiagnostics({ workspaceId: 'workspace-1' }),
+    ).resolves.toBe('retrieval');
+
+    expect(qualityService.getReport).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-1'],
+    });
+    expect(quarantineRepo.listDiagnosticsPage).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-1'],
+      page: 2,
+      limit: 20,
+    });
+    expect(queryAuditRepo.summarizeWorkspace).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      limit: 500,
+    });
   });
 });

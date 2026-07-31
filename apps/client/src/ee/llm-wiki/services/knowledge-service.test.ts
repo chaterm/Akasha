@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   compileKnowledgeSpaces,
   forceRebuildKnowledgeSpace,
+  getKnowledgeQualityDiagnostics,
+  getKnowledgeQuarantineDiagnostics,
+  getKnowledgeRetrievalDiagnostics,
   getKnowledgeRunDiagnostics,
   getKnowledgeRunDiagnosticsSummary,
   getKnowledgeRunPageDiagnostics,
@@ -246,6 +249,83 @@ describe("knowledge service", () => {
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "/api/llm-wiki/admin/diagnostics/runs/run%2F1/pages?page=1&limit=50",
       "/api/llm-wiki/admin/diagnostics/workers",
+    ]);
+  });
+
+  it("loads quality, quarantine, and retrieval from independent on-demand endpoints", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: {
+            summary: { pageCount: 5000, healthScore: 98 },
+            spaces: [
+              {
+                spaceId: "space-1",
+                spaceName: "AIM",
+                pageCount: 5000,
+                healthScore: 98,
+              },
+            ],
+            topIssues: [
+              {
+                code: "missing_embeddings",
+                severity: "medium",
+                affectedPageCount: 2,
+              },
+            ],
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: {
+            items: [
+              {
+                id: "quarantine-1",
+                workspaceId: "workspace-1",
+                spaceId: "space-1",
+                reasonCodes: ["invalid_source_range"],
+                createdAt: "2026-08-01T00:00:00.000Z",
+              },
+            ],
+            total: 21,
+            page: 2,
+            limit: 20,
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: { sampleCount: 100, zeroHitRate: 0.03 },
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const quality = await getKnowledgeQualityDiagnostics({
+      spaceIds: ["space-1"],
+    });
+    const quarantine = await getKnowledgeQuarantineDiagnostics({
+      spaceIds: ["space-1"],
+      page: 2,
+      limit: 20,
+    });
+    const retrieval = await getKnowledgeRetrievalDiagnostics();
+
+    expect(quality.summary).toMatchObject({ pageCount: 5000, healthScore: 98 });
+    expect(quality.topIssues[0]).toMatchObject({
+      code: "missing_embeddings",
+      severity: "medium",
+    });
+    expect(quarantine).toMatchObject({ total: 21, page: 2 });
+    expect(retrieval).toMatchObject({ sampleCount: 100, zeroHitRate: 0.03 });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/llm-wiki/admin/diagnostics/quality",
+      "/api/llm-wiki/admin/diagnostics/quarantine",
+      "/api/llm-wiki/admin/diagnostics/retrieval",
     ]);
   });
 

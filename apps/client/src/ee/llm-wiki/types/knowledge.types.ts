@@ -269,6 +269,69 @@ export interface KnowledgeWorkerDiagnostics {
   image: KnowledgeWorkerCapacityEstimate;
 }
 
+export interface KnowledgeRetrievalDiagnosticsSummary {
+  sampleCount: number;
+  zeroHitRate: number;
+  embeddingFallbackRate: number;
+  accessPolicyFallbackRate: number;
+  averageAuthorizedCandidateCount: number;
+  averageFilteredCandidateCount: number;
+}
+
+export interface KnowledgeQualitySummary {
+  pageCount: number;
+  compiledPageCount: number;
+  stalePageCount: number;
+  missingSourcePageCount: number;
+  missingChunkPageCount: number;
+  missingEmbeddingPageCount: number;
+  healthScore: number;
+}
+
+export interface KnowledgeSpaceHealth {
+  spaceId: string;
+  spaceName: string;
+  pageCount: number;
+  compiledPageCount: number;
+  stalePageCount: number;
+  missingChunkPageCount: number;
+  missingEmbeddingPageCount: number;
+  oldestStaleSourceAgeHours: number | null;
+  healthScore: number;
+}
+
+export interface KnowledgeQualityIssue {
+  code: string;
+  severity: "high" | "medium" | "low";
+  message: string;
+  affectedPageCount: number;
+}
+
+export interface KnowledgeQualityReport {
+  summary: KnowledgeQualitySummary;
+  spaces: KnowledgeSpaceHealth[];
+  topIssues: KnowledgeQualityIssue[];
+}
+
+export interface KnowledgeQuarantinedArtifact {
+  id: string;
+  workspaceId: string;
+  spaceId: string;
+  artifactId: string | null;
+  artifactKind: string | null;
+  compilerRunId: string | null;
+  compileTaskId: string | null;
+  reasonCodes: string[];
+  createdAt: string;
+}
+
+export interface KnowledgeQuarantineDiagnosticsPage {
+  items: KnowledgeQuarantinedArtifact[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
 export interface KnowledgeGraphNode {
   id: string;
   title: string;

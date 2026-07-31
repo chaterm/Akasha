@@ -1,11 +1,20 @@
 import { MantineProvider } from "@mantine/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { HelmetProvider } from "react-helmet-async";
 import { BrowserRouter } from "react-router-dom";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   forceRebuildKnowledgeSpace,
+  getKnowledgeQualityDiagnostics,
+  getKnowledgeQuarantineDiagnostics,
+  getKnowledgeRetrievalDiagnostics,
   getKnowledgeRunDiagnostics,
   getKnowledgeRunDiagnosticsSummary,
   getKnowledgeRunPageDiagnostics,
@@ -17,6 +26,7 @@ import {
 import KnowledgeAdminPage, {
   knowledgeDiagnosticsRefetchInterval,
 } from "./knowledge-admin";
+import type { KnowledgeRunDiagnostic } from "../types/knowledge.types";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -44,6 +54,9 @@ vi.mock("../services/knowledge-service", () => ({
   getKnowledgeRunDiagnostics: vi.fn(),
   getKnowledgeRunPageDiagnostics: vi.fn(),
   getKnowledgeWorkerDiagnostics: vi.fn(),
+  getKnowledgeQualityDiagnostics: vi.fn(),
+  getKnowledgeQuarantineDiagnostics: vi.fn(),
+  getKnowledgeRetrievalDiagnostics: vi.fn(),
   retryKnowledgePages: vi.fn(),
   runKnowledgeAdminAction: vi.fn(),
   updateKnowledgeSpace: vi.fn(),
@@ -98,6 +111,64 @@ describe("KnowledgeAdminPage", () => {
       space: worker(10, 30),
       image: worker(5, 15),
     });
+    vi.mocked(getKnowledgeQualityDiagnostics).mockResolvedValue({
+      summary: {
+        pageCount: 5000,
+        compiledPageCount: 4998,
+        stalePageCount: 1,
+        missingSourcePageCount: 0,
+        missingChunkPageCount: 1,
+        missingEmbeddingPageCount: 1,
+        healthScore: 99,
+      },
+      spaces: [
+        {
+          spaceId: "space-1",
+          spaceName: "AIM",
+          pageCount: 5000,
+          compiledPageCount: 4998,
+          stalePageCount: 1,
+          missingChunkPageCount: 1,
+          missingEmbeddingPageCount: 1,
+          oldestStaleSourceAgeHours: 2,
+          healthScore: 99,
+        },
+      ],
+      topIssues: [
+        {
+          code: "missing_chunks",
+          severity: "high",
+          message: "Some pages have no compiled chunks.",
+          affectedPageCount: 1,
+        },
+      ],
+    });
+    vi.mocked(getKnowledgeQuarantineDiagnostics).mockResolvedValue({
+      items: [
+        {
+          id: "quarantine-1",
+          workspaceId: "workspace-1",
+          spaceId: "space-1",
+          artifactId: "artifact-1",
+          artifactKind: "source_summary",
+          compilerRunId: "run-1",
+          compileTaskId: null,
+          reasonCodes: ["invalid_source_range"],
+          createdAt: "2026-08-01T00:00:00.000Z",
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 20,
+    });
+    vi.mocked(getKnowledgeRetrievalDiagnostics).mockResolvedValue({
+      sampleCount: 100,
+      zeroHitRate: 0.03,
+      embeddingFallbackRate: 0.01,
+      accessPolicyFallbackRate: 0,
+      averageAuthorizedCandidateCount: 8,
+      averageFilteredCandidateCount: 1,
+    });
     vi.mocked(retryKnowledgePages).mockResolvedValue({
       queuedPageCount: 1,
       jobIds: ["run-2"],
@@ -124,6 +195,7 @@ describe("KnowledgeAdminPage", () => {
 
     expect(await screen.findByText("Space compilation runs")).toBeTruthy();
     expect(await screen.findByText("Waiting initialization")).toBeTruthy();
+    expect(await screen.findByText("Space dispatch pending")).toBeTruthy();
     expect(await screen.findByText("text continuation")).toBeTruthy();
     expect(getKnowledgeRunPageDiagnostics).not.toHaveBeenCalled();
 
@@ -136,6 +208,116 @@ describe("KnowledgeAdminPage", () => {
       page: 1,
       limit: 50,
     });
+  });
+
+  it("loads quality, retrieval, and paginated quarantine only after opening the health tab", async () => {
+    renderPage();
+    await screen.findByText("Space compilation runs");
+
+    expect(getKnowledgeQualityDiagnostics).not.toHaveBeenCalled();
+    expect(getKnowledgeQuarantineDiagnostics).not.toHaveBeenCalled();
+    expect(getKnowledgeRetrievalDiagnostics).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Health and quarantine" }));
+
+    expect(await screen.findByText("Knowledge health")).toBeTruthy();
+    expect(await screen.findByText("artifact-1")).toBeTruthy();
+    expect(getKnowledgeQualityDiagnostics).toHaveBeenCalledWith({
+      spaceIds: ["space-1"],
+    });
+    expect(getKnowledgeQuarantineDiagnostics).toHaveBeenCalledWith({
+      spaceIds: ["space-1"],
+      page: 1,
+      limit: 20,
+    });
+    expect(getKnowledgeRetrievalDiagnostics).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() =>
+      expect(getKnowledgeRunDiagnosticsSummary).toHaveBeenCalledTimes(2),
+    );
+    expect(getKnowledgeQualityDiagnostics).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes search, status, phase, and pagination through the bounded Run query", async () => {
+    vi.mocked(getKnowledgeRunDiagnostics).mockImplementation(async (input) => ({
+      items: [
+        run({
+          runId: input.page === 2 ? "run-page-2" : "run-page-1",
+          spaceName: input.page === 2 ? "General" : "AIM",
+        }),
+      ],
+      total: 100,
+      page: input.page,
+      limit: input.limit,
+    }));
+    renderPage();
+
+    await screen.findByText("run-page-1");
+    fireEvent.change(screen.getByLabelText("Search Space or Run"), {
+      target: { value: "run-page" },
+    });
+    selectOption("queued");
+    selectOption("text");
+
+    await waitFor(() =>
+      expect(getKnowledgeRunDiagnostics).toHaveBeenCalledWith({
+        spaceIds: ["space-1"],
+        statuses: ["queued"],
+        phases: ["text"],
+        search: "run-page",
+        page: 1,
+        limit: 50,
+      }),
+    );
+    await screen.findByText("run-page-1");
+
+    fireEvent.click(screen.getByRole("button", { name: "2" }));
+    expect(await screen.findByText("run-page-2")).toBeTruthy();
+    expect(screen.queryByText("run-page-1")).toBeNull();
+    expect(getKnowledgeRunDiagnostics).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 2, limit: 50 }),
+    );
+  });
+
+  it("stops requesting RunPage details after the detail modal closes", async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "View pages" }));
+    await screen.findByText("Large page");
+    expect(getKnowledgeRunPageDiagnostics).toHaveBeenCalledTimes(1);
+
+    const detailDialog = screen.getByRole("dialog", { name: "Run pages" });
+    fireEvent.click(within(detailDialog).getAllByRole("button")[0]);
+    await waitFor(() => expect(screen.queryByText("Large page")).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() =>
+      expect(getKnowledgeRunDiagnosticsSummary).toHaveBeenCalledTimes(2),
+    );
+    expect(getKnowledgeRunPageDiagnostics).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows unknown estimates when BullMQ worker discovery is unsupported", async () => {
+    vi.mocked(getKnowledgeWorkerDiagnostics).mockResolvedValue({
+      sampledAt: "2026-07-31T12:00:00.000Z",
+      databaseMaxPool: 25,
+      schedulingAuthority: "postgresql",
+      space: {
+        ...worker(10, 30),
+        workerCount: null,
+        capacity: null,
+        source: "unsupported" as const,
+      },
+      image: {
+        ...worker(5, 15),
+        workerCount: null,
+        capacity: null,
+        source: "unsupported" as const,
+      },
+    });
+
+    renderPage();
+
+    expect(await screen.findAllByText("Unknown")).toHaveLength(2);
   });
 
   it("retries only explicitly selected failed RunPages", async () => {
@@ -214,6 +396,14 @@ function renderPage() {
   );
 }
 
+function selectOption(value: string): void {
+  const option = document.querySelector<HTMLElement>(
+    `[role="option"][value="${value}"]`,
+  );
+  if (!option) throw new Error(`Select option not found: ${value}`);
+  fireEvent.click(option);
+}
+
 function summary() {
   return {
     sampledAt: "2026-07-31T12:00:00.000Z",
@@ -253,7 +443,9 @@ function summary() {
   };
 }
 
-function run() {
+function run(
+  overrides: Partial<KnowledgeRunDiagnostic> = {},
+): KnowledgeRunDiagnostic {
   return {
     runId: "run-1",
     spaceId: "space-1",
@@ -281,6 +473,7 @@ function run() {
       images: { expected: 20, succeeded: 0 },
       merge: { expected: 20, succeeded: 0 },
     },
+    ...overrides,
   };
 }
 

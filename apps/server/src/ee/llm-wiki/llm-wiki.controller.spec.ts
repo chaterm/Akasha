@@ -704,6 +704,66 @@ describe('LlmWikiController', () => {
     expect(diagnosticsService.getWorkerDiagnostics).not.toHaveBeenCalled();
   });
 
+  it('loads quality on demand only for readable Spaces', async () => {
+    const diagnosticsService = {
+      findWorkspaceSpaceIds: jest
+        .fn()
+        .mockResolvedValue(['space-readable', 'space-private']),
+      getQualityDiagnostics: jest.fn().mockResolvedValue({ summary: {} }),
+    };
+    const controller = createController({
+      diagnosticsService,
+      spaceAuthorization: {
+        filterReadableSpaceIds: jest.fn().mockResolvedValue(['space-readable']),
+      },
+    });
+
+    await controller.getQualityDiagnostics({}, user(), workspace());
+
+    expect(diagnosticsService.getQualityDiagnostics).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-readable'],
+    });
+  });
+
+  it('restricts quarantine and retrieval diagnostics to workspace owners', async () => {
+    const diagnosticsService = {
+      listQuarantineDiagnostics: jest.fn(),
+      getRetrievalDiagnostics: jest.fn(),
+    };
+    const controller = createController({ diagnosticsService });
+
+    await expect(
+      controller.getQuarantineDiagnostics({}, adminUser(), workspace()),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      controller.getRetrievalDiagnostics(adminUser(), workspace()),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(diagnosticsService.listQuarantineDiagnostics).not.toHaveBeenCalled();
+    expect(diagnosticsService.getRetrievalDiagnostics).not.toHaveBeenCalled();
+  });
+
+  it('paginates owner quarantine diagnostics inside the requested Space scope', async () => {
+    const diagnosticsService = {
+      findWorkspaceSpaceIds: jest.fn().mockResolvedValue(['space-1']),
+      listQuarantineDiagnostics: jest.fn().mockResolvedValue({ items: [] }),
+    };
+    const controller = createController({ diagnosticsService });
+
+    await controller.getQuarantineDiagnostics(
+      { spaceIds: ['space-1'], page: 2, limit: 20 },
+      ownerUser(),
+      workspace(),
+    );
+
+    expect(diagnosticsService.listQuarantineDiagnostics).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-1'],
+      page: 2,
+      limit: 20,
+    });
+  });
+
   it('retries selected pages by requesting one durable Run per Space', async () => {
     const pageRepo = {
       findExistingPageRefs: jest.fn().mockResolvedValue([
@@ -1101,6 +1161,9 @@ function createController(
       findRunDiagnosticSpaceId: jest.fn(),
       listRunPageDiagnostics: jest.fn(),
       getWorkerDiagnostics: jest.fn(),
+      getQualityDiagnostics: jest.fn(),
+      listQuarantineDiagnostics: jest.fn(),
+      getRetrievalDiagnostics: jest.fn(),
       findRetryableFailedPageIds: jest
         .fn()
         .mockImplementation(({ sourcePageIds }) => sourcePageIds),
@@ -1158,6 +1221,10 @@ function user(overrides: Partial<User> = {}): User {
 
 function adminUser(): User {
   return user({ role: UserRole.ADMIN });
+}
+
+function ownerUser(): User {
+  return user({ role: UserRole.OWNER });
 }
 
 function workspace(): Workspace {

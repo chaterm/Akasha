@@ -45,6 +45,7 @@ import { KnowledgeSpaceRunnerService } from './services/knowledge-space-runner.s
 import { KnowledgeSpaceProcessor } from './processors/knowledge-space.processor';
 import { KnowledgeRunReaperService } from './services/knowledge-run-reaper.service';
 import { KnowledgeImageReaperService } from './services/knowledge-image-reaper.service';
+import { KnowledgeQualityService } from './services/knowledge-quality.service';
 
 @Module({
   imports: [NoopAuditModule, ReviewModule],
@@ -62,6 +63,7 @@ import { KnowledgeImageReaperService } from './services/knowledge-image-reaper.s
     KnowledgeContextPackService,
     KnowledgeCitationResolverService,
     KnowledgeDiagnosticsService,
+    KnowledgeQualityService,
     KnowledgeGraphService,
     AiKnowledgeChatService,
     ConfiguredKnowledgeEmbeddingProvider,

@@ -37,6 +37,9 @@ describePostgres(
         db as never,
         queueStubs[2] as never,
         queueStubs[0] as never,
+        {} as never,
+        {} as never,
+        {} as never,
       );
     });
 

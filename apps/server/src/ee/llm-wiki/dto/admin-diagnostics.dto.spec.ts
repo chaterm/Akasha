@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { validate } from 'class-validator';
 import {
+  AdminKnowledgeQuarantineListDto,
   AdminKnowledgeRunListDto,
   AdminKnowledgeRunPagesQueryDto,
 } from './admin-diagnostics.dto';
@@ -28,6 +29,19 @@ describe('bounded knowledge diagnostics DTOs', () => {
 
     await expect(validate(dto)).resolves.toEqual(
       expect.arrayContaining([expect.objectContaining({ property: 'limit' })]),
+    );
+  });
+
+  it('bounds on-demand quarantine pagination and Space scope', async () => {
+    const dto = Object.assign(new AdminKnowledgeQuarantineListDto(), {
+      spaceIds: Array.from({ length: 101 }, () => 'not-a-uuid'),
+      page: 0,
+      limit: 101,
+    });
+
+    const errors = await validate(dto);
+    expect(errors.map((error) => error.property)).toEqual(
+      expect.arrayContaining(['spaceIds', 'page', 'limit']),
     );
   });
 });

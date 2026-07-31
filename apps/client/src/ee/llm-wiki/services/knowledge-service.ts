@@ -10,6 +10,11 @@ import type {
   KnowledgeGraphResult,
   KnowledgeQueryResult,
   KnowledgeQueueSnapshot,
+  KnowledgeQualityIssue,
+  KnowledgeQualityReport,
+  KnowledgeQuarantineDiagnosticsPage,
+  KnowledgeQuarantinedArtifact,
+  KnowledgeRetrievalDiagnosticsSummary,
   KnowledgeRetryPagesResult,
   KnowledgeRunDiagnostic,
   KnowledgeRunDiagnosticsPage,
@@ -242,6 +247,38 @@ export async function getKnowledgeWorkerDiagnostics(): Promise<KnowledgeWorkerDi
   });
   if (!response.ok) throw new Error(await readErrorMessage(response));
   return normalizeWorkerDiagnostics(unwrapApiData(await response.json()));
+}
+
+export async function getKnowledgeQualityDiagnostics(params: {
+  spaceIds?: string[];
+}): Promise<KnowledgeQualityReport> {
+  return normalizeKnowledgeQuality(
+    await postKnowledgeDiagnostics(
+      "/api/llm-wiki/admin/diagnostics/quality",
+      params,
+    ),
+  );
+}
+
+export async function getKnowledgeQuarantineDiagnostics(params: {
+  spaceIds?: string[];
+  page?: number;
+  limit?: number;
+}): Promise<KnowledgeQuarantineDiagnosticsPage> {
+  return normalizeQuarantineDiagnosticsPage(
+    await postKnowledgeDiagnostics(
+      "/api/llm-wiki/admin/diagnostics/quarantine",
+      params,
+    ),
+  );
+}
+
+export async function getKnowledgeRetrievalDiagnostics(): Promise<KnowledgeRetrievalDiagnosticsSummary> {
+  const response = await fetch("/api/llm-wiki/admin/diagnostics/retrieval", {
+    credentials: "include",
+  });
+  if (!response.ok) throw new Error(await readErrorMessage(response));
+  return normalizeRetrievalDiagnostics(unwrapApiData(await response.json()));
 }
 
 async function postKnowledgeDiagnostics(
@@ -638,6 +675,104 @@ function normalizeWorkerCapacity(value: unknown) {
     lockDuration: readNumber(record.lockDuration),
     stalledInterval: readNumber(record.stalledInterval),
     maxStalledCount: readNumber(record.maxStalledCount),
+  };
+}
+
+function normalizeKnowledgeQuality(value: unknown): KnowledgeQualityReport {
+  const record = isRecord(value) ? value : {};
+  const summary = isRecord(record.summary) ? record.summary : {};
+  const spaces = Array.isArray(record.spaces) ? record.spaces : [];
+  const topIssues = Array.isArray(record.topIssues) ? record.topIssues : [];
+  return {
+    summary: {
+      pageCount: readNumber(summary.pageCount),
+      compiledPageCount: readNumber(summary.compiledPageCount),
+      stalePageCount: readNumber(summary.stalePageCount),
+      missingSourcePageCount: readNumber(summary.missingSourcePageCount),
+      missingChunkPageCount: readNumber(summary.missingChunkPageCount),
+      missingEmbeddingPageCount: readNumber(summary.missingEmbeddingPageCount),
+      healthScore: readNumber(summary.healthScore),
+    },
+    spaces: spaces.filter(isRecord).map((space) => ({
+      spaceId: readString(space.spaceId),
+      spaceName: readString(space.spaceName),
+      pageCount: readNumber(space.pageCount),
+      compiledPageCount: readNumber(space.compiledPageCount),
+      stalePageCount: readNumber(space.stalePageCount),
+      missingChunkPageCount: readNumber(space.missingChunkPageCount),
+      missingEmbeddingPageCount: readNumber(space.missingEmbeddingPageCount),
+      oldestStaleSourceAgeHours:
+        typeof space.oldestStaleSourceAgeHours === "number"
+          ? space.oldestStaleSourceAgeHours
+          : null,
+      healthScore: readNumber(space.healthScore),
+    })),
+    topIssues: topIssues.filter(isRecord).map((issue) => ({
+      code: readString(issue.code),
+      severity: normalizeIssueSeverity(issue.severity),
+      message: readString(issue.message),
+      affectedPageCount: readNumber(issue.affectedPageCount),
+    })),
+  };
+}
+
+function normalizeIssueSeverity(
+  value: unknown,
+): KnowledgeQualityIssue["severity"] {
+  return value === "high" || value === "medium" || value === "low"
+    ? value
+    : "low";
+}
+
+function normalizeQuarantineDiagnosticsPage(
+  value: unknown,
+): KnowledgeQuarantineDiagnosticsPage {
+  const record = isRecord(value) ? value : {};
+  return {
+    items: Array.isArray(record.items)
+      ? record.items.filter(isRecord).map(normalizeQuarantinedArtifact)
+      : [],
+    total: readNumber(record.total),
+    page: Math.max(readNumber(record.page), 1),
+    limit: Math.max(readNumber(record.limit), 1),
+  };
+}
+
+function normalizeQuarantinedArtifact(
+  value: Record<string, unknown>,
+): KnowledgeQuarantinedArtifact {
+  return {
+    id: readString(value.id),
+    workspaceId: readString(value.workspaceId),
+    spaceId: readString(value.spaceId),
+    artifactId: readNullableString(value.artifactId),
+    artifactKind: readNullableString(value.artifactKind),
+    compilerRunId: readNullableString(value.compilerRunId),
+    compileTaskId: readNullableString(value.compileTaskId),
+    reasonCodes: Array.isArray(value.reasonCodes)
+      ? value.reasonCodes.filter(
+          (reason): reason is string => typeof reason === "string",
+        )
+      : [],
+    createdAt: readString(value.createdAt),
+  };
+}
+
+function normalizeRetrievalDiagnostics(
+  value: unknown,
+): KnowledgeRetrievalDiagnosticsSummary {
+  const record = isRecord(value) ? value : {};
+  return {
+    sampleCount: readNumber(record.sampleCount),
+    zeroHitRate: readNumber(record.zeroHitRate),
+    embeddingFallbackRate: readNumber(record.embeddingFallbackRate),
+    accessPolicyFallbackRate: readNumber(record.accessPolicyFallbackRate),
+    averageAuthorizedCandidateCount: readNumber(
+      record.averageAuthorizedCandidateCount,
+    ),
+    averageFilteredCandidateCount: readNumber(
+      record.averageFilteredCandidateCount,
+    ),
   };
 }
 

@@ -67,18 +67,18 @@ order by count(*) desc;
 
 上线负责人必须填写并附到发布单：
 
-| 项目 | 证据 |
-|---|---|
-| 部署平台/集群/namespace | 待填写 |
-| workload 名称与配置版本 | 待填写 |
-| 应用副本数为 3 | 待填写 |
-| 三实例 Worker env 同构 | 待填写 |
-| 三实例 `DATABASE_MAX_POOL=25` | 待填写 |
+| 项目                                  | 证据   |
+| ------------------------------------- | ------ |
+| 部署平台/集群/namespace               | 待填写 |
+| workload 名称与配置版本               | 待填写 |
+| 应用副本数为 3                        | 待填写 |
+| 三实例 Worker env 同构                | 待填写 |
+| 三实例 `DATABASE_MAX_POOL=25`         | 待填写 |
 | PostgreSQL `max_connections` 与保留量 | 待填写 |
-| 其他数据库进程连接池合计 | 待填写 |
-| 容量公式核查结果 | 待填写 |
-| 100 空间预发压测报告 | 待填写 |
-| stalled/续锁故障注入报告 | 待填写 |
+| 其他数据库进程连接池合计              | 待填写 |
+| 容量公式核查结果                      | 待填写 |
+| 100 空间预发压测报告                  | 待填写 |
+| stalled/续锁故障注入报告              | 待填写 |
 
 任一项为空时，只能认定“仓库实现完成”，不能认定“生产上线验收完成”。
 
@@ -86,15 +86,15 @@ order by count(*) desc;
 
 本账本对应架构方案 Task 11 的 43 条场景。状态只表示当前仓库能提供的证据，不替代预发压测或部署证明。
 
-| 证据层级 | 场景 | 主要自动化证据 | 当前状态 |
-|---|---|---|---|
-| 调度与时间片 | 1–9、17–19、22–24 | `multi-space-compilation.integration.spec.ts`、`knowledge-space-runner.service.spec.ts`、`knowledge-space-compilation.repo.postgres.spec.ts`、`knowledge-space-execution.repo.postgres.spec.ts`、`knowledge-clean-cutover.spec.ts` | 单元/集成测试已实现；真实 PostgreSQL 场景需连接测试库复跑 |
-| lease、fence 与恢复 | 10、12、16、21、27–30、36 | `knowledge-space.processor.spec.ts`、`knowledge-run-reaper.service.spec.ts`、`knowledge-image-reaper.service.spec.ts`、`knowledge-space-execution.repo.postgres.spec.ts`、`knowledge-import.service.spec.ts` | 逻辑与 CAS 测试已实现；真实续锁中断、进程退出仍须预发故障注入 |
-| 单图共享队列 | 13–15、31–35 | `knowledge-image.processor.spec.ts`、`knowledge-space-compilation.service.spec.ts`、`knowledge-image-extraction.repo.postgres.spec.ts`、`knowledge-space-execution.repo.postgres.spec.ts`、`queue.module.spec.ts` | 单图冻结、每 Run 窗口、恢复和 50 图上限已实现；retention 数值须由 100 空间压测校准 |
-| Run 语义与知识一致性 | 20–23、37–40 | `knowledge-space-compilation.repo.postgres.spec.ts`、`knowledge-space-compilation.service.spec.ts`、`knowledge-space-execution.repo.postgres.spec.ts`、`environment.validation.spec.ts`、`knowledge-compiler-llm.provider.spec.ts` | 查询、状态机和跨字段校验已实现；PostgreSQL 测试需在可用测试库执行 |
-| 有界外部调用与维护任务 | 27、40–43 | `knowledge-operation-budget.spec.ts`、`knowledge-embedding-provider.service.spec.ts`、`knowledge-vector-index.service.spec.ts`、`knowledge-access-indexer.service.spec.ts`、`knowledge-image-understanding-provider.service.spec.ts`、`knowledge-space-aggregator.service.spec.ts`、`knowledge-diagnostics.service.spec.ts` | 超时、批次、并发和错误分类已有自动化测试；真实 provider P99 与 5000 页样本须预发校准 |
-| Diagnostics | 25、43 | `knowledge-diagnostics.service.spec.ts`、`knowledge-diagnostics.service.postgres.spec.ts`、client `knowledge-admin.test.tsx` | 分页、等待分类、容量 estimate 和预算超时展示已实现；大数据查询计划须预发确认 |
-| 部署和全局容量 | 11、26 | 启动配置校验、本文外部部署证据表 | 仓库内不能完成；3 replicas、同构配置和 PostgreSQL 全局连接预算是上线硬门槛 |
+| 证据层级               | 场景                      | 主要自动化证据                                                                                                                                                                                                                                                                                                              | 当前状态                                                                                               |
+| ---------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 调度与时间片           | 1–9、17–19、22–24         | `multi-space-compilation.integration.spec.ts`、`knowledge-space-runner.service.spec.ts`、`knowledge-space-compilation.repo.postgres.spec.ts`、`knowledge-space-execution.repo.postgres.spec.ts`、`knowledge-clean-cutover.spec.ts`                                                                                          | 单元/集成测试已实现；真实 PostgreSQL 场景需连接测试库复跑                                              |
+| lease、fence 与恢复    | 10、12、16、21、27–30、36 | `knowledge-space.processor.spec.ts`、`knowledge-run-reaper.service.spec.ts`、`knowledge-image-reaper.service.spec.ts`、`knowledge-space-execution.repo.postgres.spec.ts`、`knowledge-import.service.spec.ts`                                                                                                                | 逻辑与 CAS 测试已实现；真实续锁中断、进程退出仍须预发故障注入                                          |
+| 单图共享队列           | 13–15、31–35              | `knowledge-image.processor.spec.ts`、`knowledge-space-compilation.service.spec.ts`、`knowledge-image-extraction.repo.postgres.spec.ts`、`knowledge-space-execution.repo.postgres.spec.ts`、`queue.module.spec.ts`                                                                                                           | 单图冻结、每 Run 窗口、恢复和 50 图上限已实现；retention 数值须由 100 空间压测校准                     |
+| Run 语义与知识一致性   | 20–23、37–40              | `knowledge-space-compilation.repo.postgres.spec.ts`、`knowledge-space-compilation.service.spec.ts`、`knowledge-space-execution.repo.postgres.spec.ts`、`environment.validation.spec.ts`、`knowledge-compiler-llm.provider.spec.ts`                                                                                          | 查询、状态机和跨字段校验已实现；PostgreSQL 测试需在可用测试库执行                                      |
+| 有界外部调用与维护任务 | 27、40–43                 | `knowledge-operation-budget.spec.ts`、`knowledge-embedding-provider.service.spec.ts`、`knowledge-vector-index.service.spec.ts`、`knowledge-access-indexer.service.spec.ts`、`knowledge-image-understanding-provider.service.spec.ts`、`knowledge-space-aggregator.service.spec.ts`、`knowledge-diagnostics.service.spec.ts` | 超时、批次、并发和错误分类已有自动化测试；真实 provider P99 与 5000 页样本须预发校准                   |
+| Diagnostics            | 25、43                    | `knowledge-diagnostics.service.spec.ts`、`knowledge-diagnostics.service.postgres.spec.ts`、`knowledge-quality.service.postgres.spec.ts`、client `knowledge-admin.test.tsx`                                                                                                                                                  | Run/RunPage 分页、等待分类、容量 estimate、预算超时和按需健康/隔离查询已实现；大数据查询计划须预发确认 |
+| 部署和全局容量         | 11、26                    | 启动配置校验、本文外部部署证据表                                                                                                                                                                                                                                                                                            | 仓库内不能完成；3 replicas、同构配置和 PostgreSQL 全局连接预算是上线硬门槛                             |
 
 本地没有 PostgreSQL 测试连接时，带 `.postgres.spec.ts` 的套件会被显式跳过，不能把“测试文件存在”解释为数据库验收通过。发布流水线必须设置 `AKASHA_MIGRATION_TEST_DATABASE_URL`，并把跳过的 PostgreSQL 套件视为失败或未完成。
 
@@ -148,6 +148,7 @@ Owner 应能看到：
 - DB 已预留但投递未确认、过期 lease、恢复中/恢复耗尽。
 - 最近 stalled/lock renewal failed。
 - RunPage 分页详情与 `retryable_exhausted`/`permanent` 图片失败分类。
+- 独立的 Health and quarantine Tab；打开后才请求按空间聚合的 quality、分页 quarantine 和 retrieval 摘要，5 秒 Run 轮询不得重复执行这些查询。
 
 非 Owner 只能看到 ACL 可读空间，不能看到全局 queue/capacity；敏感错误只能在授权详情中查看。
 

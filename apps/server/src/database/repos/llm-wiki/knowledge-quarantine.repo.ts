@@ -71,18 +71,72 @@ export class KnowledgeQuarantineRepo {
         throw error;
       });
 
-    return rows.map((row) => ({
-      id: row.id,
-      workspaceId: row.workspaceId,
-      spaceId: row.spaceId,
-      artifactId: row.artifactId,
-      artifactKind: row.artifactKind,
-      compilerRunId: row.compilerRunId,
-      compileTaskId: row.compileTaskId,
-      reasonCodes: normalizeReasonCodes(row.reasonCodes),
-      createdAt: row.createdAt,
-    }));
+    return rows.map(toDiagnostic);
   }
+
+  async listDiagnosticsPage(input: {
+    workspaceId: string;
+    spaceIds: string[];
+    page?: number;
+    limit?: number;
+  }): Promise<{
+    items: KnowledgeQuarantinedArtifactDiagnostic[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
+    const page = Math.max(input.page ?? 1, 1);
+    const limit = Math.min(Math.max(input.limit ?? 50, 1), 100);
+    const spaceIds = [...new Set(input.spaceIds)];
+    if (spaceIds.length === 0) return { items: [], total: 0, page, limit };
+
+    const rows = await this.db
+      .selectFrom('knowledgeQuarantinedArtifacts')
+      .selectAll()
+      .select((eb) => eb.fn.countAll<number>().over().as('totalCount'))
+      .where('workspaceId', '=', input.workspaceId)
+      .where('spaceId', 'in', spaceIds)
+      .orderBy('createdAt', 'desc')
+      .orderBy('id', 'desc')
+      .offset((page - 1) * limit)
+      .limit(limit)
+      .execute()
+      .catch((error) => {
+        if (isUndefinedTableError(error)) return [];
+        throw error;
+      });
+
+    return {
+      items: rows.map(toDiagnostic),
+      total: Number(rows[0]?.totalCount ?? 0),
+      page,
+      limit,
+    };
+  }
+}
+
+function toDiagnostic(row: {
+  id: string;
+  workspaceId: string;
+  spaceId: string;
+  artifactId: string | null;
+  artifactKind: string | null;
+  compilerRunId: string | null;
+  compileTaskId: string | null;
+  reasonCodes: JsonValue;
+  createdAt: Date;
+}): KnowledgeQuarantinedArtifactDiagnostic {
+  return {
+    id: row.id,
+    workspaceId: row.workspaceId,
+    spaceId: row.spaceId,
+    artifactId: row.artifactId,
+    artifactKind: row.artifactKind,
+    compilerRunId: row.compilerRunId,
+    compileTaskId: row.compileTaskId,
+    reasonCodes: normalizeReasonCodes(row.reasonCodes),
+    createdAt: row.createdAt,
+  };
 }
 
 function isUndefinedTableError(error: unknown): boolean {

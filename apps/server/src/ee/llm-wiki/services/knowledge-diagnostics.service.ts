@@ -4,6 +4,8 @@ import { InjectKysely } from 'nestjs-kysely';
 import { Queue } from 'bullmq';
 import { sql } from 'kysely';
 import { KyselyDB } from '@akasha/db/types/kysely.types';
+import { KnowledgeQuarantineRepo } from '@akasha/db/repos/llm-wiki/knowledge-quarantine.repo';
+import { KnowledgeQueryAuditRepo } from '@akasha/db/repos/llm-wiki/knowledge-query-audit.repo';
 import { QueueName } from '../../../integrations/queue/constants';
 import {
   KNOWLEDGE_IMAGE_WORKER_OPTIONS,
@@ -11,6 +13,7 @@ import {
   KNOWLEDGE_WORKER_SETTINGS,
 } from './knowledge-worker-settings';
 import { getKnowledgeWorkerEventSnapshot } from './knowledge-worker-observability';
+import { KnowledgeQualityService } from './knowledge-quality.service';
 
 export type KnowledgeQueueCounts = {
   waiting: number;
@@ -133,8 +136,34 @@ export class KnowledgeDiagnosticsService {
     @InjectQueue(QueueName.KNOWLEDGE_IMAGE_QUEUE)
     private readonly knowledgeImageQueue: Queue,
     @InjectQueue(QueueName.KNOWLEDGE_SPACE_QUEUE)
-    private readonly knowledgeSpaceQueue?: Queue,
+    private readonly knowledgeSpaceQueue: Queue,
+    private readonly qualityService: KnowledgeQualityService,
+    private readonly quarantineRepo: KnowledgeQuarantineRepo,
+    private readonly queryAuditRepo: KnowledgeQueryAuditRepo,
   ) {}
+
+  async getQualityDiagnostics(input: {
+    workspaceId: string;
+    spaceIds: string[];
+  }) {
+    return this.qualityService.getReport(input);
+  }
+
+  async listQuarantineDiagnostics(input: {
+    workspaceId: string;
+    spaceIds: string[];
+    page?: number;
+    limit?: number;
+  }) {
+    return this.quarantineRepo.listDiagnosticsPage(input);
+  }
+
+  async getRetrievalDiagnostics(input: { workspaceId: string }) {
+    return this.queryAuditRepo.summarizeWorkspace({
+      workspaceId: input.workspaceId,
+      limit: 500,
+    });
+  }
 
   async getRunDiagnosticsSummary(input: {
     workspaceId: string;
@@ -804,9 +833,9 @@ export function classifyRunPageError(
   return 'other';
 }
 
-function sanitizeRunPageErrorDetail(value: string): string {
+export function sanitizeRunPageErrorDetail(value: string): string {
   return value
-    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/[\p{Cc}\s]+/gu, ' ')
     .trim()
     .slice(0, 500);
 }

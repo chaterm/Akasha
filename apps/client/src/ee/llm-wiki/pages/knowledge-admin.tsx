@@ -14,12 +14,17 @@ import {
   Select,
   Stack,
   Table,
+  Tabs,
   Text,
   TextInput,
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  type UseQueryResult,
+} from "@tanstack/react-query";
 import {
   IconAlertTriangle,
   IconArrowLeft,
@@ -36,6 +41,9 @@ import { useGetSpacesQuery } from "@/features/space/queries/space-query";
 import useUserRole from "@/hooks/use-user-role";
 import {
   forceRebuildKnowledgeSpace,
+  getKnowledgeQualityDiagnostics,
+  getKnowledgeQuarantineDiagnostics,
+  getKnowledgeRetrievalDiagnostics,
   getKnowledgeRunDiagnostics,
   getKnowledgeRunDiagnosticsSummary,
   getKnowledgeRunPageDiagnostics,
@@ -47,7 +55,10 @@ import {
 import classes from "../styles/knowledge-admin.module.css";
 import type {
   KnowledgeAdminSpaceAction,
+  KnowledgeQualityReport,
+  KnowledgeQuarantineDiagnosticsPage,
   KnowledgeQueueSnapshot,
+  KnowledgeRetrievalDiagnosticsSummary,
   KnowledgeRunDiagnostic,
   KnowledgeRunPhase,
   KnowledgeRunStatus,
@@ -101,6 +112,8 @@ export default function KnowledgeAdminPage() {
   const [runPage, setRunPage] = useState(1);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [runPageDetailPage, setRunPageDetailPage] = useState(1);
+  const [activeSection, setActiveSection] = useState<"runs" | "health">("runs");
+  const [quarantinePage, setQuarantinePage] = useState(1);
   const [selectedPageIds, setSelectedPageIds] = useState<string[]>([]);
   const [confirmedCompilation, setConfirmedCompilation] =
     useState<ConfirmedSpaceCompilation | null>(null);
@@ -178,6 +191,26 @@ export default function KnowledgeAdminPage() {
     enabled: isOwner,
     refetchInterval: isOwner ? 30_000 : false,
     refetchIntervalInBackground: false,
+  });
+  const qualityQuery = useQuery({
+    queryKey: ["knowledge-quality", spaceIds],
+    queryFn: () => getKnowledgeQualityDiagnostics({ spaceIds }),
+    enabled: activeSection === "health" && spaceIds.length > 0,
+  });
+  const quarantineQuery = useQuery({
+    queryKey: ["knowledge-quarantine", spaceIds, quarantinePage],
+    queryFn: () =>
+      getKnowledgeQuarantineDiagnostics({
+        spaceIds,
+        page: quarantinePage,
+        limit: 20,
+      }),
+    enabled: activeSection === "health" && isOwner && spaceIds.length > 0,
+  });
+  const retrievalQuery = useQuery({
+    queryKey: ["knowledge-retrieval"],
+    queryFn: getKnowledgeRetrievalDiagnostics,
+    enabled: activeSection === "health" && isOwner,
   });
 
   const refreshRunViews = () => {
@@ -498,6 +531,7 @@ export default function KnowledgeAdminPage() {
               onChange={(value) => {
                 setSpaceIds(value);
                 setRunPage(1);
+                setQuarantinePage(1);
                 setSelectedRunId(null);
               }}
               label={t("Spaces")}
@@ -513,252 +547,544 @@ export default function KnowledgeAdminPage() {
             </Alert>
           )}
 
-          <section className={classes.panel}>
-            <Group justify="space-between" mb="md">
-              <div>
-                <Title order={2} size="h4">
-                  {t("Space compilation runs")}
-                </Title>
-                <Text size="sm" c="dimmed">
-                  {t(
-                    "PostgreSQL is the scheduling authority. Redis worker counts are capacity estimates only.",
+          <Tabs
+            value={activeSection}
+            onChange={(value) =>
+              setActiveSection(value === "health" ? "health" : "runs")
+            }
+          >
+            <Tabs.List>
+              <Tabs.Tab value="runs">{t("Compilation runs")}</Tabs.Tab>
+              <Tabs.Tab value="health">{t("Health and quarantine")}</Tabs.Tab>
+            </Tabs.List>
+          </Tabs>
+
+          {activeSection === "runs" ? (
+            <>
+              <section className={classes.panel}>
+                <Group justify="space-between" mb="md">
+                  <div>
+                    <Title order={2} size="h4">
+                      {t("Space compilation runs")}
+                    </Title>
+                    <Text size="sm" c="dimmed">
+                      {t(
+                        "PostgreSQL is the scheduling authority. Redis worker counts are capacity estimates only.",
+                      )}
+                    </Text>
+                  </div>
+                  {(runSummaryQuery.isFetching || runListQuery.isFetching) && (
+                    <Loader size="sm" />
                   )}
-                </Text>
-              </div>
-              {(runSummaryQuery.isFetching || runListQuery.isFetching) && (
-                <Loader size="sm" />
-              )}
-            </Group>
-            <div className={classes.metricGrid}>
-              <Metric
-                label={t("Active runs")}
-                value={runSummary?.activeRunCount ?? 0}
-              />
-              <Metric
-                label={t("Active space slots")}
-                value={runSummary?.activeSpaceSlotRunCount ?? 0}
-              />
-              <Metric
-                label={t("Queued runs")}
-                value={runSummary?.queuedRunCount ?? 0}
-              />
-              <Metric
-                label={t("Waiting initialization")}
-                value={runSummary?.waitingInitializationCount ?? 0}
-              />
-              <Metric
-                label={t("Longest slot wait")}
-                value={formatDuration(
-                  runSummary?.longestCurrentSlotWaitMs ?? null,
+                </Group>
+                <div className={classes.metricGrid}>
+                  <Metric
+                    label={t("Active runs")}
+                    value={runSummary?.activeRunCount ?? 0}
+                  />
+                  <Metric
+                    label={t("Active space slots")}
+                    value={runSummary?.activeSpaceSlotRunCount ?? 0}
+                  />
+                  <Metric
+                    label={t("Queued runs")}
+                    value={runSummary?.queuedRunCount ?? 0}
+                  />
+                  <Metric
+                    label={t("Waiting initialization")}
+                    value={runSummary?.waitingInitializationCount ?? 0}
+                  />
+                  <Metric
+                    label={t("Longest slot wait")}
+                    value={formatDuration(
+                      runSummary?.longestCurrentSlotWaitMs ?? null,
+                    )}
+                  />
+                  <Metric
+                    label={t("Recent yields")}
+                    value={runSummary?.recentYieldCount ?? 0}
+                  />
+                  <Metric
+                    label={t("Recent completed")}
+                    value={runSummary?.recentCompletedCount ?? 0}
+                  />
+                  <Metric
+                    label={t("Recent failed")}
+                    value={runSummary?.recentFailedCount ?? 0}
+                  />
+                  <Metric
+                    label={t("Budget timeouts")}
+                    value={runSummary?.failureCategories.budgetTimeout ?? 0}
+                  />
+                  <Metric
+                    label={t("Space dispatch pending")}
+                    value={runSummary?.dispatch.spaceUnacknowledged ?? 0}
+                  />
+                  <Metric
+                    label={t("Image dispatch pending")}
+                    value={runSummary?.dispatch.imageUnacknowledged ?? 0}
+                  />
+                  {isOwner && (
+                    <>
+                      <Metric
+                        label={t("Estimated space capacity")}
+                        value={workerQuery.data?.space.capacity ?? t("Unknown")}
+                      />
+                      <Metric
+                        label={t("Estimated image capacity")}
+                        value={workerQuery.data?.image.capacity ?? t("Unknown")}
+                      />
+                    </>
+                  )}
+                </div>
+                <Group gap="xs" mt="md">
+                  {Object.entries(runSummary?.phaseCounts ?? {}).map(
+                    ([phase, count]) => (
+                      <Badge key={phase} variant="light">
+                        {humanizeState(phase)}: {count}
+                      </Badge>
+                    ),
+                  )}
+                  {(runSummary?.workerEvents.lockRenewalFailed ?? 0) > 0 && (
+                    <Badge color="orange" variant="outline">
+                      {t("Lock renewal failed")}:{" "}
+                      {runSummary?.workerEvents.lockRenewalFailed ?? 0}
+                    </Badge>
+                  )}
+                  {(runSummary?.workerEvents.stalled ?? 0) > 0 && (
+                    <Badge color="red" variant="outline">
+                      {t("Stalled")}: {runSummary?.workerEvents.stalled ?? 0}
+                    </Badge>
+                  )}
+                  {Object.entries({
+                    [t("Expired leases")]:
+                      runSummary?.recovery.expiredExecutionLeases ?? 0,
+                    [t("Space recovering")]:
+                      runSummary?.recovery.spaceRecovering ?? 0,
+                    [t("Space recovery exhausted")]:
+                      runSummary?.recovery.spaceRecoveryExhausted ?? 0,
+                    [t("Image recovering")]:
+                      runSummary?.recovery.imageRecovering ?? 0,
+                    [t("Image recovery exhausted")]:
+                      runSummary?.recovery.imageRecoveryExhausted ?? 0,
+                  }).map(([label, count]) =>
+                    count > 0 ? (
+                      <Badge key={label} color="orange" variant="outline">
+                        {label}: {count}
+                      </Badge>
+                    ) : null,
+                  )}
+                </Group>
+                {isOwner && runSummary?.queues && (
+                  <div className={classes.queueGrid}>
+                    <QueueSnapshotCard
+                      title={t("Space work queue")}
+                      snapshot={runSummary.queues.space}
+                    />
+                    <QueueSnapshotCard
+                      title={t("Shared image queue")}
+                      snapshot={runSummary.queues.image}
+                    />
+                  </div>
                 )}
-              />
-              <Metric
-                label={t("Recent yields")}
-                value={runSummary?.recentYieldCount ?? 0}
-              />
-              <Metric
-                label={t("Recent completed")}
-                value={runSummary?.recentCompletedCount ?? 0}
-              />
-              <Metric
-                label={t("Recent failed")}
-                value={runSummary?.recentFailedCount ?? 0}
-              />
-              <Metric
-                label={t("Budget timeouts")}
-                value={runSummary?.failureCategories.budgetTimeout ?? 0}
-              />
-              {isOwner && (
-                <Metric
-                  label={t("Estimated space capacity")}
-                  value={workerQuery.data?.space.capacity ?? t("Unknown")}
-                />
+                {isOwner && workerQuery.data && (
+                  <Text size="xs" c="dimmed" mt="sm">
+                    {t("Database pool per instance")}:{" "}
+                    {workerQuery.data.databaseMaxPool} · {t("Image capacity")}:{" "}
+                    {workerQuery.data.image.capacity ?? t("Unknown")}
+                  </Text>
+                )}
+
+                <Group align="end" grow mt="lg">
+                  <TextInput
+                    label={t("Search Space or Run")}
+                    value={runSearch}
+                    onChange={(event) => {
+                      setRunSearch(event.currentTarget.value);
+                      setRunPage(1);
+                    }}
+                  />
+                  <Select
+                    data={RUN_STATUS_OPTIONS}
+                    value={runStatus}
+                    onChange={(value) => {
+                      setRunStatus(value as KnowledgeRunStatus | null);
+                      setRunPage(1);
+                    }}
+                    label={t("Run status")}
+                    clearable
+                  />
+                  <Select
+                    data={RUN_PHASE_OPTIONS}
+                    value={runPhase}
+                    onChange={(value) => {
+                      setRunPhase(value as KnowledgeRunPhase | null);
+                      setRunPage(1);
+                    }}
+                    label={t("Run phase")}
+                    clearable
+                  />
+                </Group>
+
+                <Table.ScrollContainer minWidth={1240}>
+                  <Table mt="md" highlightOnHover verticalSpacing="sm">
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>{t("Space")}</Table.Th>
+                        <Table.Th>{t("State")}</Table.Th>
+                        <Table.Th>{t("Slice")}</Table.Th>
+                        <Table.Th>{t("Text")}</Table.Th>
+                        <Table.Th>{t("Images")}</Table.Th>
+                        <Table.Th>{t("Merge")}</Table.Th>
+                        <Table.Th>{t("Current wait")}</Table.Th>
+                        <Table.Th>{t("Run duration")}</Table.Th>
+                        <Table.Th>{t("Worker")}</Table.Th>
+                        <Table.Th>{t("Details")}</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {runs.length === 0 ? (
+                        <Table.Tr>
+                          <Table.Td colSpan={10}>
+                            <Text className={classes.emptyText}>
+                              {t("No compilation runs")}
+                            </Text>
+                          </Table.Td>
+                        </Table.Tr>
+                      ) : (
+                        runs.map((run) => (
+                          <RunRow
+                            key={run.runId}
+                            run={run}
+                            onViewPages={() => {
+                              setSelectedRunId(run.runId);
+                              setRunPageDetailPage(1);
+                              setSelectedPageIds([]);
+                            }}
+                          />
+                        ))
+                      )}
+                    </Table.Tbody>
+                  </Table>
+                </Table.ScrollContainer>
+                <Group justify="space-between" mt="md">
+                  <Text size="sm" c="dimmed">
+                    {t("Runs")}: {runListQuery.data?.total ?? 0}
+                  </Text>
+                  {runPageCount > 1 && (
+                    <Pagination
+                      value={runPage}
+                      onChange={setRunPage}
+                      total={runPageCount}
+                    />
+                  )}
+                </Group>
+              </section>
+
+              <section className={classes.panel}>
+                <Title order={2} size="h4" mb="md">
+                  {t("Space operations")}
+                </Title>
+                <Table.ScrollContainer minWidth={900}>
+                  <Table highlightOnHover verticalSpacing="sm">
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>{t("Space")}</Table.Th>
+                        <Table.Th>{t("Actions")}</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {selectedSpaces.map((space) => (
+                        <Table.Tr key={space.id}>
+                          <Table.Td>{space.name}</Table.Td>
+                          <Table.Td>
+                            <Group gap="xs">
+                              <Button
+                                size="xs"
+                                variant="light"
+                                onClick={() =>
+                                  openCompilation(
+                                    "update",
+                                    space.id,
+                                    space.name,
+                                  )
+                                }
+                              >
+                                {t("Update knowledge")}
+                              </Button>
+                              <Button
+                                size="xs"
+                                variant="default"
+                                loading={actionMutation.isPending}
+                                onClick={() =>
+                                  actionMutation.mutate({
+                                    action: "rebuild_embeddings",
+                                    spaceIds: [space.id],
+                                  })
+                                }
+                              >
+                                {t("Rebuild embeddings")}
+                              </Button>
+                              <MaintenanceMenu
+                                onAction={(action) =>
+                                  actionMutation.mutate({
+                                    action,
+                                    spaceIds: [space.id],
+                                  })
+                                }
+                                onForce={() =>
+                                  openCompilation("force", space.id, space.name)
+                                }
+                              />
+                            </Group>
+                          </Table.Td>
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                </Table.ScrollContainer>
+              </section>
+            </>
+          ) : (
+            <HealthDiagnostics
+              qualityQuery={qualityQuery}
+              quarantineQuery={quarantineQuery}
+              retrievalQuery={retrievalQuery}
+              quarantinePage={quarantinePage}
+              setQuarantinePage={setQuarantinePage}
+              isOwner={isOwner}
+            />
+          )}
+        </Stack>
+      </Container>
+    </>
+  );
+}
+
+function HealthDiagnostics({
+  qualityQuery,
+  quarantineQuery,
+  retrievalQuery,
+  quarantinePage,
+  setQuarantinePage,
+  isOwner,
+}: {
+  qualityQuery: UseQueryResult<KnowledgeQualityReport, Error>;
+  quarantineQuery: UseQueryResult<KnowledgeQuarantineDiagnosticsPage, Error>;
+  retrievalQuery: UseQueryResult<KnowledgeRetrievalDiagnosticsSummary, Error>;
+  quarantinePage: number;
+  setQuarantinePage: (page: number) => void;
+  isOwner: boolean;
+}) {
+  const { t } = useTranslation();
+  const quality = qualityQuery.data;
+  const quarantine = quarantineQuery.data;
+  const retrieval = retrievalQuery.data;
+  const quarantinePageCount = Math.max(
+    1,
+    Math.ceil((quarantine?.total ?? 0) / 20),
+  );
+  const error =
+    qualityQuery.error ?? quarantineQuery.error ?? retrievalQuery.error;
+
+  return (
+    <Stack gap="lg">
+      {error && (
+        <Alert color="red" icon={<IconAlertTriangle size={18} />}>
+          {error.message}
+        </Alert>
+      )}
+      <section className={classes.panel}>
+        <Group justify="space-between" mb="md">
+          <div>
+            <Title order={2} size="h4">
+              {t("Knowledge health")}
+            </Title>
+            <Text size="sm" c="dimmed">
+              {t(
+                "Loaded on demand from database aggregates; compilation polling does not refresh this report.",
               )}
+            </Text>
+          </div>
+          {qualityQuery.isFetching ? (
+            <Loader size="sm" />
+          ) : quality ? (
+            <Badge
+              color={healthColor(quality.summary.healthScore)}
+              variant="light"
+              size="lg"
+            >
+              {quality.summary.healthScore}
+            </Badge>
+          ) : null}
+        </Group>
+
+        {quality && (
+          <>
+            <div className={classes.metricGrid}>
+              <Metric label={t("Pages")} value={quality.summary.pageCount} />
+              <Metric
+                label={t("Compiled")}
+                value={quality.summary.compiledPageCount}
+              />
+              <Metric
+                label={t("Stale")}
+                value={quality.summary.stalePageCount}
+              />
+              <Metric
+                label={t("Missing source")}
+                value={quality.summary.missingSourcePageCount}
+              />
+              <Metric
+                label={t("Missing chunks")}
+                value={quality.summary.missingChunkPageCount}
+              />
+              <Metric
+                label={t("Missing embeddings")}
+                value={quality.summary.missingEmbeddingPageCount}
+              />
             </div>
-            <Group gap="xs" mt="md">
-              {Object.entries(runSummary?.phaseCounts ?? {}).map(
-                ([phase, count]) => (
-                  <Badge key={phase} variant="light">
-                    {humanizeState(phase)}: {count}
-                  </Badge>
-                ),
-              )}
-              <Badge color="orange" variant="outline">
-                {t("Lock renewal failed")}:{" "}
-                {runSummary?.workerEvents.lockRenewalFailed ?? 0}
-              </Badge>
-              <Badge color="red" variant="outline">
-                {t("Stalled")}: {runSummary?.workerEvents.stalled ?? 0}
-              </Badge>
-            </Group>
-            {isOwner && runSummary?.queues && (
-              <div className={classes.queueGrid}>
-                <QueueSnapshotCard
-                  title={t("Space work queue")}
-                  snapshot={runSummary.queues.space}
-                />
-                <QueueSnapshotCard
-                  title={t("Shared image queue")}
-                  snapshot={runSummary.queues.image}
-                />
-              </div>
-            )}
-            {isOwner && workerQuery.data && (
-              <Text size="xs" c="dimmed" mt="sm">
-                {t("Database pool per instance")}:{" "}
-                {workerQuery.data.databaseMaxPool} · {t("Image capacity")}:{" "}
-                {workerQuery.data.image.capacity ?? t("Unknown")}
-              </Text>
+
+            {isOwner && retrieval && (
+              <Group gap="xs" mt="md">
+                <Badge variant="light">
+                  {t("Zero-hit")}: {formatPercent(retrieval.zeroHitRate)}
+                </Badge>
+                <Badge variant="light">
+                  {t("Embedding fallback")}:{" "}
+                  {formatPercent(retrieval.embeddingFallbackRate)}
+                </Badge>
+                <Badge variant="light">
+                  {t("ACL fallback")}:{" "}
+                  {formatPercent(retrieval.accessPolicyFallbackRate)}
+                </Badge>
+                <Badge variant="outline">
+                  {t("Queries")}: {retrieval.sampleCount}
+                </Badge>
+              </Group>
             )}
 
-            <Group align="end" grow mt="lg">
-              <TextInput
-                label={t("Search Space or Run")}
-                value={runSearch}
-                onChange={(event) => {
-                  setRunSearch(event.currentTarget.value);
-                  setRunPage(1);
-                }}
-              />
-              <Select
-                data={RUN_STATUS_OPTIONS}
-                value={runStatus}
-                onChange={(value) => {
-                  setRunStatus(value as KnowledgeRunStatus | null);
-                  setRunPage(1);
-                }}
-                label={t("Run status")}
-                clearable
-              />
-              <Select
-                data={RUN_PHASE_OPTIONS}
-                value={runPhase}
-                onChange={(value) => {
-                  setRunPhase(value as KnowledgeRunPhase | null);
-                  setRunPage(1);
-                }}
-                label={t("Run phase")}
-                clearable
-              />
-            </Group>
+            {quality.topIssues.length > 0 && (
+              <Stack gap="xs" mt="md">
+                {quality.topIssues.map((issue) => (
+                  <Group key={issue.code} justify="space-between" gap="md">
+                    <Group gap="xs">
+                      <Badge color={issueColor(issue.severity)} variant="light">
+                        {issue.severity}
+                      </Badge>
+                      <Text size="sm">{issue.message}</Text>
+                    </Group>
+                    <Badge variant="outline">{issue.affectedPageCount}</Badge>
+                  </Group>
+                ))}
+              </Stack>
+            )}
 
-            <Table.ScrollContainer minWidth={1240}>
+            <Table.ScrollContainer minWidth={820}>
               <Table mt="md" highlightOnHover verticalSpacing="sm">
                 <Table.Thead>
                   <Table.Tr>
                     <Table.Th>{t("Space")}</Table.Th>
-                    <Table.Th>{t("State")}</Table.Th>
-                    <Table.Th>{t("Slice")}</Table.Th>
-                    <Table.Th>{t("Text")}</Table.Th>
-                    <Table.Th>{t("Images")}</Table.Th>
-                    <Table.Th>{t("Merge")}</Table.Th>
-                    <Table.Th>{t("Current wait")}</Table.Th>
-                    <Table.Th>{t("Run duration")}</Table.Th>
-                    <Table.Th>{t("Worker")}</Table.Th>
-                    <Table.Th>{t("Details")}</Table.Th>
+                    <Table.Th>{t("Health")}</Table.Th>
+                    <Table.Th>{t("Pages")}</Table.Th>
+                    <Table.Th>{t("Compiled")}</Table.Th>
+                    <Table.Th>{t("Stale")}</Table.Th>
+                    <Table.Th>{t("Missing chunks")}</Table.Th>
+                    <Table.Th>{t("Missing embeddings")}</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
-                  {runs.length === 0 ? (
-                    <Table.Tr>
-                      <Table.Td colSpan={10}>
-                        <Text className={classes.emptyText}>
-                          {t("No compilation runs")}
-                        </Text>
-                      </Table.Td>
-                    </Table.Tr>
-                  ) : (
-                    runs.map((run) => (
-                      <RunRow
-                        key={run.runId}
-                        run={run}
-                        onViewPages={() => {
-                          setSelectedRunId(run.runId);
-                          setRunPageDetailPage(1);
-                          setSelectedPageIds([]);
-                        }}
-                      />
-                    ))
-                  )}
-                </Table.Tbody>
-              </Table>
-            </Table.ScrollContainer>
-            <Group justify="space-between" mt="md">
-              <Text size="sm" c="dimmed">
-                {t("Runs")}: {runListQuery.data?.total ?? 0}
-              </Text>
-              {runPageCount > 1 && (
-                <Pagination
-                  value={runPage}
-                  onChange={setRunPage}
-                  total={runPageCount}
-                />
-              )}
-            </Group>
-          </section>
-
-          <section className={classes.panel}>
-            <Title order={2} size="h4" mb="md">
-              {t("Space operations")}
-            </Title>
-            <Table.ScrollContainer minWidth={900}>
-              <Table highlightOnHover verticalSpacing="sm">
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>{t("Space")}</Table.Th>
-                    <Table.Th>{t("Actions")}</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {selectedSpaces.map((space) => (
-                    <Table.Tr key={space.id}>
-                      <Table.Td>{space.name}</Table.Td>
+                  {quality.spaces.map((space) => (
+                    <Table.Tr key={space.spaceId}>
+                      <Table.Td>{space.spaceName}</Table.Td>
                       <Table.Td>
-                        <Group gap="xs">
-                          <Button
-                            size="xs"
-                            variant="light"
-                            onClick={() =>
-                              openCompilation("update", space.id, space.name)
-                            }
-                          >
-                            {t("Update knowledge")}
-                          </Button>
-                          <Button
-                            size="xs"
-                            variant="default"
-                            loading={actionMutation.isPending}
-                            onClick={() =>
-                              actionMutation.mutate({
-                                action: "rebuild_embeddings",
-                                spaceIds: [space.id],
-                              })
-                            }
-                          >
-                            {t("Rebuild embeddings")}
-                          </Button>
-                          <MaintenanceMenu
-                            onAction={(action) =>
-                              actionMutation.mutate({
-                                action,
-                                spaceIds: [space.id],
-                              })
-                            }
-                            onForce={() =>
-                              openCompilation("force", space.id, space.name)
-                            }
-                          />
-                        </Group>
+                        <Badge
+                          color={healthColor(space.healthScore)}
+                          variant="light"
+                        >
+                          {space.healthScore}
+                        </Badge>
                       </Table.Td>
+                      <Table.Td>{space.pageCount}</Table.Td>
+                      <Table.Td>{space.compiledPageCount}</Table.Td>
+                      <Table.Td>
+                        {space.stalePageCount}
+                        {space.oldestStaleSourceAgeHours !== null
+                          ? ` · ${space.oldestStaleSourceAgeHours}h`
+                          : ""}
+                      </Table.Td>
+                      <Table.Td>{space.missingChunkPageCount}</Table.Td>
+                      <Table.Td>{space.missingEmbeddingPageCount}</Table.Td>
                     </Table.Tr>
                   ))}
                 </Table.Tbody>
               </Table>
             </Table.ScrollContainer>
-          </section>
-        </Stack>
-      </Container>
-    </>
+          </>
+        )}
+      </section>
+
+      {isOwner && (
+        <section className={classes.panel}>
+          <Group justify="space-between" mb="md">
+            <Title order={2} size="h4">
+              {t("Quarantine")}
+            </Title>
+            {quarantineQuery.isFetching ? (
+              <Loader size="sm" />
+            ) : (
+              <Badge variant="light">{quarantine?.total ?? 0}</Badge>
+            )}
+          </Group>
+          <Table.ScrollContainer minWidth={900}>
+            <Table highlightOnHover verticalSpacing="sm">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>{t("Artifact")}</Table.Th>
+                  <Table.Th>{t("Kind")}</Table.Th>
+                  <Table.Th>{t("Reason")}</Table.Th>
+                  <Table.Th>{t("Run")}</Table.Th>
+                  <Table.Th>{t("Created")}</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {(quarantine?.items ?? []).length === 0 ? (
+                  <Table.Tr>
+                    <Table.Td colSpan={5}>
+                      <Text className={classes.emptyText}>
+                        {t("No quarantined artifacts")}
+                      </Text>
+                    </Table.Td>
+                  </Table.Tr>
+                ) : (
+                  quarantine?.items.map((item) => (
+                    <Table.Tr key={item.id}>
+                      <Table.Td>
+                        <Text className={classes.mono}>
+                          {item.artifactId ?? item.id}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>{item.artifactKind ?? "-"}</Table.Td>
+                      <Table.Td>{item.reasonCodes.join(", ")}</Table.Td>
+                      <Table.Td>{item.compilerRunId ?? "-"}</Table.Td>
+                      <Table.Td>{formatDate(item.createdAt)}</Table.Td>
+                    </Table.Tr>
+                  ))
+                )}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
+          {quarantinePageCount > 1 && (
+            <Pagination
+              mt="md"
+              value={quarantinePage}
+              onChange={setQuarantinePage}
+              total={quarantinePageCount}
+            />
+          )}
+        </section>
+      )}
+    </Stack>
   );
 }
 
@@ -907,6 +1233,22 @@ function formatDuration(ms: number | null): string {
   if (ms < 60_000) return `${Math.round(ms / 1_000)}s`;
   if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
   return `${(ms / 3_600_000).toFixed(1)}h`;
+}
+
+function formatPercent(value: number): string {
+  return `${Math.round(value * 1000) / 10}%`;
+}
+
+function healthColor(score: number): string {
+  return score >= 90 ? "green" : score >= 70 ? "yellow" : "red";
+}
+
+function issueColor(severity: "high" | "medium" | "low"): string {
+  return severity === "high"
+    ? "red"
+    : severity === "medium"
+      ? "yellow"
+      : "blue";
 }
 
 function humanizeState(value: string): string {

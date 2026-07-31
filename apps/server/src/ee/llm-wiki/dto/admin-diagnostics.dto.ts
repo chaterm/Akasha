@@ -71,6 +71,21 @@ export class AdminKnowledgeRunListDto extends AdminKnowledgeRunSummaryDto {
   limit?: number;
 }
 
+export class AdminKnowledgeQuarantineListDto extends AdminKnowledgeRunSummaryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+}
+
 export class AdminKnowledgeRunPagesQueryDto {
   @IsOptional()
   @Type(() => Number)

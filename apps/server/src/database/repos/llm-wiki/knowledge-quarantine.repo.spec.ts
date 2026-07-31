@@ -53,6 +53,11 @@ class FakeKyselyQuery {
     return this;
   }
 
+  offset(...args: unknown[]) {
+    this.calls.push({ method: 'offset', args });
+    return this;
+  }
+
   async execute() {
     this.calls.push({ method: 'execute', args: [] });
     if (this.error) throw this.error;
@@ -167,6 +172,67 @@ describe('KnowledgeQuarantineRepo', () => {
       { method: 'limit', args: [20] },
       { method: 'execute', args: [] },
     ]);
+  });
+
+  it('paginates quarantine diagnostics inside the authorized Space scope', async () => {
+    const createdAt = new Date('2026-06-18T08:00:00.000Z');
+    const query = new FakeKyselyQuery([
+      {
+        id: 'quarantine-1',
+        workspaceId: 'workspace-1',
+        spaceId: 'space-2',
+        artifactId: null,
+        artifactKind: null,
+        compilerRunId: null,
+        compileTaskId: null,
+        reasonCodes: ['validation_failed'],
+        createdAt,
+        totalCount: 21,
+      },
+    ]);
+    const repo = new KnowledgeQuarantineRepo(query as never);
+
+    await expect(
+      repo.listDiagnosticsPage({
+        workspaceId: 'workspace-1',
+        spaceIds: ['space-1', 'space-2'],
+        page: 2,
+        limit: 20,
+      }),
+    ).resolves.toEqual({
+      items: [
+        {
+          id: 'quarantine-1',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-2',
+          artifactId: null,
+          artifactKind: null,
+          compilerRunId: null,
+          compileTaskId: null,
+          reasonCodes: ['validation_failed'],
+          createdAt,
+        },
+      ],
+      total: 21,
+      page: 2,
+      limit: 20,
+    });
+    expect(query.calls.map((call) => call.method)).toEqual([
+      'selectFrom',
+      'selectAll',
+      'select',
+      'where',
+      'where',
+      'orderBy',
+      'orderBy',
+      'offset',
+      'limit',
+      'execute',
+    ]);
+    expect(query.calls[4]).toEqual({
+      method: 'where',
+      args: ['spaceId', 'in', ['space-1', 'space-2']],
+    });
   });
 
   it('returns an empty diagnostic list when the quarantine table has not been migrated', async () => {

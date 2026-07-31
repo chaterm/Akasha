@@ -40,6 +40,7 @@ import {
 import { AdminKnowledgeSpaceActionDto } from './dto/admin-space-action.dto';
 import { CompileSpacesDto } from './dto/compile-spaces.dto';
 import {
+  AdminKnowledgeQuarantineListDto,
   AdminKnowledgeRunListDto,
   AdminKnowledgeRunPagesQueryDto,
   AdminKnowledgeRunSummaryDto,
@@ -393,6 +394,67 @@ export class LlmWikiController {
       search: dto.search,
       page: dto.page,
       limit: dto.limit,
+    });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('admin/diagnostics/quality')
+  async getQualityDiagnostics(
+    @Body() dto: AdminKnowledgeRunSummaryDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertDiagnosticsEnabled(workspace);
+    const spaceIds = await this.findAuthorizedDiagnosticSpaceIds(
+      dto.spaceIds,
+      user,
+      workspace,
+    );
+    return this.diagnosticsService.getQualityDiagnostics({
+      workspaceId: workspace.id,
+      spaceIds,
+    });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('admin/diagnostics/quarantine')
+  async getQuarantineDiagnostics(
+    @Body() dto: AdminKnowledgeQuarantineListDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertDiagnosticsEnabled(workspace);
+    if (user.role !== UserRole.OWNER) {
+      throw new ForbiddenException(
+        'Knowledge quarantine diagnostics are restricted to workspace owners',
+      );
+    }
+    const spaceIds = await this.findAuthorizedDiagnosticSpaceIds(
+      dto.spaceIds,
+      user,
+      workspace,
+    );
+    return this.diagnosticsService.listQuarantineDiagnostics({
+      workspaceId: workspace.id,
+      spaceIds,
+      page: dto.page,
+      limit: dto.limit,
+    });
+  }
+
+  @Get('admin/diagnostics/retrieval')
+  async getRetrievalDiagnostics(
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertDiagnosticsEnabled(workspace);
+    if (user.role !== UserRole.OWNER) {
+      throw new ForbiddenException(
+        'Knowledge retrieval diagnostics are restricted to workspace owners',
+      );
+    }
+    return this.diagnosticsService.getRetrievalDiagnostics({
+      workspaceId: workspace.id,
     });
   }
 
