@@ -33,6 +33,9 @@ export interface RunPageInitializationPlan {
   expectedSourceVersion: string;
   expectedSourceContentHash: string;
   expectedImageCount: number;
+  succeededImageCount?: number;
+  failedImageCount?: number;
+  skippedImageCount?: number;
   status: KnowledgeSpaceCompileRunPageStatus;
   imageStatus: KnowledgeSpaceCompileRunPageImageStatus;
   mergeStatus: KnowledgeSpaceCompileRunPageMergeStatus;
@@ -92,6 +95,89 @@ export function buildSpaceSliceJobId(
 export class KnowledgeSpaceExecutionRepo {
   constructor(@InjectKysely() private readonly db: KyselyDB) {}
 
+  async findLeasedRun(lease: SpaceExecutionLease) {
+    return this.db
+      .selectFrom('knowledgeSpaceCompileRuns')
+      .selectAll()
+      .$call((query) => this.whereLease(query, lease))
+      .where('phase', 'in', this.phasesFor(lease.jobPhase))
+      .where('status', 'in', NONTERMINAL_RUN_STATUSES)
+      .executeTakeFirst();
+  }
+
+  async isLeaseActive(lease: SpaceExecutionLease): Promise<boolean> {
+    return Boolean(await this.findLeasedRun(lease));
+  }
+
+  async findPendingTextPages(lease: SpaceExecutionLease) {
+    return this.db
+      .selectFrom('knowledgeSpaceCompileRunPages as page')
+      .innerJoin('knowledgeSpaceCompileRuns as run', 'run.id', 'page.runId')
+      .select([
+        'page.sourcePageId',
+        'page.expectedSourceVersion',
+        'page.expectedSourceContentHash',
+        'page.createdAt',
+      ])
+      .where('run.id', '=', lease.runId)
+      .where('run.knowledgeGeneration', '=', lease.knowledgeGeneration)
+      .where('run.spaceJobSequence', '=', lease.spaceJobSequence)
+      .where('run.spaceJobId', '=', lease.spaceJobId)
+      .where('run.executionToken', '=', lease.executionToken)
+      .where('run.phase', '=', 'text')
+      .where('run.status', 'in', NONTERMINAL_RUN_STATUSES)
+      .where('page.status', 'in', ['pending', 'queued', 'running'])
+      .orderBy('page.createdAt', 'asc')
+      .orderBy('page.sourcePageId', 'asc')
+      .execute();
+  }
+
+  async isLeaseActiveForPublication(
+    lease: SpaceExecutionLease,
+    input: {
+      sourcePageId: string;
+      sourceVersion: string;
+      sourceContentHash: string;
+    },
+    trx: KyselyTransaction,
+  ): Promise<boolean> {
+    const run = await this.lockLeasedRun(trx, lease);
+    if (!run || run.phase !== 'text') return false;
+    const page = await trx
+      .selectFrom('knowledgeSpaceCompileRunPages')
+      .select('id')
+      .where('runId', '=', lease.runId)
+      .where('sourcePageId', '=', input.sourcePageId)
+      .where('expectedSourceVersion', '=', input.sourceVersion)
+      .where('expectedSourceContentHash', '=', input.sourceContentHash)
+      .forUpdate()
+      .executeTakeFirst();
+    return Boolean(page);
+  }
+
+  async isLeaseActiveForSpacePublication(
+    lease: SpaceExecutionLease,
+    trx: KyselyTransaction,
+  ): Promise<boolean> {
+    return Boolean(await this.lockLeasedRun(trx, lease));
+  }
+
+  async hasImageWork(lease: SpaceExecutionLease): Promise<boolean> {
+    const row = await this.db
+      .selectFrom('knowledgeSpaceCompileRunPages as page')
+      .innerJoin('knowledgeSpaceCompileRuns as run', 'run.id', 'page.runId')
+      .select('page.id')
+      .where('run.id', '=', lease.runId)
+      .where('run.knowledgeGeneration', '=', lease.knowledgeGeneration)
+      .where('run.spaceJobSequence', '=', lease.spaceJobSequence)
+      .where('run.spaceJobId', '=', lease.spaceJobId)
+      .where('run.executionToken', '=', lease.executionToken)
+      .where('page.imageStatus', 'in', ['pending', 'queued', 'processing'])
+      .limit(1)
+      .executeTakeFirst();
+    return Boolean(row);
+  }
+
   async claimSpaceSlice(
     input: SpaceSliceReservation & {
       workerId: string;
@@ -137,14 +223,16 @@ export class KnowledgeSpaceExecutionRepo {
       executionToken?: string;
       leaseExpiredBefore: Date;
       executionLeaseExpiresAt: Date;
+      allowUnexpired?: boolean;
     },
   ): Promise<SpaceExecutionLease | undefined> {
     return executeTx(this.db, async (trx) => {
       const locked = await this.lockReservedRun(trx, input);
       if (
         !locked ||
-        !locked.executionLeaseExpiresAt ||
-        locked.executionLeaseExpiresAt >= input.leaseExpiredBefore ||
+        (!input.allowUnexpired &&
+          (!locked.executionLeaseExpiresAt ||
+            locked.executionLeaseExpiresAt >= input.leaseExpiredBefore)) ||
         locked.spaceJobRecoveryCount >= 3
       ) {
         return undefined;
@@ -163,7 +251,9 @@ export class KnowledgeSpaceExecutionRepo {
         .$call((query) => this.whereReservation(query, input))
         .where('phase', '=', locked.phase)
         .where('status', 'in', NONTERMINAL_RUN_STATUSES)
-        .where('executionLeaseExpiresAt', '<', input.leaseExpiredBefore)
+        .$if(!input.allowUnexpired, (query) =>
+          query.where('executionLeaseExpiresAt', '<', input.leaseExpiredBefore),
+        )
         .returning('id')
         .executeTakeFirst();
       if (!claimed) return undefined;
@@ -219,6 +309,9 @@ export class KnowledgeSpaceExecutionRepo {
                 expectedSourceVersion: page.expectedSourceVersion,
                 expectedSourceContentHash: page.expectedSourceContentHash,
                 expectedImageCount: page.expectedImageCount,
+                succeededImageCount: page.succeededImageCount ?? 0,
+                failedImageCount: page.failedImageCount ?? 0,
+                skippedImageCount: page.skippedImageCount ?? 0,
                 status: page.status,
                 imageStatus: page.imageStatus,
                 mergeStatus: page.mergeStatus,
@@ -370,6 +463,33 @@ export class KnowledgeSpaceExecutionRepo {
         failedPageCount: counts.failed,
         skippedPageCount: counts.skipped,
       };
+    });
+  }
+
+  async advanceTextBarrier(lease: SpaceExecutionLease) {
+    return executeTx(this.db, async (trx) => {
+      const run = await this.lockLeasedRun(trx, lease);
+      if (!run || run.phase !== 'text') return undefined;
+      const counts = await this.countPageStatuses(trx, lease.runId);
+      const barrierComplete =
+        counts.succeeded + counts.failed + counts.skipped >=
+        run.expectedPageCount;
+      if (!barrierComplete) return { barrierComplete: false, ...counts };
+      const updated = await trx
+        .updateTable('knowledgeSpaceCompileRuns')
+        .set({
+          phase: 'initial_aggregate',
+          status: 'aggregating',
+          succeededPageCount: counts.succeeded,
+          failedPageCount: counts.failed,
+          skippedPageCount: counts.skipped,
+          updatedAt: new Date(),
+        })
+        .$call((query) => this.whereLease(query, lease))
+        .where('phase', '=', 'text')
+        .returning('id')
+        .executeTakeFirst();
+      return updated ? { barrierComplete: true, ...counts } : undefined;
     });
   }
 

@@ -19,6 +19,10 @@ import {
 } from '@akasha/db/repos/llm-wiki/knowledge-image-extraction.repo';
 import { KnowledgeSourceRepo } from '@akasha/db/repos/llm-wiki/knowledge-source.repo';
 import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
+import {
+  KnowledgeSpaceExecutionRepo,
+  SpaceExecutionLease,
+} from '@akasha/db/repos/llm-wiki/knowledge-space-execution.repo';
 import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import {
   DEFAULT_KNOWLEDGE_COMPILER_VERSION,
@@ -64,7 +68,12 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     private readonly contributionRepo: KnowledgeArtifactContributionRepo,
     private readonly environmentService: EnvironmentService,
     private readonly sourceExporter: KnowledgeSourceExporterService,
-  ) {}
+    executionRepo?: KnowledgeSpaceExecutionRepo,
+  ) {
+    this.executionRepo = executionRepo;
+  }
+
+  private readonly executionRepo?: KnowledgeSpaceExecutionRepo;
 
   async onModuleInit(): Promise<void> {
     await this.dispatchPending();
@@ -101,6 +110,196 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     }
     await this.dispatchPending();
     return results;
+  }
+
+  async initializeLeasedRun(lease: SpaceExecutionLease) {
+    if (!this.executionRepo) {
+      throw new Error(
+        'KnowledgeSpaceExecutionRepo is required for Space jobs.',
+      );
+    }
+    const run = await this.executionRepo.findLeasedRun(lease);
+    if (!run) return undefined;
+    const scope = { workspaceId: run.workspaceId, spaceId: run.spaceId };
+    const sources = await this.sourceExporter.exportSpaceSources(scope);
+    const sourcePageIds = sources.map((source) => source.sourcePageId);
+    const snapshotImages = sources.flatMap((source) =>
+      (source.images ?? []).map((image) => ({
+        sourcePageId: source.sourcePageId,
+        attachmentId: image.attachmentId,
+        attachmentVersion: image.attachmentVersion,
+      })),
+    );
+    const [
+      catalog,
+      aggregateFingerprint,
+      reuseCandidates,
+      activeSourcePageIds,
+      contributionSourcePageIds,
+      readyExtractions,
+      latestAggregateRun,
+      hasActiveOverview,
+    ] = await Promise.all([
+      this.catalogService.snapshot(scope),
+      this.catalogService.aggregateFingerprint(scope),
+      this.compilationRepo.findSpaceReuseCandidates({
+        ...scope,
+        sourcePageIds,
+      }),
+      this.sourceRepo.findActiveSourcePageIdsBySpace(scope),
+      this.contributionRepo.findSpaceSourcePageIds(scope),
+      this.imageExtractionRepo.findCurrentReadyForSnapshotImages({
+        ...scope,
+        images: snapshotImages,
+        model: this.environmentService.getAiVisionModel().trim(),
+        promptVersion: DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
+      }),
+      this.runRepo.findLatestCompletedRunForAggregateReuse({
+        ...scope,
+        currentRunId: run.id,
+      }),
+      this.capsuleRepo.hasActiveSpaceOverview(scope),
+    ]);
+    const currentSourcePageIds = new Set(sourcePageIds);
+    const removedSourcePageIds = [
+      ...new Set([...activeSourcePageIds, ...contributionSourcePageIds]),
+    ].filter((sourcePageId) => !currentSourcePageIds.has(sourcePageId));
+    const remainingSourcesAffectedByRemoval = new Set(
+      removedSourcePageIds.length > 0
+        ? await this.contributionRepo.findRemainingSourcePageIdsForRemovedSources(
+            { ...scope, removedSourcePageIds },
+          )
+        : [],
+    );
+    const candidateByPageId = new Map(
+      reuseCandidates.map((candidate) => [candidate.sourcePageId, candidate]),
+    );
+    const readyExtractionByAttachmentId = currentReadyExtractionMap(
+      sources,
+      readyExtractions,
+      this.environmentService.getAiVisionModel().trim(),
+    );
+    const planned = sources.map((source) => {
+      const sourceImages = source.images ?? [];
+      const readyImages = sourceImages.flatMap(
+        (image): ReadyKnowledgeImage[] => {
+          const extraction = readyExtractionByAttachmentId.get(
+            image.attachmentId,
+          );
+          return extraction
+            ? [
+                {
+                  attachmentId: image.attachmentId,
+                  attachmentVersion: image.attachmentVersion,
+                  cacheFingerprint: extraction.cacheFingerprint,
+                  contentHash: extraction.contentHash,
+                  ocrText: extraction.ocrText ?? '',
+                  caption: extraction.caption ?? '',
+                },
+              ]
+            : [];
+        },
+      );
+      const allImagesReady = readyImages.length === sourceImages.length;
+      const effectiveKnowledgeHash = buildEffectiveKnowledgeHash({
+        sourceContentHash: source.contentHash,
+        compilerVersion: run.compilerVersion,
+        promptVersion: run.promptVersion,
+        readyImages,
+      });
+      const candidate = candidateByPageId.get(source.sourcePageId);
+      const reusable =
+        !remainingSourcesAffectedByRemoval.has(source.sourcePageId) &&
+        allImagesReady &&
+        Boolean(candidate?.activeSourceId) &&
+        Boolean(candidate?.activeSummaryId) &&
+        Boolean(candidate?.activeSummaryChunkId) &&
+        candidate?.lastSuccessfulSourceVersion === source.sourceVersion &&
+        candidate?.lastSuccessfulSourceHash === source.contentHash &&
+        candidate?.contributionSourceVersion === source.sourceVersion &&
+        candidate?.contributionSourceHash === source.contentHash &&
+        candidate?.contributionCompilerVersion === run.compilerVersion &&
+        candidate?.contributionPromptVersion === run.promptVersion &&
+        candidate?.lastSuccessfulEffectiveHash === effectiveKnowledgeHash;
+      return {
+        source,
+        sourceImages,
+        readyImages,
+        reusable,
+        effectiveKnowledgeHash,
+      };
+    });
+    const pageCompilationRequired = planned.some((item) => !item.reusable);
+    const aggregateReusable =
+      !pageCompilationRequired &&
+      removedSourcePageIds.length === 0 &&
+      Boolean(hasActiveOverview) &&
+      Boolean(latestAggregateRun) &&
+      latestAggregateRun!.compilerVersion === run.compilerVersion &&
+      latestAggregateRun!.promptVersion === run.promptVersion &&
+      latestAggregateRun!.knowledgeGeneration ===
+        latestAggregateRun!.currentKnowledgeGeneration &&
+      latestAggregateRun!.catalogHash === aggregateFingerprint.hash;
+
+    const initialized = await this.executionRepo.initializeRun(lease, {
+      catalogSnapshot: catalog.entries as unknown as JsonValue,
+      catalogHash: aggregateFingerprint.hash,
+      removedSourcePageIds,
+      pages: planned.map((item) => ({
+        sourcePageId: item.source.sourcePageId,
+        expectedSourceVersion: item.source.sourceVersion,
+        expectedSourceContentHash: item.source.contentHash,
+        expectedImageCount: item.sourceImages.length,
+        succeededImageCount: item.reusable
+          ? item.sourceImages.length
+          : item.readyImages.length,
+        status: item.reusable ? ('skipped' as const) : ('pending' as const),
+        imageStatus:
+          item.sourceImages.length === 0
+            ? ('not_required' as const)
+            : item.reusable
+              ? ('succeeded' as const)
+              : ('pending' as const),
+        mergeStatus:
+          item.sourceImages.length === 0
+            ? ('not_required' as const)
+            : item.reusable
+              ? ('succeeded' as const)
+              : ('waiting_images' as const),
+        errorCode: item.reusable ? 'unchanged' : null,
+        errorMessage: item.reusable
+          ? 'Existing compiled knowledge is current.'
+          : null,
+        targetEffectiveKnowledgeHash: item.effectiveKnowledgeHash,
+      })),
+      images: planned.flatMap((item) =>
+        item.reusable
+          ? []
+          : item.sourceImages.map((image, imageOrdinal) => {
+              const ready = readyExtractionByAttachmentId.get(
+                image.attachmentId,
+              );
+              return {
+                sourcePageId: item.source.sourcePageId,
+                attachmentId: image.attachmentId,
+                imageOrdinal,
+                fileName: image.fileName,
+                mimeType: image.mimeType,
+                fileSize: image.fileSize,
+                altText: image.altText,
+                expectedAttachmentVersion: image.attachmentVersion,
+                status: ready ? ('succeeded' as const) : ('pending' as const),
+                extractionId: ready?.id ?? null,
+              };
+            }),
+      ),
+    });
+    if (!initialized) return undefined;
+    return {
+      ...initialized,
+      aggregateRequired: !aggregateReusable,
+      pageCompilationRequired,
+    };
   }
 
   async startSpaceRun(input: {

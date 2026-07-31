@@ -42,6 +42,8 @@ import { KnowledgeImageEnrichmentService } from './services/knowledge-image-enri
 import { KnowledgeSpaceResetService } from './services/knowledge-space-reset.service';
 import { KnowledgeTextJobHandler } from './services/knowledge-text-job.handler';
 import { KnowledgePageCompilationService } from './services/knowledge-page-compilation.service';
+import { KnowledgeSpaceRunnerService } from './services/knowledge-space-runner.service';
+import { KnowledgeSpaceProcessor } from './processors/knowledge-space.processor';
 
 @Module({
   imports: [NoopAuditModule, ReviewModule],
@@ -74,6 +76,7 @@ import { KnowledgePageCompilationService } from './services/knowledge-page-compi
     KnowledgeSpaceResetService,
     KnowledgeSpaceAggregatorService,
     KnowledgePageCompilationService,
+    KnowledgeSpaceRunnerService,
     KnowledgeTextJobHandler,
     KnowledgeLinkResolverService,
     {
@@ -100,6 +103,7 @@ import { KnowledgePageCompilationService } from './services/knowledge-page-compi
     },
     KnowledgeTextProcessor,
     KnowledgeImageProcessor,
+    KnowledgeSpaceProcessor,
   ],
   exports: [
     KnowledgeSourceAuthorizationService,

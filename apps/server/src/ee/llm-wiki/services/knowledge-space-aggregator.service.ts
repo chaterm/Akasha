@@ -2,6 +2,10 @@ import { Inject, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
 import {
+  KnowledgeSpaceExecutionRepo,
+  SpaceExecutionLease,
+} from '@akasha/db/repos/llm-wiki/knowledge-space-execution.repo';
+import {
   KnowledgeCompilerLlmError,
   KnowledgeCompilerLlmProvider,
 } from '../compiler/knowledge-compiler-llm.provider';
@@ -31,7 +35,12 @@ export class KnowledgeSpaceAggregatorService {
     private readonly importService: KnowledgeImportService,
     private readonly linkResolver: KnowledgeLinkResolverService,
     private readonly environmentService: EnvironmentService = undefined as never,
-  ) {}
+    executionRepo?: KnowledgeSpaceExecutionRepo,
+  ) {
+    this.executionRepo = executionRepo;
+  }
+
+  private readonly executionRepo?: KnowledgeSpaceExecutionRepo;
 
   async aggregate(input: {
     runId: string;
@@ -60,6 +69,156 @@ export class KnowledgeSpaceAggregatorService {
         );
       }
       throw error;
+    } finally {
+      boundedSignal.dispose();
+    }
+  }
+
+  async aggregateLeased(
+    lease: SpaceExecutionLease,
+    input: { workspaceId: string; spaceId: string },
+  ) {
+    if (!this.executionRepo) {
+      throw new Error(
+        'KnowledgeSpaceExecutionRepo is required for Space jobs.',
+      );
+    }
+    const boundedSignal = createBoundedAbortSignal(
+      undefined,
+      this.environmentService?.getKnowledgeAggregateDeadlineMs?.() ?? 300_000,
+    );
+    try {
+      const run = await this.executionRepo.findLeasedRun(lease);
+      if (!run || run.phase !== 'initial_aggregate') {
+        return { ...emptyAggregateResult(), catalogHash: run?.catalogHash };
+      }
+      const aggregateInput = await this.artifactCatalog.aggregateInput({
+        ...input,
+        abortSignal: boundedSignal.signal,
+      });
+      const { pages, sourceRefsByArtifact, allSourceRefs } = aggregateInput;
+      if (pages.length === 0 || allSourceRefs.length === 0) {
+        const retirement = await this.importService.importCompileResult({
+          input: {
+            ...input,
+            compilerVersion: run.compilerVersion,
+            promptVersion: run.promptVersion,
+            compileMode: 'space',
+            sources: [],
+            operationBudget: new KnowledgeOperationBudget({
+              signal: boundedSignal.signal,
+            }),
+          },
+          artifacts: [],
+          upsertSources: false,
+          retireCompileScope: true,
+          publicationGuard: (trx) =>
+            this.executionRepo!.isLeaseActiveForSpacePublication(lease, trx),
+        });
+        if (retirement.skippedReason === 'run_superseded') {
+          return {
+            ...emptyAggregateResult(),
+            catalogHash: aggregateInput.fingerprint.hash,
+          };
+        }
+        return {
+          ...emptyAggregateResult(),
+          catalogHash: aggregateInput.fingerprint.hash,
+        };
+      }
+      if (!this.provider.completeMerge) {
+        throw new KnowledgeCompilerLlmError(
+          'configuration_error',
+          'Knowledge compiler aggregate provider is not configured.',
+          false,
+        );
+      }
+      let completion;
+      try {
+        completion = knowledgeSpaceAggregateSchema.parse(
+          JSON.parse(
+            await this.provider.completeMerge(
+              {
+                system: buildAggregateSystemPrompt(),
+                prompt: buildAggregatePrompt(pages),
+              },
+              { abortSignal: boundedSignal.signal },
+            ),
+          ),
+        );
+      } catch (error) {
+        if (error instanceof KnowledgeCompilerLlmError) throw error;
+        if (boundedSignal.signal.aborted) {
+          throw new KnowledgeCompilerLlmError(
+            'timeout',
+            'Knowledge aggregate phase timed out.',
+            true,
+            boundedSignal.signal.reason ?? error,
+          );
+        }
+        throw new KnowledgeCompilerLlmError(
+          'invalid_output',
+          'Knowledge compiler returned invalid aggregate output.',
+          false,
+          error,
+        );
+      }
+      if (!(await this.executionRepo.isLeaseActive(lease))) {
+        return {
+          ...emptyAggregateResult(),
+          catalogHash: aggregateInput.fingerprint.hash,
+        };
+      }
+      const overview = buildOverviewArtifact({
+        workspaceId: input.workspaceId,
+        spaceId: input.spaceId,
+        runId: lease.runId,
+        compilerVersion: run.compilerVersion,
+        promptVersion: run.promptVersion,
+        title: completion.title,
+        narrative: completion.markdown,
+        pages,
+        sourceRefsByArtifact,
+        allSourceRefs,
+      });
+      const compileInput = {
+        ...input,
+        compilerVersion: run.compilerVersion,
+        promptVersion: run.promptVersion,
+        compileMode: 'space' as const,
+        sources: allSourceRefs.map((source) => ({
+          workspaceId: source.workspaceId,
+          spaceId: source.spaceId,
+          sourcePageId: source.sourcePageId,
+          sourceVersion: source.sourceVersion,
+          contentHash: source.contentHash,
+          title: source.sourcePageId,
+          text: '',
+          references: [],
+        })),
+        operationBudget: new KnowledgeOperationBudget({
+          signal: boundedSignal.signal,
+        }),
+      };
+      const result = await this.importService.importCompileResult({
+        input: compileInput,
+        artifacts: [overview],
+        upsertSources: false,
+        publicationGuard: (trx) =>
+          this.executionRepo!.isLeaseActiveForSpacePublication(lease, trx),
+      });
+      if (result.skippedReason === 'run_superseded') {
+        return {
+          ...emptyAggregateResult(),
+          catalogHash: aggregateInput.fingerprint.hash,
+        };
+      }
+      await this.linkResolver.resolveSpace({
+        ...input,
+        abortSignal: boundedSignal.signal,
+      });
+      boundedSignal.signal.throwIfAborted();
+      return { ...result, catalogHash: aggregateInput.fingerprint.hash };
     } finally {
       boundedSignal.dispose();
     }
