@@ -754,6 +754,69 @@ describe('LlmWikiController', () => {
     );
   });
 
+  it('scopes the scalable Run summary to readable Spaces and hides global queues from admins', async () => {
+    const diagnosticsService = {
+      findWorkspaceSpaceIds: jest
+        .fn()
+        .mockResolvedValue(['space-readable', 'space-private']),
+      getRunDiagnosticsSummary: jest.fn().mockResolvedValue({
+        activeRunCount: 1,
+      }),
+    };
+    const spaceAuthorization = {
+      filterReadableSpaceIds: jest.fn().mockResolvedValue(['space-readable']),
+    };
+    const controller = createController({
+      diagnosticsService,
+      spaceAuthorization,
+    });
+
+    await expect(
+      controller.getRunDiagnosticsSummary({}, adminUser(), workspace()),
+    ).resolves.toEqual({ activeRunCount: 1 });
+    expect(diagnosticsService.getRunDiagnosticsSummary).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-readable'],
+      enforceSpaceScope: true,
+      canViewGlobalQueues: false,
+    });
+  });
+
+  it('does not reveal a RunPage detail outside the readable Space scope', async () => {
+    const diagnosticsService = {
+      findRunDiagnosticSpaceId: jest.fn().mockResolvedValue('space-private'),
+      listRunPageDiagnostics: jest.fn(),
+    };
+    const controller = createController({
+      diagnosticsService,
+      spaceAuthorization: {
+        filterReadableSpaceIds: jest.fn().mockResolvedValue([]),
+      },
+    });
+
+    await expect(
+      controller.getRunPageDiagnostics(
+        '11111111-1111-4111-8111-111111111111',
+        { page: 1, limit: 50 },
+        user(),
+        workspace(),
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(diagnosticsService.listRunPageDiagnostics).toHaveBeenCalledWith(
+      expect.objectContaining({ allowedSpaceIds: [] }),
+    );
+  });
+
+  it('restricts approximate worker capacity to workspace owners', async () => {
+    const diagnosticsService = { getWorkerDiagnostics: jest.fn() };
+    const controller = createController({ diagnosticsService });
+
+    await expect(
+      controller.getKnowledgeWorkerDiagnostics(adminUser(), workspace()),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(diagnosticsService.getWorkerDiagnostics).not.toHaveBeenCalled();
+  });
+
   it('retries selected pages by requesting one durable Run per Space', async () => {
     const pageRepo = {
       findExistingPageRefs: jest.fn().mockResolvedValue([
@@ -1147,6 +1210,12 @@ function createController(
     } as unknown as KnowledgeImportService,
     {
       getWorkspaceDiagnostics: jest.fn(),
+      findWorkspaceSpaceIds: jest.fn().mockResolvedValue([]),
+      getRunDiagnosticsSummary: jest.fn(),
+      listRunDiagnostics: jest.fn(),
+      findRunDiagnosticSpaceId: jest.fn(),
+      listRunPageDiagnostics: jest.fn(),
+      getWorkerDiagnostics: jest.fn(),
       findRetryableFailedPageIds: jest
         .fn()
         .mockImplementation(({ sourcePageIds }) => sourcePageIds),

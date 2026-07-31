@@ -6,7 +6,121 @@ import {
   buildPageCompilationDiagnostics,
   buildCompileStatusesFromJobs,
   buildCompileStatusesFromRuns,
+  buildWorkerCapacityEstimate,
+  classifyRunPageError,
+  classifyRunQueueState,
 } from './knowledge-diagnostics.service';
+
+describe('scalable Knowledge Run diagnostics', () => {
+  it('marks BullMQ worker capacity as an estimate and keeps unsupported Redis unknown', () => {
+    expect(
+      buildWorkerCapacityEstimate(
+        [{ name: 'knowledge-space-worker-1' }, { name: 'worker-2' }],
+        10,
+      ),
+    ).toEqual({
+      workerCount: 2,
+      capacity: 20,
+      exact: false,
+      source: 'bullmq_client_list',
+    });
+    expect(
+      buildWorkerCapacityEstimate(
+        [{ name: 'GCP does not support client list' }],
+        10,
+      ),
+    ).toEqual({
+      workerCount: null,
+      capacity: null,
+      exact: false,
+      source: 'unsupported',
+    });
+    expect(buildWorkerCapacityEstimate(undefined, 10)).toEqual({
+      workerCount: null,
+      capacity: null,
+      exact: false,
+      source: 'unavailable',
+    });
+  });
+
+  it('distinguishes first initialization from resumable queue states', () => {
+    expect(
+      classifyRunQueueState({
+        status: 'queued',
+        phase: 'text',
+        initializedAt: null,
+      }),
+    ).toBe('waiting_initialization');
+    expect(
+      classifyRunQueueState({
+        status: 'queued',
+        phase: 'text',
+        initializedAt: new Date(),
+      }),
+    ).toBe('text_continuation');
+    expect(
+      classifyRunQueueState({
+        status: 'queued',
+        phase: 'image_merge',
+        initializedAt: new Date(),
+      }),
+    ).toBe('image_merge_continuation');
+    expect(
+      classifyRunQueueState({
+        status: 'compiling',
+        phase: 'images',
+        initializedAt: new Date(),
+      }),
+    ).toBeNull();
+  });
+
+  it('reports configured worker options without using getWorkersCount', async () => {
+    const imageQueue = {
+      getWorkers: jest
+        .fn()
+        .mockResolvedValue([{ name: 'GCP does not support client list' }]),
+      getWorkersCount: jest.fn(),
+    };
+    const spaceQueue = {
+      getWorkers: jest.fn().mockResolvedValue([{ name: 'space-worker-1' }]),
+      getWorkersCount: jest.fn(),
+    };
+    const service = new KnowledgeDiagnosticsService(
+      {} as never,
+      {} as never,
+      imageQueue as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      spaceQueue as never,
+    );
+
+    await expect(service.getWorkerDiagnostics()).resolves.toMatchObject({
+      schedulingAuthority: 'postgresql',
+      space: {
+        workerCount: 1,
+        capacity: 10,
+        exact: false,
+        lockDuration: 120_000,
+        stalledInterval: 30_000,
+        maxStalledCount: 2,
+      },
+      image: {
+        workerCount: null,
+        capacity: null,
+        source: 'unsupported',
+      },
+    });
+    expect(spaceQueue.getWorkersCount).not.toHaveBeenCalled();
+    expect(imageQueue.getWorkersCount).not.toHaveBeenCalled();
+  });
+
+  it('keeps page budget timeout separate from provider failures', () => {
+    expect(classifyRunPageError('page_timeout')).toBe('budget_timeout');
+    expect(classifyRunPageError('provider_error')).toBe('provider');
+  });
+});
 
 describe('KnowledgeDiagnosticsService queue counts', () => {
   it('samples text and image BullMQ queues independently', async () => {
@@ -73,10 +187,7 @@ describe('KnowledgeDiagnosticsService queue counts', () => {
   });
 
   it('does not read global BullMQ counts when global queue visibility is denied', async () => {
-    const queues = [
-      { getJobCounts: jest.fn() },
-      { getJobCounts: jest.fn() },
-    ];
+    const queues = [{ getJobCounts: jest.fn() }, { getJobCounts: jest.fn() }];
     const service = new KnowledgeDiagnosticsService(
       {} as never,
       queues[0] as never,

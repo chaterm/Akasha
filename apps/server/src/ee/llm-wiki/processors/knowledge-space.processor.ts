@@ -10,6 +10,7 @@ import {
   KNOWLEDGE_SPACE_WORKER_OPTIONS,
   KNOWLEDGE_WORKER_SETTINGS,
 } from '../services/knowledge-worker-settings';
+import { recordKnowledgeWorkerEvent } from '../services/knowledge-worker-observability';
 
 @Processor(QueueName.KNOWLEDGE_SPACE_QUEUE, KNOWLEDGE_SPACE_WORKER_OPTIONS)
 export class KnowledgeSpaceProcessor
@@ -63,6 +64,7 @@ export class KnowledgeSpaceProcessor
 
   @OnWorkerEvent('stalled')
   onStalled(jobId: string): void {
+    recordKnowledgeWorkerEvent('stalled');
     this.logger.warn({
       event: 'knowledge_space_job_stalled',
       jobId,
@@ -72,6 +74,7 @@ export class KnowledgeSpaceProcessor
 
   @OnWorkerEvent('lockRenewalFailed')
   onLockRenewalFailed(jobIds: string[]): void {
+    recordKnowledgeWorkerEvent('lock_renewal_failed', jobIds.length || 1);
     this.logger.error({
       event: 'knowledge_space_lock_renewal_failed',
       jobIds,

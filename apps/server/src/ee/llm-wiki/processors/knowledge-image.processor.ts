@@ -13,6 +13,7 @@ import { KnowledgeSpaceCompilationService } from '../services/knowledge-space-co
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import { createBoundedAbortSignal } from '../services/knowledge-operation-budget';
 import { KNOWLEDGE_IMAGE_WORKER_OPTIONS } from '../services/knowledge-worker-settings';
+import { recordKnowledgeWorkerEvent } from '../services/knowledge-worker-observability';
 
 @Processor(QueueName.KNOWLEDGE_IMAGE_QUEUE, KNOWLEDGE_IMAGE_WORKER_OPTIONS)
 export class KnowledgeImageProcessor
@@ -164,6 +165,21 @@ export class KnowledgeImageProcessor
       succeeded: 0,
       failed: data.images.length,
       skipped: 0,
+    });
+  }
+
+  @OnWorkerEvent('stalled')
+  onStalled(jobId: string): void {
+    recordKnowledgeWorkerEvent('stalled');
+    this.logger.warn({ event: 'knowledge_image_job_stalled', jobId });
+  }
+
+  @OnWorkerEvent('lockRenewalFailed')
+  onLockRenewalFailed(jobIds: string[]): void {
+    recordKnowledgeWorkerEvent('lock_renewal_failed', jobIds.length || 1);
+    this.logger.error({
+      event: 'knowledge_image_lock_renewal_failed',
+      jobIds,
     });
   }
 

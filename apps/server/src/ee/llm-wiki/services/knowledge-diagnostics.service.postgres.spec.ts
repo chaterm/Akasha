@@ -161,6 +161,46 @@ describePostgres(
         rawErrorsExposed: false,
       });
     });
+
+    it('uses fixed database aggregates and paginates Runs and on-demand RunPages', async () => {
+      const summary = await service.getRunDiagnosticsSummary({
+        workspaceId: 'workspace-1',
+        spaceIds: ['space-a'],
+        enforceSpaceScope: true,
+        canViewGlobalQueues: false,
+      });
+      expect(summary.activeRunCount).toBe(100);
+      expect(summary.waitingInitializationCount).toBe(100);
+      expect(summary.phaseCounts).toMatchObject({ text: 100, images: 1 });
+      expect(summary.failureCategories.provider).toBe(1);
+      expect(summary.queues).toBeUndefined();
+
+      const runs = await service.listRunDiagnostics({
+        workspaceId: 'workspace-1',
+        spaceIds: ['space-a'],
+        enforceSpaceScope: true,
+        page: 1,
+        limit: 5,
+      });
+      expect(runs.total).toBe(113);
+      expect(runs.items).toHaveLength(5);
+      expect(runs.items[0]).toMatchObject({
+        runId: 'run-space-a-latest',
+        spaceId: 'space-a',
+      });
+
+      const detail = await service.listRunPageDiagnostics({
+        workspaceId: 'workspace-1',
+        runId: 'run-space-a-latest',
+        allowedSpaceIds: ['space-a'],
+        page: 1,
+        limit: 2,
+        includeSensitiveErrors: false,
+      });
+      expect(detail).toMatchObject({ total: 3, page: 1, limit: 2 });
+      expect(detail?.items).toHaveLength(2);
+      expect(JSON.stringify(detail)).not.toContain('private page content');
+    });
   },
 );
 
@@ -189,6 +229,16 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       aggregate_job_id varchar,
       error_code varchar,
       error_message varchar,
+      initialized_at timestamptz,
+      space_job_id varchar,
+      space_job_dispatched_at timestamptz,
+      space_job_queued_at timestamptz,
+      space_job_recovery_count integer not null default 0,
+      space_job_sequence integer not null default 0,
+      execution_lease_expires_at timestamptz,
+      last_yield_at timestamptz,
+      last_yield_reason varchar,
+      worker_id varchar,
       queued_at timestamptz not null,
       started_at timestamptz,
       finished_at timestamptz,
@@ -208,15 +258,42 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       skipped_image_count integer not null default 0,
       image_status varchar not null default 'not_required',
       merge_status varchar not null default 'not_required',
+      expected_source_version varchar not null default 'v1',
+      expected_source_content_hash varchar not null default 'sha256:fixture',
       error_code varchar,
       error_message varchar,
+      queued_at timestamptz,
+      started_at timestamptz,
+      finished_at timestamptz,
       updated_at timestamptz not null
+    );
+    create table knowledge_space_compile_run_images (
+      id varchar primary key,
+      run_id varchar not null,
+      run_page_id varchar not null,
+      status varchar not null,
+      job_id varchar,
+      dispatched_at timestamptz,
+      redis_recovery_count integer not null default 0,
+      failure_class varchar,
+      error_code varchar
+    );
+    create table pages (
+      id varchar primary key,
+      title varchar not null,
+      slug_id varchar not null
     );
 
     insert into spaces (id, workspace_id, name) values
       ('space-a', 'workspace-1', 'Space A'),
       ('space-b', 'workspace-1', 'Space B'),
       ('space-denied', 'workspace-1', 'Denied Space');
+
+    insert into pages (id, title, slug_id) values
+      ('page-a-1', 'Page A1', 'page-a-1'),
+      ('page-a-2', 'Page A2', 'page-a-2'),
+      ('page-a-3', 'Page A3', 'page-a-3'),
+      ('page-b-1', 'Page B1', 'page-b-1');
 
     insert into knowledge_space_compile_runs (
       id, workspace_id, space_id, status, mode, phase,
@@ -236,6 +313,29 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       timestamptz '2026-07-28 06:00:00+00' - old_run * interval '1 minute',
       timestamptz '2026-07-28 06:00:00+00' - old_run * interval '1 minute'
     from generate_series(1, 12) as old_run;
+
+    insert into knowledge_space_compile_runs (
+      id, workspace_id, space_id, status, mode, phase,
+      knowledge_generation, expected_page_count, initialized_at,
+      space_job_queued_at, space_job_sequence, queued_at, created_at,
+      updated_at
+    )
+    select
+      'run-scale-' || run_number,
+      'workspace-1',
+      'space-a',
+      'queued',
+      'incremental',
+      'text',
+      10,
+      50,
+      null,
+      timestamptz '2026-07-27 06:00:00+00' + run_number * interval '1 second',
+      1,
+      timestamptz '2026-07-27 06:00:00+00' + run_number * interval '1 second',
+      timestamptz '2026-07-27 06:00:00+00' + run_number * interval '1 second',
+      timestamptz '2026-07-27 06:00:00+00' + run_number * interval '1 second'
+    from generate_series(1, 100) as run_number;
 
     insert into knowledge_space_compile_runs (
       id, workspace_id, space_id, status, mode, phase,
@@ -282,6 +382,14 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       ('run-page-b-1', 'run-space-b-latest', 'workspace-1', 'space-b',
        'page-b-1', 'succeeded', 1, 1, 0, 0, 'succeeded', 'succeeded',
        null, null, '2026-07-28 08:01:00+00');
+
+    insert into knowledge_space_compile_run_images (
+      id, run_id, run_page_id, status, failure_class, error_code
+    ) values
+      ('image-a-1', 'run-space-a-latest', 'run-page-a-2', 'failed',
+       'retryable_exhausted', 'image_job_attempts_exhausted'),
+      ('image-a-2', 'run-space-a-latest', 'run-page-a-2', 'failed',
+       'permanent', 'unsupported_image');
   `.execute(db);
 }
 

@@ -39,7 +39,12 @@ import {
 } from './llm-wiki.constants';
 import { AdminKnowledgeSpaceActionDto } from './dto/admin-space-action.dto';
 import { CompileSpacesDto } from './dto/compile-spaces.dto';
-import { AdminKnowledgeDiagnosticsDto } from './dto/admin-diagnostics.dto';
+import {
+  AdminKnowledgeDiagnosticsDto,
+  AdminKnowledgeRunListDto,
+  AdminKnowledgeRunPagesQueryDto,
+  AdminKnowledgeRunSummaryDto,
+} from './dto/admin-diagnostics.dto';
 import { AdminKnowledgeRetryPagesDto } from './dto/admin-retry-pages.dto';
 import { ImportCompileResultDto } from './dto/import-compile-result.dto';
 import { KnowledgeGraphDto } from './dto/knowledge-graph.dto';
@@ -386,6 +391,101 @@ export class LlmWikiController {
   }
 
   @HttpCode(HttpStatus.OK)
+  @Post('admin/diagnostics/summary')
+  async getRunDiagnosticsSummary(
+    @Body() dto: AdminKnowledgeRunSummaryDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertDiagnosticsEnabled(workspace);
+    const spaceIds = await this.findAuthorizedDiagnosticSpaceIds(
+      dto.spaceIds,
+      user,
+      workspace,
+    );
+    return this.diagnosticsService.getRunDiagnosticsSummary({
+      workspaceId: workspace.id,
+      spaceIds,
+      enforceSpaceScope: true,
+      canViewGlobalQueues: user.role === UserRole.OWNER,
+    });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('admin/diagnostics/runs')
+  async getRunDiagnostics(
+    @Body() dto: AdminKnowledgeRunListDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertDiagnosticsEnabled(workspace);
+    const spaceIds = await this.findAuthorizedDiagnosticSpaceIds(
+      dto.spaceIds,
+      user,
+      workspace,
+    );
+    return this.diagnosticsService.listRunDiagnostics({
+      workspaceId: workspace.id,
+      spaceIds,
+      enforceSpaceScope: true,
+      statuses: dto.statuses,
+      phases: dto.phases,
+      search: dto.search,
+      page: dto.page,
+      limit: dto.limit,
+    });
+  }
+
+  @Get('admin/diagnostics/runs/:runId/pages')
+  async getRunPageDiagnostics(
+    @Param('runId', ParseUUIDPipe) runId: string,
+    @Query() dto: AdminKnowledgeRunPagesQueryDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertDiagnosticsEnabled(workspace);
+    const spaceId = await this.diagnosticsService.findRunDiagnosticSpaceId({
+      workspaceId: workspace.id,
+      runId,
+    });
+    if (!spaceId) throw new NotFoundException('Knowledge Run not found');
+    const allowedSpaceIds =
+      await this.spaceAuthorization.filterReadableSpaceIds({
+        user: {
+          id: user.id,
+          role: user.role ?? UserRole.MEMBER,
+          workspaceId: workspace.id,
+        },
+        spaceIds: [spaceId],
+      });
+    const result = await this.diagnosticsService.listRunPageDiagnostics({
+      workspaceId: workspace.id,
+      runId,
+      allowedSpaceIds,
+      page: dto.page,
+      limit: dto.limit,
+      includeSensitiveErrors:
+        user.role === UserRole.OWNER || user.role === UserRole.ADMIN,
+    });
+    if (!result) throw new NotFoundException('Knowledge Run not found');
+    return result;
+  }
+
+  @Get('admin/diagnostics/workers')
+  async getKnowledgeWorkerDiagnostics(
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertDiagnosticsEnabled(workspace);
+    if (user.role !== UserRole.OWNER) {
+      throw new ForbiddenException(
+        'Knowledge worker diagnostics are restricted to workspace owners',
+      );
+    }
+    return this.diagnosticsService.getWorkerDiagnostics();
+  }
+
+  @HttpCode(HttpStatus.OK)
   @Post('admin/retry-pages')
   async retryPages(
     @Body() dto: AdminKnowledgeRetryPagesDto,
@@ -498,6 +598,32 @@ export class LlmWikiController {
     if (user.role !== UserRole.OWNER && user.role !== UserRole.ADMIN) {
       throw new ForbiddenException(message);
     }
+  }
+
+  private assertDiagnosticsEnabled(workspace: Workspace): void {
+    if (!this.chatService.isEnabledForWorkspace(workspace)) {
+      throw new ForbiddenException('AI knowledge chat is disabled');
+    }
+  }
+
+  private async findAuthorizedDiagnosticSpaceIds(
+    requestedSpaceIds: string[] | undefined,
+    user: User,
+    workspace: Workspace,
+  ): Promise<string[]> {
+    const candidateSpaceIds =
+      await this.diagnosticsService.findWorkspaceSpaceIds({
+        workspaceId: workspace.id,
+        requestedSpaceIds,
+      });
+    return this.spaceAuthorization.filterReadableSpaceIds({
+      user: {
+        id: user.id,
+        role: user.role ?? UserRole.MEMBER,
+        workspaceId: workspace.id,
+      },
+      spaceIds: candidateSpaceIds,
+    });
   }
 
   private assertKnowledgeOperationAllowed(
