@@ -71,6 +71,10 @@ import {
   KnowledgeOperationBudget,
   createBoundedAbortSignal,
 } from './knowledge-operation-budget';
+import {
+  KnowledgePageCompilationService,
+  PageCompilationOutcome,
+} from './knowledge-page-compilation.service';
 
 type ReviewProcessorJobResult = {
   type: 'review-discover' | 'review-negotiate';
@@ -128,7 +132,23 @@ export class KnowledgeTextJobHandler {
     private readonly imageEnrichment: KnowledgeImageEnrichmentService,
     private readonly vectorIndex: KnowledgeVectorIndexService = undefined as never,
     private readonly environmentService: EnvironmentService = undefined as never,
-  ) {}
+    pageCompilation?: KnowledgePageCompilationService,
+  ) {
+    this.pageCompilation =
+      pageCompilation ??
+      new KnowledgePageCompilationService(
+        sourceExporter,
+        compiler,
+        importService,
+        accessIndexer,
+        compilationRepo,
+        artifactCatalog,
+        spaceCompilation,
+        imageEnrichment,
+      );
+  }
+
+  private readonly pageCompilation: KnowledgePageCompilationService;
 
   async handle(
     job: Job,
@@ -247,6 +267,46 @@ export class KnowledgeTextJobHandler {
         }
       }
       case QueueJob.KNOWLEDGE_COMPILE_PAGES: {
+        const extractedData = job.data as IKnowledgeCompilePagesJob;
+        const extractedSourcePageIds = uniqueValues(
+          extractedData.sourcePageIds,
+        );
+        const extractedSourcePageId = extractedSourcePageIds[0] ?? 'invalid';
+        const extractedCompileTaskId = String(
+          job.id ??
+            buildKnowledgeCompilePageJobId({
+              workspaceId: extractedData.workspaceId,
+              spaceId: extractedData.spaceId,
+              sourcePageId: extractedSourcePageId,
+            }),
+        );
+        const extractedDeadline = createBoundedAbortSignal(
+          undefined,
+          this.environmentService?.getKnowledgePageDeadlineMs?.() ?? 900_000,
+        );
+        try {
+          const outcome = await this.pageCompilation.compileTextPage(
+            {
+              data: extractedData,
+              compileTaskId: extractedCompileTaskId,
+              finalAttempt: isFinalJobAttempt(job),
+            },
+            extractedDeadline.signal,
+          );
+          if (outcome.outcome === 'failed') {
+            this.logProviderFailure(outcome.cause, {
+              workspaceId: extractedData.workspaceId,
+              spaceId: extractedData.spaceId,
+              sourcePageId: extractedSourcePageId,
+              compileTaskId: extractedCompileTaskId,
+            });
+          }
+          return unwrapPageCompilationOutcome(outcome);
+        } finally {
+          extractedDeadline.dispose();
+        }
+
+        /* istanbul ignore next -- removed with the legacy queue in Task 8 */
         const data = job.data as IKnowledgeCompilePagesJob;
         const startedAt = Date.now();
         const sourcePageIds = uniqueValues(data.sourcePageIds);
@@ -703,7 +763,16 @@ export class KnowledgeTextJobHandler {
           signal: pageDeadline.signal,
         });
         try {
-          return await this.handlePageImageMerge(job, operationBudget);
+          const data = job.data as IKnowledgeMergePageImagesJob;
+          const outcome = await this.pageCompilation.mergePageImages(
+            {
+              data,
+              compileTaskId: String(job.id ?? 'knowledge-image-merge'),
+              finalAttempt: isFinalJobAttempt(job),
+            },
+            operationBudget.signal,
+          );
+          return unwrapPageCompilationOutcome(outcome);
         } finally {
           pageDeadline.dispose();
         }
@@ -1572,6 +1641,14 @@ function noOpMergeResult(
     quarantinedArtifactCount: 0,
     durationMs: Math.max(0, Date.now() - startedAt),
   };
+}
+
+function unwrapPageCompilationOutcome(
+  outcome: PageCompilationOutcome,
+): KnowledgeCompileJobResult {
+  if (outcome.outcome !== 'failed') return outcome.result;
+  if (!outcome.retryable) throw new UnrecoverableError(outcome.message);
+  throw outcome.cause;
 }
 
 function countReviewItemTypes(
