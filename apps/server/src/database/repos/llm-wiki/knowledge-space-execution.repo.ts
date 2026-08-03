@@ -63,6 +63,8 @@ const NONTERMINAL_RUN_STATUSES: KnowledgeSpaceCompileRunStatus[] = [
   'aggregate_pending',
   'aggregating',
 ];
+const RUN_PAGE_INITIALIZATION_BATCH_SIZE = 200;
+const RUN_IMAGE_INITIALIZATION_BATCH_SIZE = 500;
 
 const TEXT_PHASES: KnowledgeSpaceCompileRunPhase[] = [
   'text',
@@ -129,6 +131,7 @@ export class KnowledgeSpaceExecutionRepo {
       .where('page.status', 'in', ['pending', 'queued', 'running'])
       .orderBy('page.createdAt', 'asc')
       .orderBy('page.sourcePageId', 'asc')
+      .limit(1)
       .execute();
   }
 
@@ -154,6 +157,7 @@ export class KnowledgeSpaceExecutionRepo {
       .where('page.mergeStatus', 'in', ['pending', 'queued', 'running'])
       .orderBy('page.createdAt', 'asc')
       .orderBy('page.sourcePageId', 'asc')
+      .limit(1)
       .execute();
     if (pages.length === 0) return [];
     const images = await this.db
@@ -539,11 +543,7 @@ export class KnowledgeSpaceExecutionRepo {
           query.where('status', '=', 'queued'),
         )
         .$if(requiresExpiredLease, (query) =>
-          query.where(
-            'executionLeaseExpiresAt',
-            '<',
-            input.leaseExpiredBefore,
-          ),
+          query.where('executionLeaseExpiresAt', '<', input.leaseExpiredBefore),
         )
         .returning('id')
         .executeTakeFirst();
@@ -574,6 +574,7 @@ export class KnowledgeSpaceExecutionRepo {
   async initializeRun(
     lease: SpaceExecutionLease,
     input: {
+      aggregateRequired: boolean;
       catalogSnapshot: JsonValue;
       catalogHash: string;
       pages: RunPageInitializationPlan[];
@@ -588,11 +589,16 @@ export class KnowledgeSpaceExecutionRepo {
 
       await this.retireRemovedSources(trx, run, input.removedSourcePageIds);
       const now = new Date();
-      const insertedPages = input.pages.length
-        ? await trx
+      const insertedPages: Array<{ id: string; sourcePageId: string }> = [];
+      for (const pages of batches(
+        input.pages,
+        RUN_PAGE_INITIALIZATION_BATCH_SIZE,
+      )) {
+        insertedPages.push(
+          ...(await trx
             .insertInto('knowledgeSpaceCompileRunPages')
             .values(
-              input.pages.map((page) => ({
+              pages.map((page) => ({
                 runId: run.id,
                 workspaceId: run.workspaceId,
                 spaceId: run.spaceId,
@@ -616,16 +622,20 @@ export class KnowledgeSpaceExecutionRepo {
               })),
             )
             .returning(['id', 'sourcePageId'])
-            .execute()
-        : [];
+            .execute()),
+        );
+      }
       const pageIds = new Map(
         insertedPages.map((page) => [page.sourcePageId, page.id]),
       );
-      if (input.images.length > 0) {
+      for (const images of batches(
+        input.images,
+        RUN_IMAGE_INITIALIZATION_BATCH_SIZE,
+      )) {
         await trx
           .insertInto('knowledgeSpaceCompileRunImages')
           .values(
-            input.images.map((image) => {
+            images.map((image) => {
               const runPageId = pageIds.get(image.sourcePageId);
               if (!runPageId) {
                 throw new Error(
@@ -669,6 +679,7 @@ export class KnowledgeSpaceExecutionRepo {
         .updateTable('knowledgeSpaceCompileRuns')
         .set({
           initializedAt: now,
+          aggregateRequired: input.aggregateRequired,
           catalogSnapshot: input.catalogSnapshot,
           catalogHash: input.catalogHash,
           expectedPageCount: input.pages.length,
@@ -713,7 +724,8 @@ export class KnowledgeSpaceExecutionRepo {
         .forUpdate()
         .executeTakeFirst();
       if (!page) return undefined;
-      if (!isPageTerminal(page.status)) {
+      const transitioned = !isPageTerminal(page.status);
+      if (transitioned) {
         const now = new Date();
         await trx
           .updateTable('knowledgeSpaceCompileRunPages')
@@ -728,7 +740,17 @@ export class KnowledgeSpaceExecutionRepo {
           .where('status', 'in', ['pending', 'queued', 'running'])
           .execute();
       }
-      const counts = await this.countPageStatuses(trx, lease.runId);
+      const counts = {
+        succeeded:
+          run.succeededPageCount +
+          (transitioned && input.status === 'succeeded' ? 1 : 0),
+        failed:
+          run.failedPageCount +
+          (transitioned && input.status === 'failed' ? 1 : 0),
+        skipped:
+          run.skippedPageCount +
+          (transitioned && input.status === 'skipped' ? 1 : 0),
+      };
       const barrierComplete =
         counts.succeeded + counts.failed + counts.skipped >=
         run.expectedPageCount;
@@ -764,7 +786,11 @@ export class KnowledgeSpaceExecutionRepo {
     return executeTx(this.db, async (trx) => {
       const run = await this.lockLeasedRun(trx, lease);
       if (!run) return undefined;
-      const counts = await this.countPageStatuses(trx, lease.runId);
+      const counts = {
+        succeeded: run.succeededPageCount,
+        failed: run.failedPageCount,
+        skipped: run.skippedPageCount,
+      };
       if (run.phase === 'initial_aggregate') {
         return { barrierComplete: true, ...counts };
       }
@@ -1198,19 +1224,6 @@ export class KnowledgeSpaceExecutionRepo {
     return jobPhase === 'text' ? TEXT_PHASES : IMAGE_MERGE_PHASES;
   }
 
-  private async countPageStatuses(trx: KyselyTransaction, runId: string) {
-    const pages = await trx
-      .selectFrom('knowledgeSpaceCompileRunPages')
-      .select('status')
-      .where('runId', '=', runId)
-      .execute();
-    return {
-      succeeded: pages.filter((page) => page.status === 'succeeded').length,
-      failed: pages.filter((page) => page.status === 'failed').length,
-      skipped: pages.filter((page) => page.status === 'skipped').length,
-    };
-  }
-
   private async retireRemovedSources(
     trx: KyselyTransaction,
     run: { workspaceId: string; spaceId: string },
@@ -1262,6 +1275,14 @@ function diagnostic(
   maxLength: number,
 ): string | null {
   return value ? value.replace(/[\r\n\t]+/g, ' ').slice(0, maxLength) : null;
+}
+
+function batches<T>(values: readonly T[], batchSize: number): T[][] {
+  const result: T[][] = [];
+  for (let offset = 0; offset < values.length; offset += batchSize) {
+    result.push(values.slice(offset, offset + batchSize));
+  }
+  return result;
 }
 
 function truncateToMilliseconds(value: Date | string): Date {

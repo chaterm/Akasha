@@ -10,6 +10,7 @@ const migrationFiles = [
   '20260728T110000-knowledge-image-attachment-version.ts',
   '20260728T120000-knowledge-image-run-page-skips.ts',
   '20260731T100000-multi-space-compilation.ts',
+  '20260803T100000-persist-knowledge-run-plan.ts',
 ] as const;
 const migrationPaths = migrationFiles.map((file) =>
   resolve(__dirname, 'migrations', file),
@@ -26,10 +27,15 @@ describe('reliable knowledge compilation migration sequence', () => {
   it('orders the dependent migrations and keeps conservative backfill semantics', async () => {
     expect([...migrationFiles].sort()).toEqual(migrationFiles);
 
-    const [reliable, attachmentVersion, skippedImages, multiSpace] =
-      await Promise.all(
-        migrationPaths.map((migrationPath) => readFile(migrationPath, 'utf8')),
-      );
+    const [
+      reliable,
+      attachmentVersion,
+      skippedImages,
+      multiSpace,
+      persistedPlan,
+    ] = await Promise.all(
+      migrationPaths.map((migrationPath) => readFile(migrationPath, 'utf8')),
+    );
 
     expect(reliable).toContain(
       'chk_knowledge_space_compile_run_pages_image_counts',
@@ -50,6 +56,9 @@ describe('reliable knowledge compilation migration sequence', () => {
     expect(multiSpace).not.toContain(".addColumn('skipped_image_count'");
     expect(multiSpace).toContain(
       ".createTable('knowledge_space_compile_run_images')",
+    );
+    expect(persistedPlan).toContain(
+      ".addColumn('aggregate_required', 'boolean'",
     );
   });
 
@@ -82,6 +91,7 @@ describe('reliable knowledge compilation migration sequence', () => {
     expect(runs).toContain('mode: Generated<string>;');
     expect(runs).toContain('phase: Generated<string>;');
     expect(runs).toContain('initializedAt: Timestamp | null;');
+    expect(runs).toContain('aggregateRequired: Generated<boolean>;');
     expect(runs).toContain('spaceJobSequence: Generated<number>;');
     expect(runPages).toContain('expectedImageCount: Generated<number>;');
     expect(runPages).toContain('succeededImageCount: Generated<number>;');
@@ -138,8 +148,8 @@ describePostgres(
     });
 
     it('preserves legacy rows through the full sequence -> down -> up', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const migrations = migrationPaths.map((migrationPath) =>
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         require(migrationPath),
       ) as Migration[];
 
@@ -342,7 +352,7 @@ async function expectCurrentSchema(db: Kysely<unknown>): Promise<void> {
           and column_name = 'skipped_image_count')
         or (table_name = 'knowledge_space_compile_runs'
           and column_name in (
-            'initialized_at', 'space_job_sequence',
+            'initialized_at', 'aggregate_required', 'space_job_sequence',
             'space_job_recovery_count', 'execution_token',
             'rerun_requested'
           ))
@@ -363,6 +373,12 @@ async function expectCurrentSchema(db: Kysely<unknown>): Promise<void> {
         isNullable: 'NO',
         columnDefault: '0',
       },
+      expect.objectContaining({
+        tableName: 'knowledge_space_compile_runs',
+        columnName: 'aggregate_required',
+        isNullable: 'NO',
+        columnDefault: 'true',
+      }),
       expect.objectContaining({
         tableName: 'knowledge_space_compile_runs',
         columnName: 'space_job_sequence',
@@ -398,6 +414,7 @@ async function expectLegacyRowsUseConservativeDefaults(
     generation: number;
     mode: string;
     phase: string;
+    aggregateRequired: boolean;
     sourceVersion: string;
     expectedImages: number;
     succeededImages: number;
@@ -411,6 +428,7 @@ async function expectLegacyRowsUseConservativeDefaults(
       space.knowledge_generation as generation,
       run.mode,
       run.phase,
+      run.aggregate_required as "aggregateRequired",
       run_page.expected_source_version as "sourceVersion",
       run_page.expected_image_count as "expectedImages",
       run_page.succeeded_image_count as "succeededImages",
@@ -429,6 +447,7 @@ async function expectLegacyRowsUseConservativeDefaults(
       generation: 0,
       mode: 'incremental',
       phase: 'text',
+      aggregateRequired: true,
       sourceVersion: 'legacy-version',
       expectedImages: 0,
       succeededImages: 0,

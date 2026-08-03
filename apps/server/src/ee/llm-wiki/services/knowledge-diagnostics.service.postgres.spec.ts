@@ -59,6 +59,7 @@ describePostgres(
       expect(summary.activeRunCount).toBe(100);
       expect(summary.waitingInitializationCount).toBe(100);
       expect(summary.phaseCounts).toMatchObject({ text: 100, images: 1 });
+      expect(summary.failureCategories.budgetTimeout).toBe(1);
       expect(summary.failureCategories.provider).toBe(1);
       expect(summary.queues).toBeUndefined();
 
@@ -260,8 +261,9 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
        'page-a-1', 'succeeded', 2, 2, 0, 0, 'succeeded', 'succeeded',
        null, null, '2026-07-28 07:01:00+00'),
       ('run-page-a-2', 'run-space-a-latest', 'workspace-1', 'space-a',
-       'page-a-2', 'skipped', 3, 1, 1, 1, 'partial', 'pending',
-       null, null, '2026-07-28 07:01:30+00'),
+       'page-a-2', 'skipped', 3, 1, 1, 1, 'partial', 'failed',
+       'page_timeout', 'Image merge exceeded its page budget',
+       '2026-07-28 07:01:30+00'),
       ('run-page-a-3', 'run-space-a-latest', 'workspace-1', 'space-a',
        'page-a-3', 'failed', 0, 0, 0, 0, 'not_required', 'not_required',
        'provider_error', 'raw provider response and private page content',

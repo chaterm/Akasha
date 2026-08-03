@@ -5,6 +5,10 @@ const migrationPath = resolve(
   __dirname,
   'migrations/20260731T100000-multi-space-compilation.ts',
 );
+const persistedPlanMigrationPath = resolve(
+  __dirname,
+  'migrations/20260803T100000-persist-knowledge-run-plan.ts',
+);
 const databaseTypesPath = resolve(__dirname, 'types/db.d.ts');
 const entityTypesPath = resolve(__dirname, 'types/entity.types.ts');
 
@@ -88,10 +92,12 @@ describe('multi-space compilation migration contract', () => {
   });
 
   it('keeps generated Kysely contracts aligned with the additive schema', async () => {
-    const [databaseTypes, entityTypes] = await Promise.all([
-      readFile(databaseTypesPath, 'utf8'),
-      readFile(entityTypesPath, 'utf8'),
-    ]);
+    const [databaseTypes, entityTypes, persistedPlanMigration] =
+      await Promise.all([
+        readFile(databaseTypesPath, 'utf8'),
+        readFile(entityTypesPath, 'utf8'),
+        readFile(persistedPlanMigrationPath, 'utf8'),
+      ]);
     const runs = interfaceBody(databaseTypes, 'KnowledgeSpaceCompileRuns');
     const images = interfaceBody(
       databaseTypes,
@@ -100,6 +106,7 @@ describe('multi-space compilation migration contract', () => {
     const database = interfaceBody(databaseTypes, 'DB');
 
     expect(runs).toContain('initializedAt: Timestamp | null;');
+    expect(runs).toContain('aggregateRequired: Generated<boolean>;');
     expect(runs).toContain('spaceJobSequence: Generated<number>;');
     expect(runs).toContain('spaceJobRecoveryCount: Generated<number>;');
     expect(runs).toContain('executionToken: string | null;');
@@ -114,6 +121,12 @@ describe('multi-space compilation migration contract', () => {
       'knowledgeSpaceCompileRunImages: KnowledgeSpaceCompileRunImages;',
     );
     expect(entityTypes).toContain('Selectable<KnowledgeSpaceCompileRunImages>');
+    expect(persistedPlanMigration).toContain(
+      ".addColumn('aggregate_required', 'boolean'",
+    );
+    expect(persistedPlanMigration).toContain(
+      'column.notNull().defaultTo(true)',
+    );
   });
 });
 

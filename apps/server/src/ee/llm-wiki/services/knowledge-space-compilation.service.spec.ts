@@ -163,6 +163,32 @@ describe('KnowledgeSpaceCompilationService', () => {
     );
   });
 
+  it('resumes an initialized Run without repeating whole-Space planning', async () => {
+    const fixture = createService();
+    fixture.executionRepo.findLeasedRun.mockResolvedValue({
+      id: 'current-run',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+      promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+      initializedAt: new Date('2026-08-03T00:00:00.000Z'),
+      aggregateRequired: false,
+    });
+
+    await expect(fixture.service.initializeLeasedRun(lease())).resolves.toEqual(
+      expect.objectContaining({
+        initialized: false,
+        aggregateRequired: false,
+        pageCompilationRequired: false,
+      }),
+    );
+
+    expect(fixture.sourceExporter.exportSpaceSources).not.toHaveBeenCalled();
+    expect(fixture.catalog.snapshot).not.toHaveBeenCalled();
+    expect(fixture.catalog.aggregateFingerprint).not.toHaveBeenCalled();
+    expect(fixture.executionRepo.initializeRun).not.toHaveBeenCalled();
+  });
+
   it('never treats an image-overflow page as fully reusable and freezes only the first 50 images', async () => {
     const source = sourceSnapshotWithImages(60);
     const readyExtractions = source.images.slice(0, 50).map(readyExtraction);

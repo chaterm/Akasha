@@ -237,12 +237,57 @@ describePostgres('KnowledgeSpaceCompilationRepo PostgreSQL round trip', () => {
       childStaleCount: 5,
       contributionCount: 1,
       initializedAt: null,
+      aggregateRequired: true,
       status: 'queued',
       phase: 'text',
       sequence: 7,
       runPageCount: 0,
       runImageCount: 0,
     });
+  });
+
+  it('persists one queued active Run for each Space in a 100-Space request', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name)
+      select 'space-bulk-' || ordinal, 'workspace-1', 'Bulk ' || ordinal
+      from generate_series(1, 100) ordinal
+    `.execute(db);
+    const requests = Array.from({ length: 100 }, (_, index) => ({
+      workspaceId: 'workspace-1',
+      spaceId: `space-bulk-${index + 1}`,
+      trigger: 'manual_compile',
+    }));
+
+    const results = await repo.requestRuns({
+      requests,
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+
+    expect(results).toHaveLength(100);
+    expect(results.every((result) => result.disposition === 'created')).toBe(
+      true,
+    );
+    const evidence = await sql<{
+      runCount: number;
+      uninitializedCount: number;
+      runPageCount: number;
+    }>`
+      select
+        count(*)::integer as "runCount",
+        count(*) filter (where initialized_at is null)::integer
+          as "uninitializedCount",
+        (select count(*)::integer
+         from knowledge_space_compile_run_pages run_page
+         join knowledge_space_compile_runs run on run.id = run_page.run_id
+         where run.space_id like 'space-bulk-%') as "runPageCount"
+      from knowledge_space_compile_runs
+      where space_id like 'space-bulk-%'
+        and status in ('queued', 'compiling', 'aggregate_pending', 'aggregating')
+    `.execute(db);
+    expect(evidence.rows).toEqual([
+      { runCount: 100, uninitializedCount: 100, runPageCount: 0 },
+    ]);
   });
 });
 
@@ -275,6 +320,7 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       prompt_version varchar not null,
       catalog_snapshot jsonb not null,
       catalog_hash varchar not null,
+      aggregate_required boolean not null default true,
       aggregate_job_id varchar,
       aggregate_started_at timestamptz,
       imported_artifact_count integer not null default 0,
@@ -416,7 +462,7 @@ async function seedInitializedRemovedSourcePlan(
   await sql`
     update knowledge_space_compile_runs
     set initialized_at = now(), status = 'compiling', space_job_sequence = 7,
-        execution_token = 'old-token'
+        execution_token = 'old-token', aggregate_required = false
     where id = ${runId}
   `.execute(db);
   await sql`
@@ -476,6 +522,7 @@ async function readRemovedSourceReplanEvidence(
     childStaleCount: number;
     contributionCount: number;
     initializedAt: Date | null;
+    aggregateRequired: boolean;
     status: string;
     phase: string;
     sequence: number;
@@ -497,7 +544,8 @@ async function readRemovedSourceReplanEvidence(
       )::integer as "childStaleCount",
       (select count(*)::integer from knowledge_artifact_contributions
        where id = 'contribution-removed') as "contributionCount",
-      run.initialized_at as "initializedAt", run.status, run.phase,
+      run.initialized_at as "initializedAt",
+      run.aggregate_required as "aggregateRequired", run.status, run.phase,
       run.space_job_sequence as sequence,
       (select count(*)::integer from knowledge_space_compile_run_pages
        where run_id = run.id) as "runPageCount",

@@ -267,19 +267,19 @@ export class KnowledgeDiagnosticsService {
             .executeTakeFirst() as Promise<Record<string, unknown>>,
           pages
             .select([
-              sql<number>`count(*) filter (where rp.status = 'failed' and rp.error_code = 'page_timeout')`.as(
+              sql<number>`count(*) filter (where (rp.status = 'failed' or rp.merge_status = 'failed') and rp.error_code = 'page_timeout')`.as(
                 'budgetTimeout',
               ),
-              sql<number>`count(*) filter (where rp.status = 'failed' and rp.error_code <> 'page_timeout' and (rp.error_code ilike '%provider%' or rp.error_code ilike '%llm%' or rp.error_code in ('rate_limited', 'invalid_output')))`.as(
+              sql<number>`count(*) filter (where (rp.status = 'failed' or rp.merge_status = 'failed') and rp.error_code <> 'page_timeout' and (rp.error_code ilike '%provider%' or rp.error_code ilike '%llm%' or rp.error_code in ('rate_limited', 'invalid_output')))`.as(
                 'provider',
               ),
-              sql<number>`count(*) filter (where rp.status = 'failed' and (rp.error_code ilike '%publication%' or rp.error_code ilike '%import%' or rp.error_code ilike '%merge%'))`.as(
+              sql<number>`count(*) filter (where (rp.status = 'failed' or rp.merge_status = 'failed') and (rp.error_code ilike '%publication%' or rp.error_code ilike '%import%' or rp.error_code ilike '%merge%'))`.as(
                 'publication',
               ),
-              sql<number>`count(*) filter (where rp.status = 'failed' and (rp.error_code ilike '%storage%' or rp.error_code ilike '%database%' or rp.error_code ilike '%job%' or rp.error_code ilike '%embedding%'))`.as(
+              sql<number>`count(*) filter (where (rp.status = 'failed' or rp.merge_status = 'failed') and (rp.error_code ilike '%storage%' or rp.error_code ilike '%database%' or rp.error_code ilike '%job%' or rp.error_code ilike '%embedding%'))`.as(
                 'infrastructure',
               ),
-              sql<number>`count(*) filter (where rp.status = 'failed')`.as(
+              sql<number>`count(*) filter (where rp.status = 'failed' or rp.merge_status = 'failed')`.as(
                 'failedTotal',
               ),
             ])

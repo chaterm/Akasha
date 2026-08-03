@@ -126,6 +126,14 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     }
     const run = await this.executionRepo.findLeasedRun(lease);
     if (!run) return undefined;
+    if (run.initializedAt) {
+      return {
+        initialized: false,
+        run,
+        aggregateRequired: run.aggregateRequired,
+        pageCompilationRequired: run.expectedPageCount > run.skippedPageCount,
+      };
+    }
     const scope = { workspaceId: run.workspaceId, spaceId: run.spaceId };
     const sources = await this.sourceExporter.exportSpaceSources(scope);
     const sourcePageIds = sources.map((source) => source.sourcePageId);
@@ -254,8 +262,10 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       latestAggregateRun!.knowledgeGeneration ===
         latestAggregateRun!.currentKnowledgeGeneration &&
       latestAggregateRun!.catalogHash === aggregateFingerprint.hash;
+    const aggregateRequired = !aggregateReusable;
 
     const initialized = await this.executionRepo.initializeRun(lease, {
+      aggregateRequired,
       catalogSnapshot: catalog.entries as unknown as JsonValue,
       catalogHash: aggregateFingerprint.hash,
       removedSourcePageIds,
@@ -318,7 +328,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     if (!initialized) return undefined;
     return {
       ...initialized,
-      aggregateRequired: !aggregateReusable,
+      aggregateRequired,
       pageCompilationRequired,
     };
   }

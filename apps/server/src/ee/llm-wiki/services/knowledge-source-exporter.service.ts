@@ -36,12 +36,12 @@ export class KnowledgeSourceExporterService {
     const scope = { workspaceId: input.workspaceId, spaceId: input.spaceId };
     return this.inReadSnapshot(async (trx) => {
       const snapshots: KnowledgeSourceSnapshot[] = [];
-      let after: { updatedAt: Date; id: string } | undefined;
+      let afterId: string | undefined;
       do {
         const query = {
           ...scope,
           limit: KNOWLEDGE_EXPORT_PAGE_SIZE,
-          ...(after ? { after } : {}),
+          ...(afterId ? { afterId } : {}),
         };
         const pages = trx
           ? await this.pageRepo.findPagesForKnowledgeExport(query, trx)
@@ -51,11 +51,11 @@ export class KnowledgeSourceExporterService {
         );
         input.abortSignal?.throwIfAborted();
         const last = pages[pages.length - 1];
-        after =
+        afterId =
           pages.length === KNOWLEDGE_EXPORT_PAGE_SIZE && last
-            ? { updatedAt: last.updatedAt, id: last.id }
+            ? last.id
             : undefined;
-      } while (after);
+      } while (afterId);
       return snapshots;
     });
   }

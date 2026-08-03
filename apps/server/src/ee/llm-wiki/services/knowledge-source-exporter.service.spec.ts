@@ -57,17 +57,13 @@ describe('KnowledgeSourceExporterService', () => {
       },
       trx,
     );
-    const lastFirstBatch = pages[199];
     expect(pageRepo.findPagesForKnowledgeExport).toHaveBeenNthCalledWith(
       2,
       {
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
         limit: 200,
-        after: {
-          updatedAt: lastFirstBatch.updatedAt,
-          id: lastFirstBatch.id,
-        },
+        afterId: pages[199].id,
       },
       trx,
     );

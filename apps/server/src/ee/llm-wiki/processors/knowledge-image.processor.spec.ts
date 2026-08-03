@@ -57,6 +57,44 @@ describe('KnowledgeImageProcessor', () => {
     );
   });
 
+  it('does not commit a RunImage after the activation deadline expires', async () => {
+    jest.useFakeTimers();
+    try {
+      const fixture = createFixture();
+      fixture.compilation.claimRunImage.mockResolvedValue({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageId: 'page-1',
+        attachmentId: 'image-1',
+        fileName: 'one.png',
+        mimeType: 'image/png',
+        fileSize: 10,
+        altText: null,
+        expectedAttachmentVersion: new Date('2026-07-27T00:00:00.000Z'),
+      });
+      let resolveEnrichment!: (value: unknown) => void;
+      fixture.enrichment.enrichSingleImage.mockReturnValue(
+        new Promise((resolve) => {
+          resolveEnrichment = resolve;
+        }),
+      );
+
+      const running = fixture.processor.process(runImageJob());
+      await Promise.resolve();
+      await jest.advanceTimersByTimeAsync(180_000);
+      resolveEnrichment({
+        status: 'succeeded',
+        extractionId: 'late-extraction',
+        retryable: false,
+      });
+
+      await expect(running).rejects.toThrow('timed out after 180000ms');
+      expect(fixture.compilation.completeRunImage).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('rejects the removed page-sized image job', async () => {
     const fixture = createFixture();
 

@@ -228,7 +228,7 @@ export class PageRepo {
       workspaceId: string;
       spaceId: string;
       limit: number;
-      after?: { updatedAt: Date; id: string };
+      afterId?: string;
     },
     trx?: KyselyTransaction,
   ): Promise<
@@ -257,18 +257,9 @@ export class PageRepo {
       .where('workspaceId', '=', input.workspaceId)
       .where('spaceId', '=', input.spaceId)
       .where('deletedAt', 'is', null)
-      .$if(Boolean(input.after), (query) =>
-        query.where((eb) =>
-          eb.or([
-            eb('updatedAt', '>', input.after!.updatedAt),
-            eb.and([
-              eb('updatedAt', '=', input.after!.updatedAt),
-              eb('id', '>', input.after!.id),
-            ]),
-          ]),
-        ),
+      .$if(Boolean(input.afterId), (query) =>
+        query.where('id', '>', input.afterId!),
       )
-      .orderBy('updatedAt', 'asc')
       .orderBy('id', 'asc')
       .limit(input.limit)
       .execute();

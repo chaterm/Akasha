@@ -65,6 +65,7 @@ const CACHE_KEY_COLUMNS = [
   'attachmentId',
   'cacheFingerprint',
 ] as const;
+const SNAPSHOT_IMAGE_LOOKUP_BATCH_SIZE = 1_000;
 
 @Injectable()
 export class KnowledgeImageExtractionRepo {
@@ -107,45 +108,53 @@ export class KnowledgeImageExtractionRepo {
       ]),
     );
 
-    const rows = await this.db
-      .selectFrom('knowledgeImageExtractions as extraction')
-      .innerJoin(
-        'attachments as attachment',
-        'attachment.id',
-        'extraction.attachmentId',
-      )
-      .selectAll('extraction')
-      .select([
-        'attachment.updatedAt as currentAttachmentVersion',
-        'attachment.workspaceId as attachmentWorkspaceId',
-        'attachment.spaceId as attachmentSpaceId',
-        'attachment.pageId as attachmentPageId',
-      ])
-      .distinctOn('extraction.attachmentId')
-      .where('extraction.workspaceId', '=', input.workspaceId)
-      .where('extraction.attachmentId', 'in', attachmentIds)
-      .where('extraction.status', '=', 'ready')
-      .where('extraction.model', '=', input.model)
-      .where('extraction.promptVersion', '=', input.promptVersion)
-      .where('extraction.cacheFingerprint', '!=', '')
-      .where('extraction.contentHash', '!=', '')
-      .where('attachment.workspaceId', '=', input.workspaceId)
-      .where('attachment.spaceId', '=', input.spaceId)
-      .where('attachment.deletedAt', 'is', null)
-      .where('extraction.attachmentVersion', 'is not', null)
-      .where(
-        sql<boolean>`date_trunc('milliseconds', extraction.attachment_version) = date_trunc('milliseconds', attachment.updated_at)`,
-      )
-      .where(
-        sql<boolean>`(
-          length(trim(coalesce(extraction.ocr_text, ''))) > 0
-          OR length(trim(coalesce(extraction.caption, ''))) > 0
-        )`,
-      )
-      .orderBy('extraction.attachmentId', 'asc')
-      .orderBy('extraction.updatedAt', 'desc')
-      .orderBy('extraction.id', 'desc')
-      .execute();
+    const rows: CurrentReadyKnowledgeImageExtraction[] = [];
+    for (const attachmentIdBatch of batches(
+      attachmentIds,
+      SNAPSHOT_IMAGE_LOOKUP_BATCH_SIZE,
+    )) {
+      rows.push(
+        ...(await this.db
+          .selectFrom('knowledgeImageExtractions as extraction')
+          .innerJoin(
+            'attachments as attachment',
+            'attachment.id',
+            'extraction.attachmentId',
+          )
+          .selectAll('extraction')
+          .select([
+            'attachment.updatedAt as currentAttachmentVersion',
+            'attachment.workspaceId as attachmentWorkspaceId',
+            'attachment.spaceId as attachmentSpaceId',
+            'attachment.pageId as attachmentPageId',
+          ])
+          .distinctOn('extraction.attachmentId')
+          .where('extraction.workspaceId', '=', input.workspaceId)
+          .where('extraction.attachmentId', 'in', attachmentIdBatch)
+          .where('extraction.status', '=', 'ready')
+          .where('extraction.model', '=', input.model)
+          .where('extraction.promptVersion', '=', input.promptVersion)
+          .where('extraction.cacheFingerprint', '!=', '')
+          .where('extraction.contentHash', '!=', '')
+          .where('attachment.workspaceId', '=', input.workspaceId)
+          .where('attachment.spaceId', '=', input.spaceId)
+          .where('attachment.deletedAt', 'is', null)
+          .where('extraction.attachmentVersion', 'is not', null)
+          .where(
+            sql<boolean>`date_trunc('milliseconds', extraction.attachment_version) = date_trunc('milliseconds', attachment.updated_at)`,
+          )
+          .where(
+            sql<boolean>`(
+              length(trim(coalesce(extraction.ocr_text, ''))) > 0
+              OR length(trim(coalesce(extraction.caption, ''))) > 0
+            )`,
+          )
+          .orderBy('extraction.attachmentId', 'asc')
+          .orderBy('extraction.updatedAt', 'desc')
+          .orderBy('extraction.id', 'desc')
+          .execute()),
+      );
+    }
     return rows.filter((row) => {
       const expected = expectedOwnership.get(row.attachmentId);
       return (
@@ -325,4 +334,12 @@ export class KnowledgeImageExtractionRepo {
       .returningAll()
       .executeTakeFirst();
   }
+}
+
+function batches<T>(values: readonly T[], batchSize: number): T[][] {
+  const result: T[][] = [];
+  for (let offset = 0; offset < values.length; offset += batchSize) {
+    result.push(values.slice(offset, offset + batchSize));
+  }
+  return result;
 }

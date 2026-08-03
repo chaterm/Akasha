@@ -123,7 +123,7 @@ export default function KnowledgeAdminPage() {
   );
   const spaceIdsInitialized = useRef(false);
   const { data: spacesData, isLoading: spacesLoading } = useGetSpacesQuery({
-    limit: 100,
+    limit: 1000,
   });
   const spaces = spacesData?.items ?? [];
   const spaceOptions = useMemo(

@@ -701,6 +701,7 @@ export interface KnowledgeSpaceCompileRunImages {
 
 export interface KnowledgeSpaceCompileRuns {
   aggregateJobId: string | null;
+  aggregateRequired: Generated<boolean>;
   aggregateStartedAt: Timestamp | null;
   catalogHash: string;
   catalogSnapshot: Generated<Json>;

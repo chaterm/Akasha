@@ -14,7 +14,6 @@ import { AuthUser } from '../../common/decorators/auth-user.decorator';
 import { AuthWorkspace } from '../../common/decorators/auth-workspace.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { SpaceIdDto } from './dto/space-id.dto';
-import { PaginationOptions } from '@akasha/db/pagination/pagination-options';
 import { SpaceMemberService } from './services/space-member.service';
 import { User, Workspace } from '@akasha/db/types/entity.types';
 import { AddSpaceMembersDto } from './dto/add-space-members.dto';
@@ -36,6 +35,8 @@ import WorkspaceAbilityFactory from '../casl/abilities/workspace-ability.factory
 import { CreateSpaceDto } from './dto/create-space.dto';
 import { SpaceRepo } from '@akasha/db/repos/space/space.repo';
 import { UserRole, SpaceRole } from '../../common/helpers/types/permission';
+import { SpacePaginationOptions } from './dto/space-pagination-options.dto';
+import { PaginationOptions } from '@akasha/db/pagination/pagination-options';
 
 @UseGuards(JwtAuthGuard)
 @Controller('spaces')
@@ -53,7 +54,7 @@ export class SpaceController {
   @Post('/')
   async getWorkspaceSpaces(
     @Body()
-    pagination: PaginationOptions,
+    pagination: SpacePaginationOptions,
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
   ) {
@@ -123,10 +124,8 @@ export class SpaceController {
       throw new ForbiddenException();
     }
 
-    const userSpaceRoles = await this.spaceMemberRepo.getUserSpaceRoles(
-      user.id,
-      space.id,
-    ) ?? [];
+    const userSpaceRoles =
+      (await this.spaceMemberRepo.getUserSpaceRoles(user.id, space.id)) ?? [];
 
     const userSpaceRole =
       user.role === UserRole.OWNER && !userSpaceRoles.length

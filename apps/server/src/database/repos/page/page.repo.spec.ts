@@ -234,11 +234,31 @@ describe('PageRepo', () => {
         { method: 'where', args: ['workspaceId', '=', 'workspace-1'] },
         { method: 'where', args: ['spaceId', '=', 'space-1'] },
         { method: 'where', args: ['deletedAt', 'is', null] },
-        { method: 'orderBy', args: ['updatedAt', 'asc'] },
         { method: 'orderBy', args: ['id', 'asc'] },
         { method: 'limit', args: [200] },
         { method: 'execute', args: [] },
       ]);
+    });
+
+    it('keyset-paginates only by the lossless page id', async () => {
+      const query = new FakeKyselyQuery([]);
+      const repo = createRepo(query);
+
+      await repo.findPagesForKnowledgeExport({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        limit: 200,
+        afterId: 'page-200',
+      });
+
+      expect(query.calls).toContainEqual({
+        method: 'where',
+        args: ['id', '>', 'page-200'],
+      });
+      expect(query.calls).not.toContainEqual({
+        method: 'orderBy',
+        args: ['updatedAt', 'asc'],
+      });
     });
   });
 

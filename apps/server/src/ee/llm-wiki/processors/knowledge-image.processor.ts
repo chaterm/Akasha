@@ -87,6 +87,7 @@ export class KnowledgeImageProcessor
         processingExpiresAt: new Date(Date.now() + 210_000),
       });
       if (!image) return imageJobResult('noop');
+      deadline.signal.throwIfAborted();
       const result = await this.imageEnrichment.enrichSingleImage(
         {
           workspaceId: image.workspaceId,
@@ -103,6 +104,7 @@ export class KnowledgeImageProcessor
         },
         deadline.signal,
       );
+      deadline.signal.throwIfAborted();
       if (
         result.status === 'failed' &&
         result.retryable &&

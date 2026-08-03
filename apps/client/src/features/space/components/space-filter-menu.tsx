@@ -42,7 +42,7 @@ export function SpaceFilterMenu({
   const [debouncedQuery] = useDebouncedValue(searchQuery, 300);
 
   const { data: spacesData } = useGetSpacesQuery({
-    limit: 100,
+    limit: 1000,
     query: debouncedQuery,
   });
   const spaces = spacesData?.items ?? [];

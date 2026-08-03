@@ -571,6 +571,7 @@ export class KnowledgeSpaceCompilationRepo {
         quarantinedArtifactCount: 0,
         catalogSnapshot: [] as JsonValue,
         catalogHash: 'pending-initialization',
+        aggregateRequired: true,
         aggregateJobId: null,
         aggregateStartedAt: null,
         startedAt: null,
@@ -1104,11 +1105,7 @@ export class KnowledgeSpaceCompilationRepo {
         .$if(input.observedStatus === 'processing', (query) =>
           query
             .where('processingExpiresAt', 'is not', null)
-            .where(
-              'processingExpiresAt',
-              '<',
-              input.processingExpiredBefore,
-            ),
+            .where('processingExpiresAt', '<', input.processingExpiredBefore),
         )
         .returning('id')
         .executeTakeFirst();

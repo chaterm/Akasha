@@ -18,6 +18,7 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
   let db: Kysely<unknown>;
   let compilationRepo: KnowledgeSpaceCompilationRepo;
   let executionRepo: KnowledgeSpaceExecutionRepo;
+  const executedSql: string[] = [];
 
   beforeAll(async () => {
     client = postgres(normalizePostgresUrl(integrationDatabaseUrl!), {
@@ -27,6 +28,9 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
     db = new Kysely({
       dialect: new PostgresJSDialect({ postgres: client }),
       plugins: [new CamelCasePlugin()],
+      log(event) {
+        if (event.level === 'query') executedSql.push(event.query.sql);
+      },
     });
     await sql.raw(`create schema "${schema}"`).execute(db);
     await sql.raw(`set search_path to "${schema}"`).execute(db);
@@ -86,6 +90,7 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
       'finish-token',
     );
     const initialized = await executionRepo.initializeRun(lease, {
+      aggregateRequired: true,
       catalogSnapshot: [],
       catalogHash: 'sha256:catalog',
       pages: [
@@ -107,6 +112,7 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
       executionRepo.initializeRun(
         { ...lease, executionToken: 'old-token' },
         {
+          aggregateRequired: true,
           catalogSnapshot: [],
           catalogHash: 'ignored',
           pages: [],
@@ -151,6 +157,124 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
     ).resolves.toBe(false);
   });
 
+  it('persists a no-aggregate initialization decision for later activations', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name)
+      values ('space-plan-fast-path', 'workspace-1', 'Plan fast path');
+      insert into knowledge_space_compile_runs (
+        id, workspace_id, space_id, trigger, compiler_version, prompt_version,
+        catalog_hash, space_job_queued_at
+      ) values (
+        'run-plan-fast-path', 'workspace-1', 'space-plan-fast-path', 'manual',
+        'compiler-v1', 'prompt-v1', 'pending-initialization', now()
+      )
+    `.execute(db);
+    const lease = await claimedLease(
+      compilationRepo,
+      executionRepo,
+      'run-plan-fast-path',
+      'plan-fast-path-token',
+    );
+
+    await executionRepo.initializeRun(lease, {
+      aggregateRequired: false,
+      catalogSnapshot: [],
+      catalogHash: 'sha256:reused-catalog',
+      pages: [],
+      images: [],
+      removedSourcePageIds: [],
+    });
+
+    await expect(executionRepo.findLeasedRun(lease)).resolves.toEqual(
+      expect.objectContaining({
+        initializedAt: expect.any(Date),
+        aggregateRequired: false,
+      }),
+    );
+  });
+
+  it('initializes 5000 pages and 5000 frozen images without one oversized SQL statement', async () => {
+    await sql`
+      select setval('run_image_seq', 100000, true);
+      insert into spaces (id, workspace_id, name)
+      values ('space-large-plan', 'workspace-1', 'Large plan');
+      insert into knowledge_space_compile_runs (
+        id, workspace_id, space_id, trigger, compiler_version, prompt_version,
+        catalog_hash, space_job_queued_at
+      ) values (
+        'run-large-plan', 'workspace-1', 'space-large-plan', 'manual',
+        'compiler-v1', 'prompt-v1', 'pending-initialization', now()
+      )
+    `.execute(db);
+    const lease = await claimedLease(
+      compilationRepo,
+      executionRepo,
+      'run-large-plan',
+      'large-plan-token',
+    );
+    const pages = Array.from({ length: 5_000 }, (_, index) => ({
+      sourcePageId: `large-page-${index}`,
+      expectedSourceVersion: 'v1',
+      expectedSourceContentHash: `sha256:large-page-${index}`,
+      expectedImageCount: index < 100 ? 50 : 0,
+      status: 'pending' as const,
+      imageStatus:
+        index < 100 ? ('pending' as const) : ('not_required' as const),
+      mergeStatus:
+        index < 100 ? ('waiting_images' as const) : ('not_required' as const),
+    }));
+    const images = Array.from({ length: 5_000 }, (_, index) => {
+      const pageIndex = Math.floor(index / 50);
+      const imageOrdinal = index % 50;
+      return {
+        sourcePageId: `large-page-${pageIndex}`,
+        attachmentId: `large-attachment-${index}`,
+        imageOrdinal,
+        fileName: `large-image-${index}.png`,
+        mimeType: 'image/png',
+        expectedAttachmentVersion: new Date('2026-08-03T00:00:00.000Z'),
+      };
+    });
+
+    await expect(
+      executionRepo.initializeRun(lease, {
+        aggregateRequired: true,
+        catalogSnapshot: [],
+        catalogHash: 'sha256:large-plan',
+        pages,
+        images,
+        removedSourcePageIds: [],
+      }),
+    ).resolves.toEqual(expect.objectContaining({ initialized: true }));
+
+    const counts = await sql<{ pageCount: number; imageCount: number }>`
+      select
+        (select count(*)::integer from knowledge_space_compile_run_pages
+         where run_id = 'run-large-plan') as "pageCount",
+        (select count(*)::integer from knowledge_space_compile_run_images
+         where run_id = 'run-large-plan') as "imageCount"
+    `.execute(db);
+    expect(counts.rows).toEqual([{ pageCount: 5_000, imageCount: 5_000 }]);
+
+    executedSql.length = 0;
+    await executionRepo.completeTextPage(lease, {
+      sourcePageId: 'large-page-0',
+      sourceVersion: 'v1',
+      sourceContentHash: 'sha256:large-page-0',
+      status: 'succeeded',
+    });
+    expect(
+      executedSql.some(
+        (statement) =>
+          statement.includes('knowledge_space_compile_run_pages') &&
+          statement.includes('select "status"'),
+      ),
+    ).toBe(false);
+    await expect(
+      executionRepo.findPendingTextPages(lease),
+    ).resolves.toHaveLength(1);
+  });
+
   it('physically retires fail-closed removed-source contributions during leased initialization', async () => {
     await sql`
       insert into knowledge_artifact_contributions (
@@ -170,6 +294,7 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
     );
 
     await executionRepo.initializeRun(lease, {
+      aggregateRequired: true,
       catalogSnapshot: [],
       catalogHash: 'sha256:retired',
       pages: [],
@@ -211,6 +336,7 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
       'text-changed-token',
     );
     await executionRepo.initializeRun(lease, {
+      aggregateRequired: true,
       catalogSnapshot: [],
       catalogHash: 'sha256:text-changed',
       pages: [pagePlan('changed-page')],
@@ -271,6 +397,7 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
       'yield-token',
     );
     await executionRepo.initializeRun(lease, {
+      aggregateRequired: true,
       catalogSnapshot: [],
       catalogHash: 'sha256:yield',
       pages: [pagePlan('yield-page-1'), pagePlan('yield-page-2')],
@@ -448,10 +575,7 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
       'merge-token',
     );
     const pages = await executionRepo.findPendingMergePages(lease);
-    expect(pages.map((page) => page.sourcePageId)).toEqual([
-      'merge-page-1',
-      'merge-page-2',
-    ]);
+    expect(pages.map((page) => page.sourcePageId)).toEqual(['merge-page-1']);
     expect(pages[0].images.map((image) => image.attachmentId)).toEqual([
       'merge-attachment-0',
       'merge-attachment-1',
@@ -471,6 +595,9 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
     );
     const afterFirst = await executionRepo.findLeasedRun(lease);
     expect(afterFirst?.phase).toBe('image_merge');
+    await expect(executionRepo.findPendingMergePages(lease)).resolves.toEqual([
+      expect.objectContaining({ sourcePageId: 'merge-page-2' }),
+    ]);
     await expect(
       db.transaction().execute((trx) =>
         executionRepo.completeMergePagePublicationInTransaction(
@@ -563,6 +690,7 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       prompt_version varchar not null,
       catalog_snapshot jsonb not null default '[]',
       catalog_hash varchar not null,
+      aggregate_required boolean not null default true,
       aggregate_job_id varchar,
       aggregate_started_at timestamptz,
       imported_artifact_count integer not null default 0,
