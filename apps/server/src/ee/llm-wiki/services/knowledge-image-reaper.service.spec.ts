@@ -15,6 +15,9 @@ describe('KnowledgeImageReaperService', () => {
       expect.objectContaining({
         runImageId: 'run-image-1',
         jobId: 'image-job-1',
+        observedStatus: 'processing',
+        processingExpiredBefore: expect.any(Date),
+        queuedDispatchedBefore: expect.any(Date),
       }),
     );
   });
@@ -55,6 +58,9 @@ function createFixture(input: {
         runId: 'run-1',
         knowledgeGeneration: 2,
         jobId: 'image-job-1',
+        status: 'processing',
+        processingExpiresAt: new Date(Date.now() - 60_000),
+        dispatchedAt: new Date(Date.now() - 180_000),
         redisRecoveryCount: input.recoveryCount ?? 0,
       },
     ]),

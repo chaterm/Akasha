@@ -14,12 +14,29 @@ describe('KnowledgeRunReaperService', () => {
     const fixture = createFixture({ state: 'failed' });
     await fixture.service.reap();
     expect(fixture.repo.claimRecoveryLease).toHaveBeenCalledWith(
-      expect.objectContaining({ runId: 'run-1', spaceJobId: 'job-1' }),
+      expect.objectContaining({
+        runId: 'run-1',
+        spaceJobId: 'job-1',
+        recoveryKind: 'expired',
+      }),
     );
     expect(fixture.repo.finishRun).toHaveBeenCalledWith(
       fixture.lease,
       'failed',
       expect.objectContaining({ errorCode: 'job_attempts_exhausted' }),
+    );
+  });
+
+  it('allows recovery without an execution lease only for a stale queued reservation', async () => {
+    const fixture = createFixture({ state: 'missing' });
+    fixture.repo.findSpaceRecoveryCandidates.mockResolvedValue([
+      candidate({ status: 'queued', executionLeaseExpiresAt: null }),
+    ]);
+
+    await fixture.service.reap();
+
+    expect(fixture.repo.claimRecoveryLease).toHaveBeenCalledWith(
+      expect.objectContaining({ recoveryKind: 'queued_reservation' }),
     );
   });
 
@@ -95,6 +112,7 @@ function candidate(overrides: Record<string, unknown> = {}) {
     spaceJobSequence: 1,
     spaceJobId: 'job-1',
     executionLeaseExpiresAt: new Date(Date.now() - 60_000),
+    status: 'compiling',
     spaceJobRecoveryCount: 0,
     ...overrides,
   };

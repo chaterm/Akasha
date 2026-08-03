@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import {
   KnowledgeSpaceExecutionRepo,
   SpaceExecutionLease,
@@ -32,6 +32,8 @@ export interface SpaceSliceRunOptions {
 
 @Injectable()
 export class KnowledgeSpaceRunnerService {
+  private readonly logger = new Logger(KnowledgeSpaceRunnerService.name);
+
   constructor(
     private readonly executionRepo: KnowledgeSpaceExecutionRepo,
     private readonly spaceCompilation: KnowledgeSpaceCompilationService,
@@ -73,6 +75,14 @@ export class KnowledgeSpaceRunnerService {
       void this.executionRepo
         .heartbeatSpaceSlice(lease, {
           executionLeaseExpiresAt: leaseExpiry(settings.leaseTtlMs),
+        })
+        .catch(() => {
+          this.logger.warn({
+            event: 'knowledge_space_heartbeat_failed',
+            runId: lease.runId,
+            jobId: lease.spaceJobId,
+            phase: lease.jobPhase,
+          });
         })
         .finally(() => {
           heartbeatInFlight = false;
@@ -131,7 +141,11 @@ export class KnowledgeSpaceRunnerService {
         } finally {
           deadline.dispose();
         }
-        if (outcome.outcome === 'failed' && outcome.retryable) {
+        if (
+          outcome.outcome === 'failed' &&
+          outcome.retryable &&
+          !options.finalAttempt
+        ) {
           throw outcome.cause;
         }
         if (!(await this.executionRepo.isLeaseActive(lease))) {
@@ -244,6 +258,14 @@ export class KnowledgeSpaceRunnerService {
         .heartbeatSpaceSlice(lease, {
           executionLeaseExpiresAt: leaseExpiry(settings.leaseTtlMs),
         })
+        .catch(() => {
+          this.logger.warn({
+            event: 'knowledge_space_heartbeat_failed',
+            runId: lease.runId,
+            jobId: lease.spaceJobId,
+            phase: lease.jobPhase,
+          });
+        })
         .finally(() => {
           heartbeatInFlight = false;
         });
@@ -288,7 +310,11 @@ export class KnowledgeSpaceRunnerService {
         } finally {
           deadline.dispose();
         }
-        if (outcome.outcome === 'failed' && outcome.retryable) {
+        if (
+          outcome.outcome === 'failed' &&
+          outcome.retryable &&
+          !options.finalAttempt
+        ) {
           throw outcome.cause;
         }
         if (!(await this.executionRepo.isLeaseActive(lease))) {

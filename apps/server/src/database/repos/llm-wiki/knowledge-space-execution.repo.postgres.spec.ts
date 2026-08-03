@@ -125,6 +125,14 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
     expect(checkpoint).toEqual(
       expect.objectContaining({ barrierComplete: true, succeededPageCount: 1 }),
     );
+    await expect(executionRepo.advanceTextBarrier(lease)).resolves.toEqual(
+      expect.objectContaining({
+        barrierComplete: true,
+        succeeded: 1,
+        failed: 0,
+        skipped: 0,
+      }),
+    );
     await sql`
       update knowledge_space_compile_runs
       set rerun_requested = true
@@ -182,6 +190,47 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
     expect(evidence.rows).toEqual([
       { contributionCount: 0, artifactStale: true },
     ]);
+  });
+
+  it('requests an incremental follow-up when a text snapshot changes', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name)
+      values ('space-text-changed', 'workspace-1', 'Text changed');
+      insert into knowledge_space_compile_runs (
+        id, workspace_id, space_id, trigger, compiler_version, prompt_version,
+        catalog_hash, space_job_queued_at
+      ) values (
+        'run-text-changed', 'workspace-1', 'space-text-changed', 'manual',
+        'compiler-v1', 'prompt-v1', 'pending-initialization', now()
+      )
+    `.execute(db);
+    const lease = await claimedLease(
+      compilationRepo,
+      executionRepo,
+      'run-text-changed',
+      'text-changed-token',
+    );
+    await executionRepo.initializeRun(lease, {
+      catalogSnapshot: [],
+      catalogHash: 'sha256:text-changed',
+      pages: [pagePlan('changed-page')],
+      images: [],
+      removedSourcePageIds: [],
+    });
+
+    await executionRepo.completeTextPage(lease, {
+      sourcePageId: 'changed-page',
+      sourceVersion: 'v1',
+      sourceContentHash: 'sha256:changed-page',
+      status: 'skipped',
+      errorCode: 'source_changed',
+    });
+
+    const state = await sql<{ rerunRequested: boolean }>`
+      select rerun_requested as "rerunRequested"
+      from knowledge_space_compile_runs where id = 'run-text-changed'
+    `.execute(db);
+    expect(state.rows).toEqual([{ rerunRequested: true }]);
   });
 
   it('turns a force-run content update into one same-generation incremental follow-up', async () => {
@@ -273,6 +322,7 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
       executionToken: 'recovery-token',
       leaseExpiredBefore: new Date(),
       executionLeaseExpiresAt: new Date(Date.now() + 180_000),
+      recoveryKind: 'expired',
     });
     expect(recovery?.executionToken).toBe('recovery-token');
     await expect(
@@ -287,6 +337,66 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
       from knowledge_space_compile_runs where id = 'run-recovery'
     `.execute(db);
     expect(state.rows).toEqual([{ recoveryCount: 1 }]);
+  });
+
+  it('separates queued-reservation recovery from final-failure recovery', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name)
+      values ('space-recovery-race', 'workspace-1', 'Recovery race');
+      insert into knowledge_space_compile_runs (
+        id, workspace_id, space_id, trigger, compiler_version, prompt_version,
+        catalog_hash, space_job_queued_at
+      ) values (
+        'run-recovery-race', 'workspace-1', 'space-recovery-race', 'manual',
+        'compiler-v1', 'prompt-v1', 'pending-initialization', now()
+      )
+    `.execute(db);
+    const liveLease = await claimedLease(
+      compilationRepo,
+      executionRepo,
+      'run-recovery-race',
+      'live-race-token',
+    );
+
+    const recovery = await executionRepo.claimRecoveryLease({
+      runId: liveLease.runId,
+      knowledgeGeneration: liveLease.knowledgeGeneration,
+      jobPhase: liveLease.jobPhase,
+      spaceJobSequence: liveLease.spaceJobSequence,
+      spaceJobId: liveLease.spaceJobId,
+      workerId: 'reaper-race',
+      executionToken: 'recovery-race-token',
+      leaseExpiredBefore: new Date(),
+      executionLeaseExpiresAt: new Date(Date.now() + 180_000),
+      recoveryKind: 'queued_reservation',
+    });
+
+    expect(recovery).toBeUndefined();
+    await expect(
+      executionRepo.heartbeatSpaceSlice(liveLease, {
+        executionLeaseExpiresAt: new Date(Date.now() + 180_000),
+      }),
+    ).resolves.toBe(true);
+
+    const finalFailureRecovery = await executionRepo.claimRecoveryLease({
+      runId: liveLease.runId,
+      knowledgeGeneration: liveLease.knowledgeGeneration,
+      jobPhase: liveLease.jobPhase,
+      spaceJobSequence: liveLease.spaceJobSequence,
+      spaceJobId: liveLease.spaceJobId,
+      workerId: 'failed-event-recovery',
+      executionToken: 'final-failure-token',
+      leaseExpiredBefore: new Date(),
+      executionLeaseExpiresAt: new Date(Date.now() + 180_000),
+      recoveryKind: 'final_failed',
+    });
+
+    expect(finalFailureRecovery?.executionToken).toBe('final-failure-token');
+    await expect(
+      executionRepo.heartbeatSpaceSlice(liveLease, {
+        executionLeaseExpiresAt: new Date(Date.now() + 180_000),
+      }),
+    ).resolves.toBe(false);
   });
 
   it('reserves at most five images per Run and replenishes from DB state', async () => {
@@ -308,11 +418,20 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
       ...image,
       processingExpiresAt: new Date(Date.now() + 210_000),
     });
-    await compilationRepo.completeRunImage({
+    await expect(
+      compilationRepo.requeueMissingRunImage({
+        ...image,
+        observedStatus: 'queued',
+        processingExpiredBefore: new Date(),
+        queuedDispatchedBefore: new Date(),
+      }),
+    ).resolves.toBe(false);
+    const completedImage = await compilationRepo.completeRunImage({
       ...image,
       status: 'succeeded',
       extractionId: 'extraction-1',
     });
+    expect(completedImage?.imageStatus).toBe('queued');
     const replenished = await compilationRepo.reserveRunImagesFairly({
       maxOutstandingPerRun: 5,
     });

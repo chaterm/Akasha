@@ -1024,6 +1024,9 @@ export class KnowledgeSpaceCompilationRepo {
         'image.id as runImageId',
         'image.runId',
         'image.jobId',
+        'image.status',
+        'image.dispatchedAt',
+        'image.processingExpiresAt',
         'image.redisRecoveryCount',
         'run.knowledgeGeneration',
       ])
@@ -1058,12 +1061,23 @@ export class KnowledgeSpaceCompilationRepo {
     runId: string;
     knowledgeGeneration: number;
     jobId: string;
+    observedStatus: 'queued' | 'processing';
+    processingExpiredBefore: Date;
+    queuedDispatchedBefore: Date;
   }): Promise<boolean> {
     return executeTx(this.db, async (trx) => {
       const locked = await this.lockRunImageIdentity(trx, input);
+      const recoveryWindowStillValid =
+        input.observedStatus === 'queued'
+          ? locked?.image.status === 'queued' &&
+            locked.image.dispatchedAt !== null &&
+            locked.image.dispatchedAt < input.queuedDispatchedBefore
+          : locked?.image.status === 'processing' &&
+            locked.image.processingExpiresAt !== null &&
+            locked.image.processingExpiresAt < input.processingExpiredBefore;
       if (
         !locked ||
-        !['queued', 'processing'].includes(locked.image.status) ||
+        !recoveryWindowStillValid ||
         locked.image.redisRecoveryCount >= 3
       ) {
         return false;
@@ -1081,7 +1095,21 @@ export class KnowledgeSpaceCompilationRepo {
         .where('runId', '=', input.runId)
         .where('jobId', '=', input.jobId)
         .where('redisRecoveryCount', '=', locked.image.redisRecoveryCount)
-        .where('status', 'in', ['queued', 'processing'])
+        .where('status', '=', input.observedStatus)
+        .$if(input.observedStatus === 'queued', (query) =>
+          query
+            .where('dispatchedAt', 'is not', null)
+            .where('dispatchedAt', '<', input.queuedDispatchedBefore),
+        )
+        .$if(input.observedStatus === 'processing', (query) =>
+          query
+            .where('processingExpiresAt', 'is not', null)
+            .where(
+              'processingExpiresAt',
+              '<',
+              input.processingExpiredBefore,
+            ),
+        )
         .returning('id')
         .executeTakeFirst();
       return Boolean(updated);
@@ -1171,7 +1199,16 @@ export class KnowledgeSpaceCompilationRepo {
       const childSkipped = children.filter(
         (child) => child.status === 'skipped',
       ).length;
-      const nonterminal = children.length - succeeded - failed - childSkipped;
+      const processing = children.filter(
+        (child) => child.status === 'processing',
+      ).length;
+      const queued = children.filter(
+        (child) => child.status === 'queued',
+      ).length;
+      const pending = children.filter(
+        (child) => child.status === 'pending',
+      ).length;
+      const nonterminal = processing + queued + pending;
       const overflowSkipped = Math.max(
         0,
         locked.page.expectedImageCount - children.length,
@@ -1183,13 +1220,17 @@ export class KnowledgeSpaceCompilationRepo {
           child.failureClass === 'retryable_exhausted',
       );
       const imageStatus =
-        nonterminal > 0
+        processing > 0
           ? 'processing'
-          : retryableExhausted
-            ? 'failed'
-            : failed > 0 || skipped > 0
-              ? 'partial'
-              : 'succeeded';
+          : queued > 0
+            ? 'queued'
+            : pending > 0
+              ? 'pending'
+              : retryableExhausted
+                ? 'failed'
+                : failed > 0 || skipped > 0
+                  ? 'partial'
+                  : 'succeeded';
       await trx
         .updateTable('knowledgeSpaceCompileRunPages')
         .set({

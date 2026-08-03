@@ -105,7 +105,7 @@ export class KnowledgeSpaceProcessor
       executionLeaseExpiresAt: new Date(
         Date.now() + KNOWLEDGE_WORKER_SETTINGS.executionLeaseTtlMs,
       ),
-      allowUnexpired: true,
+      recoveryKind: 'final_failed',
     });
     if (!recoveryLease) return;
     await this.executionRepo.finishRun(recoveryLease, 'failed', {

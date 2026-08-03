@@ -62,6 +62,60 @@ describe('KnowledgeSpaceRunnerService', () => {
     });
   });
 
+  it('continues text pages after a retryable page is checkpointed on the final attempt', async () => {
+    const pages = Array.from({ length: 6 }, (_, index) => ({
+      sourcePageId: `retry-page-${index + 1}`,
+      expectedSourceVersion: 'v1',
+      expectedSourceContentHash: `sha256:retry-page-${index + 1}`,
+      createdAt: new Date(index),
+    }));
+    const lease = leaseFixture();
+    const executionRepo = createExecutionRepo(lease, pages);
+    let completedPages = 0;
+    const pageCompilation = {
+      compileTextPage: jest.fn(async (input) => {
+        const firstPage = completedPages === 0;
+        await input.execution.completePage({
+          status: firstPage ? 'failed' : 'succeeded',
+        });
+        completedPages += 1;
+        executionRepo.findPendingTextPages.mockResolvedValue(
+          pages.slice(completedPages),
+        );
+        return firstPage
+          ? {
+              outcome: 'failed',
+              retryable: true,
+              cause: new Error('provider retries exhausted'),
+            }
+          : { outcome: 'succeeded', result: pageResult() };
+      }),
+    };
+    const runner = new KnowledgeSpaceRunnerService(
+      executionRepo as never,
+      {
+        initializeLeasedRun: jest.fn().mockResolvedValue({
+          initialized: true,
+          aggregateRequired: true,
+          pageCompilationRequired: true,
+        }),
+      } as never,
+      pageCompilation as never,
+      { aggregateLeased: jest.fn() } as never,
+      { getKnowledgePageDeadlineMs: () => 900_000 } as never,
+    );
+
+    await expect(
+      runner.runTextSlice(sliceInput(), {
+        workerId: 'worker-1',
+        finalAttempt: true,
+        settings: settings(),
+        monotonicNow: () => 0,
+      }),
+    ).resolves.toEqual({ outcome: 'yielded', completedPages: 5 });
+    expect(pageCompilation.compileTextPage).toHaveBeenCalledTimes(5);
+  });
+
   it('finishes an all-reused run without compiling or aggregating', async () => {
     const lease = leaseFixture();
     const executionRepo = createExecutionRepo(lease, []);
@@ -124,6 +178,45 @@ describe('KnowledgeSpaceRunnerService', () => {
       pageCompilationRequired: false,
     });
     await running;
+    jest.useRealTimers();
+  });
+
+  it('keeps a slice alive when a background heartbeat temporarily fails', async () => {
+    jest.useFakeTimers();
+    const lease = leaseFixture();
+    const executionRepo = createExecutionRepo(lease, []);
+    executionRepo.heartbeatSpaceSlice.mockRejectedValueOnce(
+      new Error('database pool temporarily unavailable'),
+    );
+    let resolveInitialization!: (value: unknown) => void;
+    const initialization = new Promise((resolve) => {
+      resolveInitialization = resolve;
+    });
+    const runner = new KnowledgeSpaceRunnerService(
+      executionRepo as never,
+      { initializeLeasedRun: jest.fn(() => initialization) } as never,
+      { compileTextPage: jest.fn() } as never,
+      { aggregateLeased: jest.fn() } as never,
+      { getKnowledgePageDeadlineMs: () => 900_000 } as never,
+    );
+    const running = runner.runTextSlice(sliceInput(), {
+      workerId: 'worker-1',
+      finalAttempt: false,
+      settings: settings(),
+      monotonicNow: () => 0,
+    });
+    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(30_000);
+    resolveInitialization({
+      initialized: true,
+      aggregateRequired: false,
+      pageCompilationRequired: false,
+    });
+
+    await expect(running).resolves.toEqual({
+      outcome: 'completed',
+      completedPages: 0,
+    });
     jest.useRealTimers();
   });
 
@@ -192,6 +285,58 @@ describe('KnowledgeSpaceRunnerService', () => {
       reason: 'page_limit',
     });
     expect(aggregator.aggregateLeased).not.toHaveBeenCalled();
+  });
+
+  it('continues image merges after a retryable page is checkpointed on the final attempt', async () => {
+    const pages = Array.from({ length: 6 }, (_, index) => ({
+      id: `retry-run-page-${index + 1}`,
+      sourcePageId: `retry-merge-page-${index + 1}`,
+      expectedSourceVersion: 'v1',
+      expectedSourceContentHash: `sha256:retry-merge-page-${index + 1}`,
+      targetEffectiveKnowledgeHash: null,
+      createdAt: new Date(index),
+      images: [],
+    }));
+    const lease = mergeLeaseFixture();
+    const executionRepo = createExecutionRepo(lease, []);
+    executionRepo.findPendingMergePages = jest.fn().mockResolvedValue(pages);
+    let completedPages = 0;
+    const pageCompilation = {
+      mergePageImages: jest.fn(async (input) => {
+        const firstPage = completedPages === 0;
+        if (firstPage) {
+          await input.execution.completePage({ status: 'failed' });
+        }
+        completedPages += 1;
+        executionRepo.findPendingMergePages.mockResolvedValue(
+          pages.slice(completedPages),
+        );
+        return firstPage
+          ? {
+              outcome: 'failed',
+              retryable: true,
+              cause: new Error('provider retries exhausted'),
+            }
+          : { outcome: 'succeeded', result: pageResult() };
+      }),
+    };
+    const runner = new KnowledgeSpaceRunnerService(
+      executionRepo as never,
+      { initializeLeasedRun: jest.fn() } as never,
+      pageCompilation as never,
+      { aggregateLeased: jest.fn() } as never,
+      { getKnowledgePageDeadlineMs: () => 900_000 } as never,
+    );
+
+    await expect(
+      runner.runImageMergeSlice(mergeSliceInput(), {
+        workerId: 'worker-1',
+        finalAttempt: true,
+        settings: settings(),
+        monotonicNow: () => 0,
+      }),
+    ).resolves.toEqual({ outcome: 'yielded', completedPages: 5 });
+    expect(pageCompilation.mergePageImages).toHaveBeenCalledTimes(5);
   });
 
   it('runs the final aggregate only after the image merge barrier', async () => {

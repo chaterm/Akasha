@@ -30,12 +30,20 @@ export class KnowledgeImageReaperService {
     this.reaping = true;
     try {
       const now = new Date();
+      const processingExpiredBefore = now;
+      const queuedDispatchedBefore = new Date(now.getTime() - 120_000);
       const candidates = await this.runRepo.findRunImageRecoveryCandidates({
-        processingExpiredBefore: now,
-        queuedDispatchedBefore: new Date(now.getTime() - 120_000),
+        processingExpiredBefore,
+        queuedDispatchedBefore,
         limit: 500,
       });
       for (const candidate of candidates) {
+        if (
+          candidate.status !== 'queued' &&
+          candidate.status !== 'processing'
+        ) {
+          continue;
+        }
         let state: string;
         try {
           const job = await this.imageQueue.getJob(candidate.jobId!);
@@ -55,7 +63,12 @@ export class KnowledgeImageReaperService {
           jobId: candidate.jobId!,
         };
         if (state === 'missing' && candidate.redisRecoveryCount < 3) {
-          await this.runRepo.requeueMissingRunImage(identity);
+          await this.runRepo.requeueMissingRunImage({
+            ...identity,
+            observedStatus: candidate.status,
+            processingExpiredBefore,
+            queuedDispatchedBefore,
+          });
           continue;
         }
         const errorCode =

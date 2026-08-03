@@ -96,7 +96,7 @@ describe('KnowledgeSpaceProcessor', () => {
         jobPhase: 'text',
         spaceJobSequence: 2,
         spaceJobId: 'space-job-2',
-        allowUnexpired: true,
+        recoveryKind: 'final_failed',
       }),
     );
     expect(executionRepo.finishRun).toHaveBeenCalledWith(

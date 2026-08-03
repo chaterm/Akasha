@@ -500,16 +500,24 @@ export class KnowledgeSpaceExecutionRepo {
       executionToken?: string;
       leaseExpiredBefore: Date;
       executionLeaseExpiresAt: Date;
-      allowUnexpired?: boolean;
+      recoveryKind: 'expired' | 'final_failed' | 'queued_reservation';
     },
   ): Promise<SpaceExecutionLease | undefined> {
     return executeTx(this.db, async (trx) => {
       const locked = await this.lockReservedRun(trx, input);
+      if (!locked) {
+        return undefined;
+      }
+      const isQueuedReservation =
+        input.recoveryKind === 'queued_reservation' &&
+        locked.status === 'queued';
+      const requiresExpiredLease =
+        input.recoveryKind === 'expired' ||
+        (input.recoveryKind === 'queued_reservation' && !isQueuedReservation);
       if (
-        !locked ||
-        (!input.allowUnexpired &&
-          (!locked.executionLeaseExpiresAt ||
-            locked.executionLeaseExpiresAt >= input.leaseExpiredBefore))
+        requiresExpiredLease &&
+        (!locked.executionLeaseExpiresAt ||
+          locked.executionLeaseExpiresAt >= input.leaseExpiredBefore)
       ) {
         return undefined;
       }
@@ -527,8 +535,15 @@ export class KnowledgeSpaceExecutionRepo {
         .$call((query) => this.whereReservation(query, input))
         .where('phase', '=', locked.phase)
         .where('status', 'in', NONTERMINAL_RUN_STATUSES)
-        .$if(!input.allowUnexpired, (query) =>
-          query.where('executionLeaseExpiresAt', '<', input.leaseExpiredBefore),
+        .$if(isQueuedReservation, (query) =>
+          query.where('status', '=', 'queued'),
+        )
+        .$if(requiresExpiredLease, (query) =>
+          query.where(
+            'executionLeaseExpiresAt',
+            '<',
+            input.leaseExpiredBefore,
+          ),
         )
         .returning('id')
         .executeTakeFirst();
@@ -723,6 +738,9 @@ export class KnowledgeSpaceExecutionRepo {
           succeededPageCount: counts.succeeded,
           failedPageCount: counts.failed,
           skippedPageCount: counts.skipped,
+          ...(input.errorCode === 'source_changed'
+            ? { rerunRequested: true }
+            : {}),
           ...(barrierComplete
             ? { phase: 'initial_aggregate', status: 'aggregating' }
             : {}),
@@ -745,8 +763,12 @@ export class KnowledgeSpaceExecutionRepo {
   async advanceTextBarrier(lease: SpaceExecutionLease) {
     return executeTx(this.db, async (trx) => {
       const run = await this.lockLeasedRun(trx, lease);
-      if (!run || run.phase !== 'text') return undefined;
+      if (!run) return undefined;
       const counts = await this.countPageStatuses(trx, lease.runId);
+      if (run.phase === 'initial_aggregate') {
+        return { barrierComplete: true, ...counts };
+      }
+      if (run.phase !== 'text') return undefined;
       const barrierComplete =
         counts.succeeded + counts.failed + counts.skipped >=
         run.expectedPageCount;
