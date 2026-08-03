@@ -62,10 +62,13 @@ describePostgres('force-reset PostgreSQL scope', () => {
         generation: 4,
         supersededRunIds: ['run-old'],
         supersededJobIds: expect.arrayContaining([
+          'space-old',
           'page-old',
           'image-old',
           'merge-old',
           'aggregate-old',
+          'run-image-succeeded',
+          'run-image-processing',
         ]),
         run: expect.objectContaining({
           mode: 'force_rebuild',
@@ -94,6 +97,17 @@ describePostgres('force-reset PostgreSQL scope', () => {
         attempts: 2,
         history: 3,
         oldRunStatus: 'superseded',
+        oldRunPhase: 'complete',
+        oldRunHasLease: false,
+        oldRunRerunRequested: false,
+        oldRunSkippedPages: 1,
+        oldPageStatus: 'skipped',
+        oldPageImageStatus: 'partial',
+        oldPageMergeStatus: 'skipped',
+        oldPageSucceededImages: 1,
+        oldPageSkippedImages: 1,
+        oldProcessingImageStatus: 'skipped',
+        openChildStates: 0,
         resetTaskId: 'force-reset:4',
         resetLastHash: null,
         newRunGeneration: 4,
@@ -162,12 +176,20 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       workspace_id varchar not null, space_id varchar not null, source_page_id varchar not null,
       expected_source_version varchar not null, expected_source_content_hash varchar not null,
       expected_image_count integer not null default 0, succeeded_image_count integer not null default 0,
-      failed_image_count integer not null default 0, image_status varchar not null default 'not_required',
+      failed_image_count integer not null default 0, skipped_image_count integer not null default 0,
+      image_status varchar not null default 'not_required',
       image_job_id varchar, merge_status varchar not null default 'not_required', merge_job_id varchar,
       target_effective_knowledge_hash varchar, merged_effective_knowledge_hash varchar,
       status varchar not null, job_id varchar, error_code varchar, error_message varchar,
       queued_at timestamptz, started_at timestamptz, finished_at timestamptz,
       created_at timestamptz not null default now(), updated_at timestamptz not null default now()
+    );
+    create table knowledge_space_compile_run_images (
+      id varchar primary key, run_id varchar not null, run_page_id varchar not null,
+      workspace_id varchar not null, space_id varchar not null, source_page_id varchar not null,
+      status varchar not null, failure_class varchar, job_id varchar,
+      processing_expires_at timestamptz, error_code varchar, error_message varchar,
+      updated_at timestamptz not null default now()
     );
     create table knowledge_pages (id varchar primary key, workspace_id varchar not null, space_id varchar not null);
     create table knowledge_claims (id varchar primary key, knowledge_page_id varchar references knowledge_pages(id) on delete cascade);
@@ -200,10 +222,14 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       ('space-cross','workspace-2','Target Space',11,null,now());
     insert into pages values ('page-target','workspace-1','space-target'),('page-control','workspace-1','space-control');
     insert into attachments values ('attachment-target','workspace-1','space-target','page-target'),('attachment-control','workspace-1','space-control','page-control');
-    insert into knowledge_space_compile_runs (id,workspace_id,space_id,trigger,mode,knowledge_generation,phase,status,expected_page_count,compiler_version,prompt_version,catalog_snapshot,catalog_hash,aggregate_job_id,queued_at)
-      values ('run-old','workspace-1','space-target','manual_compile','incremental',3,'text','compiling',1,'c','p','[]','h','aggregate-old',now());
-    insert into knowledge_space_compile_run_pages (id,run_id,workspace_id,space_id,source_page_id,expected_source_version,expected_source_content_hash,image_status,image_job_id,merge_status,merge_job_id,status,job_id)
-      values ('rp-old','run-old','workspace-1','space-target','page-target','v1','h1','queued','image-old','queued','merge-old','running','page-old');
+    insert into knowledge_space_compile_runs (id,workspace_id,space_id,trigger,mode,knowledge_generation,phase,status,expected_page_count,compiler_version,prompt_version,catalog_snapshot,catalog_hash,aggregate_job_id,queued_at,space_job_id,space_job_dispatched_at,execution_token,execution_lease_expires_at,worker_id,heartbeat_at,rerun_requested)
+      values ('run-old','workspace-1','space-target','manual_compile','incremental',3,'text','compiling',1,'c','p','[]','h','aggregate-old',now(),'space-old',now(),'old-token',now() + interval '3 minutes','old-worker',now(),true);
+    insert into knowledge_space_compile_run_pages (id,run_id,workspace_id,space_id,source_page_id,expected_source_version,expected_source_content_hash,expected_image_count,succeeded_image_count,image_status,image_job_id,merge_status,merge_job_id,status,job_id)
+      values ('rp-old','run-old','workspace-1','space-target','page-target','v1','h1',2,1,'queued','image-old','queued','merge-old','running','page-old');
+    insert into knowledge_space_compile_run_images (id,run_id,run_page_id,workspace_id,space_id,source_page_id,status,failure_class,job_id,processing_expires_at)
+      values
+        ('image-succeeded','run-old','rp-old','workspace-1','space-target','page-target','succeeded',null,'run-image-succeeded',null),
+        ('image-processing','run-old','rp-old','workspace-1','space-target','page-target','processing',null,'run-image-processing',now() + interval '3 minutes');
     insert into knowledge_pages values ('kp-target','workspace-1','space-target'),('kp-control','workspace-1','space-control');
     insert into knowledge_claims values ('claim-target','kp-target'),('claim-control','kp-control');
     insert into knowledge_chunks values ('chunk-target','kp-target'),('chunk-control','kp-control');
@@ -252,6 +278,18 @@ async function evidence(db: Kysely<unknown>) {
        (select count(*) from knowledge_source_access_policy where source_space_id='space-control') +
        (select count(*) from knowledge_source_access_requirements where source_page_id='page-control'))::integer as "controlCompiled",
       (select status from knowledge_space_compile_runs where id='run-old') as "oldRunStatus",
+      (select phase from knowledge_space_compile_runs where id='run-old') as "oldRunPhase",
+      (select execution_token is not null or execution_lease_expires_at is not null or worker_id is not null from knowledge_space_compile_runs where id='run-old') as "oldRunHasLease",
+      (select rerun_requested from knowledge_space_compile_runs where id='run-old') as "oldRunRerunRequested",
+      (select skipped_page_count from knowledge_space_compile_runs where id='run-old')::integer as "oldRunSkippedPages",
+      (select status from knowledge_space_compile_run_pages where id='rp-old') as "oldPageStatus",
+      (select image_status from knowledge_space_compile_run_pages where id='rp-old') as "oldPageImageStatus",
+      (select merge_status from knowledge_space_compile_run_pages where id='rp-old') as "oldPageMergeStatus",
+      (select succeeded_image_count from knowledge_space_compile_run_pages where id='rp-old')::integer as "oldPageSucceededImages",
+      (select skipped_image_count from knowledge_space_compile_run_pages where id='rp-old')::integer as "oldPageSkippedImages",
+      (select status from knowledge_space_compile_run_images where id='image-processing') as "oldProcessingImageStatus",
+      ((select count(*) from knowledge_space_compile_run_pages where run_id='run-old' and (status in ('pending','queued','running') or image_status in ('pending','queued','processing') or merge_status in ('waiting_images','pending','queued','running'))) +
+       (select count(*) from knowledge_space_compile_run_images where run_id='run-old' and status in ('pending','queued','processing')))::integer as "openChildStates",
       (select compile_task_id from knowledge_compilation_attempts where id='attempt-target') as "resetTaskId",
       (select last_successful_source_hash from knowledge_compilation_attempts where id='attempt-target') as "resetLastHash",
       (select max(knowledge_generation) from knowledge_space_compile_runs where space_id='space-target')::integer as "newRunGeneration",

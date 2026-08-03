@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsDateString,
   IsIn,
   IsInt,
   IsOptional,
@@ -21,6 +22,18 @@ const RUN_STATUSES = [
   'partial',
   'failed',
   'superseded',
+  'cancelled',
+] as const;
+
+// Per-page compilation statuses recorded on knowledge_space_compile_run_pages
+// (matches chk_knowledge_space_compile_run_pages_status).
+const PAGE_LOG_STATUSES = [
+  'pending',
+  'queued',
+  'running',
+  'succeeded',
+  'failed',
+  'skipped',
 ] as const;
 
 const RUN_PHASES = [
@@ -87,6 +100,40 @@ export class AdminKnowledgeQuarantineListDto extends AdminKnowledgeRunSummaryDto
 }
 
 export class AdminKnowledgeRunPagesQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+}
+
+export class AdminKnowledgePageLogDto extends AdminKnowledgeRunSummaryDto {
+  @IsOptional()
+  @IsArray()
+  @IsIn(PAGE_LOG_STATUSES, { each: true })
+  statuses?: (typeof PAGE_LOG_STATUSES)[number][];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  search?: string;
+
+  // ISO-8601 timestamps bounding the most-recent-compilation time window.
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @IsOptional()
+  @IsDateString()
+  to?: string;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()

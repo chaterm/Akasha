@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  cancelKnowledgeCompilationRun,
   compileKnowledgeSpaces,
   forceRebuildKnowledgeSpace,
   getKnowledgeQualityDiagnostics,
@@ -101,6 +102,53 @@ describe("knowledge service", () => {
     );
   });
 
+  it("cancels one exact Run and normalizes the control-plane result", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: {
+          disposition: "cancelled",
+          runId: "run/1",
+          spaceId: "space-1",
+          status: "cancelled",
+          phase: "complete",
+          previousStatus: "compiling",
+          previousPhase: "images",
+          removedJobCount: 4,
+          fencedActiveJobCount: 1,
+          cleanupErrorCount: 0,
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      cancelKnowledgeCompilationRun({
+        runId: "run/1",
+        reason: "  Capacity test completed.  ",
+      }),
+    ).resolves.toEqual({
+      disposition: "cancelled",
+      runId: "run/1",
+      spaceId: "space-1",
+      status: "cancelled",
+      phase: "complete",
+      previousStatus: "compiling",
+      previousPhase: "images",
+      removedJobCount: 4,
+      fencedActiveJobCount: 1,
+      cleanupErrorCount: 0,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/llm-wiki/admin/compilation-runs/run%2F1/cancel",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify({ reason: "Capacity test completed." }),
+      }),
+    );
+  });
+
   it("loads bounded summary and paginated Run diagnostics separately", async () => {
     const fetchMock = vi
       .fn()
@@ -137,9 +185,9 @@ describe("knowledge service", () => {
               phase: "text",
               queueState: "text_continuation",
               progress: {
-                text: { expected: 100, succeeded: 45 },
-                images: { expected: 20, succeeded: 0 },
-                merge: { expected: 20, succeeded: 0 },
+                text: { expected: 100, succeeded: 45, failed: 2, skipped: 3 },
+                images: { expected: 20, succeeded: 10, failed: 2, skipped: 3 },
+                merge: { expected: 20, succeeded: 12, failed: 1, skipped: 2 },
               },
             },
           ],
@@ -171,7 +219,11 @@ describe("knowledge service", () => {
           runId: "run-1",
           status: "compiling",
           queueState: "text_continuation",
-          progress: { text: { expected: 100, succeeded: 45 } },
+          progress: {
+            text: { expected: 100, succeeded: 45, failed: 2, skipped: 3 },
+            images: { expected: 20, succeeded: 10, failed: 2, skipped: 3 },
+            merge: { expected: 20, succeeded: 12, failed: 1, skipped: 2 },
+          },
         },
       ],
     });

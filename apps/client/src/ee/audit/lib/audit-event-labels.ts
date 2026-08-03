@@ -83,6 +83,7 @@ export const auditEventLabels: Record<string, string> = {
   "knowledge.query": "Queried knowledge",
   "knowledge.import": "Imported knowledge",
   "knowledge.compile_queued": "Queued knowledge compile",
+  "knowledge.compile_cancelled": "Cancelled knowledge compile",
   "knowledge.review_discovered": "Discovered knowledge review items",
   "knowledge.review_negotiated": "Negotiated knowledge review item",
   "knowledge.review_planned": "Planned knowledge review application",
@@ -215,6 +216,10 @@ export const eventFilterOptions: EventGroup[] = [
       { value: "knowledge.query", label: "Queried knowledge" },
       { value: "knowledge.import", label: "Imported knowledge" },
       { value: "knowledge.compile_queued", label: "Queued knowledge compile" },
+      {
+        value: "knowledge.compile_cancelled",
+        label: "Cancelled knowledge compile",
+      },
       {
         value: "knowledge.review_discovered",
         label: "Discovered knowledge review items",

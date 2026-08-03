@@ -189,6 +189,38 @@ describe('KnowledgeSpaceCompilationService', () => {
     expect(fixture.executionRepo.initializeRun).not.toHaveBeenCalled();
   });
 
+  it('compiles only target pages and never retires other sources for a page-scoped Run', async () => {
+    const source = sourceSnapshot();
+    const fixture = createService({
+      exportedSources: [source],
+      targetSourcePageIds: ['page-1'],
+      // The Space still has other active pages; a page-scoped Run must not
+      // treat them as removed just because it did not export them.
+      activeSourcePageIds: ['page-1', 'other-page-a', 'other-page-b'],
+    });
+
+    const result = await fixture.service.initializeLeasedRun(lease());
+
+    // Uses the page-scoped exporter, never the whole-Space exporter.
+    expect(fixture.sourceExporter.exportPageSources).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageIds: ['page-1'],
+      }),
+    );
+    expect(fixture.sourceExporter.exportSpaceSources).not.toHaveBeenCalled();
+    // The other active pages are NOT retired as removed sources.
+    const plan = fixture.executionRepo.initializeRun.mock.calls[0][1];
+    expect(plan.removedSourcePageIds).toEqual([]);
+    expect(plan.pages).toEqual([
+      expect.objectContaining({ sourcePageId: 'page-1', status: 'pending' }),
+    ]);
+    expect(result).toEqual(
+      expect.objectContaining({ pageCompilationRequired: true }),
+    );
+  });
+
   it('never treats an image-overflow page as fully reusable and freezes only the first 50 images', async () => {
     const source = sourceSnapshotWithImages(60);
     const readyExtractions = source.images.slice(0, 50).map(readyExtraction);
@@ -256,6 +288,8 @@ function createService(
     readyExtractions?: unknown[];
     latestAggregateRun?: unknown;
     hasActiveOverview?: boolean;
+    targetSourcePageIds?: string[] | null;
+    activeSourcePageIds?: string[];
   } = {},
 ) {
   const repo = {
@@ -292,7 +326,9 @@ function createService(
     }),
   };
   const sourceRepo = {
-    findActiveSourcePageIdsBySpace: jest.fn().mockResolvedValue([]),
+    findActiveSourcePageIdsBySpace: jest
+      .fn()
+      .mockResolvedValue(overrides.activeSourcePageIds ?? []),
   };
   const imageExtractionRepo = {
     findCurrentReadyForSnapshotImages: jest
@@ -314,6 +350,9 @@ function createService(
     exportSpaceSources: jest
       .fn()
       .mockResolvedValue(overrides.exportedSources ?? []),
+    exportPageSources: jest
+      .fn()
+      .mockResolvedValue(overrides.exportedSources ?? []),
   };
   const executionRepo = {
     findLeasedRun: jest.fn().mockResolvedValue({
@@ -322,6 +361,7 @@ function createService(
       spaceId: 'space-1',
       compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
       promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+      targetSourcePageIds: overrides.targetSourcePageIds ?? null,
     }),
     initializeRun: jest.fn().mockResolvedValue({
       initialized: true,
@@ -353,6 +393,8 @@ function createService(
     catalog,
     sourceExporter,
     executionRepo,
+    sourceRepo,
+    contributionRepo,
   };
 }
 

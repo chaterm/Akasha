@@ -289,6 +289,97 @@ describePostgres('KnowledgeSpaceCompilationRepo PostgreSQL round trip', () => {
       { runCount: 100, uninitializedCount: 100, runPageCount: 0 },
     ]);
   });
+
+  it('persists the target page scope for a page-scoped Run', async () => {
+    const [created] = await repo.requestRuns({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-scoped',
+          trigger: 'page_retry',
+          targetSourcePageIds: ['page-x', 'page-y'],
+        },
+      ],
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+    expect(created.disposition).toBe('created');
+    const row = await sql<{ targetSourcePageIds: string[] | null }>`
+      select target_source_page_ids as "targetSourcePageIds"
+      from knowledge_space_compile_runs where id = ${created.run!.id}
+    `.execute(db);
+    expect(row.rows[0].targetSourcePageIds).toEqual(['page-x', 'page-y']);
+  });
+
+  it('unions target pages when coalescing two page-scoped requests', async () => {
+    const [first] = await repo.requestRuns({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-scoped-union',
+          trigger: 'page_retry',
+          targetSourcePageIds: ['page-a'],
+        },
+      ],
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+    const [second] = await repo.requestRuns({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-scoped-union',
+          trigger: 'page_retry',
+          targetSourcePageIds: ['page-a', 'page-b'],
+        },
+      ],
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+    expect(second.disposition).toBe('coalesced');
+    expect(second.run!.id).toBe(first.run!.id);
+    const row = await sql<{ targetSourcePageIds: string[] | null }>`
+      select target_source_page_ids as "targetSourcePageIds"
+      from knowledge_space_compile_runs where id = ${first.run!.id}
+    `.execute(db);
+    expect([...(row.rows[0].targetSourcePageIds ?? [])].sort()).toEqual([
+      'page-a',
+      'page-b',
+    ]);
+  });
+
+  it('widens a page-scoped Run to full-Space when a full request coalesces', async () => {
+    const [scoped] = await repo.requestRuns({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-scoped-widen',
+          trigger: 'page_retry',
+          targetSourcePageIds: ['page-a'],
+        },
+      ],
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+    const [full] = await repo.requestRuns({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-scoped-widen',
+          trigger: 'manual_compile',
+        },
+      ],
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+    expect(full.disposition).toBe('coalesced');
+    expect(full.run!.id).toBe(scoped.run!.id);
+    const row = await sql<{ targetSourcePageIds: string[] | null }>`
+      select target_source_page_ids as "targetSourcePageIds"
+      from knowledge_space_compile_runs where id = ${scoped.run!.id}
+    `.execute(db);
+    expect(row.rows[0].targetSourcePageIds).toBeNull();
+  });
 });
 
 async function createFixture(db: Kysely<unknown>): Promise<void> {
@@ -320,6 +411,7 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       prompt_version varchar not null,
       catalog_snapshot jsonb not null,
       catalog_hash varchar not null,
+      target_source_page_ids jsonb,
       aggregate_required boolean not null default true,
       aggregate_job_id varchar,
       aggregate_started_at timestamptz,
@@ -451,7 +543,10 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       ('space-removed', 'workspace-1', 'Removed'),
       ('space-fair-old', 'workspace-1', 'Fair old'),
       ('space-fair-continuation', 'workspace-1', 'Fair continuation'),
-      ('space-fair-merge', 'workspace-1', 'Fair merge')
+      ('space-fair-merge', 'workspace-1', 'Fair merge'),
+      ('space-scoped', 'workspace-1', 'Page scoped'),
+      ('space-scoped-union', 'workspace-1', 'Page scoped union'),
+      ('space-scoped-widen', 'workspace-1', 'Page scoped widen')
   `.execute(db);
 }
 

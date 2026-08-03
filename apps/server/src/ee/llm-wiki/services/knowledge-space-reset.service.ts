@@ -65,13 +65,12 @@ export class KnowledgeSpaceResetService {
           const job = await queue.getJob(jobId);
           if (!job) continue;
           const state: string = await job.getState();
-          if (
-            state === 'waiting' ||
-            state === 'delayed' ||
-            state === 'paused'
-          ) {
-            await job.remove();
-          }
+          // Priority Space jobs live in BullMQ's prioritized set rather than
+          // wait. Every non-active exact job is safe to remove after the DB
+          // fence commits; a locked active job must finish and observe the
+          // superseded generation/token fence.
+          if (state !== 'active') await job.remove();
+          break;
         }
       } catch {
         this.logger.warn(

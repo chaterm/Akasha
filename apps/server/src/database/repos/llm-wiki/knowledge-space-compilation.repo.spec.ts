@@ -1,4 +1,45 @@
-import { decideSpaceRunRequest } from './knowledge-space-compilation.repo';
+import {
+  decideSpaceRunRequest,
+  reconcileRunTargetScope,
+} from './knowledge-space-compilation.repo';
+
+describe('reconcileRunTargetScope', () => {
+  it('leaves a full-Space Run unchanged for any request', () => {
+    expect(
+      reconcileRunTargetScope({
+        runTargetSourcePageIds: null,
+        requestTargetSourcePageIds: ['page-a'],
+      }),
+    ).toEqual({ changed: false, targetSourcePageIds: null });
+  });
+
+  it('widens a page-scoped Run to full-Space for a full request', () => {
+    expect(
+      reconcileRunTargetScope({
+        runTargetSourcePageIds: ['page-a'],
+        requestTargetSourcePageIds: undefined,
+      }),
+    ).toEqual({ changed: true, targetSourcePageIds: null });
+  });
+
+  it('unions two page-scoped inputs and flags the change', () => {
+    expect(
+      reconcileRunTargetScope({
+        runTargetSourcePageIds: ['page-a'],
+        requestTargetSourcePageIds: ['page-a', 'page-b'],
+      }),
+    ).toEqual({ changed: true, targetSourcePageIds: ['page-a', 'page-b'] });
+  });
+
+  it('reports no change when the request adds no new pages', () => {
+    expect(
+      reconcileRunTargetScope({
+        runTargetSourcePageIds: ['page-a', 'page-b'],
+        requestTargetSourcePageIds: ['page-a'],
+      }),
+    ).toEqual({ changed: false, targetSourcePageIds: ['page-a', 'page-b'] });
+  });
+});
 
 describe('decideSpaceRunRequest', () => {
   it('creates only when no active run exists', () => {

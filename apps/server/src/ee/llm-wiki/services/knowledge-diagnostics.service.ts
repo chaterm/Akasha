@@ -478,11 +478,23 @@ export class KnowledgeDiagnosticsService {
               sql<number>`coalesce(sum(rp.succeeded_image_count), 0)`.as(
                 'succeededImageCount',
               ),
-              sql<number>`count(*) filter (where rp.merge_status not in ('not_required', 'waiting_images'))`.as(
+              sql<number>`coalesce(sum(rp.failed_image_count), 0)`.as(
+                'failedImageCount',
+              ),
+              sql<number>`coalesce(sum(rp.skipped_image_count), 0)`.as(
+                'skippedImageCount',
+              ),
+              sql<number>`count(*) filter (where rp.expected_image_count > 0)`.as(
                 'expectedMergeCount',
               ),
               sql<number>`count(*) filter (where rp.merge_status = 'succeeded')`.as(
                 'succeededMergeCount',
+              ),
+              sql<number>`count(*) filter (where rp.merge_status = 'failed')`.as(
+                'failedMergeCount',
+              ),
+              sql<number>`count(*) filter (where rp.merge_status = 'skipped')`.as(
+                'skippedMergeCount',
               ),
             ])
             .where('rp.runId', 'in', runIds)
@@ -532,10 +544,14 @@ export class KnowledgeDiagnosticsService {
             images: {
               expected: numberValue(progress?.expectedImageCount),
               succeeded: numberValue(progress?.succeededImageCount),
+              failed: numberValue(progress?.failedImageCount),
+              skipped: numberValue(progress?.skippedImageCount),
             },
             merge: {
               expected: numberValue(progress?.expectedMergeCount),
               succeeded: numberValue(progress?.succeededMergeCount),
+              failed: numberValue(progress?.failedMergeCount),
+              skipped: numberValue(progress?.skippedMergeCount),
             },
           },
         };
@@ -689,6 +705,187 @@ export class KnowledgeDiagnosticsService {
     };
   }
 
+  /**
+   * Page-centric compilation log: for each source page, the most recent
+   * per-page compilation record within an optional time window. Answers
+   * "was this page compiled recently, and did it succeed?" without forcing the
+   * operator to locate the owning run first. Backed entirely by existing
+   * knowledge_space_compile_run_pages rows (no new table).
+   */
+  async listPageCompilationLog(input: {
+    workspaceId: string;
+    spaceIds: string[];
+    enforceSpaceScope: boolean;
+    statuses?: string[];
+    search?: string;
+    from?: string;
+    to?: string;
+    page?: number;
+    limit?: number;
+    includeSensitiveErrors?: boolean;
+  }) {
+    const page = Math.max(input.page ?? 1, 1);
+    const limit = Math.min(Math.max(input.limit ?? 50, 1), 100);
+    if (input.enforceSpaceScope && input.spaceIds.length === 0) {
+      return { items: [], total: 0, page, limit };
+    }
+
+    let base = this.db
+      .selectFrom('knowledgeSpaceCompileRunPages as runPage')
+      .innerJoin('knowledgeSpaceCompileRuns as run', 'run.id', 'runPage.runId')
+      .innerJoin('spaces as space', (join) =>
+        join
+          .onRef('space.id', '=', 'run.spaceId')
+          .onRef('space.workspaceId', '=', 'run.workspaceId')
+          .on('space.deletedAt', 'is', null),
+      )
+      .leftJoin('pages as page', 'page.id', 'runPage.sourcePageId')
+      .where('runPage.workspaceId', '=', input.workspaceId);
+    if (input.spaceIds.length > 0) {
+      base = base.where('run.spaceId', 'in', input.spaceIds);
+    }
+    if (input.statuses?.length) {
+      base = base.where('runPage.status', 'in', input.statuses);
+    }
+    const fromDate = parseTimestamp(input.from);
+    if (fromDate) {
+      base = base.where('runPage.updatedAt', '>=', fromDate);
+    }
+    const toDate = parseTimestamp(input.to);
+    if (toDate) {
+      base = base.where('runPage.updatedAt', '<=', toDate);
+    }
+    const search = input.search?.trim();
+    if (search) {
+      base = base.where((eb) =>
+        eb.or([
+          eb('page.title', 'ilike', `%${search}%`),
+          eb('page.slugId', 'ilike', `%${search}%`),
+        ]),
+      );
+    }
+
+    const latest = base
+      .select([
+        'runPage.id as runPageId',
+        'runPage.runId',
+        'runPage.sourcePageId',
+        'run.spaceId',
+        'space.name as spaceName',
+        'page.title',
+        'page.slugId',
+        'runPage.status',
+        'runPage.imageStatus',
+        'runPage.mergeStatus',
+        'runPage.expectedImageCount',
+        'runPage.succeededImageCount',
+        'runPage.failedImageCount',
+        'runPage.skippedImageCount',
+        'runPage.errorCode',
+        'runPage.errorMessage',
+        'runPage.queuedAt',
+        'runPage.startedAt',
+        'runPage.finishedAt',
+        'runPage.updatedAt',
+      ])
+      .distinctOn('runPage.sourcePageId')
+      .orderBy('runPage.sourcePageId')
+      .orderBy('runPage.updatedAt', 'desc');
+
+    const [countRow, rows] = await Promise.all([
+      base
+        .select((eb) =>
+          eb.fn.count('runPage.sourcePageId').distinct().as('count'),
+        )
+        .executeTakeFirst(),
+      this.db
+        .selectFrom(latest.as('latest'))
+        .selectAll()
+        .orderBy('latest.updatedAt', 'desc')
+        .orderBy('latest.sourcePageId', 'asc')
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .execute(),
+    ]);
+
+    const runPageIds = rows.map((row) => row.runPageId);
+    const imageFailures =
+      runPageIds.length === 0
+        ? []
+        : await this.db
+            .selectFrom('knowledgeSpaceCompileRunImages')
+            .select(['runPageId', 'failureClass'])
+            .select((eb) => eb.fn.countAll().as('count'))
+            .where('runPageId', 'in', runPageIds)
+            .where('status', '=', 'failed')
+            .groupBy(['runPageId', 'failureClass'])
+            .execute();
+    const imageFailuresByPage = new Map<
+      string,
+      { retryableExhausted: number; permanent: number }
+    >();
+    for (const row of imageFailures) {
+      const current = imageFailuresByPage.get(row.runPageId) ?? {
+        retryableExhausted: 0,
+        permanent: 0,
+      };
+      if (row.failureClass === 'retryable_exhausted') {
+        current.retryableExhausted += numberValue(row.count);
+      } else if (row.failureClass === 'permanent') {
+        current.permanent += numberValue(row.count);
+      }
+      imageFailuresByPage.set(row.runPageId, current);
+    }
+
+    return {
+      items: rows.map((row) => {
+        const startedMs = row.startedAt?.getTime() ?? null;
+        const finishedMs = row.finishedAt?.getTime() ?? null;
+        return {
+          runPageId: row.runPageId,
+          runId: row.runId,
+          sourcePageId: row.sourcePageId,
+          spaceId: row.spaceId,
+          spaceName: row.spaceName,
+          title: row.title ?? '',
+          slugId: row.slugId ?? null,
+          status: row.status,
+          imageStatus: row.imageStatus,
+          mergeStatus: row.mergeStatus,
+          expectedImageCount: row.expectedImageCount,
+          succeededImageCount: row.succeededImageCount,
+          failedImageCount: row.failedImageCount,
+          skippedImageCount: row.skippedImageCount,
+          errorCode: row.errorCode,
+          errorCategory: classifyRunPageError(row.errorCode),
+          errorSummary: row.errorCode
+            ? safeCompilationErrorMessage(row.errorCode)
+            : null,
+          ...(input.includeSensitiveErrors && row.errorMessage
+            ? { errorDetail: sanitizeRunPageErrorDetail(row.errorMessage) }
+            : {}),
+          queuedAt: isoDate(row.queuedAt),
+          startedAt: isoDate(row.startedAt),
+          finishedAt: isoDate(row.finishedAt),
+          // No per-page duration column exists; approximate from timestamps.
+          durationMs:
+            startedMs !== null && finishedMs !== null
+              ? Math.max(0, finishedMs - startedMs)
+              : null,
+          lastCompiledAt: isoDate(row.finishedAt ?? row.updatedAt),
+          updatedAt: row.updatedAt.toISOString(),
+          imageFailures: imageFailuresByPage.get(row.runPageId) ?? {
+            retryableExhausted: 0,
+            permanent: 0,
+          },
+        };
+      }),
+      total: numberValue(countRow?.count),
+      page,
+      limit,
+    };
+  }
+
   async findRetryableFailedPageIds(input: {
     workspaceId: string;
     sourcePageIds: string[];
@@ -793,6 +990,12 @@ function dateValue(value: unknown): Date | null {
 
 function isoDate(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;
+}
+
+function parseTimestamp(value: string | undefined): Date | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 export function classifyRunPageError(

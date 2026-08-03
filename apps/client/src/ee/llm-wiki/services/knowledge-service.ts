@@ -1,6 +1,7 @@
 import type {
   KnowledgeAdminActionResult,
   KnowledgeAdminSpaceAction,
+  KnowledgeCancelRunResult,
   KnowledgeContextBudget,
   KnowledgeCompileResult,
   KnowledgeCompileSpacesResult,
@@ -12,6 +13,8 @@ import type {
   KnowledgeQueueSnapshot,
   KnowledgeQualityIssue,
   KnowledgeQualityReport,
+  KnowledgePageLogItem,
+  KnowledgePageLogPage,
   KnowledgeQuarantineDiagnosticsPage,
   KnowledgeQuarantinedArtifact,
   KnowledgeRetrievalDiagnosticsSummary,
@@ -241,6 +244,22 @@ export async function getKnowledgeRunPageDiagnostics(params: {
   return normalizeRunPageDiagnosticsPage(unwrapApiData(await response.json()));
 }
 
+export async function getKnowledgePageCompilationLog(params: {
+  spaceIds?: string[];
+  statuses?: string[];
+  search?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  limit?: number;
+}): Promise<KnowledgePageLogPage> {
+  const value = await postKnowledgeDiagnostics(
+    "/api/llm-wiki/admin/diagnostics/page-log",
+    params,
+  );
+  return normalizePageLogPage(value);
+}
+
 export async function getKnowledgeWorkerDiagnostics(): Promise<KnowledgeWorkerDiagnostics> {
   const response = await fetch("/api/llm-wiki/admin/diagnostics/workers", {
     credentials: "include",
@@ -319,6 +338,45 @@ export async function retryKnowledgePages(params: {
           (jobId): jobId is string => typeof jobId === "string",
         )
       : [],
+  };
+}
+
+export async function cancelKnowledgeCompilationRun(params: {
+  runId: string;
+  reason?: string;
+}): Promise<KnowledgeCancelRunResult> {
+  const response = await fetch(
+    `/api/llm-wiki/admin/compilation-runs/${encodeURIComponent(params.runId)}/cancel`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        ...(params.reason?.trim() ? { reason: params.reason.trim() } : {}),
+      }),
+    },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response));
+  const value = unwrapApiData(await response.json());
+  const record = isRecord(value) ? value : {};
+  return {
+    disposition:
+      record.disposition === "already_terminal"
+        ? "already_terminal"
+        : "cancelled",
+    runId: readString(record.runId),
+    spaceId: readString(record.spaceId),
+    status: normalizeRunStatus(record.status),
+    phase: normalizeRunPhase(record.phase),
+    ...(record.previousStatus
+      ? { previousStatus: normalizeRunStatus(record.previousStatus) }
+      : {}),
+    ...(record.previousPhase
+      ? { previousPhase: normalizeRunPhase(record.previousPhase) }
+      : {}),
+    removedJobCount: readNumber(record.removedJobCount),
+    fencedActiveJobCount: readNumber(record.fencedActiveJobCount),
+    cleanupErrorCount: readNumber(record.cleanupErrorCount),
   };
 }
 
@@ -576,10 +634,14 @@ function normalizeRunDiagnostic(
       images: {
         expected: readNumber(images.expected),
         succeeded: readNumber(images.succeeded),
+        failed: readNumber(images.failed),
+        skipped: readNumber(images.skipped),
       },
       merge: {
         expected: readNumber(merge.expected),
         succeeded: readNumber(merge.succeeded),
+        failed: readNumber(merge.failed),
+        skipped: readNumber(merge.skipped),
       },
     },
   };
@@ -642,6 +704,65 @@ function normalizeRunPageDiagnosticsPage(
     total: readNumber(record.total),
     page: Math.max(readNumber(record.page), 1),
     limit: Math.max(readNumber(record.limit), 1),
+  };
+}
+
+function normalizePageLogPage(value: unknown): KnowledgePageLogPage {
+  const record = isRecord(value) ? value : {};
+  return {
+    items: Array.isArray(record.items)
+      ? record.items.filter(isRecord).map(normalizePageLogItem)
+      : [],
+    total: readNumber(record.total),
+    page: Math.max(readNumber(record.page), 1),
+    limit: Math.max(readNumber(record.limit), 1),
+  };
+}
+
+function normalizePageLogItem(
+  item: Record<string, unknown>,
+): KnowledgePageLogItem {
+  const imageFailures = isRecord(item.imageFailures) ? item.imageFailures : {};
+  const errorCategory = [
+    "budget_timeout",
+    "provider",
+    "publication",
+    "infrastructure",
+    "other",
+  ].includes(item.errorCategory as string)
+    ? (item.errorCategory as KnowledgePageLogItem["errorCategory"])
+    : null;
+  return {
+    runPageId: readString(item.runPageId),
+    runId: readString(item.runId),
+    sourcePageId: readString(item.sourcePageId),
+    spaceId: readString(item.spaceId),
+    spaceName: readString(item.spaceName),
+    title: readString(item.title),
+    slugId: readNullableString(item.slugId),
+    status: readString(item.status),
+    imageStatus: readString(item.imageStatus),
+    mergeStatus: readString(item.mergeStatus),
+    expectedImageCount: readNumber(item.expectedImageCount),
+    succeededImageCount: readNumber(item.succeededImageCount),
+    failedImageCount: readNumber(item.failedImageCount),
+    skippedImageCount: readNumber(item.skippedImageCount),
+    errorCode: readNullableString(item.errorCode),
+    errorCategory,
+    errorSummary: readNullableString(item.errorSummary),
+    ...(typeof item.errorDetail === "string"
+      ? { errorDetail: item.errorDetail }
+      : {}),
+    queuedAt: readNullableString(item.queuedAt),
+    startedAt: readNullableString(item.startedAt),
+    finishedAt: readNullableString(item.finishedAt),
+    durationMs: typeof item.durationMs === "number" ? item.durationMs : null,
+    lastCompiledAt: readNullableString(item.lastCompiledAt),
+    updatedAt: readString(item.updatedAt),
+    imageFailures: {
+      retryableExhausted: readNumber(imageFailures.retryableExhausted),
+      permanent: readNumber(imageFailures.permanent),
+    },
   };
 }
 
@@ -793,6 +914,7 @@ function normalizeRunStatus(value: unknown): KnowledgeRunStatus {
     "partial",
     "failed",
     "superseded",
+    "cancelled",
   ].includes(value as string)
     ? (value as KnowledgeRunStatus)
     : "queued";

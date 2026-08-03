@@ -17,7 +17,8 @@ export type KnowledgeSpaceCompileRunStatus =
   | 'succeeded'
   | 'partial'
   | 'failed'
-  | 'superseded';
+  | 'superseded'
+  | 'cancelled';
 
 export type KnowledgeSpaceCompileRunMode = 'incremental' | 'force_rebuild';
 
@@ -41,6 +42,56 @@ export interface SpaceRunRequest {
   confirmationSpaceName?: string;
   removedSourcePageIds?: string[];
   scanRemovedSources?: boolean;
+  // When set, the Run compiles only these source pages instead of the whole
+  // Space (page-scoped retry). Undefined/empty means a full-Space Run.
+  targetSourcePageIds?: string[];
+}
+
+/**
+ * Reconciles the page scope of a coalescing target Run with an incoming
+ * request. A full-Space request (no target pages) always widens the Run to
+ * full scope; two page-scoped inputs union; a page-scoped request against an
+ * already full-Space Run leaves it full (the page is already covered).
+ * Returns the new scope, or `undefined` when the scope is unchanged.
+ */
+export function reconcileRunTargetScope(input: {
+  runTargetSourcePageIds: string[] | null;
+  requestTargetSourcePageIds: string[] | undefined;
+}): { changed: boolean; targetSourcePageIds: string[] | null } {
+  const runTarget = input.runTargetSourcePageIds;
+  const requestTarget = input.requestTargetSourcePageIds;
+  const requestIsFullSpace = !requestTarget || requestTarget.length === 0;
+  // A full-Space Run already covers every page; nothing to widen or union.
+  if (runTarget === null) {
+    return { changed: false, targetSourcePageIds: null };
+  }
+  // A full-Space request widens a page-scoped Run to the whole Space.
+  if (requestIsFullSpace) {
+    return { changed: true, targetSourcePageIds: null };
+  }
+  const union = [...new Set([...runTarget, ...requestTarget!])];
+  const changed = union.length !== runTarget.length;
+  return { changed, targetSourcePageIds: union };
+}
+
+/**
+ * Normalizes a request's target page list to either a de-duplicated non-empty
+ * array (page-scoped) or null (full-Space). Empty input is treated as
+ * full-Space so callers cannot accidentally create a Run that compiles nothing.
+ */
+function normalizeTargetSourcePageIds(
+  value: string[] | undefined,
+): string[] | null {
+  if (!value) return null;
+  const unique = [...new Set(value.filter((id) => id.length > 0))];
+  return unique.length > 0 ? unique : null;
+}
+
+/** Reads the persisted JSON scope of a Run back into a string[] or null. */
+function parseTargetSourcePageIds(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const ids = value.filter((id): id is string => typeof id === 'string');
+  return ids.length > 0 ? ids : null;
 }
 
 export interface RequestRunsInput {
@@ -303,6 +354,11 @@ export class KnowledgeSpaceCompilationRepo {
             };
           }
 
+          const requestTargetSourcePageIds = normalizeTargetSourcePageIds(
+            request.targetSourcePageIds,
+          );
+          const pageScoped = requestTargetSourcePageIds !== null;
+
           let activeRun = await trx
             .selectFrom('knowledgeSpaceCompileRuns')
             .selectAll()
@@ -312,10 +368,12 @@ export class KnowledgeSpaceCompilationRepo {
             .forUpdate()
             .executeTakeFirst();
 
-          const removedSourcePageIds = await this.resolveRemovedSourcePageIds(
-            trx,
-            request,
-          );
+          // A page-scoped Run must not scan the whole Space for removed
+          // sources: it only knows about its target pages, and a Space-wide
+          // scan would wrongly retire every page it did not export.
+          const removedSourcePageIds = pageScoped
+            ? []
+            : await this.resolveRemovedSourcePageIds(trx, request);
           if (removedSourcePageIds.length > 0) {
             activeRun = await this.invalidateRemovedSourcesAndReplanInTx(
               trx,
@@ -328,6 +386,27 @@ export class KnowledgeSpaceCompilationRepo {
 
           const disposition = decideSpaceRunRequest(activeRun);
           if (disposition === 'coalesced') {
+            const scope = reconcileRunTargetScope({
+              runTargetSourcePageIds: parseTargetSourcePageIds(
+                activeRun!.targetSourcePageIds,
+              ),
+              requestTargetSourcePageIds:
+                requestTargetSourcePageIds ?? undefined,
+            });
+            if (scope.changed) {
+              const widened = await trx
+                .updateTable('knowledgeSpaceCompileRuns')
+                .set({
+                  targetSourcePageIds:
+                    scope.targetSourcePageIds as JsonValue | null,
+                  updatedAt: now,
+                })
+                .where('id', '=', activeRun!.id)
+                .where('status', 'in', NONTERMINAL_RUN_STATUSES)
+                .returningAll()
+                .executeTakeFirst();
+              return { disposition, run: widened ?? activeRun! };
+            }
             return { disposition, run: activeRun! };
           }
           if (disposition === 'rerun_requested') {
@@ -356,6 +435,8 @@ export class KnowledgeSpaceCompilationRepo {
               promptVersion: input.promptVersion,
               catalogSnapshot: [] as JsonValue,
               catalogHash: 'pending-initialization',
+              targetSourcePageIds:
+                requestTargetSourcePageIds as JsonValue | null,
               queuedAt: now,
               spaceJobQueuedAt: now,
               updatedAt: now,
@@ -636,43 +717,46 @@ export class KnowledgeSpaceCompilationRepo {
 
       const oldRuns = await trx
         .selectFrom('knowledgeSpaceCompileRuns')
-        .select(['id', 'aggregateJobId', 'skippedPageCount'])
+        .select(['id', 'spaceJobId', 'aggregateJobId'])
         .where('workspaceId', '=', input.workspaceId)
         .where('spaceId', '=', input.spaceId)
         .where('status', 'in', NONTERMINAL_RUN_STATUSES)
         .forUpdate()
         .execute();
       const oldRunIds = oldRuns.map((run) => run.id);
-      const oldPages =
-        oldRunIds.length === 0
-          ? []
-          : await trx
-              .updateTable('knowledgeSpaceCompileRunPages')
-              .set({
-                status: 'skipped',
-                errorCode: 'run_superseded',
-                errorMessage: 'Knowledge compilation run was superseded.',
-                finishedAt: now,
-                updatedAt: now,
-              })
-              .where('runId', 'in', oldRunIds)
-              .where('status', 'in', ['pending', 'queued', 'running'])
-              .returning(['runId', 'jobId', 'imageJobId', 'mergeJobId'])
-              .execute();
-      const skippedByRun = new Map<string, number>();
-      for (const page of oldPages) {
-        skippedByRun.set(page.runId, (skippedByRun.get(page.runId) ?? 0) + 1);
-      }
+      const supersededMessage =
+        'A force rebuild replaced this knowledge compilation run.';
+      const {
+        pages: oldPages,
+        images: oldImages,
+        countsByRun,
+      } = await this.terminalizeInterruptedRunChildren(trx, {
+        runIds: oldRunIds,
+        errorCode: 'run_superseded',
+        errorMessage: supersededMessage,
+        now,
+      });
       for (const oldRun of oldRuns) {
+        const counts = countsByRun.get(oldRun.id)!;
         await trx
           .updateTable('knowledgeSpaceCompileRuns')
           .set({
             status: 'superseded',
-            skippedPageCount:
-              oldRun.skippedPageCount + (skippedByRun.get(oldRun.id) ?? 0),
+            phase: 'complete',
+            succeededPageCount: counts.succeeded,
+            failedPageCount: counts.failed,
+            skippedPageCount: counts.skipped,
             errorCode: 'run_superseded',
-            errorMessage:
-              'A force rebuild replaced this knowledge compilation run.',
+            errorMessage: supersededMessage,
+            rerunRequested: false,
+            aggregateJobId: null,
+            spaceJobId: null,
+            spaceJobQueuedAt: null,
+            spaceJobDispatchedAt: null,
+            executionToken: null,
+            executionLeaseExpiresAt: null,
+            workerId: null,
+            heartbeatAt: null,
             finishedAt: now,
             updatedAt: now,
           })
@@ -849,12 +933,14 @@ export class KnowledgeSpaceCompilationRepo {
           .execute();
       }
       const supersededJobIds = [
+        ...oldRuns.map((oldRun) => oldRun.spaceJobId),
         ...oldRuns.map((oldRun) => oldRun.aggregateJobId),
         ...oldPages.flatMap((page) => [
           page.jobId,
           page.imageJobId,
           page.mergeJobId,
         ]),
+        ...oldImages.map((image) => image.jobId),
       ].filter((jobId): jobId is string => Boolean(jobId));
       return {
         reset: true as const,
@@ -1525,6 +1611,276 @@ export class KnowledgeSpaceCompilationRepo {
       .forUpdate()
       .executeTakeFirst();
     return image ? { run, page, image } : undefined;
+  }
+
+  /**
+   * Closes every unfinished child dimension for Runs that are being stopped
+   * by an explicit control-plane transaction. Callers must already hold the
+   * Space and Run locks; this method completes the global lock order with
+   * RunPage -> RunImage and returns every exact child Job ID for post-commit
+   * Redis cleanup.
+   */
+  private async terminalizeInterruptedRunChildren(
+    trx: KyselyTransaction,
+    input: {
+      runIds: string[];
+      errorCode: string;
+      errorMessage: string | null;
+      now: Date;
+    },
+  ) {
+    const countsByRun = new Map<
+      string,
+      { succeeded: number; failed: number; skipped: number }
+    >();
+    for (const runId of input.runIds) {
+      countsByRun.set(runId, { succeeded: 0, failed: 0, skipped: 0 });
+    }
+    if (input.runIds.length === 0) {
+      return { pages: [], images: [], countsByRun };
+    }
+
+    const pages = await trx
+      .selectFrom('knowledgeSpaceCompileRunPages')
+      .select(['id', 'runId', 'status', 'jobId', 'imageJobId', 'mergeJobId'])
+      .where('runId', 'in', input.runIds)
+      .orderBy('runId', 'asc')
+      .orderBy('id', 'asc')
+      .forUpdate()
+      .execute();
+    const images = await trx
+      .selectFrom('knowledgeSpaceCompileRunImages')
+      .select(['id', 'runId', 'jobId'])
+      .where('runId', 'in', input.runIds)
+      .orderBy('runId', 'asc')
+      .orderBy('id', 'asc')
+      .forUpdate()
+      .execute();
+
+    await trx
+      .updateTable('knowledgeSpaceCompileRunImages')
+      .set({
+        status: 'skipped',
+        failureClass: null,
+        errorCode: input.errorCode,
+        errorMessage: input.errorMessage,
+        processingExpiresAt: null,
+        updatedAt: input.now,
+      })
+      .where('runId', 'in', input.runIds)
+      .where('status', 'in', ['pending', 'queued', 'processing'])
+      .execute();
+
+    await trx
+      .updateTable('knowledgeSpaceCompileRunPages')
+      .set({
+        status: 'skipped',
+        errorCode: sql`COALESCE(error_code, ${input.errorCode})`,
+        errorMessage: sql`COALESCE(error_message, ${input.errorMessage})`,
+        finishedAt: input.now,
+        updatedAt: input.now,
+      })
+      .where('runId', 'in', input.runIds)
+      .where('status', 'in', ['pending', 'queued', 'running'])
+      .execute();
+
+    await sql`
+      WITH image_counts AS (
+        SELECT
+          run_page_id,
+          COUNT(*) FILTER (WHERE status = 'succeeded')::integer AS succeeded,
+          COUNT(*) FILTER (WHERE status = 'failed')::integer AS failed,
+          BOOL_OR(
+            status = 'failed' AND failure_class = 'retryable_exhausted'
+          ) AS has_retryable_exhausted
+        FROM knowledge_space_compile_run_images
+        WHERE run_id IN (${sql.join(input.runIds)})
+        GROUP BY run_page_id
+      )
+      UPDATE knowledge_space_compile_run_pages AS page
+      SET
+        succeeded_image_count = counts.succeeded,
+        failed_image_count = counts.failed,
+        skipped_image_count = GREATEST(
+          page.expected_image_count - counts.succeeded - counts.failed,
+          0
+        ),
+        image_status = CASE
+          WHEN counts.has_retryable_exhausted THEN 'failed'
+          WHEN counts.failed > 0 OR
+               page.expected_image_count - counts.succeeded - counts.failed > 0
+            THEN 'partial'
+          ELSE 'succeeded'
+        END,
+        updated_at = ${input.now}
+      FROM image_counts AS counts
+      WHERE page.id = counts.run_page_id
+        AND page.run_id IN (${sql.join(input.runIds)})
+        AND page.image_status IN ('pending', 'queued', 'processing')
+    `.execute(trx);
+
+    // RunPages may exist before the RunImage snapshot is inserted. They are
+    // absent from image_counts but still must become terminal.
+    await trx
+      .updateTable('knowledgeSpaceCompileRunPages')
+      .set({
+        skippedImageCount: sql`GREATEST(
+          expected_image_count - succeeded_image_count - failed_image_count,
+          0
+        )`,
+        imageStatus: sql`CASE
+          WHEN expected_image_count = 0 THEN 'not_required'
+          ELSE 'partial'
+        END`,
+        updatedAt: input.now,
+      })
+      .where('runId', 'in', input.runIds)
+      .where('imageStatus', 'in', ['pending', 'queued', 'processing'])
+      .execute();
+
+    await trx
+      .updateTable('knowledgeSpaceCompileRunPages')
+      .set({
+        mergeStatus: 'skipped',
+        errorCode: sql`COALESCE(error_code, ${input.errorCode})`,
+        errorMessage: sql`COALESCE(error_message, ${input.errorMessage})`,
+        updatedAt: input.now,
+      })
+      .where('runId', 'in', input.runIds)
+      .where('mergeStatus', 'in', [
+        'waiting_images',
+        'pending',
+        'queued',
+        'running',
+      ])
+      .execute();
+
+    for (const page of pages) {
+      const counts = countsByRun.get(page.runId)!;
+      const status = ['pending', 'queued', 'running'].includes(page.status)
+        ? 'skipped'
+        : page.status;
+      if (status === 'succeeded') counts.succeeded += 1;
+      if (status === 'failed') counts.failed += 1;
+      if (status === 'skipped') counts.skipped += 1;
+    }
+    return { pages, images, countsByRun };
+  }
+
+  /**
+   * Administratively stops one exact Run. The database transaction is the
+   * authoritative cancellation boundary; callers may remove the returned
+   * exact BullMQ jobs only after it commits. Already published knowledge is
+   * intentionally retained.
+   */
+  async cancelRun(input: {
+    workspaceId: string;
+    runId: string;
+    reason?: string;
+  }) {
+    return executeTx(this.db, async (trx) => {
+      // The identity read takes no lock. Every multi-table lock that follows
+      // obeys the global spaces -> Run -> RunPage -> RunImage order.
+      const identity = await trx
+        .selectFrom('knowledgeSpaceCompileRuns')
+        .select(['spaceId'])
+        .where('id', '=', input.runId)
+        .where('workspaceId', '=', input.workspaceId)
+        .executeTakeFirst();
+      if (!identity) return { disposition: 'not_found' as const };
+
+      const space = await trx
+        .selectFrom('spaces')
+        .select('id')
+        .where('id', '=', identity.spaceId)
+        .where('workspaceId', '=', input.workspaceId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!space) return { disposition: 'not_found' as const };
+
+      const run = await trx
+        .selectFrom('knowledgeSpaceCompileRuns')
+        .selectAll()
+        .where('id', '=', input.runId)
+        .where('workspaceId', '=', input.workspaceId)
+        .where('spaceId', '=', identity.spaceId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!run) return { disposition: 'not_found' as const };
+      if (
+        !NONTERMINAL_RUN_STATUSES.includes(
+          run.status as KnowledgeSpaceCompileRunStatus,
+        )
+      ) {
+        return {
+          disposition: 'already_terminal' as const,
+          run,
+          jobIds: [],
+        };
+      }
+
+      const now = new Date();
+      const errorMessage = diagnosticValue(
+        input.reason
+          ? `Knowledge compilation was cancelled: ${input.reason}`
+          : 'Knowledge compilation was cancelled by an administrator.',
+        500,
+      );
+      const { pages, images, countsByRun } =
+        await this.terminalizeInterruptedRunChildren(trx, {
+          runIds: [input.runId],
+          errorCode: 'manual_cancelled',
+          errorMessage,
+          now,
+        });
+      const counts = countsByRun.get(input.runId)!;
+
+      const cancelled = await trx
+        .updateTable('knowledgeSpaceCompileRuns')
+        .set({
+          status: 'cancelled',
+          phase: 'complete',
+          succeededPageCount: counts.succeeded,
+          failedPageCount: counts.failed,
+          skippedPageCount: counts.skipped,
+          errorCode: 'manual_cancelled',
+          errorMessage,
+          rerunRequested: false,
+          aggregateJobId: null,
+          spaceJobId: null,
+          spaceJobQueuedAt: null,
+          spaceJobDispatchedAt: null,
+          executionToken: null,
+          executionLeaseExpiresAt: null,
+          workerId: null,
+          heartbeatAt: null,
+          finishedAt: now,
+          updatedAt: now,
+        })
+        .where('id', '=', input.runId)
+        .where('workspaceId', '=', input.workspaceId)
+        .where('status', 'in', NONTERMINAL_RUN_STATUSES)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      const jobIds = [
+        run.spaceJobId,
+        run.aggregateJobId,
+        ...pages.flatMap((page) => [
+          page.jobId,
+          page.imageJobId,
+          page.mergeJobId,
+        ]),
+        ...images.map((image) => image.jobId),
+      ].filter((jobId): jobId is string => Boolean(jobId));
+      return {
+        disposition: 'cancelled' as const,
+        previousStatus: run.status as KnowledgeSpaceCompileRunStatus,
+        previousPhase: run.phase as KnowledgeSpaceCompileRunPhase,
+        run: cancelled,
+        jobIds: [...new Set(jobIds)],
+      };
+    });
   }
 
   async findRun(runId: string) {

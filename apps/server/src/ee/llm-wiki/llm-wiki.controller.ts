@@ -39,7 +39,9 @@ import {
 } from './llm-wiki.constants';
 import { AdminKnowledgeSpaceActionDto } from './dto/admin-space-action.dto';
 import { CompileSpacesDto } from './dto/compile-spaces.dto';
+import { CancelKnowledgeRunDto } from './dto/cancel-knowledge-run.dto';
 import {
+  AdminKnowledgePageLogDto,
   AdminKnowledgeQuarantineListDto,
   AdminKnowledgeRunListDto,
   AdminKnowledgeRunPagesQueryDto,
@@ -398,6 +400,34 @@ export class LlmWikiController {
   }
 
   @HttpCode(HttpStatus.OK)
+  @Post('admin/diagnostics/page-log')
+  async getPageCompilationLog(
+    @Body() dto: AdminKnowledgePageLogDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertDiagnosticsEnabled(workspace);
+    const spaceIds = await this.findAuthorizedDiagnosticSpaceIds(
+      dto.spaceIds,
+      user,
+      workspace,
+    );
+    return this.diagnosticsService.listPageCompilationLog({
+      workspaceId: workspace.id,
+      spaceIds,
+      enforceSpaceScope: true,
+      statuses: dto.statuses,
+      search: dto.search,
+      from: dto.from,
+      to: dto.to,
+      page: dto.page,
+      limit: dto.limit,
+      includeSensitiveErrors:
+        user.role === UserRole.OWNER || user.role === UserRole.ADMIN,
+    });
+  }
+
+  @HttpCode(HttpStatus.OK)
   @Post('admin/diagnostics/quality')
   async getQualityDiagnostics(
     @Body() dto: AdminKnowledgeRunSummaryDto,
@@ -508,6 +538,45 @@ export class LlmWikiController {
   }
 
   @HttpCode(HttpStatus.OK)
+  @Post('admin/compilation-runs/:runId/cancel')
+  async cancelKnowledgeCompilationRun(
+    @Param('runId', ParseUUIDPipe) runId: string,
+    @Body() dto: CancelKnowledgeRunDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertKnowledgeOperationAllowed(user, workspace);
+    const reason =
+      dto.reason
+        ?.replace(/[\u0000-\u001f\u007f]+/g, ' ')
+        .trim()
+        .slice(0, 400) || undefined;
+    const result = await this.spaceCompilation.cancelRun({
+      workspaceId: workspace.id,
+      runId,
+      reason,
+    });
+    if (result.disposition === 'cancelled') {
+      this.auditService.log({
+        event: AuditEvent.KNOWLEDGE_COMPILE_CANCELLED,
+        resourceType: AuditResource.KNOWLEDGE,
+        resourceId: runId,
+        spaceId: result.spaceId,
+        metadata: {
+          runId,
+          previousStatus: result.previousStatus,
+          previousPhase: result.previousPhase,
+          reason,
+          removedJobCount: result.removedJobCount,
+          fencedActiveJobCount: result.fencedActiveJobCount,
+          cleanupErrorCount: result.cleanupErrorCount,
+        },
+      });
+    }
+    return result;
+  }
+
+  @HttpCode(HttpStatus.OK)
   @Post('admin/retry-pages')
   async retryPages(
     @Body() dto: AdminKnowledgeRetryPagesDto,
@@ -555,10 +624,12 @@ export class LlmWikiController {
     }
 
     const requests = await this.spaceCompilation.requestRuns(
-      [...pagesBySpace.keys()].map((spaceId) => ({
+      [...pagesBySpace.entries()].map(([spaceId, spacePages]) => ({
         workspaceId: workspace.id,
         spaceId,
-        trigger: 'retry_compile',
+        trigger: 'page_retry',
+        // Compile only the selected failed pages, not the whole Space.
+        targetSourcePageIds: spacePages.map((page) => page.id),
       })),
     );
     const jobIds = requests.map((request) => request.run!.id);

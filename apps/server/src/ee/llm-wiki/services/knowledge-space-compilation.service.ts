@@ -81,6 +81,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       confirmationSpaceName?: string;
       removedSourcePageIds?: string[];
       scanRemovedSources?: boolean;
+      targetSourcePageIds?: string[];
     }>,
   ) {
     const results = await this.runRepo.requestRuns({
@@ -99,6 +100,43 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     }
     await this.dispatchPending();
     return results;
+  }
+
+  async cancelRun(input: {
+    workspaceId: string;
+    runId: string;
+    reason?: string;
+  }) {
+    const result = await this.runRepo.cancelRun(input);
+    if (result.disposition === 'not_found') {
+      throw new NotFoundException('Knowledge compilation Run not found.');
+    }
+    if (result.disposition === 'already_terminal') {
+      return {
+        disposition: result.disposition,
+        runId: result.run.id,
+        spaceId: result.run.spaceId,
+        status: result.run.status,
+        phase: result.run.phase,
+        removedJobCount: 0,
+        fencedActiveJobCount: 0,
+        cleanupErrorCount: 0,
+      };
+    }
+
+    // The PostgreSQL transaction has committed and invalidated every writer at
+    // this point. Redis cleanup is an exact-ID traffic optimization only.
+    const cleanup = await this.removeCancelledJobs(result.jobIds);
+    return {
+      disposition: result.disposition,
+      runId: result.run.id,
+      spaceId: result.run.spaceId,
+      status: result.run.status,
+      phase: result.run.phase,
+      previousStatus: result.previousStatus,
+      previousPhase: result.previousPhase,
+      ...cleanup,
+    };
   }
 
   async requestIncrementalCompileForPages(input: {
@@ -135,7 +173,17 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       };
     }
     const scope = { workspaceId: run.workspaceId, spaceId: run.spaceId };
-    const sources = await this.sourceExporter.exportSpaceSources(scope);
+    // A page-scoped Run compiles only its target pages; a full-Space Run
+    // exports every page in the Space.
+    const targetSourcePageIds = parseRunTargetSourcePageIds(
+      run.targetSourcePageIds,
+    );
+    const sources = targetSourcePageIds
+      ? await this.sourceExporter.exportPageSources({
+          ...scope,
+          sourcePageIds: targetSourcePageIds,
+        })
+      : await this.sourceExporter.exportSpaceSources(scope);
     const sourcePageIds = sources.map((source) => source.sourcePageId);
     const snapshotImages = sources.flatMap((source) =>
       (source.images ?? []).map((image) => ({
@@ -175,9 +223,15 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       this.capsuleRepo.hasActiveSpaceOverview(scope),
     ]);
     const currentSourcePageIds = new Set(sourcePageIds);
-    const removedSourcePageIds = [
-      ...new Set([...activeSourcePageIds, ...contributionSourcePageIds]),
-    ].filter((sourcePageId) => !currentSourcePageIds.has(sourcePageId));
+    // Removed-source detection compares the Space's known pages against the
+    // exported set. It is only valid for a full-Space export; a page-scoped
+    // Run exports a subset, so every non-target page would be misread as
+    // removed and wrongly retired. Page-scoped Runs never retire sources.
+    const removedSourcePageIds = targetSourcePageIds
+      ? []
+      : [
+          ...new Set([...activeSourcePageIds, ...contributionSourcePageIds]),
+        ].filter((sourcePageId) => !currentSourcePageIds.has(sourcePageId));
     const remainingSourcesAffectedByRemoval = new Set(
       removedSourcePageIds.length > 0
         ? await this.contributionRepo.findRemainingSourcePageIdsForRemovedSources(
@@ -424,6 +478,61 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       }
     }
   }
+
+  private async removeCancelledJobs(jobIds: string[]): Promise<{
+    removedJobCount: number;
+    fencedActiveJobCount: number;
+    cleanupErrorCount: number;
+  }> {
+    let removedJobCount = 0;
+    let fencedActiveJobCount = 0;
+    let cleanupErrorCount = 0;
+    for (const jobId of [...new Set(jobIds)]) {
+      let found = false;
+      for (const queue of [this.spaceQueue, this.imageQueue]) {
+        try {
+          const job = await queue.getJob(jobId);
+          if (!job) continue;
+          found = true;
+          const state: string = await job.getState();
+          if (state === 'active') {
+            // BullMQ cannot remove a locked active Job. The committed Run
+            // status/token fence makes its remaining publication a no-op.
+            fencedActiveJobCount += 1;
+          } else {
+            await job.remove();
+            removedJobCount += 1;
+          }
+          break;
+        } catch {
+          cleanupErrorCount += 1;
+          this.logger.warn({
+            event: 'knowledge_cancel_job_cleanup_failed',
+            jobId,
+          });
+          break;
+        }
+      }
+      // A missing retained Job is already clean. It is deliberately not an
+      // error because Redis retention or a prior idempotent call may remove it.
+      if (!found) continue;
+    }
+    return {
+      removedJobCount,
+      fencedActiveJobCount,
+      cleanupErrorCount,
+    };
+  }
+}
+
+/**
+ * Reads a Run's persisted page scope. Returns a non-empty string[] for a
+ * page-scoped Run, or null for a full-Space Run.
+ */
+function parseRunTargetSourcePageIds(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const ids = value.filter((id): id is string => typeof id === 'string');
+  return ids.length > 0 ? ids : null;
 }
 
 function currentReadyExtractionMap(

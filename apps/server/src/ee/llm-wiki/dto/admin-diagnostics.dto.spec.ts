@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { validate } from 'class-validator';
 import {
+  AdminKnowledgePageLogDto,
   AdminKnowledgeQuarantineListDto,
   AdminKnowledgeRunListDto,
   AdminKnowledgeRunPagesQueryDto,
@@ -43,5 +44,32 @@ describe('bounded knowledge diagnostics DTOs', () => {
     expect(errors.map((error) => error.property)).toEqual(
       expect.arrayContaining(['spaceIds', 'page', 'limit']),
     );
+  });
+
+  it('bounds page-log pagination and validates status/time filters', async () => {
+    const dto = Object.assign(new AdminKnowledgePageLogDto(), {
+      statuses: ['mystery'],
+      from: 'not-a-date',
+      page: 0,
+      limit: 101,
+    });
+
+    const errors = await validate(dto);
+    expect(errors.map((error) => error.property)).toEqual(
+      expect.arrayContaining(['statuses', 'from', 'page', 'limit']),
+    );
+  });
+
+  it('accepts a valid page-log query', async () => {
+    const dto = Object.assign(new AdminKnowledgePageLogDto(), {
+      statuses: ['succeeded', 'failed'],
+      search: 'runbook',
+      from: '2026-08-01T00:00:00.000Z',
+      to: '2026-08-03T00:00:00.000Z',
+      page: 1,
+      limit: 50,
+    });
+
+    await expect(validate(dto)).resolves.toHaveLength(0);
   });
 });

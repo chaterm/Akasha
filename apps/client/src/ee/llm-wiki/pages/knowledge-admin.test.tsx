@@ -11,6 +11,7 @@ import { HelmetProvider } from "react-helmet-async";
 import { BrowserRouter } from "react-router-dom";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  cancelKnowledgeCompilationRun,
   forceRebuildKnowledgeSpace,
   getKnowledgeQualityDiagnostics,
   getKnowledgeQuarantineDiagnostics,
@@ -50,6 +51,7 @@ vi.mock("@/hooks/use-user-role", () => ({
   default: () => ({ isAdmin: true, isOwner: true, isMember: false }),
 }));
 vi.mock("../services/knowledge-service", () => ({
+  cancelKnowledgeCompilationRun: vi.fn(),
   getKnowledgeRunDiagnosticsSummary: vi.fn(),
   getKnowledgeRunDiagnostics: vi.fn(),
   getKnowledgeRunPageDiagnostics: vi.fn(),
@@ -188,6 +190,18 @@ describe("KnowledgeAdminPage", () => {
       mode: "force_rebuild",
       knowledgeGeneration: 6,
     });
+    vi.mocked(cancelKnowledgeCompilationRun).mockResolvedValue({
+      disposition: "cancelled",
+      runId: "run-1",
+      spaceId: "space-1",
+      status: "cancelled",
+      phase: "complete",
+      previousStatus: "queued",
+      previousPhase: "text",
+      removedJobCount: 1,
+      fencedActiveJobCount: 0,
+      cleanupErrorCount: 0,
+    });
   });
 
   it("shows bounded Run diagnostics and loads RunPages only on demand", async () => {
@@ -206,6 +220,11 @@ describe("KnowledgeAdminPage", () => {
     expect(await screen.findByText("Waiting initialization")).toBeTruthy();
     expect(await screen.findByText("Space dispatch pending")).toBeTruthy();
     expect(await screen.findByText("text continuation")).toBeTruthy();
+    expect(screen.getByText("50/100")).toBeTruthy();
+    expect(screen.getAllByText("15/20")).toHaveLength(2);
+    expect(
+      screen.getByText("Succeeded 45 · Failed 2 · Skipped 3"),
+    ).toBeTruthy();
     expect(getKnowledgeRunPageDiagnostics).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "View pages" }));
@@ -399,6 +418,37 @@ describe("KnowledgeAdminPage", () => {
     );
   });
 
+  it("cancels one exact active Run only after explicit Space confirmation", async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel run" }));
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Cancel compilation run",
+    });
+    expect(
+      within(dialog).getByText(
+        "Remaining compilation work will stop. Knowledge already published by completed pages is retained.",
+      ),
+    ).toBeTruthy();
+    const confirmName = within(dialog).getByLabelText(
+      "Type the space name to confirm",
+    );
+    const reason = within(dialog).getByLabelText("Reason (optional)");
+    const confirm = within(dialog).getByRole("button", { name: "Cancel run" });
+    expect((confirm as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(confirmName, { target: { value: "AIM" } });
+    fireEvent.change(reason, { target: { value: "  Test completed.  " } });
+    fireEvent.click(confirm);
+
+    await waitFor(() =>
+      expect(cancelKnowledgeCompilationRun).toHaveBeenCalledWith(
+        { runId: "run-1", reason: "Test completed." },
+        expect.anything(),
+      ),
+    );
+  });
+
   it("stops diagnostics polling while the page is hidden", () => {
     const original = Object.getOwnPropertyDescriptor(
       document,
@@ -508,9 +558,9 @@ function run(
     runDurationMs: 3_600_000,
     currentSliceWaitMs: 120_000,
     progress: {
-      text: { expected: 100, succeeded: 45, failed: 0, skipped: 0 },
-      images: { expected: 20, succeeded: 0 },
-      merge: { expected: 20, succeeded: 0 },
+      text: { expected: 100, succeeded: 45, failed: 2, skipped: 3 },
+      images: { expected: 20, succeeded: 10, failed: 2, skipped: 3 },
+      merge: { expected: 20, succeeded: 12, failed: 1, skipped: 2 },
     },
     ...overrides,
   };

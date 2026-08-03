@@ -75,6 +75,11 @@ describePostgres(
       expect(runs.items[0]).toMatchObject({
         runId: 'run-space-a-latest',
         spaceId: 'space-a',
+        progress: {
+          text: { expected: 3, succeeded: 1, failed: 1, skipped: 1 },
+          images: { expected: 5, succeeded: 3, failed: 1, skipped: 1 },
+          merge: { expected: 2, succeeded: 1, failed: 1, skipped: 0 },
+        },
       });
 
       const detail = await service.listRunPageDiagnostics({
@@ -88,6 +93,69 @@ describePostgres(
       expect(detail).toMatchObject({ total: 3, page: 1, limit: 2 });
       expect(detail?.items).toHaveLength(2);
       expect(JSON.stringify(detail)).not.toContain('private page content');
+    });
+
+    it('returns the most recent per-page compilation for the page log', async () => {
+      const log = await service.listPageCompilationLog({
+        workspaceId: 'workspace-1',
+        spaceIds: ['space-a'],
+        enforceSpaceScope: true,
+        page: 1,
+        limit: 50,
+        includeSensitiveErrors: false,
+      });
+      // Three distinct pages in space-a, most-recent-updated first.
+      expect(log.total).toBe(3);
+      expect(log.items.map((item) => item.sourcePageId)).toEqual([
+        'page-a-3',
+        'page-a-2',
+        'page-a-1',
+      ]);
+      const succeeded = log.items.find(
+        (item) => item.sourcePageId === 'page-a-1',
+      );
+      expect(succeeded).toMatchObject({
+        status: 'succeeded',
+        spaceName: 'Space A',
+        title: 'Page A1',
+        expectedImageCount: 2,
+        succeededImageCount: 2,
+      });
+      // Sensitive raw error text is redacted when not permitted.
+      expect(JSON.stringify(log)).not.toContain('private page content');
+    });
+
+    it('scopes the page log by status, search, and space', async () => {
+      const failedOnly = await service.listPageCompilationLog({
+        workspaceId: 'workspace-1',
+        spaceIds: ['space-a'],
+        enforceSpaceScope: true,
+        statuses: ['failed'],
+        includeSensitiveErrors: true,
+      });
+      expect(failedOnly.total).toBe(1);
+      expect(failedOnly.items[0]).toMatchObject({
+        sourcePageId: 'page-a-3',
+        status: 'failed',
+        errorCategory: 'provider',
+      });
+
+      const searched = await service.listPageCompilationLog({
+        workspaceId: 'workspace-1',
+        spaceIds: ['space-a', 'space-b'],
+        enforceSpaceScope: true,
+        search: 'Page B1',
+      });
+      expect(searched.items.map((item) => item.sourcePageId)).toEqual([
+        'page-b-1',
+      ]);
+
+      const emptyScope = await service.listPageCompilationLog({
+        workspaceId: 'workspace-1',
+        spaceIds: [],
+        enforceSpaceScope: true,
+      });
+      expect(emptyScope).toMatchObject({ items: [], total: 0 });
     });
   },
 );

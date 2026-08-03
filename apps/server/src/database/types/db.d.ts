@@ -737,6 +737,7 @@ export interface KnowledgeSpaceCompileRuns {
   startedAt: Timestamp | null;
   status: Generated<string>;
   succeededPageCount: Generated<number>;
+  targetSourcePageIds: Json | null;
   trigger: string;
   updatedAt: Generated<Timestamp>;
   workerId: string | null;

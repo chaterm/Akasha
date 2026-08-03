@@ -86,6 +86,19 @@ export interface KnowledgeRetryPagesResult {
   jobIds: string[];
 }
 
+export interface KnowledgeCancelRunResult {
+  disposition: "cancelled" | "already_terminal";
+  runId: string;
+  spaceId: string;
+  status: KnowledgeRunStatus;
+  phase: KnowledgeRunPhase;
+  previousStatus?: KnowledgeRunStatus;
+  previousPhase?: KnowledgeRunPhase;
+  removedJobCount: number;
+  fencedActiveJobCount: number;
+  cleanupErrorCount: number;
+}
+
 export interface KnowledgeQueueCounts {
   waiting: number;
   active: number;
@@ -109,7 +122,8 @@ export type KnowledgeRunStatus =
   | "succeeded"
   | "partial"
   | "failed"
-  | "superseded";
+  | "superseded"
+  | "cancelled";
 
 export type KnowledgeRunPhase =
   | "text"
@@ -191,8 +205,8 @@ export interface KnowledgeRunDiagnostic {
   currentSliceWaitMs: number | null;
   progress: {
     text: KnowledgeRunProgressCount;
-    images: Pick<KnowledgeRunProgressCount, "expected" | "succeeded">;
-    merge: Pick<KnowledgeRunProgressCount, "expected" | "succeeded">;
+    images: KnowledgeRunProgressCount;
+    merge: KnowledgeRunProgressCount;
   };
 }
 
@@ -245,6 +259,50 @@ export interface KnowledgeRunPageDiagnostic {
 export interface KnowledgeRunPageDiagnosticsPage {
   run: { runId: string; spaceId: string; spaceName: string };
   items: KnowledgeRunPageDiagnostic[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface KnowledgePageLogItem {
+  runPageId: string;
+  runId: string;
+  sourcePageId: string;
+  spaceId: string;
+  spaceName: string;
+  title: string;
+  slugId: string | null;
+  status: string;
+  imageStatus: string;
+  mergeStatus: string;
+  expectedImageCount: number;
+  succeededImageCount: number;
+  failedImageCount: number;
+  skippedImageCount: number;
+  errorCode: string | null;
+  errorCategory:
+    | "budget_timeout"
+    | "provider"
+    | "publication"
+    | "infrastructure"
+    | "other"
+    | null;
+  errorSummary: string | null;
+  errorDetail?: string;
+  queuedAt: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  durationMs: number | null;
+  lastCompiledAt: string | null;
+  updatedAt: string;
+  imageFailures: {
+    retryableExhausted: number;
+    permanent: number;
+  };
+}
+
+export interface KnowledgePageLogPage {
+  items: KnowledgePageLogItem[];
   total: number;
   page: number;
   limit: number;

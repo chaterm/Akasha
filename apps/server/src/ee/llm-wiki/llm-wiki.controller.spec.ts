@@ -812,12 +812,14 @@ describe('LlmWikiController', () => {
       {
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
-        trigger: 'retry_compile',
+        trigger: 'page_retry',
+        targetSourcePageIds: ['page-1'],
       },
       {
         workspaceId: 'workspace-1',
         spaceId: 'space-2',
-        trigger: 'retry_compile',
+        trigger: 'page_retry',
+        targetSourcePageIds: ['page-2'],
       },
     ]);
   });

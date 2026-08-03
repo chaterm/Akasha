@@ -3,30 +3,39 @@ import { QueueName } from '../../../integrations/queue/constants';
 import { KnowledgeSpaceResetService } from './knowledge-space-reset.service';
 
 describe('KnowledgeSpaceResetService', () => {
-  it('removes only returned removable jobs after commit and then dispatches the new run', async () => {
-    const removable = {
-      getState: jest.fn().mockResolvedValue('waiting'),
+  it('removes prioritized and image jobs after commit while fencing active work', async () => {
+    const prioritized = {
+      getState: jest.fn().mockResolvedValue('prioritized'),
       remove: jest.fn().mockResolvedValue(undefined),
     };
     const active = {
       getState: jest.fn().mockResolvedValue('active'),
       remove: jest.fn(),
     };
+    const imageWaiting = {
+      getState: jest.fn().mockResolvedValue('waiting'),
+      remove: jest.fn().mockResolvedValue(undefined),
+    };
     const queue = {
       getJob: jest
         .fn()
-        .mockResolvedValueOnce(removable)
-        .mockResolvedValueOnce(active),
+        .mockResolvedValueOnce(prioritized)
+        .mockResolvedValueOnce(active)
+        .mockResolvedValueOnce(undefined),
     };
     const imageQueue = {
-      getJob: jest.fn().mockResolvedValue(undefined),
+      getJob: jest.fn().mockResolvedValueOnce(imageWaiting),
     };
     const runRepo = {
       forceResetAndRequestRun: jest.fn().mockResolvedValue({
         reset: true,
         generation: 8,
         run: { id: 'force-run', mode: 'force_rebuild' },
-        supersededJobIds: ['waiting-job', 'active-job'],
+        supersededJobIds: [
+          'prioritized-space-job',
+          'active-job',
+          'waiting-image-job',
+        ],
       }),
     };
     const compilation = { dispatchPending: jest.fn() };
@@ -55,10 +64,11 @@ describe('KnowledgeSpaceResetService', () => {
         promptVersion: expect.any(String),
       }),
     );
-    expect(queue.getJob).toHaveBeenCalledTimes(2);
-    expect(imageQueue.getJob).toHaveBeenCalledTimes(2);
-    expect(removable.remove).toHaveBeenCalledTimes(1);
+    expect(queue.getJob).toHaveBeenCalledTimes(3);
+    expect(imageQueue.getJob).toHaveBeenCalledTimes(1);
+    expect(prioritized.remove).toHaveBeenCalledTimes(1);
     expect(active.remove).not.toHaveBeenCalled();
+    expect(imageWaiting.remove).toHaveBeenCalledTimes(1);
     expect(compilation.dispatchPending).toHaveBeenCalledTimes(1);
   });
 

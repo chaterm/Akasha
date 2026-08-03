@@ -31,6 +31,7 @@ import {
   IconDatabaseSearch,
   IconDotsVertical,
   IconInfoCircle,
+  IconPlayerStop,
   IconRefresh,
 } from "@tabler/icons-react";
 import { Helmet } from "react-helmet-async";
@@ -38,9 +39,12 @@ import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { getAppName } from "@/lib/config";
 import { useGetSpacesQuery } from "@/features/space/queries/space-query";
+import { buildPageUrl } from "@/features/page/page.utils.ts";
 import useUserRole from "@/hooks/use-user-role";
 import {
+  cancelKnowledgeCompilationRun,
   forceRebuildKnowledgeSpace,
+  getKnowledgePageCompilationLog,
   getKnowledgeQualityDiagnostics,
   getKnowledgeQuarantineDiagnostics,
   getKnowledgeRetrievalDiagnostics,
@@ -55,6 +59,7 @@ import {
 import classes from "../styles/knowledge-admin.module.css";
 import type {
   KnowledgeAdminSpaceAction,
+  KnowledgePageLogItem,
   KnowledgeQualityReport,
   KnowledgeQuarantineDiagnosticsPage,
   KnowledgeQueueSnapshot,
@@ -92,6 +97,7 @@ const RUN_STATUS_OPTIONS = [
   "partial",
   "failed",
   "superseded",
+  "cancelled",
 ].map((value) => ({ value, label: humanizeState(value) }));
 
 const RUN_PHASE_OPTIONS = [
@@ -103,17 +109,41 @@ const RUN_PHASE_OPTIONS = [
   "complete",
 ].map((value) => ({ value, label: humanizeState(value) }));
 
+const PAGE_LOG_STATUS_OPTIONS = [
+  "pending",
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "skipped",
+].map((value) => ({ value, label: humanizeState(value) }));
+
+// Quick relative time windows for the compilation log, in hours.
+const PAGE_LOG_RANGE_HOURS: Record<string, number> = {
+  "1h": 1,
+  "24h": 24,
+  "7d": 24 * 7,
+  "30d": 24 * 30,
+};
+type PageLogRange = keyof typeof PAGE_LOG_RANGE_HOURS | "all";
+
 type ConfirmedSpaceCompilation = {
   mode: "update" | "force";
   spaceId: string;
   spaceName: string;
 };
 
+type ConfirmedRunCancellation = {
+  runId: string;
+  spaceName: string;
+};
+
 type RunStatusFilter = KnowledgeRunStatus | "active";
+type DiagnosticsSection = "runs" | "log" | "health";
 
 export default function KnowledgeAdminPage() {
   const { t } = useTranslation();
-  const { isOwner } = useUserRole();
+  const { isOwner, isAdmin } = useUserRole();
   const [spaceSelection, setSpaceSelection] = useState<string[]>([
     ALL_SPACES_VALUE,
   ]);
@@ -123,8 +153,13 @@ export default function KnowledgeAdminPage() {
   const [runPage, setRunPage] = useState(1);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [runPageDetailPage, setRunPageDetailPage] = useState(1);
-  const [activeSection, setActiveSection] = useState<"runs" | "health">("runs");
+  const [activeSection, setActiveSection] =
+    useState<DiagnosticsSection>("runs");
   const [quarantinePage, setQuarantinePage] = useState(1);
+  const [logRange, setLogRange] = useState<PageLogRange>("24h");
+  const [logStatus, setLogStatus] = useState<string | null>(null);
+  const [logSearch, setLogSearch] = useState("");
+  const [logPage, setLogPage] = useState(1);
   const [selectedPageIds, setSelectedPageIds] = useState<string[]>([]);
   const [confirmedCompilation, setConfirmedCompilation] =
     useState<ConfirmedSpaceCompilation | null>(null);
@@ -132,6 +167,11 @@ export default function KnowledgeAdminPage() {
   const [confirmationError, setConfirmationError] = useState<string | null>(
     null,
   );
+  const [confirmedRunCancellation, setConfirmedRunCancellation] =
+    useState<ConfirmedRunCancellation | null>(null);
+  const [cancelConfirmationSpaceName, setCancelConfirmationSpaceName] =
+    useState("");
+  const [cancelReason, setCancelReason] = useState("");
   const { data: spacesData, isLoading: spacesLoading } = useGetSpacesQuery({
     limit: 1000,
   });
@@ -142,6 +182,10 @@ export default function KnowledgeAdminPage() {
       ...spaces.map((space) => ({ value: space.id, label: space.name })),
     ],
     [spaces, t],
+  );
+  const spaceSlugById = useMemo(
+    () => new Map(spaces.map((space) => [space.id, space.slug] as const)),
+    [spaces],
   );
   const allSpacesSelected = spaceSelection.includes(ALL_SPACES_VALUE);
   const selectedSpaceIds = allSpacesSelected ? [] : spaceSelection;
@@ -237,6 +281,34 @@ export default function KnowledgeAdminPage() {
     queryFn: getKnowledgeRetrievalDiagnostics,
     enabled: activeSection === "health" && isOwner,
   });
+  const pageLogQuery = useQuery({
+    queryKey: [
+      "knowledge-page-log",
+      allSpacesSelected,
+      selectedSpaceIds,
+      logRange,
+      logStatus,
+      logSearch,
+      logPage,
+    ],
+    queryFn: () => {
+      const hours = PAGE_LOG_RANGE_HOURS[logRange];
+      const from = hours
+        ? new Date(Date.now() - hours * 3_600_000).toISOString()
+        : undefined;
+      return getKnowledgePageCompilationLog({
+        ...diagnosticsScope,
+        ...(from ? { from } : {}),
+        ...(logStatus ? { statuses: [logStatus] } : {}),
+        ...(logSearch.trim() ? { search: logSearch.trim() } : {}),
+        page: logPage,
+        limit: PAGE_SIZE,
+      });
+    },
+    enabled: activeSection === "log" && diagnosticsScopeReady,
+    refetchInterval: knowledgeDiagnosticsRefetchInterval,
+    refetchIntervalInBackground: false,
+  });
 
   const refreshRunViews = () => {
     void runSummaryQuery.refetch();
@@ -295,6 +367,37 @@ export default function KnowledgeAdminPage() {
     onError: (error) =>
       notifications.show({ color: "red", message: error.message }),
   });
+  const logRetryMutation = useMutation({
+    mutationFn: retryKnowledgePages,
+    onSuccess: (data) => {
+      notifications.show({
+        message: t("Knowledge page retries queued", {
+          count: data.queuedPageCount,
+        }),
+      });
+      void pageLogQuery.refetch();
+    },
+    onError: (error) =>
+      notifications.show({ color: "red", message: error.message }),
+  });
+  const cancelRunMutation = useMutation({
+    mutationFn: cancelKnowledgeCompilationRun,
+    retry: false,
+    onSuccess: (data) => {
+      setConfirmedRunCancellation(null);
+      setCancelConfirmationSpaceName("");
+      setCancelReason("");
+      notifications.show({
+        message:
+          data.disposition === "already_terminal"
+            ? t("Compilation run was already finished")
+            : t("Compilation run cancelled"),
+      });
+      refreshRunViews();
+    },
+    onError: (error) =>
+      notifications.show({ color: "red", message: error.message }),
+  });
 
   const runSummary = runSummaryQuery.data;
   const runs = runListQuery.data?.items ?? [];
@@ -315,6 +418,15 @@ export default function KnowledgeAdminPage() {
     setConfirmationSpaceName("");
     setConfirmationError(null);
     confirmedCompilationMutation.reset();
+  };
+  const openRunCancellation = (run: KnowledgeRunDiagnostic) => {
+    setConfirmedRunCancellation({
+      runId: run.runId,
+      spaceName: run.spaceName,
+    });
+    setCancelConfirmationSpaceName("");
+    setCancelReason("");
+    cancelRunMutation.reset();
   };
 
   return (
@@ -428,6 +540,77 @@ export default function KnowledgeAdminPage() {
                     }
                   >
                     {t("Confirm")}
+                  </Button>
+                </Group>
+              </Stack>
+            )}
+          </Modal>
+
+          <Modal
+            opened={confirmedRunCancellation !== null}
+            onClose={() => {
+              if (!cancelRunMutation.isPending) {
+                setConfirmedRunCancellation(null);
+              }
+            }}
+            title={t("Cancel compilation run")}
+            centered
+          >
+            {confirmedRunCancellation && (
+              <Stack gap="md">
+                <Alert color="orange" icon={<IconPlayerStop size={18} />}>
+                  {t(
+                    "Remaining compilation work will stop. Knowledge already published by completed pages is retained.",
+                  )}
+                </Alert>
+                <Text size="sm">
+                  {t("Enter the exact space name to continue:")}{" "}
+                  <Text component="span" fw={700}>
+                    {confirmedRunCancellation.spaceName}
+                  </Text>
+                </Text>
+                <TextInput
+                  label={t("Type the space name to confirm")}
+                  value={cancelConfirmationSpaceName}
+                  onChange={(event) =>
+                    setCancelConfirmationSpaceName(event.currentTarget.value)
+                  }
+                  data-autofocus
+                />
+                <TextInput
+                  label={t("Reason (optional)")}
+                  value={cancelReason}
+                  maxLength={400}
+                  onChange={(event) =>
+                    setCancelReason(event.currentTarget.value)
+                  }
+                />
+                <Group justify="flex-end">
+                  <Button
+                    variant="default"
+                    disabled={cancelRunMutation.isPending}
+                    onClick={() => setConfirmedRunCancellation(null)}
+                  >
+                    {t("Keep running")}
+                  </Button>
+                  <Button
+                    color="orange"
+                    leftSection={<IconPlayerStop size={16} />}
+                    loading={cancelRunMutation.isPending}
+                    disabled={
+                      cancelConfirmationSpaceName !==
+                      confirmedRunCancellation.spaceName
+                    }
+                    onClick={() =>
+                      cancelRunMutation.mutate({
+                        runId: confirmedRunCancellation.runId,
+                        ...(cancelReason.trim()
+                          ? { reason: cancelReason.trim() }
+                          : {}),
+                      })
+                    }
+                  >
+                    {t("Cancel run")}
                   </Button>
                 </Group>
               </Stack>
@@ -585,16 +768,52 @@ export default function KnowledgeAdminPage() {
           <Tabs
             value={activeSection}
             onChange={(value) =>
-              setActiveSection(value === "health" ? "health" : "runs")
+              setActiveSection(
+                value === "health" || value === "log"
+                  ? (value as DiagnosticsSection)
+                  : "runs",
+              )
             }
           >
             <Tabs.List>
               <Tabs.Tab value="runs">{t("Compilation runs")}</Tabs.Tab>
+              <Tabs.Tab value="log">{t("Compilation log")}</Tabs.Tab>
               <Tabs.Tab value="health">{t("Health and quarantine")}</Tabs.Tab>
             </Tabs.List>
           </Tabs>
 
-          {activeSection === "runs" ? (
+          {activeSection === "log" ? (
+            <PageCompilationLog
+              query={pageLogQuery}
+              range={logRange}
+              setRange={(value) => {
+                setLogRange(value);
+                setLogPage(1);
+              }}
+              status={logStatus}
+              setStatus={(value) => {
+                setLogStatus(value);
+                setLogPage(1);
+              }}
+              search={logSearch}
+              setSearch={(value) => {
+                setLogSearch(value);
+                setLogPage(1);
+              }}
+              page={logPage}
+              setPage={setLogPage}
+              spaceSlugById={spaceSlugById}
+              isAdmin={isAdmin}
+              onRetry={(pageId) =>
+                logRetryMutation.mutate({ pageIds: [pageId] })
+              }
+              retryingPageId={
+                logRetryMutation.isPending
+                  ? (logRetryMutation.variables?.pageIds[0] ?? null)
+                  : null
+              }
+            />
+          ) : activeSection === "runs" ? (
             <>
               <section className={classes.panel}>
                 <Group justify="space-between" mb="md">
@@ -776,6 +995,7 @@ export default function KnowledgeAdminPage() {
                         <Table.Th>{t("Merge")}</Table.Th>
                         <Table.Th>{t("Current wait")}</Table.Th>
                         <Table.Th>{t("Run duration")}</Table.Th>
+                        <Table.Th>{t("Compiled at")}</Table.Th>
                         <Table.Th>{t("Worker")}</Table.Th>
                         <Table.Th>{t("Details")}</Table.Th>
                       </Table.Tr>
@@ -783,7 +1003,7 @@ export default function KnowledgeAdminPage() {
                     <Table.Tbody>
                       {runs.length === 0 ? (
                         <Table.Tr>
-                          <Table.Td colSpan={10}>
+                          <Table.Td colSpan={11}>
                             <Text className={classes.emptyText}>
                               {t("No compilation runs")}
                             </Text>
@@ -799,6 +1019,12 @@ export default function KnowledgeAdminPage() {
                               setRunPageDetailPage(1);
                               setSelectedPageIds([]);
                             }}
+                            onCancel={
+                              isAdmin &&
+                              ACTIVE_RUN_STATUSES.includes(run.status)
+                                ? () => openRunCancellation(run)
+                                : undefined
+                            }
                           />
                         ))
                       )}
@@ -906,6 +1132,237 @@ export default function KnowledgeAdminPage() {
         </Stack>
       </Container>
     </>
+  );
+}
+
+function PageCompilationLog({
+  query,
+  range,
+  setRange,
+  status,
+  setStatus,
+  search,
+  setSearch,
+  page,
+  setPage,
+  spaceSlugById,
+  isAdmin,
+  onRetry,
+  retryingPageId,
+}: {
+  query: UseQueryResult<
+    { items: KnowledgePageLogItem[]; total: number },
+    Error
+  >;
+  range: PageLogRange;
+  setRange: (value: PageLogRange) => void;
+  status: string | null;
+  setStatus: (value: string | null) => void;
+  search: string;
+  setSearch: (value: string) => void;
+  page: number;
+  setPage: (value: number) => void;
+  spaceSlugById: Map<string, string>;
+  isAdmin: boolean;
+  onRetry: (pageId: string) => void;
+  retryingPageId: string | null;
+}) {
+  const { t } = useTranslation();
+  const items = query.data?.items ?? [];
+  const pageCount = Math.max(
+    1,
+    Math.ceil((query.data?.total ?? 0) / PAGE_SIZE),
+  );
+  const rangeOptions = [
+    { value: "1h", label: t("Last hour") },
+    { value: "24h", label: t("Last 24 hours") },
+    { value: "7d", label: t("Last 7 days") },
+    { value: "30d", label: t("Last 30 days") },
+    { value: "all", label: t("All time") },
+  ];
+
+  return (
+    <section className={classes.panel}>
+      <Group justify="space-between" mb="md">
+        <Title order={2} size="h5">
+          {t("Compilation log")}
+        </Title>
+        <Text size="xs" c="dimmed">
+          {t("Most recent compilation per page")}
+        </Text>
+      </Group>
+      <Group gap="sm" mb="md" align="flex-end">
+        <Select
+          label={t("Time range")}
+          data={rangeOptions}
+          value={range}
+          onChange={(value) => setRange((value as PageLogRange) ?? "24h")}
+          allowDeselect={false}
+          w={160}
+        />
+        <Select
+          label={t("Status")}
+          data={PAGE_LOG_STATUS_OPTIONS}
+          value={status}
+          onChange={setStatus}
+          placeholder={t("All statuses")}
+          clearable
+          w={160}
+        />
+        <TextInput
+          label={t("Search page")}
+          value={search}
+          onChange={(event) => setSearch(event.currentTarget.value)}
+          placeholder={t("Title or slug")}
+          w={240}
+        />
+      </Group>
+      {query.isError && (
+        <Alert color="red" icon={<IconAlertTriangle size={18} />}>
+          {query.error.message}
+        </Alert>
+      )}
+      {query.isLoading ? (
+        <Loader size="sm" />
+      ) : items.length === 0 ? (
+        <Text size="sm" c="dimmed">
+          {t("No compiled pages found in this range.")}
+        </Text>
+      ) : (
+        <>
+          <Table.ScrollContainer minWidth={isAdmin ? 1020 : 900}>
+            <Table highlightOnHover verticalSpacing="sm">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>{t("Page")}</Table.Th>
+                  <Table.Th>{t("Space")}</Table.Th>
+                  <Table.Th>{t("Status")}</Table.Th>
+                  <Table.Th>{t("Images")}</Table.Th>
+                  <Table.Th>{t("Last compiled")}</Table.Th>
+                  <Table.Th>{t("Duration")}</Table.Th>
+                  <Table.Th>{t("Error")}</Table.Th>
+                  {isAdmin && <Table.Th>{t("Actions")}</Table.Th>}
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {items.map((item) => (
+                  <PageLogRow
+                    key={item.runPageId}
+                    item={item}
+                    spaceSlug={spaceSlugById.get(item.spaceId)}
+                    isAdmin={isAdmin}
+                    onRetry={onRetry}
+                    retrying={retryingPageId === item.sourcePageId}
+                  />
+                ))}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
+          <Group justify="flex-end" mt="md">
+            <Pagination value={page} onChange={setPage} total={pageCount} />
+          </Group>
+        </>
+      )}
+    </section>
+  );
+}
+
+function PageLogRow({
+  item,
+  spaceSlug,
+  isAdmin,
+  onRetry,
+  retrying,
+}: {
+  item: KnowledgePageLogItem;
+  spaceSlug: string | undefined;
+  isAdmin: boolean;
+  onRetry: (pageId: string) => void;
+  retrying: boolean;
+}) {
+  const { t } = useTranslation();
+  const imageSummary =
+    item.expectedImageCount > 0
+      ? item.failedImageCount > 0
+        ? t("{{succeeded}}/{{expected}} · {{failed}} failed", {
+            succeeded: item.succeededImageCount,
+            expected: item.expectedImageCount,
+            failed: item.failedImageCount,
+          })
+        : `${item.succeededImageCount}/${item.expectedImageCount}`
+      : "-";
+  const pageUrl =
+    spaceSlug && item.slugId
+      ? buildPageUrl(spaceSlug, item.slugId, item.title)
+      : null;
+
+  return (
+    <Table.Tr>
+      <Table.Td>
+        {pageUrl ? (
+          <Text
+            component={Link}
+            to={pageUrl}
+            size="sm"
+            c="blue"
+            style={{ textDecoration: "none" }}
+          >
+            {item.title || item.slugId || item.sourcePageId}
+          </Text>
+        ) : (
+          <Text size="sm">
+            {item.title || item.slugId || item.sourcePageId}
+          </Text>
+        )}
+      </Table.Td>
+      <Table.Td>
+        <Text size="sm">{item.spaceName}</Text>
+      </Table.Td>
+      <Table.Td>
+        <StateBadge value={item.status} />
+      </Table.Td>
+      <Table.Td>
+        <Text size="sm" c={item.failedImageCount > 0 ? "red" : undefined}>
+          {imageSummary}
+        </Text>
+      </Table.Td>
+      <Table.Td>
+        <Text size="sm">{formatDate(item.lastCompiledAt)}</Text>
+      </Table.Td>
+      <Table.Td>
+        <Text size="sm">{formatDuration(item.durationMs)}</Text>
+      </Table.Td>
+      <Table.Td>
+        {item.errorCode ? (
+          <Text size="xs" c="red">
+            {item.errorDetail ?? item.errorSummary ?? item.errorCode}
+          </Text>
+        ) : (
+          <Text size="xs" c="dimmed">
+            -
+          </Text>
+        )}
+      </Table.Td>
+      {isAdmin && (
+        <Table.Td>
+          {item.status === "failed" ? (
+            <Button
+              size="xs"
+              variant="light"
+              leftSection={<IconRefresh size={14} />}
+              loading={retrying}
+              onClick={() => onRetry(item.sourcePageId)}
+            >
+              {t("Retry")}
+            </Button>
+          ) : (
+            <Text size="xs" c="dimmed">
+              -
+            </Text>
+          )}
+        </Table.Td>
+      )}
+    </Table.Tr>
   );
 }
 
@@ -1139,9 +1596,11 @@ function HealthDiagnostics({
 function RunRow({
   run,
   onViewPages,
+  onCancel,
 }: {
   run: KnowledgeRunDiagnostic;
   onViewPages: () => void;
+  onCancel?: () => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -1165,16 +1624,40 @@ function RunRow({
           {run.lastYieldReason ? ` · ${run.lastYieldReason}` : ""}
         </Text>
       </Table.Td>
-      <Table.Td>{formatProgress(run.progress.text)}</Table.Td>
-      <Table.Td>{formatProgress(run.progress.images)}</Table.Td>
-      <Table.Td>{formatProgress(run.progress.merge)}</Table.Td>
+      <Table.Td>
+        <ProgressCell progress={run.progress.text} />
+      </Table.Td>
+      <Table.Td>
+        <ProgressCell progress={run.progress.images} />
+      </Table.Td>
+      <Table.Td>
+        <ProgressCell progress={run.progress.merge} />
+      </Table.Td>
       <Table.Td>{formatDuration(run.currentSliceWaitMs)}</Table.Td>
       <Table.Td>{formatDuration(run.runDurationMs)}</Table.Td>
+      <Table.Td>
+        <Text size="sm">
+          {formatDate(run.startedAt ?? run.queuedAt ?? run.createdAt)}
+        </Text>
+      </Table.Td>
       <Table.Td>{run.workerId ?? "-"}</Table.Td>
       <Table.Td>
-        <Button size="xs" variant="subtle" onClick={onViewPages}>
-          {t("View pages")}
-        </Button>
+        <Group gap={4} wrap="nowrap">
+          <Button size="xs" variant="subtle" onClick={onViewPages}>
+            {t("View pages")}
+          </Button>
+          {onCancel && (
+            <Button
+              size="xs"
+              color="orange"
+              variant="subtle"
+              leftSection={<IconPlayerStop size={14} />}
+              onClick={onCancel}
+            >
+              {t("Cancel run")}
+            </Button>
+          )}
+        </Group>
       </Table.Td>
     </Table.Tr>
   );
@@ -1253,13 +1736,15 @@ function Metric({ label, value }: { label: string; value: number | string }) {
 
 function StateBadge({ value }: { value: string }) {
   const color =
-    value === "failed" || value === "provider" || value === "publication"
-      ? "red"
-      : value === "partial" || value === "budget_timeout"
-        ? "orange"
-        : value === "succeeded" || value === "complete"
-          ? "green"
-          : "blue";
+    value === "cancelled" || value === "superseded"
+      ? "gray"
+      : value === "failed" || value === "provider" || value === "publication"
+        ? "red"
+        : value === "partial" || value === "budget_timeout"
+          ? "orange"
+          : value === "succeeded" || value === "complete"
+            ? "green"
+            : "blue";
   return (
     <Badge color={color} variant="light">
       {humanizeState(value)}
@@ -1267,8 +1752,29 @@ function StateBadge({ value }: { value: string }) {
   );
 }
 
-function formatProgress(progress: { expected: number; succeeded: number }) {
-  return `${progress.succeeded}/${progress.expected}`;
+function ProgressCell({
+  progress,
+}: {
+  progress: {
+    expected: number;
+    succeeded: number;
+    failed: number;
+    skipped: number;
+  };
+}) {
+  const { t } = useTranslation();
+  const completed = progress.succeeded + progress.failed + progress.skipped;
+  return (
+    <Stack gap={0}>
+      <Text size="sm" fw={500}>
+        {completed}/{progress.expected}
+      </Text>
+      <Text size="xs" c="dimmed">
+        {t("Succeeded")} {progress.succeeded} · {t("Failed")} {progress.failed}{" "}
+        · {t("Skipped")} {progress.skipped}
+      </Text>
+    </Stack>
+  );
 }
 
 function formatDate(value: string | null): string {
