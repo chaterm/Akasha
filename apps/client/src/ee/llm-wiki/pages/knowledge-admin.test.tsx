@@ -194,6 +194,15 @@ describe("KnowledgeAdminPage", () => {
     renderPage();
 
     expect(await screen.findByText("Space compilation runs")).toBeTruthy();
+    expect(screen.getAllByText("All spaces").length).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(getKnowledgeRunDiagnosticsSummary).toHaveBeenCalledWith({}),
+    );
+    expect(getKnowledgeRunDiagnostics).toHaveBeenCalledWith({
+      statuses: ["queued", "compiling", "aggregate_pending", "aggregating"],
+      page: 1,
+      limit: 50,
+    });
     expect(await screen.findByText("Waiting initialization")).toBeTruthy();
     expect(await screen.findByText("Space dispatch pending")).toBeTruthy();
     expect(await screen.findByText("text continuation")).toBeTruthy();
@@ -222,11 +231,8 @@ describe("KnowledgeAdminPage", () => {
 
     expect(await screen.findByText("Knowledge health")).toBeTruthy();
     expect(await screen.findByText("artifact-1")).toBeTruthy();
-    expect(getKnowledgeQualityDiagnostics).toHaveBeenCalledWith({
-      spaceIds: ["space-1"],
-    });
+    expect(getKnowledgeQualityDiagnostics).toHaveBeenCalledWith({});
     expect(getKnowledgeQuarantineDiagnostics).toHaveBeenCalledWith({
-      spaceIds: ["space-1"],
       page: 1,
       limit: 20,
     });
@@ -262,7 +268,6 @@ describe("KnowledgeAdminPage", () => {
 
     await waitFor(() =>
       expect(getKnowledgeRunDiagnostics).toHaveBeenCalledWith({
-        spaceIds: ["space-1"],
         statuses: ["queued"],
         phases: ["text"],
         search: "run-page",
@@ -278,6 +283,35 @@ describe("KnowledgeAdminPage", () => {
     expect(getKnowledgeRunDiagnostics).toHaveBeenCalledWith(
       expect.objectContaining({ page: 2, limit: 50 }),
     );
+  });
+
+  it("switches between all readable spaces and an explicit space scope", async () => {
+    renderPage();
+    await screen.findByText("Space compilation runs");
+
+    selectOption("space-1");
+    await waitFor(() =>
+      expect(getKnowledgeRunDiagnostics).toHaveBeenCalledWith({
+        spaceIds: ["space-1"],
+        statuses: ["queued", "compiling", "aggregate_pending", "aggregating"],
+        page: 1,
+        limit: 50,
+      }),
+    );
+
+    const callsBeforeReturningToAll = vi.mocked(getKnowledgeRunDiagnostics).mock
+      .calls.length;
+    selectOption("__all_spaces__");
+    await waitFor(() =>
+      expect(
+        vi.mocked(getKnowledgeRunDiagnostics).mock.calls.length,
+      ).toBeGreaterThan(callsBeforeReturningToAll),
+    );
+    expect(getKnowledgeRunDiagnostics).toHaveBeenLastCalledWith({
+      statuses: ["queued", "compiling", "aggregate_pending", "aggregating"],
+      page: 1,
+      limit: 50,
+    });
   });
 
   it("stops requesting RunPage details after the detail modal closes", async () => {
@@ -338,6 +372,11 @@ describe("KnowledgeAdminPage", () => {
 
   it("requires the exact Space name before requesting an update", async () => {
     renderPage();
+    await screen.findByText("Space compilation runs");
+    expect(
+      screen.queryByRole("button", { name: "Update knowledge" }),
+    ).toBeNull();
+    selectOption("space-1");
     await screen.findByText("Space operations");
     fireEvent.click(screen.getByRole("button", { name: "Update knowledge" }));
 

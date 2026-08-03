@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Alert,
   Badge,
@@ -65,6 +65,13 @@ import type {
 } from "../types/knowledge.types";
 
 const PAGE_SIZE = 50;
+const ALL_SPACES_VALUE = "__all_spaces__";
+const ACTIVE_RUN_STATUSES: KnowledgeRunStatus[] = [
+  "queued",
+  "compiling",
+  "aggregate_pending",
+  "aggregating",
+];
 
 export function knowledgeDiagnosticsRefetchInterval(): number | false {
   if (
@@ -102,11 +109,15 @@ type ConfirmedSpaceCompilation = {
   spaceName: string;
 };
 
+type RunStatusFilter = KnowledgeRunStatus | "active";
+
 export default function KnowledgeAdminPage() {
   const { t } = useTranslation();
   const { isOwner } = useUserRole();
-  const [spaceIds, setSpaceIds] = useState<string[]>([]);
-  const [runStatus, setRunStatus] = useState<KnowledgeRunStatus | null>(null);
+  const [spaceSelection, setSpaceSelection] = useState<string[]>([
+    ALL_SPACES_VALUE,
+  ]);
+  const [runStatus, setRunStatus] = useState<RunStatusFilter | null>("active");
   const [runPhase, setRunPhase] = useState<KnowledgeRunPhase | null>(null);
   const [runSearch, setRunSearch] = useState("");
   const [runPage, setRunPage] = useState(1);
@@ -121,38 +132,47 @@ export default function KnowledgeAdminPage() {
   const [confirmationError, setConfirmationError] = useState<string | null>(
     null,
   );
-  const spaceIdsInitialized = useRef(false);
   const { data: spacesData, isLoading: spacesLoading } = useGetSpacesQuery({
     limit: 1000,
   });
   const spaces = spacesData?.items ?? [];
   const spaceOptions = useMemo(
-    () => spaces.map((space) => ({ value: space.id, label: space.name })),
-    [spaces],
+    () => [
+      { value: ALL_SPACES_VALUE, label: t("All spaces") },
+      ...spaces.map((space) => ({ value: space.id, label: space.name })),
+    ],
+    [spaces, t],
   );
+  const allSpacesSelected = spaceSelection.includes(ALL_SPACES_VALUE);
+  const selectedSpaceIds = allSpacesSelected ? [] : spaceSelection;
+  const diagnosticsScope = allSpacesSelected
+    ? {}
+    : { spaceIds: selectedSpaceIds };
+  const diagnosticsScopeReady =
+    allSpacesSelected || selectedSpaceIds.length > 0;
   const selectedSpaces = useMemo(
-    () => spaces.filter((space) => spaceIds.includes(space.id)),
-    [spaceIds, spaces],
+    () => spaces.filter((space) => selectedSpaceIds.includes(space.id)),
+    [selectedSpaceIds, spaces],
   );
-
-  useEffect(() => {
-    if (!spaceIdsInitialized.current && spaceOptions.length > 0) {
-      spaceIdsInitialized.current = true;
-      setSpaceIds([spaceOptions[0].value]);
-    }
-  }, [spaceOptions]);
+  const runStatuses =
+    runStatus === "active"
+      ? ACTIVE_RUN_STATUSES
+      : runStatus
+        ? [runStatus]
+        : undefined;
 
   const runSummaryQuery = useQuery({
-    queryKey: ["knowledge-run-summary", spaceIds],
-    queryFn: () => getKnowledgeRunDiagnosticsSummary({ spaceIds }),
-    enabled: spaceIds.length > 0,
+    queryKey: ["knowledge-run-summary", allSpacesSelected, selectedSpaceIds],
+    queryFn: () => getKnowledgeRunDiagnosticsSummary(diagnosticsScope),
+    enabled: diagnosticsScopeReady,
     refetchInterval: knowledgeDiagnosticsRefetchInterval,
     refetchIntervalInBackground: false,
   });
   const runListQuery = useQuery({
     queryKey: [
       "knowledge-runs",
-      spaceIds,
+      allSpacesSelected,
+      selectedSpaceIds,
       runStatus,
       runPhase,
       runSearch,
@@ -160,14 +180,14 @@ export default function KnowledgeAdminPage() {
     ],
     queryFn: () =>
       getKnowledgeRunDiagnostics({
-        spaceIds,
-        ...(runStatus ? { statuses: [runStatus] } : {}),
+        ...diagnosticsScope,
+        ...(runStatuses ? { statuses: runStatuses } : {}),
         ...(runPhase ? { phases: [runPhase] } : {}),
         ...(runSearch.trim() ? { search: runSearch.trim() } : {}),
         page: runPage,
         limit: PAGE_SIZE,
       }),
-    enabled: spaceIds.length > 0,
+    enabled: diagnosticsScopeReady,
     refetchInterval: knowledgeDiagnosticsRefetchInterval,
     refetchIntervalInBackground: false,
   });
@@ -193,19 +213,24 @@ export default function KnowledgeAdminPage() {
     refetchIntervalInBackground: false,
   });
   const qualityQuery = useQuery({
-    queryKey: ["knowledge-quality", spaceIds],
-    queryFn: () => getKnowledgeQualityDiagnostics({ spaceIds }),
-    enabled: activeSection === "health" && spaceIds.length > 0,
+    queryKey: ["knowledge-quality", allSpacesSelected, selectedSpaceIds],
+    queryFn: () => getKnowledgeQualityDiagnostics(diagnosticsScope),
+    enabled: activeSection === "health" && diagnosticsScopeReady,
   });
   const quarantineQuery = useQuery({
-    queryKey: ["knowledge-quarantine", spaceIds, quarantinePage],
+    queryKey: [
+      "knowledge-quarantine",
+      allSpacesSelected,
+      selectedSpaceIds,
+      quarantinePage,
+    ],
     queryFn: () =>
       getKnowledgeQuarantineDiagnostics({
-        spaceIds,
+        ...diagnosticsScope,
         page: quarantinePage,
         limit: 20,
       }),
-    enabled: activeSection === "health" && isOwner && spaceIds.length > 0,
+    enabled: activeSection === "health" && isOwner && diagnosticsScopeReady,
   });
   const retrievalQuery = useQuery({
     queryKey: ["knowledge-retrieval"],
@@ -321,7 +346,7 @@ export default function KnowledgeAdminPage() {
                 variant="default"
                 leftSection={<IconRefresh size={16} />}
                 loading={runSummaryQuery.isFetching || runListQuery.isFetching}
-                disabled={spaceIds.length === 0}
+                disabled={!diagnosticsScopeReady}
                 onClick={refreshRunViews}
               >
                 {t("Refresh")}
@@ -527,9 +552,19 @@ export default function KnowledgeAdminPage() {
           <section className={classes.panel}>
             <MultiSelect
               data={spaceOptions}
-              value={spaceIds}
+              value={spaceSelection}
               onChange={(value) => {
-                setSpaceIds(value);
+                const includesAll = value.includes(ALL_SPACES_VALUE);
+                const wasAll = spaceSelection.includes(ALL_SPACES_VALUE);
+                const nextValue =
+                  value.length === 0
+                    ? [ALL_SPACES_VALUE]
+                    : includesAll && value.length > 1
+                      ? wasAll
+                        ? value.filter((item) => item !== ALL_SPACES_VALUE)
+                        : [ALL_SPACES_VALUE]
+                      : value;
+                setSpaceSelection(nextValue);
                 setRunPage(1);
                 setQuarantinePage(1);
                 setSelectedRunId(null);
@@ -705,10 +740,13 @@ export default function KnowledgeAdminPage() {
                     }}
                   />
                   <Select
-                    data={RUN_STATUS_OPTIONS}
+                    data={[
+                      { value: "active", label: t("Active runs") },
+                      ...RUN_STATUS_OPTIONS,
+                    ]}
                     value={runStatus}
                     onChange={(value) => {
-                      setRunStatus(value as KnowledgeRunStatus | null);
+                      setRunStatus(value as RunStatusFilter | null);
                       setRunPage(1);
                     }}
                     label={t("Run status")}
@@ -785,64 +823,74 @@ export default function KnowledgeAdminPage() {
                 <Title order={2} size="h4" mb="md">
                   {t("Space operations")}
                 </Title>
-                <Table.ScrollContainer minWidth={900}>
-                  <Table highlightOnHover verticalSpacing="sm">
-                    <Table.Thead>
-                      <Table.Tr>
-                        <Table.Th>{t("Space")}</Table.Th>
-                        <Table.Th>{t("Actions")}</Table.Th>
-                      </Table.Tr>
-                    </Table.Thead>
-                    <Table.Tbody>
-                      {selectedSpaces.map((space) => (
-                        <Table.Tr key={space.id}>
-                          <Table.Td>{space.name}</Table.Td>
-                          <Table.Td>
-                            <Group gap="xs">
-                              <Button
-                                size="xs"
-                                variant="light"
-                                onClick={() =>
-                                  openCompilation(
-                                    "update",
-                                    space.id,
-                                    space.name,
-                                  )
-                                }
-                              >
-                                {t("Update knowledge")}
-                              </Button>
-                              <Button
-                                size="xs"
-                                variant="default"
-                                loading={actionMutation.isPending}
-                                onClick={() =>
-                                  actionMutation.mutate({
-                                    action: "rebuild_embeddings",
-                                    spaceIds: [space.id],
-                                  })
-                                }
-                              >
-                                {t("Rebuild embeddings")}
-                              </Button>
-                              <MaintenanceMenu
-                                onAction={(action) =>
-                                  actionMutation.mutate({
-                                    action,
-                                    spaceIds: [space.id],
-                                  })
-                                }
-                                onForce={() =>
-                                  openCompilation("force", space.id, space.name)
-                                }
-                              />
-                            </Group>
-                          </Table.Td>
+                {selectedSpaces.length === 0 ? (
+                  <Alert color="blue" icon={<IconInfoCircle size={18} />}>
+                    {t("Select a space")}
+                  </Alert>
+                ) : (
+                  <Table.ScrollContainer minWidth={900}>
+                    <Table highlightOnHover verticalSpacing="sm">
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th>{t("Space")}</Table.Th>
+                          <Table.Th>{t("Actions")}</Table.Th>
                         </Table.Tr>
-                      ))}
-                    </Table.Tbody>
-                  </Table>
-                </Table.ScrollContainer>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {selectedSpaces.map((space) => (
+                          <Table.Tr key={space.id}>
+                            <Table.Td>{space.name}</Table.Td>
+                            <Table.Td>
+                              <Group gap="xs">
+                                <Button
+                                  size="xs"
+                                  variant="light"
+                                  onClick={() =>
+                                    openCompilation(
+                                      "update",
+                                      space.id,
+                                      space.name,
+                                    )
+                                  }
+                                >
+                                  {t("Update knowledge")}
+                                </Button>
+                                <Button
+                                  size="xs"
+                                  variant="default"
+                                  loading={actionMutation.isPending}
+                                  onClick={() =>
+                                    actionMutation.mutate({
+                                      action: "rebuild_embeddings",
+                                      spaceIds: [space.id],
+                                    })
+                                  }
+                                >
+                                  {t("Rebuild embeddings")}
+                                </Button>
+                                <MaintenanceMenu
+                                  onAction={(action) =>
+                                    actionMutation.mutate({
+                                      action,
+                                      spaceIds: [space.id],
+                                    })
+                                  }
+                                  onForce={() =>
+                                    openCompilation(
+                                      "force",
+                                      space.id,
+                                      space.name,
+                                    )
+                                  }
+                                />
+                              </Group>
+                            </Table.Td>
+                          </Table.Tr>
+                        ))}
+                      </Table.Tbody>
+                    </Table>
+                  </Table.ScrollContainer>
+                )}
               </section>
             </>
           ) : (
