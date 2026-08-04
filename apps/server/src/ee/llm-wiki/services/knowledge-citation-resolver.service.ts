@@ -13,6 +13,7 @@ import {
 import { KnowledgeSourceRange } from '../types/knowledge.types';
 import { KnowledgeRetrievalResult } from './knowledge-retrieval.service';
 import { KnowledgeSourceAuthorizationService } from './knowledge-source-authorization.service';
+import { KnowledgeAuthorizationCache } from './knowledge-source-authorization.cache';
 import { KnowledgeSourceRepo } from '@akasha/db/repos/llm-wiki/knowledge-source.repo';
 import { KnowledgeSourceChunk } from '@akasha/db/types/entity.types';
 import { chunkKnowledgeSource } from '../chunking/knowledge-structural-chunker';
@@ -53,6 +54,7 @@ export class KnowledgeCitationResolverService {
     workspaceId: string;
     userId: string;
     capsules: KnowledgePage[];
+    authCache?: KnowledgeAuthorizationCache;
   }): Promise<CapsuleCitationEntry[]> {
     const readableSourceIdsByCapsule = new Map<string, string[]>();
     const allReadableSourceIds = new Set<string>();
@@ -67,6 +69,7 @@ export class KnowledgeCitationResolverService {
           workspaceId: input.workspaceId,
           userId: input.userId,
           sourcePageIds,
+          cache: input.authCache,
         });
 
       readableSourceIdsByCapsule.set(capsule.id, readableSourcePageIds);
@@ -75,7 +78,7 @@ export class KnowledgeCitationResolverService {
       );
     }
 
-    const pagesById = await this.findReadableSourcePages(
+    const pagesById = await this.findSourcePages(
       [...allReadableSourceIds],
       input.workspaceId,
       false,
@@ -102,7 +105,7 @@ export class KnowledgeCitationResolverService {
     const allSourcePageIds = unique(
       input.chunks.flatMap((entry) => entry.sourcePageIds),
     );
-    const pagesById = await this.findReadableSourcePages(
+    const pagesById = await this.findSourcePages(
       allSourcePageIds,
       input.workspaceId,
       true,
@@ -241,7 +244,15 @@ export class KnowledgeCitationResolverService {
     );
   }
 
-  private async findReadableSourcePages(
+  /**
+   * Loads source page rows (optionally with full text) by id. This does NOT
+   * perform any access-control filtering: callers MUST pass source page ids
+   * that have already been authorized upstream (e.g. via
+   * KnowledgeSourceAuthorizationService.filterReadableSources in the retrieval
+   * pipeline). The returned text/content is fed into LLM context, so never call
+   * this with unfiltered ids.
+   */
+  private async findSourcePages(
     sourcePageIds: string[],
     workspaceId: string,
     includeTextContent: boolean,

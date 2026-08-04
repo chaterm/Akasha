@@ -16,6 +16,7 @@ import {
   KnowledgeRetrievalRankerService,
 } from './knowledge-retrieval-ranker.service';
 import { KnowledgeSourceAuthorizationService } from './knowledge-source-authorization.service';
+import { KnowledgeAuthorizationCache } from './knowledge-source-authorization.cache';
 
 export const KNOWLEDGE_COMPLETENESS_NOTICE =
   'Some knowledge may be unavailable because access is permission-scoped.';
@@ -71,18 +72,39 @@ export class KnowledgeRetrievalService {
     spaceIds: string[];
     candidateLimit?: number;
     abortSignal?: AbortSignal;
+    authCache?: KnowledgeAuthorizationCache;
   }): Promise<KnowledgeRetrievalResult> {
     const candidateLimit = input.candidateLimit ?? 20;
-    const user = await this.userRepo.findById(input.userId, input.workspaceId);
+    const authCache =
+      input.authCache ??
+      new KnowledgeAuthorizationCache({
+        workspaceId: input.workspaceId,
+        userId: input.userId,
+      });
+    // Fail closed before reading anything from the cache: a cache bound to a
+    // different (workspace, user) must never drive this user's retrieval.
+    try {
+      authCache.assertScope(input.workspaceId, input.userId);
+    } catch {
+      return emptyResult();
+    }
+
+    const user = await authCache.getUser(() =>
+      this.userRepo.findById(input.userId, input.workspaceId),
+    );
     if (!user) {
       return emptyResult();
     }
 
+    const requestedSpaceIds = unique(input.spaceIds);
     const readableSpaceIds =
       await this.spaceAuthorization.filterReadableSpaceIds({
         user,
-        spaceIds: unique(input.spaceIds),
+        spaceIds: requestedSpaceIds,
       });
+    // Reuse this space-readability decision for the source authorization passes
+    // later in this request instead of re-querying the same spaces.
+    authCache.recordSpaces(requestedSpaceIds, new Set(readableSpaceIds));
     if (readableSpaceIds.length === 0) {
       return emptyResult();
     }
@@ -229,6 +251,7 @@ export class KnowledgeRetrievalService {
         workspaceId: input.workspaceId,
         userId: input.userId,
         sourcePageIds: allSourcePageIds,
+        cache: authCache,
       });
     const readableSourceSet = new Set(readableSourcePageIds);
 
@@ -262,6 +285,7 @@ export class KnowledgeRetrievalService {
         authorizedChunks.map((candidate) => candidate.page.id),
       ),
       candidateLimit,
+      authCache,
     });
     const selectedChunks = blendDirectAndGraph(
       authorizedChunks,
@@ -313,6 +337,7 @@ export class KnowledgeRetrievalService {
     }>;
     seedPageIds: string[];
     candidateLimit: number;
+    authCache: KnowledgeAuthorizationCache;
   }): Promise<GraphExpansionResult> {
     if (input.seedPageIds.length === 0 || input.candidateLimit <= 1) {
       return { chunks: [], candidateCount: 0 };
@@ -338,6 +363,7 @@ export class KnowledgeRetrievalService {
           workspaceId: input.workspaceId,
           userId: input.userId,
           sourcePageIds: unique(edges.flatMap((edge) => edge.sourcePageIds)),
+          cache: input.authCache,
         }),
       );
       const readableEdges = edges.filter((edge) =>
@@ -387,6 +413,7 @@ export class KnowledgeRetrievalService {
         sourcePageIds: unique(
           candidates.flatMap((candidate) => candidate.sourcePageIds),
         ),
+        cache: input.authCache,
       }),
     );
     const chunks = candidates

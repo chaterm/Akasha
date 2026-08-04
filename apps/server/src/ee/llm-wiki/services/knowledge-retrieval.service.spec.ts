@@ -9,9 +9,50 @@ import {
 } from './knowledge-embedding-provider.service';
 import { KnowledgeRetrievalRankerService } from './knowledge-retrieval-ranker.service';
 import { KnowledgeSourceAuthorizationService } from './knowledge-source-authorization.service';
+import { KnowledgeAuthorizationCache } from './knowledge-source-authorization.cache';
 import { KnowledgeRetrievalService } from './knowledge-retrieval.service';
 
 describe('KnowledgeRetrievalService', () => {
+  it('fails closed without touching any dependency when the cache scope mismatches', async () => {
+    const userRepo = { findById: jest.fn() };
+    const spaceAuthorization = { filterReadableSpaceIds: jest.fn() };
+    const embeddingProvider = { embedQuery: jest.fn() };
+    const groupUserRepo = { getUserGroupIds: jest.fn() };
+    const capsuleRepo = {
+      findDenseChunkCandidates: jest.fn(),
+      findLexicalChunkCandidates: jest.fn(),
+      findExactTitleChunkCandidates: jest.fn(),
+    };
+    const service = createService({
+      userRepo,
+      spaceAuthorization,
+      embeddingProvider,
+      groupUserRepo,
+      capsuleRepo,
+    });
+    // Cache bound to a different user than the retrieval request.
+    const mismatchedCache = new KnowledgeAuthorizationCache({
+      workspaceId: 'workspace-1',
+      userId: 'other-user',
+    });
+
+    const result = await service.retrieve({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: 'anything',
+      spaceIds: ['space-1'],
+      authCache: mismatchedCache,
+    });
+
+    expect(result.chunks).toEqual([]);
+    expect(userRepo.findById).not.toHaveBeenCalled();
+    expect(spaceAuthorization.filterReadableSpaceIds).not.toHaveBeenCalled();
+    expect(embeddingProvider.embedQuery).not.toHaveBeenCalled();
+    expect(groupUserRepo.getUserGroupIds).not.toHaveBeenCalled();
+    expect(capsuleRepo.findDenseChunkCandidates).not.toHaveBeenCalled();
+    expect(capsuleRepo.findLexicalChunkCandidates).not.toHaveBeenCalled();
+    expect(capsuleRepo.findExactTitleChunkCandidates).not.toHaveBeenCalled();
+  });
   it('passes an upstream cancellation signal to query embedding', async () => {
     const abortController = new AbortController();
     const embeddingProvider = {
@@ -142,11 +183,13 @@ describe('KnowledgeRetrievalService', () => {
       workspaceId: 'workspace-1',
       chunkIds: ['chunk-visible', 'chunk-group'],
     });
-    expect(sourceAuthorization.filterReadableSources).toHaveBeenCalledWith({
-      workspaceId: 'workspace-1',
-      userId: 'user-1',
-      sourcePageIds: ['source-visible', 'source-group'],
-    });
+    expect(sourceAuthorization.filterReadableSources).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'workspace-1',
+        userId: 'user-1',
+        sourcePageIds: ['source-visible', 'source-group'],
+      }),
+    );
     expect(sourceAuthorization.filterReadableSources).toHaveBeenCalledTimes(1);
   });
 

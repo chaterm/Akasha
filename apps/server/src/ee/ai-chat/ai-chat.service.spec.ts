@@ -135,6 +135,7 @@ describe('AiChatService', () => {
     expect(knowledgeChat.chat).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       userId: 'user-1',
+      chatId: 'chat-1',
       query: 'hello',
       spaceIds: ['space-2'],
       chatContext: [],
@@ -380,6 +381,7 @@ describe('AiChatService', () => {
     expect(knowledgeChat.chat).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       userId: 'user-1',
+      chatId: 'chat-1',
       query: 'edited question',
       spaceIds: ['space-1'],
       chatContext: ['user: first question', 'assistant: first answer'],

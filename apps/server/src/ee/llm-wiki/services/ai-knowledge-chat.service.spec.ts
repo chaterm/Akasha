@@ -8,6 +8,7 @@ import {
   AiKnowledgeChatService,
   KnowledgeAnswerProvider,
 } from './ai-knowledge-chat.service';
+import { KnowledgeAuthorizationCache } from './knowledge-source-authorization.cache';
 
 describe('AiKnowledgeChatService', () => {
   it('does not associate sources when a knowledge answer omits citation markers', async () => {
@@ -120,6 +121,7 @@ describe('AiKnowledgeChatService', () => {
       service.chat({
         workspaceId: 'workspace-1',
         userId: 'user-1',
+        chatId: 'chat-1',
         query: 'Chaterm 登记批准日期',
         spaceIds: ['space-1'],
         chatContext: ['Previous turn'],
@@ -177,12 +179,21 @@ describe('AiKnowledgeChatService', () => {
       },
     });
 
-    expect(retrieval.retrieve).toHaveBeenCalledWith({
-      workspaceId: 'workspace-1',
-      userId: 'user-1',
-      query: 'Chaterm 登记批准日期',
-      spaceIds: ['space-1'],
-    });
+    expect(retrieval.retrieve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'workspace-1',
+        userId: 'user-1',
+        query: 'Chaterm 登记批准日期',
+        spaceIds: ['space-1'],
+      }),
+    );
+    // The request-scoped cache must actually be created and threaded into
+    // retrieval — guards against a future regression that drops the pass-through.
+    const retrievalInput = retrieval.retrieve.mock.calls[0][0];
+    expect(retrievalInput.authCache).toBeInstanceOf(
+      KnowledgeAuthorizationCache,
+    );
+    expect(retrievalInput.authCache.getChatId()).toBe('chat-1');
     expect(contextPack.buildContextPack).toHaveBeenCalledWith({
       chunks: [
         {
@@ -228,6 +239,33 @@ describe('AiKnowledgeChatService', () => {
     expect(answerProvider.answer).toHaveBeenCalledTimes(1);
   });
 
+  it('threads the same request-scoped cache into capsule citation resolution', async () => {
+    const retrieve = jest.fn().mockResolvedValue({
+      mode: 'high_completeness',
+      chunks: [],
+      capsules: [capsule('kp-1', 'Chaterm')],
+      completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+    });
+    const resolveForCapsules = jest.fn().mockResolvedValue([]);
+    const service = createService({
+      retrieval: { retrieve } as never,
+      citationResolver: { resolveForCapsules },
+    });
+
+    await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: 'Chaterm?',
+      spaceIds: ['space-1'],
+    });
+
+    const sharedCache = retrieve.mock.calls[0][0].authCache;
+    expect(sharedCache).toBeInstanceOf(KnowledgeAuthorizationCache);
+    expect(resolveForCapsules).toHaveBeenCalledWith(
+      expect.objectContaining({ authCache: sharedCache }),
+    );
+  });
+
   it('automatically answers with general knowledge when retrieval has no verified evidence', async () => {
     const answer = jest.fn().mockResolvedValue('Kafka is an event platform.');
     const onToken = jest.fn();
@@ -258,6 +296,9 @@ describe('AiKnowledgeChatService', () => {
       citations: [],
       citationEvidence: [],
       retrievedSources: [],
+      retrievalDiagnostics: {
+        mode: 'high_completeness',
+      },
     });
     expect(onToken.mock.calls.map(([text]) => text).join('')).toBe(
       result.answer,
@@ -330,9 +371,7 @@ describe('AiKnowledgeChatService', () => {
     const onToken = jest.fn();
     const answer = jest
       .fn()
-      .mockResolvedValueOnce(
-        '[[answer:general]]\n知识库中提到了公司推荐接口。',
-      )
+      .mockResolvedValueOnce('[[answer:general]]\n知识库中提到了公司推荐接口。')
       .mockResolvedValueOnce('孙悟空没有现实世界中的公司。');
     const service = createService(verifiedKnowledgeOverrides({ answer }));
 
@@ -409,6 +448,9 @@ describe('AiKnowledgeChatService', () => {
     });
 
     expect(result.answerMode).toBe('general');
+    expect(result.retrievalDiagnostics).toMatchObject({
+      mode: 'high_completeness',
+    });
     expect(answer).toHaveBeenCalledTimes(2);
     expect(answer).toHaveBeenNthCalledWith(
       2,
@@ -452,6 +494,7 @@ describe('AiKnowledgeChatService', () => {
       retrievedSources: [],
       snippets: [],
     });
+    expect(result.retrievalDiagnostics).toBeUndefined();
     expect(onToken.mock.calls.map(([text]) => text).join('')).toBe(
       result.answer,
     );
@@ -492,12 +535,14 @@ describe('AiKnowledgeChatService', () => {
         'assistant: 可以在 Codex 管理页面查看。',
       ],
     });
-    expect(retrieval.retrieve).toHaveBeenCalledWith({
-      workspaceId: 'workspace-1',
-      userId: 'user-1',
-      query: 'Codex 的套餐多少钱',
-      spaceIds: ['space-1'],
-    });
+    expect(retrieval.retrieve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'workspace-1',
+        userId: 'user-1',
+        query: 'Codex 的套餐多少钱',
+        spaceIds: ['space-1'],
+      }),
+    );
     expect(onStage.mock.calls.map(([stage]) => stage)).toEqual([
       'understanding',
       'retrieval',
@@ -530,12 +575,14 @@ describe('AiKnowledgeChatService', () => {
       chatContext: ['user: Codex 开通'],
     });
 
-    expect(retrieval.retrieve).toHaveBeenCalledWith({
-      workspaceId: 'workspace-1',
-      userId: 'user-1',
-      query: '套餐多少钱',
-      spaceIds: ['space-1'],
-    });
+    expect(retrieval.retrieve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'workspace-1',
+        userId: 'user-1',
+        query: '套餐多少钱',
+        spaceIds: ['space-1'],
+      }),
+    );
   });
 
   it('adds verified raw source evidence when the compiled summary omitted the requested URL', async () => {
@@ -977,8 +1024,16 @@ describe('AiKnowledgeChatService', () => {
       .mockResolvedValue(
         '[[answer:knowledge]]Use the current page. [[cite:page-current]]',
       );
+    const retrieve = jest.fn().mockResolvedValue({
+      mode: 'high_completeness',
+      chunks: [],
+      capsules: [],
+      completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+    });
+    const filterReadableSources = jest.fn().mockResolvedValue(['page-current']);
     const service = createService({
       answerProvider: { answer },
+      retrieval: { retrieve } as never,
       pageRepo: {
         findManyByIds: jest.fn().mockResolvedValue([
           {
@@ -990,7 +1045,7 @@ describe('AiKnowledgeChatService', () => {
         ]),
       },
       sourceAuthorization: {
-        filterReadableSources: jest.fn().mockResolvedValue(['page-current']),
+        filterReadableSources,
       },
       attachmentRepo: {
         findByIdWithContent: jest
@@ -1038,6 +1093,13 @@ describe('AiKnowledgeChatService', () => {
         url: '/p/current-design',
       },
     ]);
+    // The explicit-context authorization must reuse the very same cache instance
+    // that retrieval used, so decisions are shared within the request.
+    const sharedCache = retrieve.mock.calls[0][0].authCache;
+    expect(sharedCache).toBeInstanceOf(KnowledgeAuthorizationCache);
+    expect(filterReadableSources).toHaveBeenCalledWith(
+      expect.objectContaining({ cache: sharedCache }),
+    );
   });
 });
 
