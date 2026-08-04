@@ -1,5 +1,6 @@
 import {
   decideSpaceRunRequest,
+  reconcileFollowUpTargetScope,
   reconcileRunTargetScope,
 } from './knowledge-space-compilation.repo';
 
@@ -38,6 +39,28 @@ describe('reconcileRunTargetScope', () => {
         requestTargetSourcePageIds: ['page-a'],
       }),
     ).toEqual({ changed: false, targetSourcePageIds: ['page-a', 'page-b'] });
+  });
+});
+
+describe('reconcileFollowUpTargetScope', () => {
+  it('narrows the first post-initialization edit after a full Run to that page', () => {
+    expect(
+      reconcileFollowUpTargetScope({
+        runTargetSourcePageIds: null,
+        requestTargetSourcePageIds: ['page-a'],
+        rerunAlreadyRequested: false,
+      }),
+    ).toEqual({ changed: true, targetSourcePageIds: ['page-a'] });
+  });
+
+  it('does not narrow an already requested full-Space follow-up', () => {
+    expect(
+      reconcileFollowUpTargetScope({
+        runTargetSourcePageIds: null,
+        requestTargetSourcePageIds: ['page-a'],
+        rerunAlreadyRequested: true,
+      }),
+    ).toEqual({ changed: false, targetSourcePageIds: null });
   });
 });
 

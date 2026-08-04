@@ -75,6 +75,30 @@ export function reconcileRunTargetScope(input: {
 }
 
 /**
+ * Resolves the scope that an already initialized Run leaves to its follow-up.
+ * A full-Space Run has already frozen its own plan, so the first later page
+ * edit can safely narrow the follow-up to that page. Once a full follow-up has
+ * explicitly been requested, later page edits must not narrow it again.
+ */
+export function reconcileFollowUpTargetScope(input: {
+  runTargetSourcePageIds: string[] | null;
+  requestTargetSourcePageIds: string[] | undefined;
+  rerunAlreadyRequested: boolean;
+}): { changed: boolean; targetSourcePageIds: string[] | null } {
+  if (
+    !input.rerunAlreadyRequested &&
+    input.runTargetSourcePageIds === null &&
+    input.requestTargetSourcePageIds?.length
+  ) {
+    return {
+      changed: true,
+      targetSourcePageIds: [...new Set(input.requestTargetSourcePageIds)],
+    };
+  }
+  return reconcileRunTargetScope(input);
+}
+
+/**
  * Normalizes a request's target page list to either a de-duplicated non-empty
  * array (page-scoped) or null (full-Space). Empty input is treated as
  * full-Space so callers cannot accidentally create a Run that compiles nothing.
@@ -410,9 +434,31 @@ export class KnowledgeSpaceCompilationRepo {
             return { disposition, run: activeRun! };
           }
           if (disposition === 'rerun_requested') {
+            // The active Run has already frozen its RunPages, so newly changed
+            // pages belong to the follow-up. Persist the union on the current
+            // Run and let finishRun() carry that bounded scope forward. This
+            // avoids turning an ordinary page edit into another full-Space
+            // snapshot while still coalescing repeated edits durably.
+            const scope = reconcileFollowUpTargetScope({
+              runTargetSourcePageIds: parseTargetSourcePageIds(
+                activeRun!.targetSourcePageIds,
+              ),
+              requestTargetSourcePageIds:
+                requestTargetSourcePageIds ?? undefined,
+              rerunAlreadyRequested: activeRun!.rerunRequested,
+            });
             const run = await trx
               .updateTable('knowledgeSpaceCompileRuns')
-              .set({ rerunRequested: true, updatedAt: now })
+              .set({
+                rerunRequested: true,
+                ...(scope.changed
+                  ? {
+                      targetSourcePageIds:
+                        scope.targetSourcePageIds as JsonValue | null,
+                    }
+                  : {}),
+                updatedAt: now,
+              })
               .where('id', '=', activeRun!.id)
               .where('status', 'in', NONTERMINAL_RUN_STATUSES)
               .returningAll()
@@ -500,7 +546,7 @@ export class KnowledgeSpaceCompilationRepo {
         trigger: input.trigger,
         ...(input.removed
           ? { removedSourcePageIds: [...new Set(sourcePageIds)] }
-          : {}),
+          : { targetSourcePageIds: [...new Set(sourcePageIds)] }),
       })),
       compilerVersion: input.compilerVersion,
       promptVersion: input.promptVersion,

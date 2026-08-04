@@ -1047,6 +1047,10 @@ export class KnowledgeSpaceExecutionRepo {
             promptVersion: run.promptVersion,
             catalogSnapshot: [] as JsonValue,
             catalogHash: 'pending-initialization',
+            // Page updates that arrive after initialization are coalesced into
+            // the active Run's requested scope. Carry that bounded scope to
+            // the follow-up instead of silently widening it to the whole Space.
+            targetSourcePageIds: run.targetSourcePageIds,
             queuedAt: now,
             spaceJobQueuedAt: now,
             updatedAt: now,

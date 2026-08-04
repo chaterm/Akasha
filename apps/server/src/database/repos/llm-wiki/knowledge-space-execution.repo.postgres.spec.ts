@@ -141,14 +141,19 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
     );
     await sql`
       update knowledge_space_compile_runs
-      set rerun_requested = true
+      set rerun_requested = true,
+          target_source_page_ids = '["page-1", "page-2"]'::jsonb
       where id = 'run-finish'
     `.execute(db);
 
     const finished = await executionRepo.finishRun(lease, 'succeeded');
     expect(finished?.run.status).toBe('succeeded');
     expect(finished?.followUp).toEqual(
-      expect.objectContaining({ mode: 'incremental', knowledgeGeneration: 0 }),
+      expect.objectContaining({
+        mode: 'incremental',
+        knowledgeGeneration: 0,
+        targetSourcePageIds: ['page-1', 'page-2'],
+      }),
     );
     await expect(
       executionRepo.heartbeatSpaceSlice(lease, {
@@ -690,6 +695,7 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       prompt_version varchar not null,
       catalog_snapshot jsonb not null default '[]',
       catalog_hash varchar not null,
+      target_source_page_ids jsonb,
       aggregate_required boolean not null default true,
       aggregate_job_id varchar,
       aggregate_started_at timestamptz,

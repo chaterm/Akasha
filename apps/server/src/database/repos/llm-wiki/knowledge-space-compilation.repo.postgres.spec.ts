@@ -311,6 +311,86 @@ describePostgres('KnowledgeSpaceCompilationRepo PostgreSQL round trip', () => {
     expect(row.rows[0].targetSourcePageIds).toEqual(['page-x', 'page-y']);
   });
 
+  it('keeps ordinary page updates page-scoped and unions changes for one follow-up', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name)
+      values ('space-page-update', 'workspace-1', 'Page update');
+      insert into pages (id, workspace_id, space_id) values
+        ('page-update-a', 'workspace-1', 'space-page-update'),
+        ('page-update-b', 'workspace-1', 'space-page-update')
+    `.execute(db);
+
+    const [first] = await repo.requestIncrementalCompileForPages({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-update-a'],
+      trigger: 'page_update',
+      removed: false,
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+    expect(first.disposition).toBe('created');
+    expect(first.run?.targetSourcePageIds).toEqual(['page-update-a']);
+
+    // Once initialized, a second page cannot be added to the frozen RunPage
+    // plan. It is durably unioned into the bounded follow-up scope instead.
+    await sql`
+      update knowledge_space_compile_runs
+      set initialized_at = now(), status = 'compiling'
+      where id = ${first.run!.id}
+    `.execute(db);
+    const [second] = await repo.requestIncrementalCompileForPages({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-update-b'],
+      trigger: 'page_update',
+      removed: false,
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+
+    expect(second.disposition).toBe('rerun_requested');
+    expect(second.run?.rerunRequested).toBe(true);
+    expect(
+      [...((second.run?.targetSourcePageIds as string[] | null) ?? [])].sort(),
+    ).toEqual(['page-update-a', 'page-update-b']);
+  });
+
+  it('narrows the follow-up of an initialized full-Space Run to the changed page', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name)
+      values ('space-full-active', 'workspace-1', 'Full active');
+      insert into pages (id, workspace_id, space_id)
+      values ('page-full-active', 'workspace-1', 'space-full-active')
+    `.execute(db);
+    const [full] = await repo.requestRuns({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-full-active',
+          trigger: 'manual_compile',
+        },
+      ],
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+    await sql`
+      update knowledge_space_compile_runs
+      set initialized_at = now(), status = 'compiling'
+      where id = ${full.run!.id}
+    `.execute(db);
+
+    const [updated] = await repo.requestIncrementalCompileForPages({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-full-active'],
+      trigger: 'page_update',
+      removed: false,
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+
+    expect(updated.disposition).toBe('rerun_requested');
+    expect(updated.run?.targetSourcePageIds).toEqual(['page-full-active']);
+  });
+
   it('unions target pages when coalescing two page-scoped requests', async () => {
     const [first] = await repo.requestRuns({
       requests: [
