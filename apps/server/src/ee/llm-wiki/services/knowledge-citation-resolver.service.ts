@@ -75,7 +75,7 @@ export class KnowledgeCitationResolverService {
       );
     }
 
-    const pagesById = await this.findReadableSourcePages(
+    const pagesById = await this.findSourcePages(
       [...allReadableSourceIds],
       input.workspaceId,
       false,
@@ -102,7 +102,7 @@ export class KnowledgeCitationResolverService {
     const allSourcePageIds = unique(
       input.chunks.flatMap((entry) => entry.sourcePageIds),
     );
-    const pagesById = await this.findReadableSourcePages(
+    const pagesById = await this.findSourcePages(
       allSourcePageIds,
       input.workspaceId,
       true,
@@ -241,7 +241,15 @@ export class KnowledgeCitationResolverService {
     );
   }
 
-  private async findReadableSourcePages(
+  /**
+   * Loads source page rows (optionally with full text) by id. This does NOT
+   * perform any access-control filtering: callers MUST pass source page ids
+   * that have already been authorized upstream (e.g. via
+   * KnowledgeSourceAuthorizationService.filterReadableSources in the retrieval
+   * pipeline). The returned text/content is fed into LLM context, so never call
+   * this with unfiltered ids.
+   */
+  private async findSourcePages(
     sourcePageIds: string[],
     workspaceId: string,
     includeTextContent: boolean,

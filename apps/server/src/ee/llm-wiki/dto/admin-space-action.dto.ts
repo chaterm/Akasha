@@ -1,4 +1,11 @@
-import { ArrayNotEmpty, IsArray, IsIn, IsString } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
+  ArrayUnique,
+  IsArray,
+  IsIn,
+  IsUUID,
+} from 'class-validator';
 import { KnowledgeAdminSpaceAction } from '../types/knowledge-queue.types';
 
 export class AdminKnowledgeSpaceActionDto {
@@ -7,6 +14,8 @@ export class AdminKnowledgeSpaceActionDto {
 
   @IsArray()
   @ArrayNotEmpty()
-  @IsString({ each: true })
+  @ArrayMaxSize(100)
+  @ArrayUnique()
+  @IsUUID('all', { each: true })
   spaceIds: string[];
 }
