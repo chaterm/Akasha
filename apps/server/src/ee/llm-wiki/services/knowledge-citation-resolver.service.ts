@@ -13,6 +13,7 @@ import {
 import { KnowledgeSourceRange } from '../types/knowledge.types';
 import { KnowledgeRetrievalResult } from './knowledge-retrieval.service';
 import { KnowledgeSourceAuthorizationService } from './knowledge-source-authorization.service';
+import { KnowledgeAuthorizationCache } from './knowledge-source-authorization.cache';
 import { KnowledgeSourceRepo } from '@akasha/db/repos/llm-wiki/knowledge-source.repo';
 import { KnowledgeSourceChunk } from '@akasha/db/types/entity.types';
 import { chunkKnowledgeSource } from '../chunking/knowledge-structural-chunker';
@@ -53,6 +54,7 @@ export class KnowledgeCitationResolverService {
     workspaceId: string;
     userId: string;
     capsules: KnowledgePage[];
+    authCache?: KnowledgeAuthorizationCache;
   }): Promise<CapsuleCitationEntry[]> {
     const readableSourceIdsByCapsule = new Map<string, string[]>();
     const allReadableSourceIds = new Set<string>();
@@ -67,6 +69,7 @@ export class KnowledgeCitationResolverService {
           workspaceId: input.workspaceId,
           userId: input.userId,
           sourcePageIds,
+          cache: input.authCache,
         });
 
       readableSourceIdsByCapsule.set(capsule.id, readableSourcePageIds);

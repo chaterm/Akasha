@@ -23,6 +23,7 @@ import {
   KnowledgeRetrievalService,
 } from './knowledge-retrieval.service';
 import { KnowledgeSourceAuthorizationService } from './knowledge-source-authorization.service';
+import { KnowledgeAuthorizationCache } from './knowledge-source-authorization.cache';
 
 export { KnowledgeAnswerProvider, KnowledgeAnswerProviderInput };
 
@@ -109,6 +110,14 @@ export class AiKnowledgeChatService {
       return this.answerFromGeneralKnowledge(input);
     }
 
+    // One request-scoped authorization cache, bound to this (workspace, user),
+    // shared across retrieval, capsule citations and explicit context so the
+    // same pages/spaces are not re-authorized multiple times in one request.
+    const authCache = new KnowledgeAuthorizationCache({
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+    });
+
     const retrievalQuery = await this.rewriteRetrievalQuery(input);
     const contextualRetrievalQuery =
       retrievalQuery.trim() !== input.query.trim() ? retrievalQuery : undefined;
@@ -118,6 +127,7 @@ export class AiKnowledgeChatService {
       userId: input.userId,
       query: retrievalQuery,
       spaceIds: input.spaceIds,
+      authCache,
     });
     const chunkCitations = retrieval.chunks.length
       ? await this.citationResolver.resolveForChunks({
@@ -132,13 +142,14 @@ export class AiKnowledgeChatService {
             workspaceId: input.workspaceId,
             userId: input.userId,
             capsules: retrieval.capsules,
+            authCache,
           })
         : undefined;
     const pack = this.contextPack.buildContextPack({
       chunks: chunkCitations,
       capsules: capsuleCitations,
     });
-    const explicit = await this.loadExplicitContext(input);
+    const explicit = await this.loadExplicitContext(input, authCache);
     const allCitations = uniqueCitations([
       ...explicit.citations,
       ...pack.citations,
@@ -322,7 +333,10 @@ export class AiKnowledgeChatService {
     }
   }
 
-  private async loadExplicitContext(input: AiKnowledgeChatInput): Promise<{
+  private async loadExplicitContext(
+    input: AiKnowledgeChatInput,
+    authCache?: KnowledgeAuthorizationCache,
+  ): Promise<{
     context: string;
     citations: KnowledgeCitation[];
   }> {
@@ -339,6 +353,7 @@ export class AiKnowledgeChatService {
           workspaceId: input.workspaceId,
           userId: input.userId,
           sourcePageIds: requestedPageIds,
+          cache: authCache,
         });
       const pages = await this.pageRepo.findManyByIds(readablePageIds, {
         workspaceId: input.workspaceId,
@@ -662,9 +677,7 @@ class KnowledgeAnswerStreamRouter {
       this.startMode(matchedMode.mode, answerContent);
       return;
     }
-    if (
-      ANSWER_MODE_MARKERS.some(({ marker }) => marker.startsWith(content))
-    ) {
+    if (ANSWER_MODE_MARKERS.some(({ marker }) => marker.startsWith(content))) {
       return;
     }
 
