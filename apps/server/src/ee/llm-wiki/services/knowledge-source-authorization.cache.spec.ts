@@ -19,6 +19,15 @@ describe('KnowledgeAuthorizationCache', () => {
     );
   });
 
+  it('carries an optional chat id for request correlation', () => {
+    const cache = new KnowledgeAuthorizationCache({
+      ...SCOPE,
+      chatId: 'chat-1',
+    });
+
+    expect(cache.getChatId()).toBe('chat-1');
+  });
+
   it('memoizes the user load and only calls the loader once', async () => {
     const cache = new KnowledgeAuthorizationCache(SCOPE);
     const loader = jest.fn().mockResolvedValue({ id: 'user-1' } as User);

@@ -16,6 +16,7 @@ import { User } from '@akasha/db/types/entity.types';
 export class KnowledgeAuthorizationCache {
   private readonly workspaceId: string;
   private readonly userId: string;
+  private readonly chatId?: string;
 
   // Page-level decisions: true = readable, false = not readable. Only recorded
   // after all dependency queries for that page succeeded.
@@ -27,9 +28,15 @@ export class KnowledgeAuthorizationCache {
   // Memoized current user. Undefined = not loaded yet.
   private userPromise?: Promise<User | undefined>;
 
-  constructor(scope: { workspaceId: string; userId: string }) {
+  constructor(scope: { workspaceId: string; userId: string; chatId?: string }) {
     this.workspaceId = scope.workspaceId;
     this.userId = scope.userId;
+    this.chatId = scope.chatId;
+  }
+
+  /** Optional request correlation for authorization failure logs. */
+  getChatId(): string | undefined {
+    return this.chatId;
   }
 
   /**

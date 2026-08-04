@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PagePermissionRepo } from '@akasha/db/repos/page/page-permission.repo';
 import { PageRepo } from '@akasha/db/repos/page/page.repo';
 import { UserRepo } from '@akasha/db/repos/user/user.repo';
@@ -8,6 +8,10 @@ import { KnowledgeAuthorizationCache } from './knowledge-source-authorization.ca
 
 @Injectable()
 export class KnowledgeSourceAuthorizationService {
+  private readonly logger = new Logger(
+    KnowledgeSourceAuthorizationService.name,
+  );
+
   constructor(
     private readonly pageRepo: PageRepo,
     private readonly userRepo: UserRepo,
@@ -50,7 +54,15 @@ export class KnowledgeSourceAuthorizationService {
       freshlyReadable.forEach((pageId) => readable.add(pageId));
 
       return input.sourcePageIds.filter((pageId) => readable.has(pageId));
-    } catch {
+    } catch (error) {
+      this.logger.error({
+        event: 'knowledge_source_authorization_failed',
+        userId: input.userId,
+        chatId: cache?.getChatId(),
+        sourcePageCount: input.sourcePageIds.length,
+        errorType: error instanceof Error ? error.name : typeof error,
+        stack: errorStackWithoutMessage(error),
+      });
       return [];
     }
   }
@@ -158,6 +170,11 @@ export class KnowledgeSourceAuthorizationService {
     cache.recordSpaces(unknown, new Set(freshReadable));
     return [...knownReadable, ...freshReadable];
   }
+}
+
+function errorStackWithoutMessage(error: unknown): string | undefined {
+  if (!(error instanceof Error) || !error.stack) return undefined;
+  return error.stack.split('\n').slice(1).join('\n') || undefined;
 }
 
 function unique(values: string[]): string[] {

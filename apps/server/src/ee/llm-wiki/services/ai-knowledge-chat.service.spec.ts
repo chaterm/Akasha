@@ -121,6 +121,7 @@ describe('AiKnowledgeChatService', () => {
       service.chat({
         workspaceId: 'workspace-1',
         userId: 'user-1',
+        chatId: 'chat-1',
         query: 'Chaterm 登记批准日期',
         spaceIds: ['space-1'],
         chatContext: ['Previous turn'],
@@ -192,6 +193,7 @@ describe('AiKnowledgeChatService', () => {
     expect(retrievalInput.authCache).toBeInstanceOf(
       KnowledgeAuthorizationCache,
     );
+    expect(retrievalInput.authCache.getChatId()).toBe('chat-1');
     expect(contextPack.buildContextPack).toHaveBeenCalledWith({
       chunks: [
         {
@@ -294,6 +296,9 @@ describe('AiKnowledgeChatService', () => {
       citations: [],
       citationEvidence: [],
       retrievedSources: [],
+      retrievalDiagnostics: {
+        mode: 'high_completeness',
+      },
     });
     expect(onToken.mock.calls.map(([text]) => text).join('')).toBe(
       result.answer,
@@ -443,6 +448,9 @@ describe('AiKnowledgeChatService', () => {
     });
 
     expect(result.answerMode).toBe('general');
+    expect(result.retrievalDiagnostics).toMatchObject({
+      mode: 'high_completeness',
+    });
     expect(answer).toHaveBeenCalledTimes(2);
     expect(answer).toHaveBeenNthCalledWith(
       2,
@@ -486,6 +494,7 @@ describe('AiKnowledgeChatService', () => {
       retrievedSources: [],
       snippets: [],
     });
+    expect(result.retrievalDiagnostics).toBeUndefined();
     expect(onToken.mock.calls.map(([text]) => text).join('')).toBe(
       result.answer,
     );

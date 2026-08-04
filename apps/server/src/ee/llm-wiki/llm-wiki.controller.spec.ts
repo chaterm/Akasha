@@ -136,6 +136,58 @@ describe('LlmWikiController', () => {
     );
   });
 
+  it('returns and audits a general fallback after an empty knowledge retrieval', async () => {
+    const retrievalDiagnostics = {
+      mode: 'high_completeness' as const,
+      queryEmbeddingAvailable: true,
+      candidateSourceCount: 0,
+      policyCandidateSourceCount: 0,
+      fallbackCandidateSourceCount: 0,
+      finalAuthorizedSourceCount: 0,
+      accessPolicyFallbackUsed: false,
+      candidateChunkCount: 0,
+      rankedCandidateCount: 0,
+      authorizedChunkCount: 0,
+      filteredChunkCount: 0,
+    };
+    const chatService = {
+      isEnabledForWorkspace: jest.fn().mockReturnValue(true),
+      chat: jest.fn().mockResolvedValue({
+        answer: 'General answer.',
+        answerMode: 'general',
+        citations: [],
+        retrievalDiagnostics,
+      }),
+    };
+    const queryAuditRepo = {
+      recordQuery: jest.fn().mockResolvedValue(undefined),
+    };
+    const controller = createController({ chatService, queryAuditRepo });
+
+    await expect(
+      controller.queryKnowledge(
+        { query: 'Unknown topic?', spaceIds: ['space-1'] },
+        user(),
+        workspace(),
+      ),
+    ).resolves.toEqual({
+      answer: 'General answer.',
+      answerMode: 'general',
+      citations: [],
+    });
+
+    expect(queryAuditRepo.recordQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        retrievalMode: 'high_completeness',
+        authorizedCapsuleCount: 0,
+        metadata: expect.objectContaining({
+          finalAuthorizedSourceCount: 0,
+          authorizedChunkCount: 0,
+        }),
+      }),
+    );
+  });
+
   it('reads the complete ACL-authorized shared Page by its internal URL', async () => {
     const page = {
       id: 'page-1',

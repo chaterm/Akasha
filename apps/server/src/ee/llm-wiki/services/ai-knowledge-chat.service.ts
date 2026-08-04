@@ -36,6 +36,7 @@ export type AiKnowledgeCitationEvidence = KnowledgeCitation & {
 type AiKnowledgeChatInput = {
   workspaceId: string;
   userId: string;
+  chatId?: string;
   query: string;
   spaceIds: string[];
   chatContext?: string[];
@@ -116,6 +117,7 @@ export class AiKnowledgeChatService {
     const authCache = new KnowledgeAuthorizationCache({
       workspaceId: input.workspaceId,
       userId: input.userId,
+      chatId: input.chatId,
     });
 
     const retrievalQuery = await this.rewriteRetrievalQuery(input);
@@ -169,6 +171,7 @@ export class AiKnowledgeChatService {
         ...(contextualRetrievalQuery
           ? { retrievalQuery: contextualRetrievalQuery }
           : {}),
+        retrievalDiagnostics,
       };
     }
 
@@ -212,6 +215,7 @@ export class AiKnowledgeChatService {
         ...(contextualRetrievalQuery
           ? { retrievalQuery: contextualRetrievalQuery }
           : {}),
+        retrievalDiagnostics,
       };
     }
     let cleanAnswer = stripCitationMarkers(generatedAnswer.content);

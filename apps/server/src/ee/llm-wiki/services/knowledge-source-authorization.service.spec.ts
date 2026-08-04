@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { PagePermissionRepo } from '@akasha/db/repos/page/page-permission.repo';
 import { PageRepo } from '@akasha/db/repos/page/page.repo';
 import { UserRepo } from '@akasha/db/repos/user/user.repo';
@@ -7,6 +8,18 @@ import { KnowledgeSourceAuthorizationService } from './knowledge-source-authoriz
 import { KnowledgeAuthorizationCache } from './knowledge-source-authorization.cache';
 
 describe('KnowledgeSourceAuthorizationService', () => {
+  let loggerError: jest.SpyInstance;
+
+  beforeEach(() => {
+    loggerError = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    loggerError.mockRestore();
+  });
+
   it('lets workspace owners read existing non-deleted sources only', async () => {
     const service = createService({
       pages: [
@@ -76,17 +89,40 @@ describe('KnowledgeSourceAuthorizationService', () => {
   it('fails closed when a read-decision dependency throws', async () => {
     const service = createService({
       pageRepo: {
-        findExistingPageRefs: jest.fn().mockRejectedValue(new Error('db down')),
+        findExistingPageRefs: jest
+          .fn()
+          .mockRejectedValue(new Error('db down for page-sensitive-id')),
       },
+    });
+    const cache = new KnowledgeAuthorizationCache({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      chatId: 'chat-1',
     });
 
     await expect(
       service.filterReadableSources({
         workspaceId: 'workspace-1',
         userId: 'user-1',
-        sourcePageIds: ['page-1'],
+        sourcePageIds: ['page-sensitive-id'],
+        cache,
       }),
     ).resolves.toEqual([]);
+
+    expect(loggerError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'knowledge_source_authorization_failed',
+        userId: 'user-1',
+        chatId: 'chat-1',
+        sourcePageCount: 1,
+        errorType: 'Error',
+        stack: expect.any(String),
+      }),
+    );
+    expect(JSON.stringify(loggerError.mock.calls)).not.toContain(
+      'page-sensitive-id',
+    );
+    expect(loggerError.mock.calls[0]?.[0]).not.toHaveProperty('workspaceId');
   });
 
   describe('with a request-scoped cache', () => {

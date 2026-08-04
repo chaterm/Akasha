@@ -297,6 +297,7 @@ export class AiChatService {
     const answer = await this.knowledgeChat.chat({
       workspaceId: input.workspace.id,
       userId: input.user.id,
+      chatId: input.chatId,
       query: input.content,
       spaceIds: input.spaceIds,
       chatContext: input.previousMessages
