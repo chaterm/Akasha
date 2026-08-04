@@ -13,7 +13,7 @@ export class SpacePaginationOptions {
   @IsNumber()
   @IsPositive()
   @Min(1)
-  @Max(1000)
+  @Max(5000)
   limit = 20;
 
   @IsOptional()

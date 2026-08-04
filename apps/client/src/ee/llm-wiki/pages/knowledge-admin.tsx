@@ -173,7 +173,7 @@ export default function KnowledgeAdminPage() {
     useState("");
   const [cancelReason, setCancelReason] = useState("");
   const { data: spacesData, isLoading: spacesLoading } = useGetSpacesQuery({
-    limit: 1000,
+    limit: 5000,
   });
   const spaces = spacesData?.items ?? [];
   const spaceOptions = useMemo(

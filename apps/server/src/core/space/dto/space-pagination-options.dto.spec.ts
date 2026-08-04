@@ -6,16 +6,16 @@ describe('SpacePaginationOptions', () => {
     expect(new SpacePaginationOptions().limit).toBe(20);
   });
 
-  it('accepts a page size of 1000', async () => {
+  it('accepts a page size of 5000', async () => {
     const pagination = new SpacePaginationOptions();
-    pagination.limit = 1000;
+    pagination.limit = 5000;
 
     await expect(validate(pagination)).resolves.toEqual([]);
   });
 
-  it('rejects a page size greater than 1000', async () => {
+  it('rejects a page size greater than 5000', async () => {
     const pagination = new SpacePaginationOptions();
-    pagination.limit = 1001;
+    pagination.limit = 5001;
 
     const errors = await validate(pagination);
 
