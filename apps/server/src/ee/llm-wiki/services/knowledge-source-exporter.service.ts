@@ -10,6 +10,13 @@ import {
   KnowledgeSourceSnapshot,
 } from '../types/source-snapshot.types';
 import { AttachmentType } from '../../../core/attachment/attachment.constants';
+import { InjectKysely } from 'nestjs-kysely';
+import {
+  KyselyDB,
+  KyselyTransaction,
+} from '../../../database/types/kysely.types';
+
+const KNOWLEDGE_EXPORT_PAGE_SIZE = 200;
 
 @Injectable()
 export class KnowledgeSourceExporterService {
@@ -17,27 +24,74 @@ export class KnowledgeSourceExporterService {
     private readonly pageRepo: PageRepo,
     private readonly backlinkRepo: BacklinkRepo,
     private readonly attachmentRepo: AttachmentRepo,
+    @InjectKysely() private readonly db: KyselyDB = undefined as never,
   ) {}
 
   async exportSpaceSources(input: {
     workspaceId: string;
     spaceId: string;
+    abortSignal?: AbortSignal;
   }): Promise<KnowledgeSourceSnapshot[]> {
-    const pages = await this.pageRepo.findPagesForKnowledgeExport(input);
-    return this.toSnapshots(input.workspaceId, pages);
+    input.abortSignal?.throwIfAborted();
+    const scope = { workspaceId: input.workspaceId, spaceId: input.spaceId };
+    return this.inReadSnapshot(async (trx) => {
+      const snapshots: KnowledgeSourceSnapshot[] = [];
+      let afterId: string | undefined;
+      do {
+        const query = {
+          ...scope,
+          limit: KNOWLEDGE_EXPORT_PAGE_SIZE,
+          ...(afterId ? { afterId } : {}),
+        };
+        const pages = trx
+          ? await this.pageRepo.findPagesForKnowledgeExport(query, trx)
+          : await this.pageRepo.findPagesForKnowledgeExport(query);
+        snapshots.push(
+          ...(await this.toSnapshots(input.workspaceId, pages, trx)),
+        );
+        input.abortSignal?.throwIfAborted();
+        const last = pages[pages.length - 1];
+        afterId =
+          pages.length === KNOWLEDGE_EXPORT_PAGE_SIZE && last
+            ? last.id
+            : undefined;
+      } while (afterId);
+      return snapshots;
+    });
   }
 
   async exportPageSources(input: {
     workspaceId: string;
     spaceId: string;
     sourcePageIds: string[];
+    abortSignal?: AbortSignal;
   }): Promise<KnowledgeSourceSnapshot[]> {
-    const pages = await this.pageRepo.findPagesByIdsForKnowledgeExport({
-      workspaceId: input.workspaceId,
-      spaceId: input.spaceId,
-      pageIds: input.sourcePageIds,
+    input.abortSignal?.throwIfAborted();
+    return this.inReadSnapshot(async (trx) => {
+      const snapshots: KnowledgeSourceSnapshot[] = [];
+      for (
+        let offset = 0;
+        offset < input.sourcePageIds.length;
+        offset += KNOWLEDGE_EXPORT_PAGE_SIZE
+      ) {
+        const query = {
+          workspaceId: input.workspaceId,
+          spaceId: input.spaceId,
+          pageIds: input.sourcePageIds.slice(
+            offset,
+            offset + KNOWLEDGE_EXPORT_PAGE_SIZE,
+          ),
+        };
+        const pages = trx
+          ? await this.pageRepo.findPagesByIdsForKnowledgeExport(query, trx)
+          : await this.pageRepo.findPagesByIdsForKnowledgeExport(query);
+        snapshots.push(
+          ...(await this.toSnapshots(input.workspaceId, pages, trx)),
+        );
+        input.abortSignal?.throwIfAborted();
+      }
+      return snapshots;
     });
-    return this.toSnapshots(input.workspaceId, pages);
   }
 
   private async toSnapshots(
@@ -51,6 +105,7 @@ export class KnowledgeSourceExporterService {
       content: unknown;
       updatedAt: Date;
     }>,
+    trx?: KyselyTransaction,
   ): Promise<KnowledgeSourceSnapshot[]> {
     const imageRefsByPageId = new Map(
       pages.map((page) => [page.id, findPageImageReferences(page.content)]),
@@ -60,14 +115,19 @@ export class KnowledgeSourceExporterService {
         images.map((image) => image.attachmentId),
       ),
     );
-    const attachments = await this.attachmentRepo.findByIds(attachmentIds);
+    const attachments = trx
+      ? await this.attachmentRepo.findByIds(attachmentIds, { trx })
+      : await this.attachmentRepo.findByIds(attachmentIds);
     const attachmentById = new Map(
       attachments.map((attachment) => [attachment.id, attachment]),
     );
-    const references = await this.backlinkRepo.findOutgoingPageReferences({
+    const referenceQuery = {
       workspaceId,
       sourcePageIds: pages.map((page) => page.id),
-    });
+    };
+    const references = trx
+      ? await this.backlinkRepo.findOutgoingPageReferences(referenceQuery, trx)
+      : await this.backlinkRepo.findOutgoingPageReferences(referenceQuery);
     const referencesBySourcePageId = groupBy(
       references,
       (reference) => reference.sourcePageId,
@@ -132,6 +192,17 @@ export class KnowledgeSourceExporterService {
         ),
       };
     });
+  }
+
+  private async inReadSnapshot<T>(
+    callback: (trx?: KyselyTransaction) => Promise<T>,
+  ): Promise<T> {
+    if (!this.db) return callback(undefined);
+    return this.db
+      .transaction()
+      .setIsolationLevel('repeatable read')
+      .setAccessMode('read only')
+      .execute((trx) => callback(trx));
   }
 }
 

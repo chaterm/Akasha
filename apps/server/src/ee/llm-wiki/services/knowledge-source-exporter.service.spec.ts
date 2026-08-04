@@ -4,6 +4,75 @@ import { AttachmentRepo } from '@akasha/db/repos/attachment/attachment.repo';
 import { KnowledgeSourceExporterService } from './knowledge-source-exporter.service';
 
 describe('KnowledgeSourceExporterService', () => {
+  it('keyset-paginates a space inside one repeatable-read read-only snapshot', async () => {
+    const pages = Array.from({ length: 201 }, (_, index) => ({
+      id: `page-${String(index).padStart(3, '0')}`,
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      title: `Page ${index}`,
+      textContent: 'Body',
+      content: { type: 'doc', content: [] },
+      updatedAt: new Date(
+        `2026-07-30T00:00:${String(index % 60).padStart(2, '0')}.000Z`,
+      ),
+    }));
+    const pageRepo = {
+      findPagesForKnowledgeExport: jest
+        .fn()
+        .mockResolvedValueOnce(pages.slice(0, 200))
+        .mockResolvedValueOnce(pages.slice(200)),
+    };
+    const backlinkRepo = {
+      findOutgoingPageReferences: jest.fn().mockResolvedValue([]),
+    };
+    const trx = { id: 'snapshot-trx' };
+    const execute = jest.fn(async (callback) => callback(trx));
+    const setAccessMode = jest.fn(() => ({ execute }));
+    const setIsolationLevel = jest.fn(() => ({ setAccessMode }));
+    const db = {
+      transaction: jest.fn(() => ({ setIsolationLevel })),
+    };
+    const service = new KnowledgeSourceExporterService(
+      pageRepo as unknown as PageRepo,
+      backlinkRepo as unknown as BacklinkRepo,
+      createEmptyAttachmentRepo(),
+      db as never,
+    );
+
+    await expect(
+      service.exportSpaceSources({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+      }),
+    ).resolves.toHaveLength(201);
+
+    expect(setIsolationLevel).toHaveBeenCalledWith('repeatable read');
+    expect(setAccessMode).toHaveBeenCalledWith('read only');
+    expect(pageRepo.findPagesForKnowledgeExport).toHaveBeenNthCalledWith(
+      1,
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        limit: 200,
+      },
+      trx,
+    );
+    expect(pageRepo.findPagesForKnowledgeExport).toHaveBeenNthCalledWith(
+      2,
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        limit: 200,
+        afterId: pages[199].id,
+      },
+      trx,
+    );
+    expect(backlinkRepo.findOutgoingPageReferences).toHaveBeenCalledWith(
+      expect.any(Object),
+      trx,
+    );
+  });
+
   it('exports page snapshots for one workspace and space', async () => {
     const pageRepo = {
       findPagesForKnowledgeExport: jest.fn().mockResolvedValue([
@@ -41,6 +110,7 @@ describe('KnowledgeSourceExporterService', () => {
     expect(pageRepo.findPagesForKnowledgeExport).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
+      limit: 200,
     });
     expect(snapshots).toEqual([
       {

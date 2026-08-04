@@ -3,7 +3,7 @@ import {
   WORKER_METADATA,
 } from '@nestjs/bullmq/dist/bull.constants';
 import { Job } from 'bullmq';
-import { QueueName } from '../../../integrations/queue/constants';
+import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import { KnowledgeTextJobHandler } from '../services/knowledge-text-job.handler';
 import { KnowledgeTextProcessor } from './knowledge-text.processor';
 
@@ -22,27 +22,39 @@ describe('KnowledgeTextProcessor', () => {
     const processor = new KnowledgeTextProcessor(
       handler as unknown as KnowledgeTextJobHandler,
     );
-    const job = { name: 'knowledge-compile-pages' } as Job;
+    const job = { name: QueueJob.KNOWLEDGE_REINDEX_ACCESS } as Job;
 
     await expect(processor.process(job)).resolves.toEqual({ status: 'ok' });
     expect(handler.handle).toHaveBeenCalledWith(job);
   });
 
-  it('delegates terminal worker failures so durable merge state cannot stall', async () => {
-    const handler = {
-      handle: jest.fn(),
-      onFailed: jest.fn().mockResolvedValue(undefined),
-    };
+  it.each([
+    'knowledge-compile-space',
+    'knowledge-compile-pages',
+    'knowledge-merge-page-images',
+    'knowledge-aggregate-space',
+  ])('rejects removed legacy compile job %s', async (name) => {
+    const handler = { handle: jest.fn(), onFailed: jest.fn() };
+    const processor = new KnowledgeTextProcessor(handler as never);
+
+    await expect(processor.process({ name } as never)).rejects.toThrow(
+      'Unsupported Knowledge Text job',
+    );
+    expect(handler.handle).not.toHaveBeenCalled();
+  });
+
+  it('records maintenance worker failures without mutating compile Run state', () => {
+    const handler = { handle: jest.fn() };
     const processor = new KnowledgeTextProcessor(
       handler as unknown as KnowledgeTextJobHandler,
     );
     const job = {
-      name: 'knowledge-merge-page-images',
+      name: QueueJob.KNOWLEDGE_REINDEX_ACCESS,
       failedReason: 'worker stalled',
     } as Job;
 
-    await processor.onError(job);
+    expect(() => processor.onError(job)).not.toThrow();
 
-    expect(handler.onFailed).toHaveBeenCalledWith(job);
+    expect(handler.handle).not.toHaveBeenCalled();
   });
 });

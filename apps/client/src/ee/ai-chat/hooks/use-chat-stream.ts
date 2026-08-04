@@ -1,7 +1,11 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { sendChatMessage } from "../services/ai-chat-service";
+import {
+  editChatMessage,
+  getChatInfo,
+  sendChatMessage,
+} from "../services/ai-chat-service";
 import type {
   AiChatMessage,
   AiChatStreamEvent,
@@ -64,6 +68,121 @@ export function useChatStream(
     setMessages(msgs);
   }, []);
 
+  const reconcileFromServer = useCallback(
+    async (targetChatId: string) => {
+      hydratedChatIdRef.current = undefined;
+      try {
+        const info = await getChatInfo(targetChatId);
+        queryClient.setQueryData(["ai-chat", targetChatId], info);
+        if (currentChatIdRef.current !== targetChatId) return;
+        hydratedChatIdRef.current = targetChatId;
+        setMessages(info.messages);
+      } catch {
+        queryClient.invalidateQueries({
+          queryKey: ["ai-chat", targetChatId],
+        });
+      }
+    },
+    [queryClient],
+  );
+
+  const handleStreamEvent = useCallback(
+    (event: AiChatStreamEvent) => {
+      switch (event.type) {
+        case "chat_created":
+          currentChatIdRef.current = event.chatId;
+          hydratedChatIdRef.current = event.chatId;
+          if (onChatCreatedRef.current) {
+            onChatCreatedRef.current(event.chatId);
+          } else {
+            navigate(`/ai/chat/${event.chatId}`, { replace: true });
+          }
+          queryClient.invalidateQueries({ queryKey: ["ai-chats"] });
+          break;
+        case "message_edited":
+          setMessages((previous) => {
+            const messageIndex = previous.findIndex(
+              (message) => message.id === event.messageId,
+            );
+            if (messageIndex < 0) return previous;
+            return previous
+              .slice(0, messageIndex + 1)
+              .map((message, index) =>
+                index === messageIndex
+                  ? { ...message, content: event.content }
+                  : message,
+              );
+          });
+          break;
+        case "content":
+          setStreamingContent((previous) => previous + event.text);
+          break;
+        case "progress":
+          setProgressStage(event.stage);
+          break;
+        case "tool_call":
+          setStreamingToolCalls((previous) => [
+            ...previous,
+            {
+              id: event.id,
+              name: event.name,
+              args: event.args,
+            },
+          ]);
+          break;
+        case "tool_result":
+          setStreamingToolCalls((previous) =>
+            previous.map((toolCall) =>
+              toolCall.id === event.id
+                ? { ...toolCall, result: event.result }
+                : toolCall,
+            ),
+          );
+          break;
+        case "done": {
+          setStreamingContent((currentContent) => {
+            setStreamingToolCalls((currentToolCalls) => {
+              const assistantMessage: AiChatMessage = {
+                id: event.messageId,
+                chatId: currentChatIdRef.current || "",
+                role: "assistant",
+                content: currentContent || null,
+                toolCalls: currentToolCalls.length ? currentToolCalls : null,
+                metadata: buildAssistantMetadata(event),
+                createdAt: new Date().toISOString(),
+              };
+
+              setMessages((previous) => [...previous, assistantMessage]);
+              return [];
+            });
+            return "";
+          });
+          setIsStreaming(false);
+          setProgressStage(null);
+          queryClient.invalidateQueries({
+            queryKey: ["ai-chat", currentChatIdRef.current],
+          });
+          break;
+        }
+        case "superseded":
+          setStreamingContent("");
+          setStreamingToolCalls([]);
+          setIsStreaming(false);
+          setProgressStage(null);
+          void reconcileFromServer(event.chatId);
+          break;
+        case "error":
+          setError(event.message);
+          setErrorCode(event.code || null);
+          setIsRetryable(event.retryable || false);
+          setIsStreaming(false);
+          setProgressStage(null);
+          break;
+      }
+    },
+    [navigate, queryClient, reconcileFromServer],
+  );
+
   const sendMessage = useCallback(
     (
       content: string,
@@ -71,6 +190,7 @@ export function useChatStream(
       attachments: ChatAttachment[] = [],
       contextPageId?: string,
       spaceIds?: string[],
+      responseMode?: "knowledge" | "general",
     ) => {
       if (isStreaming || (!content.trim() && attachments.length === 0)) return;
 
@@ -119,81 +239,9 @@ export function useChatStream(
           ...(contextPageId && { contextPageId }),
           ...(attachmentIds.length && { attachmentIds }),
           ...(spaceIds && { spaceIds }),
+          ...(responseMode && { responseMode }),
         },
-        (event: AiChatStreamEvent) => {
-          switch (event.type) {
-            case "chat_created":
-              currentChatIdRef.current = event.chatId;
-              // Claim authority over this new chatId so when the consumer's
-              // prop catches up via navigation/onChatCreated, the reset effect
-              // sees a match and preserves our optimistic messages.
-              hydratedChatIdRef.current = event.chatId;
-              if (onChatCreatedRef.current) {
-                onChatCreatedRef.current(event.chatId);
-              } else {
-                navigate(`/ai/chat/${event.chatId}`, { replace: true });
-              }
-              queryClient.invalidateQueries({ queryKey: ["ai-chats"] });
-              break;
-            case "content":
-              setStreamingContent((prev) => prev + event.text);
-              break;
-            case "progress":
-              setProgressStage(event.stage);
-              break;
-            case "tool_call":
-              setStreamingToolCalls((prev) => [
-                ...prev,
-                {
-                  id: event.id,
-                  name: event.name,
-                  args: event.args,
-                },
-              ]);
-              break;
-            case "tool_result":
-              setStreamingToolCalls((prev) =>
-                prev.map((tc) =>
-                  tc.id === event.id ? { ...tc, result: event.result } : tc,
-                ),
-              );
-              break;
-            case "done": {
-              setStreamingContent((currentContent) => {
-                setStreamingToolCalls((currentToolCalls) => {
-                  const assistantMessage: AiChatMessage = {
-                    id: event.messageId,
-                    chatId: currentChatIdRef.current || "",
-                    role: "assistant",
-                    content: currentContent || null,
-                    toolCalls: currentToolCalls.length
-                      ? currentToolCalls
-                      : null,
-                    metadata: buildAssistantMetadata(event),
-                    createdAt: new Date().toISOString(),
-                  };
-
-                  setMessages((prev) => [...prev, assistantMessage]);
-                  return [];
-                });
-                return "";
-              });
-              setIsStreaming(false);
-              setProgressStage(null);
-              queryClient.invalidateQueries({
-                queryKey: ["ai-chat", currentChatIdRef.current],
-              });
-              break;
-            }
-            case "error":
-              setError(event.message);
-              setErrorCode(event.code || null);
-              setIsRetryable(event.retryable || false);
-              setIsStreaming(false);
-              setProgressStage(null);
-              break;
-          }
-        },
+        handleStreamEvent,
         (errorMsg) => {
           setError(errorMsg);
           setIsStreaming(false);
@@ -206,7 +254,56 @@ export function useChatStream(
 
       abortRef.current = abortController;
     },
-    [isStreaming, navigate, queryClient],
+    [handleStreamEvent, isStreaming],
+  );
+
+  const editMessage = useCallback(
+    (messageId: string, nextContent: string) => {
+      const content = nextContent.trim();
+      const currentChatId = currentChatIdRef.current;
+      if (isStreaming || !currentChatId || !content) return;
+
+      const messageIndex = messages.findIndex(
+        (message) => message.id === messageId && message.role === "user",
+      );
+      if (messageIndex < 0) return;
+      setMessages(
+        messages
+          .slice(0, messageIndex + 1)
+          .map((message, index) =>
+            index === messageIndex ? { ...message, content } : message,
+          ),
+      );
+
+      setError(null);
+      setErrorCode(null);
+      setIsRetryable(false);
+      setIsStreaming(true);
+      setProgressStage("permissions");
+      setStreamingContent("");
+      setStreamingToolCalls([]);
+
+      const reconcile = () => {
+        void reconcileFromServer(currentChatId);
+      };
+      abortRef.current = editChatMessage(
+        { chatId: currentChatId, messageId, content },
+        (event) => {
+          handleStreamEvent(event);
+          if (event.type === "error") reconcile();
+        },
+        (errorMessage) => {
+          setError(errorMessage);
+          setIsStreaming(false);
+          setProgressStage(null);
+          reconcile();
+        },
+        () => {
+          setIsStreaming(false);
+        },
+      );
+    },
+    [handleStreamEvent, isStreaming, messages, reconcileFromServer],
   );
 
   const stopGeneration = useCallback(() => {
@@ -246,6 +343,7 @@ export function useChatStream(
     errorCode,
     isRetryable,
     sendMessage,
+    editMessage,
     stopGeneration,
     hydrateFromServer,
   };
@@ -270,5 +368,9 @@ function buildAssistantMetadata(
     metadata.completenessNotice = event.completenessNotice;
   }
   if (event.answerMode) metadata.answerMode = event.answerMode;
+  if (event.retrievalQuery) metadata.retrievalQuery = event.retrievalQuery;
+  if (typeof event.canExpandScope === "boolean") {
+    metadata.canExpandScope = event.canExpandScope;
+  }
   return Object.keys(metadata).length ? metadata : null;
 }

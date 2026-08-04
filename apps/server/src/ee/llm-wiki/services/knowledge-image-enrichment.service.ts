@@ -108,6 +108,58 @@ export class KnowledgeImageEnrichmentService {
     private readonly imageProvider: KnowledgeImageUnderstandingProvider,
   ) {}
 
+  async enrichSingleImage(
+    input: {
+      workspaceId: string;
+      spaceId: string;
+      sourcePageId: string;
+      image: KnowledgeSourceImage;
+    },
+    abortSignal: AbortSignal,
+  ): Promise<{
+    status: 'succeeded' | 'failed' | 'skipped';
+    extractionId?: string;
+    retryable: boolean;
+    errorCode?: string;
+  }> {
+    const result = await this.enrichSource(
+      {
+        workspaceId: input.workspaceId,
+        spaceId: input.spaceId,
+        sourcePageId: input.sourcePageId,
+        sourceVersion: 'run-image',
+        contentHash: 'run-image',
+        title: input.image.fileName,
+        text: '',
+        images: [input.image],
+        references: [],
+      },
+      { abortSignal, formatPageKnowledge: false },
+    );
+    if (result.succeeded > 0) {
+      return {
+        status: 'succeeded',
+        extractionId: result.readyExtractionIds[0],
+        retryable: false,
+      };
+    }
+    const firstWarning = result.warnings.find(
+      (warning) => warning.attachmentId === input.image.attachmentId,
+    );
+    if (result.skipped > 0 && result.failed === 0) {
+      return {
+        status: 'skipped',
+        retryable: false,
+        errorCode: firstWarning?.code ?? 'image_skipped',
+      };
+    }
+    return {
+      status: 'failed',
+      retryable: result.retryableFailureCount > 0,
+      errorCode: firstWarning?.code ?? 'image_processing_failed',
+    };
+  }
+
   async readReadySource(source: KnowledgeSourceSnapshot): Promise<{
     source: KnowledgeSourceSnapshot;
     readyImages: ReadyKnowledgeImage[];
@@ -182,7 +234,12 @@ export class KnowledgeImageEnrichmentService {
 
   async enrichSource(
     source: KnowledgeSourceSnapshot,
+    options?: {
+      abortSignal?: AbortSignal;
+      formatPageKnowledge?: boolean;
+    },
   ): Promise<KnowledgeImageEnrichmentResult> {
+    options?.abortSignal?.throwIfAborted();
     const allSourceImages = source.images ?? [];
     const sourceImages = allSourceImages.slice(0, MAX_IMAGES_PER_PAGE);
     const warnings: KnowledgeImageEnrichmentWarning[] = [];
@@ -254,8 +311,15 @@ export class KnowledgeImageEnrichmentService {
 
       let bytes: Buffer;
       try {
-        bytes = await this.storageService.read(attachment.filePath);
-      } catch {
+        bytes = options?.abortSignal
+          ? await this.storageService.read(attachment.filePath, {
+              abortSignal: options.abortSignal,
+            })
+          : await this.storageService.read(attachment.filePath);
+      } catch (error) {
+        if (options?.abortSignal?.aborted) {
+          throw options.abortSignal.reason ?? error;
+        }
         warnings.push(warning(image.attachmentId, 'image_unreadable'));
         failed += 1;
         retryableFailureCount += 1;
@@ -357,13 +421,23 @@ export class KnowledgeImageEnrichmentService {
       }
 
       try {
-        const normalized = await normalizeForVision(bytes, detectedMime);
-        const result = await this.imageProvider.describe({
+        const normalized = await normalizeForVision(
+          bytes,
+          detectedMime,
+          options?.abortSignal,
+        );
+        const providerInput = {
           bytes: normalized.bytes,
           mimeType: normalized.mimeType,
           fileName: image.fileName,
           altText: image.altText,
-        });
+        };
+        const result = options?.abortSignal
+          ? await this.imageProvider.describe(
+              providerInput,
+              options.abortSignal,
+            )
+          : await this.imageProvider.describe(providerInput);
         const ocrText = normalizeExtractedText(result.ocrText).slice(
           0,
           MAX_OCR_CHARS_PER_IMAGE,
@@ -372,6 +446,7 @@ export class KnowledgeImageEnrichmentService {
           0,
           MAX_CAPTION_CHARS_PER_IMAGE,
         );
+        options?.abortSignal?.throwIfAborted();
         const published = await this.extractionRepo.completeSuccess({
           extractionId: claim.extraction.id,
           leaseToken: claim.leaseToken,
@@ -402,6 +477,9 @@ export class KnowledgeImageEnrichmentService {
           caption,
         });
       } catch (error) {
+        if (options?.abortSignal?.aborted) {
+          throw options.abortSignal.reason ?? error;
+        }
         const failure = imageFailure(error);
         failed += 1;
         if (failure.retryable) retryableFailureCount += 1;
@@ -431,7 +509,11 @@ export class KnowledgeImageEnrichmentService {
       }
     }
 
-    const formatted = formatImageKnowledge(extracted);
+    options?.abortSignal?.throwIfAborted();
+    const formatted =
+      options?.formatPageKnowledge === false
+        ? { text: '', truncatedCount: 0 }
+        : formatImageKnowledge(extracted);
     if (formatted.truncatedCount > 0) {
       warnings.push({
         attachmentId: '',
@@ -580,14 +662,17 @@ function appendCachedExtraction(
 async function normalizeForVision(
   bytes: Buffer,
   detectedMime: SupportedRasterMime,
+  abortSignal?: AbortSignal,
 ): Promise<NormalizedImage> {
   try {
+    abortSignal?.throwIfAborted();
     const input = sharp(bytes, {
       animated: false,
       failOn: 'error',
       limitInputPixels: MAX_IMAGE_PIXELS,
     });
     const metadata = await input.metadata();
+    abortSignal?.throwIfAborted();
     if (
       !metadata.width ||
       !metadata.height ||
@@ -611,6 +696,7 @@ async function normalizeForVision(
     let normalized = preferJpeg
       ? await pipeline.jpeg({ quality: 92, mozjpeg: true }).toBuffer()
       : await pipeline.png({ compressionLevel: 9 }).toBuffer();
+    abortSignal?.throwIfAborted();
     let mimeType: NormalizedImage['mimeType'] = preferJpeg
       ? 'image/jpeg'
       : 'image/png';
@@ -620,6 +706,7 @@ async function normalizeForVision(
         .flatten({ background: '#ffffff' })
         .jpeg({ quality: 88, mozjpeg: true })
         .toBuffer();
+      abortSignal?.throwIfAborted();
       mimeType = 'image/jpeg';
     }
     if (

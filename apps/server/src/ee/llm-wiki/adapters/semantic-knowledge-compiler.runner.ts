@@ -24,6 +24,7 @@ import { KnowledgeSourceSnapshot } from '../types/source-snapshot.types';
 import { LlmWikiCompilerRunner } from './llm-wiki-file-compiler.runner';
 import { chunkKnowledgeSource } from '../chunking/knowledge-structural-chunker';
 import { buildEffectiveKnowledgeHash } from '../services/knowledge-effective-hash';
+import { KnowledgeOperationBudget } from '../services/knowledge-operation-budget';
 
 @Injectable()
 export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
@@ -38,6 +39,10 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
       throw new Error('semantic compilation requires exactly one source page');
     }
     const source = input.sources[0];
+    const operationBudget =
+      input.operationBudget ?? new KnowledgeOperationBudget();
+    input.operationBudget = operationBudget;
+    operationBudget.throwIfAborted();
     if (!source.text.trim()) {
       throw new Error(
         'semantic compilation cannot compile an empty source page',
@@ -63,22 +68,26 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
       compileTaskId,
       stage: 'generation',
     });
-    const generation = await this.provider.generate(
-      buildSemanticGenerationMessages({
-        sourcePageId: source.sourcePageId,
-        sourceTitle: source.title,
-        sourceText: source.text,
-        analysis,
-        purpose: input.purpose,
-        schema: input.schema,
-        catalog: input.catalog,
-      }),
-      {
-        canonicalKey: source.sourcePageId,
-        title: source.title,
-        markdown: source.text,
-      },
-    );
+    const generationMessages = buildSemanticGenerationMessages({
+      sourcePageId: source.sourcePageId,
+      sourceTitle: source.title,
+      sourceText: source.text,
+      analysis,
+      purpose: input.purpose,
+      schema: input.schema,
+      catalog: input.catalog,
+    });
+    const generationFallback = {
+      canonicalKey: source.sourcePageId,
+      title: source.title,
+      markdown: source.text,
+    };
+    const generation = operationBudget.signal
+      ? await this.provider.generate(generationMessages, generationFallback, {
+          abortSignal: operationBudget.signal,
+        })
+      : await this.provider.generate(generationMessages, generationFallback);
+    operationBudget.assertArtifactCount(generation.artifacts.length);
     if (generation.compilerRecovery) {
       warnings.push({
         code:
@@ -188,15 +197,18 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
     const parsedCache = semanticAnalysisSchema.safeParse(cached);
     if (parsedCache.success) return parsedCache.data;
 
-    const analysis = await this.provider.analyze(
-      buildSemanticAnalysisMessages({
-        sourceTitle: source.title,
-        sourceText: source.text,
-        purpose: input.purpose,
-        schema: input.schema,
-        catalog: input.catalog,
-      }),
-    );
+    const messages = buildSemanticAnalysisMessages({
+      sourceTitle: source.title,
+      sourceText: source.text,
+      purpose: input.purpose,
+      schema: input.schema,
+      catalog: input.catalog,
+    });
+    const analysis = input.operationBudget?.signal
+      ? await this.provider.analyze(messages, {
+          abortSignal: input.operationBudget.signal,
+        })
+      : await this.provider.analyze(messages);
     await this.compilationRepo.saveAnalysis({
       ...cacheKey,
       spaceId: input.spaceId,

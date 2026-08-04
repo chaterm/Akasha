@@ -3,30 +3,39 @@ import { QueueName } from '../../../integrations/queue/constants';
 import { KnowledgeSpaceResetService } from './knowledge-space-reset.service';
 
 describe('KnowledgeSpaceResetService', () => {
-  it('removes only returned removable jobs after commit and then dispatches the new run', async () => {
-    const removable = {
-      getState: jest.fn().mockResolvedValue('waiting'),
+  it('removes prioritized and image jobs after commit while fencing active work', async () => {
+    const prioritized = {
+      getState: jest.fn().mockResolvedValue('prioritized'),
       remove: jest.fn().mockResolvedValue(undefined),
     };
     const active = {
       getState: jest.fn().mockResolvedValue('active'),
       remove: jest.fn(),
     };
+    const imageWaiting = {
+      getState: jest.fn().mockResolvedValue('waiting'),
+      remove: jest.fn().mockResolvedValue(undefined),
+    };
     const queue = {
       getJob: jest
         .fn()
-        .mockResolvedValueOnce(removable)
-        .mockResolvedValueOnce(active),
+        .mockResolvedValueOnce(prioritized)
+        .mockResolvedValueOnce(active)
+        .mockResolvedValueOnce(undefined),
     };
     const imageQueue = {
-      getJob: jest.fn().mockResolvedValue(undefined),
+      getJob: jest.fn().mockResolvedValueOnce(imageWaiting),
     };
     const runRepo = {
-      forceResetAndCreateRun: jest.fn().mockResolvedValue({
+      forceResetAndRequestRun: jest.fn().mockResolvedValue({
         reset: true,
         generation: 8,
         run: { id: 'force-run', mode: 'force_rebuild' },
-        supersededJobIds: ['waiting-job', 'active-job'],
+        supersededJobIds: [
+          'prioritized-space-job',
+          'active-job',
+          'waiting-image-job',
+        ],
       }),
     };
     const compilation = { dispatchPending: jest.fn() };
@@ -42,42 +51,24 @@ describe('KnowledgeSpaceResetService', () => {
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
         confirmationSpaceName: 'Exact Space',
-        sources: [
-          {
-            workspaceId: 'workspace-1',
-            spaceId: 'space-1',
-            sourcePageId: 'page-1',
-            sourceVersion: 'v1',
-            contentHash: 'sha256:page',
-            title: 'Page',
-            text: 'content',
-            references: [],
-            images: [{ attachmentId: 'attachment-1' }] as never,
-          },
-        ],
       }),
     ).resolves.toEqual({
       generation: 8,
       run: { id: 'force-run', mode: 'force_rebuild' },
     });
 
-    expect(runRepo.forceResetAndCreateRun).toHaveBeenCalledWith(
+    expect(runRepo.forceResetAndRequestRun).toHaveBeenCalledWith(
       expect.objectContaining({
         confirmationSpaceName: 'Exact Space',
-        catalogSnapshot: [],
-        catalogHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
-        sources: [
-          expect.objectContaining({
-            sourcePageId: 'page-1',
-            expectedImageCount: 1,
-          }),
-        ],
+        compilerVersion: expect.any(String),
+        promptVersion: expect.any(String),
       }),
     );
-    expect(queue.getJob).toHaveBeenCalledTimes(2);
-    expect(imageQueue.getJob).toHaveBeenCalledTimes(2);
-    expect(removable.remove).toHaveBeenCalledTimes(1);
+    expect(queue.getJob).toHaveBeenCalledTimes(3);
+    expect(imageQueue.getJob).toHaveBeenCalledTimes(1);
+    expect(prioritized.remove).toHaveBeenCalledTimes(1);
     expect(active.remove).not.toHaveBeenCalled();
+    expect(imageWaiting.remove).toHaveBeenCalledTimes(1);
     expect(compilation.dispatchPending).toHaveBeenCalledTimes(1);
   });
 
@@ -87,7 +78,7 @@ describe('KnowledgeSpaceResetService', () => {
   ])('rejects %s without Redis or dispatch', async (reason, errorType) => {
     const queue = { getJob: jest.fn() };
     const runRepo = {
-      forceResetAndCreateRun: jest.fn().mockResolvedValue({
+      forceResetAndRequestRun: jest.fn().mockResolvedValue({
         reset: false,
         reason,
       }),
@@ -105,7 +96,6 @@ describe('KnowledgeSpaceResetService', () => {
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
         confirmationSpaceName: 'Wrong',
-        sources: [],
       }),
     ).rejects.toBeInstanceOf(errorType);
     expect(queue.getJob).not.toHaveBeenCalled();

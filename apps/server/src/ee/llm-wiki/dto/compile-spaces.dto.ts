@@ -1,8 +1,16 @@
-import { ArrayNotEmpty, IsArray, IsString } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
+  ArrayUnique,
+  IsArray,
+  IsUUID,
+} from 'class-validator';
 
 export class CompileSpacesDto {
   @IsArray()
   @ArrayNotEmpty()
-  @IsString({ each: true })
+  @ArrayMaxSize(100)
+  @ArrayUnique()
+  @IsUUID('all', { each: true })
   spaceIds: string[];
 }

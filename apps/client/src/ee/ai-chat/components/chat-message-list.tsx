@@ -27,6 +27,8 @@ type Props = {
   streamingContent: string;
   streamingToolCalls: AiChatToolCall[];
   progressStage?: AiQaProgressStage | null;
+  onEditMessage?: (messageId: string, content: string) => void;
+  onEditingStateChange?: (editing: boolean) => void;
 };
 
 const BOTTOM_THRESHOLD_PX = 32;
@@ -39,6 +41,8 @@ export default function ChatMessageList({
   streamingContent,
   streamingToolCalls,
   progressStage,
+  onEditMessage,
+  onEditingStateChange,
 }: Props) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -47,6 +51,22 @@ export default function ChatMessageList({
   const isAutoScrollingRef = useRef(false);
   const prevScrollTopRef = useRef(0);
   const [showScrollButton, setShowScrollButton] = useState(false);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+
+  const handleEditingChange = useCallback(
+    (messageId: string, editing: boolean) => {
+      setEditingMessageId(editing ? messageId : null);
+      onEditingStateChange?.(editing);
+    },
+    [onEditingStateChange],
+  );
+
+  useEffect(() => {
+    if (isStreaming && editingMessageId) {
+      setEditingMessageId(null);
+      onEditingStateChange?.(false);
+    }
+  }, [editingMessageId, isStreaming, onEditingStateChange]);
 
   // Dedicated status-region announcement for screen readers. Rather than
   // putting aria-live on the whole transcript (which re-fires for every
@@ -181,7 +201,23 @@ export default function ChatMessageList({
       >
         {messages.map((msg) => (
           <ErrorBoundary key={msg.id} fallback={<ChatMessageErrorFallback />}>
-            <ChatMessage message={msg} />
+            <ChatMessage
+              message={msg}
+              onEdit={
+                onEditMessage &&
+                msg.role === "user" &&
+                !msg.id.startsWith("temp-")
+                  ? onEditMessage
+                  : undefined
+              }
+              editDisabled={
+                isStreaming ||
+                Boolean(editingMessageId && editingMessageId !== msg.id)
+              }
+              onEditingChange={(editing) =>
+                handleEditingChange(msg.id, editing)
+              }
+            />
           </ErrorBoundary>
         ))}
         {isStreaming && (

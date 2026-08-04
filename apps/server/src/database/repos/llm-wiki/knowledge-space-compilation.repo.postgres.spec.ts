@@ -35,485 +35,430 @@ describePostgres('KnowledgeSpaceCompilationRepo PostgreSQL round trip', () => {
     await db.destroy();
   });
 
-  it('durably records 2,000 reused pages and completes without queued work', async () => {
-    const result = await repo.createRun({
-      workspaceId: 'workspace-1',
-      spaceId: 'space-reused',
-      trigger: 'manual_compile',
-      compilerVersion: 'compiler-v1',
-      promptVersion: 'prompt-v1',
-      catalogSnapshot: [],
-      catalogHash: 'sha256:aggregate-current',
-      aggregateRequired: false,
-      sources: Array.from({ length: 2_000 }, (_, index) => ({
-        sourcePageId: `page-${index}`,
-        sourceVersion: 'v1',
-        sourceContentHash: `sha256:${index}`,
-        status: 'skipped' as const,
-        errorCode: 'unchanged',
-        errorMessage: 'Existing compiled knowledge is current.',
-      })),
-    });
-
-    const evidence = await readRunEvidence(db, result.run.id);
-    expect(evidence).toEqual({
-      status: 'succeeded',
-      phase: 'complete',
-      expected: 2_000,
-      succeeded: 0,
-      failed: 0,
-      skipped: 2_000,
-      pageRows: 2_000,
-      pendingRows: 0,
-      unchangedRows: 2_000,
-    });
-    logEvidence('fully_reused', evidence);
-  });
-
-  it('durably records a 999 reused + 1 changed plan before dispatch', async () => {
-    const result = await repo.createRun({
-      workspaceId: 'workspace-1',
-      spaceId: 'space-mixed',
-      trigger: 'manual_compile',
-      compilerVersion: 'compiler-v1',
-      promptVersion: 'prompt-v1',
-      catalogSnapshot: [],
-      catalogHash: 'sha256:aggregate-before',
-      aggregateRequired: true,
-      sources: [
-        ...Array.from({ length: 999 }, (_, index) => ({
-          sourcePageId: `reused-${index}`,
-          sourceVersion: 'v1',
-          sourceContentHash: `sha256:reused-${index}`,
-          status: 'skipped' as const,
-          errorCode: 'unchanged',
-          errorMessage: 'Existing compiled knowledge is current.',
-        })),
+  it('coalesces concurrent requests into one queued uninitialized run', async () => {
+    const request = {
+      requests: [
         {
-          sourcePageId: 'changed',
-          sourceVersion: 'v2',
-          sourceContentHash: 'sha256:changed',
-          status: 'pending' as const,
+          workspaceId: 'workspace-1',
+          spaceId: 'space-request',
+          trigger: 'manual_compile',
         },
       ],
-    });
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    };
 
-    const evidence = await readRunEvidence(db, result.run.id);
-    expect(evidence).toEqual({
-      status: 'queued',
-      phase: 'text',
-      expected: 1_000,
-      succeeded: 0,
-      failed: 0,
-      skipped: 999,
-      pageRows: 1_000,
-      pendingRows: 1,
-      unchangedRows: 999,
-    });
-    logEvidence('mixed_incremental', evidence);
+    const results = await Promise.all([
+      repo.requestRuns(request),
+      repo.requestRuns(request),
+    ]);
 
-    await sql`
-      update knowledge_space_compile_run_pages
-      set status = 'skipped', error_code = 'empty_source', finished_at = now()
-      where run_id = ${result.run.id} and source_page_id = 'changed'
+    expect(
+      results
+        .flat()
+        .map((result) => result.disposition)
+        .sort(),
+    ).toEqual(['coalesced', 'created']);
+    const rows = await sql<{
+      count: number;
+      initializedAt: Date | null;
+      pageCount: number;
+    }>`
+      select count(*)::integer as count,
+             max(initialized_at) as "initializedAt",
+             max(expected_page_count)::integer as "pageCount"
+      from knowledge_space_compile_runs
+      where space_id = 'space-request'
+        and status in ('queued', 'compiling', 'aggregate_pending', 'aggregating')
     `.execute(db);
+    expect(rows.rows).toEqual([
+      { count: 1, initializedAt: null, pageCount: 0 },
+    ]);
+  });
+
+  it('sets rerun_requested after initialization without creating another active run', async () => {
+    const [created] = await repo.requestRuns({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-rerun',
+          trigger: 'manual_compile',
+        },
+      ],
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
     await sql`
       update knowledge_space_compile_runs
-      set status = 'aggregating', phase = 'initial_aggregate',
-          skipped_page_count = 1000
-      where id = ${result.run.id}
+      set initialized_at = now(), status = 'compiling'
+      where id = ${created.run!.id}
     `.execute(db);
-    await repo.completeAggregation({
-      runId: result.run.id,
-      importedArtifactCount: 1,
-      quarantinedArtifactCount: 0,
-      catalogHash: 'sha256:aggregate-after',
-      phase: 'initial_aggregate',
+
+    const [followUp] = await repo.requestRuns({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-rerun',
+          trigger: 'page_update',
+        },
+      ],
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
     });
 
-    const finalPending = await sql<{ status: string; phase: string }>`
-      select status, phase
+    expect(followUp.disposition).toBe('rerun_requested');
+    expect(followUp.run?.id).toBe(created.run?.id);
+    const state = await sql<{ rerunRequested: boolean; count: number }>`
+      select bool_or(rerun_requested) as "rerunRequested",
+             count(*)::integer as count
       from knowledge_space_compile_runs
-      where id = ${result.run.id}
+      where space_id = 'space-rerun'
+        and status in ('queued', 'compiling', 'aggregate_pending', 'aggregating')
     `.execute(db);
-    expect(finalPending.rows).toEqual([
-      { status: 'aggregate_pending', phase: 'final_aggregate' },
+    expect(state.rows).toEqual([{ rerunRequested: true, count: 1 }]);
+  });
+
+  it('orders merge work first and puts yielded continuations behind older peers', async () => {
+    await sql`
+      insert into knowledge_space_compile_runs (
+        id, workspace_id, space_id, trigger, mode, knowledge_generation, phase,
+        status, expected_page_count, compiler_version, prompt_version,
+        catalog_snapshot, catalog_hash, queued_at, initialized_at,
+        space_job_queued_at
+      ) values
+        (
+          'run-old-text', 'workspace-1', 'space-fair-old', 'manual_compile',
+          'incremental', 0, 'text', 'queued', 1, 'compiler-v1', 'prompt-v1',
+          '[]', 'sha256:old', now() - interval '10 minutes', now(),
+          now() - interval '10 minutes'
+        ),
+        (
+          'run-continuation', 'workspace-1', 'space-fair-continuation',
+          'manual_compile', 'incremental', 0, 'text', 'queued', 6,
+          'compiler-v1', 'prompt-v1', '[]', 'sha256:continuation',
+          now() - interval '20 minutes', now(), now() - interval '1 minute'
+        ),
+        (
+          'run-merge', 'workspace-1', 'space-fair-merge', 'manual_compile',
+          'incremental', 0, 'image_merge', 'queued', 1, 'compiler-v1',
+          'prompt-v1', '[]', 'sha256:merge', now() - interval '20 minutes',
+          now(), now()
+        )
+    `.execute(db);
+
+    const candidates = await repo.findSpaceSliceReservationCandidates(100);
+    const relevantIds = candidates
+      .map((candidate) => candidate.id)
+      .filter((id) =>
+        ['run-merge', 'run-old-text', 'run-continuation'].includes(id),
+      );
+
+    expect(relevantIds).toEqual([
+      'run-merge',
+      'run-old-text',
+      'run-continuation',
     ]);
-    await repo.startAggregation(result.run.id, 'final_aggregate');
-    await repo.completeAggregation({
-      runId: result.run.id,
-      importedArtifactCount: 1,
-      quarantinedArtifactCount: 0,
-      catalogHash: 'sha256:aggregate-final',
-      phase: 'final_aggregate',
+  });
+
+  it('finds the prior completed aggregate candidate instead of the current placeholder', async () => {
+    await sql`
+      insert into knowledge_space_compile_runs (
+        workspace_id, space_id, trigger, mode, knowledge_generation, phase,
+        status, expected_page_count, compiler_version, prompt_version,
+        catalog_snapshot, catalog_hash, queued_at, initialized_at
+      ) values (
+        'workspace-1', 'space-reuse-query', 'manual_compile', 'incremental', 0,
+        'complete', 'succeeded', 0, 'compiler-v1', 'prompt-v1', '[]',
+        'sha256:completed', now() - interval '1 minute', now() - interval '1 minute'
+      )
+    `.execute(db);
+    const [current] = await repo.requestRuns({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-reuse-query',
+          trigger: 'manual_compile',
+        },
+      ],
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
     });
 
-    const completed = await sql<{
-      status: string;
-      phase: string;
-      catalogHash: string;
-    }>`
-      select status, phase, catalog_hash as "catalogHash"
-      from knowledge_space_compile_runs
-      where id = ${result.run.id}
-    `.execute(db);
-    expect(completed.rows).toEqual([
-      {
+    const candidate = await repo.findLatestCompletedRunForAggregateReuse({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-reuse-query',
+      currentRunId: current.run!.id,
+    });
+
+    expect(candidate).toEqual(
+      expect.objectContaining({
         status: 'succeeded',
         phase: 'complete',
-        catalogHash: 'sha256:aggregate-final',
-      },
-    ]);
-    logEvidence('neutral_skips_completed', completed.rows[0]);
-
-    await sql`
-      update knowledge_space_compile_runs
-      set status = 'aggregating', phase = 'final_aggregate'
-      where id = ${result.run.id}
-    `.execute(db);
-    await sql`
-      update knowledge_space_compile_run_pages
-      set image_status = 'partial'
-      where run_id = ${result.run.id} and source_page_id = 'changed'
-    `.execute(db);
-    await repo.completeAggregation({
-      runId: result.run.id,
-      importedArtifactCount: 1,
-      quarantinedArtifactCount: 0,
-      catalogHash: 'sha256:aggregate-image-partial',
-      phase: 'final_aggregate',
-    });
-    const degraded = await sql<{ status: string; phase: string }>`
-      select status, phase
-      from knowledge_space_compile_runs
-      where id = ${result.run.id}
-    `.execute(db);
-    expect(degraded.rows).toEqual([{ status: 'partial', phase: 'complete' }]);
-    logEvidence('true_image_failure_partial', degraded.rows[0]);
+        catalogHash: 'sha256:completed',
+      }),
+    );
+    expect(candidate?.id).not.toBe(current.run?.id);
   });
 
-  it('durably advances initial aggregate to a fenced page image terminal state', async () => {
-    const result = await repo.createRun({
-      workspaceId: 'workspace-1',
-      spaceId: 'space-images',
-      trigger: 'manual_compile',
-      compilerVersion: 'compiler-v1',
-      promptVersion: 'prompt-v1',
-      catalogSnapshot: [],
-      catalogHash: 'sha256:before-images',
-      aggregateRequired: true,
-      sources: [
+  it('fail-closes removed-source artifacts and replans the same initialized run', async () => {
+    const [created] = await repo.requestRuns({
+      requests: [
         {
-          sourcePageId: 'image-page',
-          sourceVersion: 'v1',
-          sourceContentHash: 'sha256:image-page',
-          expectedImageCount: 13,
-          imageStatus: 'pending',
-          mergeStatus: 'waiting_images',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-removed',
+          trigger: 'manual_compile',
         },
       ],
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
     });
-    await sql`
-      update knowledge_space_compile_run_pages
-      set status = 'succeeded', finished_at = now()
-      where run_id = ${result.run.id}
-    `.execute(db);
-    await sql`
-      update knowledge_space_compile_runs
-      set status = 'aggregating', phase = 'initial_aggregate',
-          succeeded_page_count = 1
-      where id = ${result.run.id}
-    `.execute(db);
-    await repo.completeAggregation({
-      runId: result.run.id,
-      importedArtifactCount: 1,
-      quarantinedArtifactCount: 0,
-      catalogHash: 'sha256:initial-aggregate',
-      phase: 'initial_aggregate',
+    await seedInitializedRemovedSourcePlan(db, created.run!.id);
+
+    const [replanned] = await repo.requestRuns({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-removed',
+          trigger: 'page_update',
+          removedSourcePageIds: ['removed-page'],
+        },
+      ],
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
     });
 
-    const pending = await repo.findPendingImageDispatches();
-    expect(pending).toHaveLength(1);
-    expect(
-      await repo.markPageImageQueued({
-        runId: result.run.id,
-        sourcePageId: 'image-page',
-        sourceVersion: 'v1',
-        sourceContentHash: 'sha256:image-page',
-        knowledgeGeneration: 0,
-        jobId: 'image-job-1',
-      }),
-    ).toBe(true);
-    expect(
-      await repo.beginPageImages({
-        runId: result.run.id,
-        sourcePageId: 'image-page',
-        sourceVersion: 'v1',
-        sourceContentHash: 'sha256:image-page',
-        knowledgeGeneration: 0,
-      }),
-    ).toBe(true);
-    expect(
-      await repo.completePageImages({
-        runId: result.run.id,
-        sourcePageId: 'image-page',
-        sourceVersion: 'v1',
-        sourceContentHash: 'sha256:image-page',
-        knowledgeGeneration: 0,
-        status: 'partial',
-        expected: 13,
-        succeeded: 12,
-        failed: 0,
-        skipped: 1,
-      }),
-    ).toBe(true);
+    expect(replanned.disposition).toBe('coalesced');
+    expect(replanned.run?.id).toBe(created.run?.id);
+    const evidence = await readRemovedSourceReplanEvidence(db, created.run!.id);
+    expect(evidence).toEqual({
+      sourceStale: true,
+      artifactStale: true,
+      overviewStale: true,
+      childStaleCount: 5,
+      contributionCount: 1,
+      initializedAt: null,
+      aggregateRequired: true,
+      status: 'queued',
+      phase: 'text',
+      sequence: 7,
+      runPageCount: 0,
+      runImageCount: 0,
+    });
+  });
 
+  it('persists one queued active Run for each Space in a 100-Space request', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name)
+      select 'space-bulk-' || ordinal, 'workspace-1', 'Bulk ' || ordinal
+      from generate_series(1, 100) ordinal
+    `.execute(db);
+    const requests = Array.from({ length: 100 }, (_, index) => ({
+      workspaceId: 'workspace-1',
+      spaceId: `space-bulk-${index + 1}`,
+      trigger: 'manual_compile',
+    }));
+
+    const results = await repo.requestRuns({
+      requests,
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+
+    expect(results).toHaveLength(100);
+    expect(results.every((result) => result.disposition === 'created')).toBe(
+      true,
+    );
     const evidence = await sql<{
-      runStatus: string;
-      phase: string;
-      imageStatus: string;
-      expected: number;
-      succeeded: number;
-      failed: number;
-      skipped: number;
-      mergeStatus: string;
+      runCount: number;
+      uninitializedCount: number;
+      runPageCount: number;
     }>`
       select
-        run.status as "runStatus",
-        run.phase,
-        page.image_status as "imageStatus",
-        page.expected_image_count as expected,
-        page.succeeded_image_count as succeeded,
-        page.failed_image_count as failed,
-        page.skipped_image_count as skipped,
-        page.merge_status as "mergeStatus"
-      from knowledge_space_compile_runs run
-      join knowledge_space_compile_run_pages page on page.run_id = run.id
-      where run.id = ${result.run.id}
+        count(*)::integer as "runCount",
+        count(*) filter (where initialized_at is null)::integer
+          as "uninitializedCount",
+        (select count(*)::integer
+         from knowledge_space_compile_run_pages run_page
+         join knowledge_space_compile_runs run on run.id = run_page.run_id
+         where run.space_id like 'space-bulk-%') as "runPageCount"
+      from knowledge_space_compile_runs
+      where space_id like 'space-bulk-%'
+        and status in ('queued', 'compiling', 'aggregate_pending', 'aggregating')
     `.execute(db);
     expect(evidence.rows).toEqual([
-      {
-        runStatus: 'compiling',
-        phase: 'images',
-        imageStatus: 'partial',
-        expected: 13,
-        succeeded: 12,
-        failed: 0,
-        skipped: 1,
-        mergeStatus: 'pending',
-      },
+      { runCount: 100, uninitializedCount: 100, runPageCount: 0 },
     ]);
-    logEvidence('page_image_terminal', evidence.rows[0]);
-
-    const pendingMerge = await repo.findPendingMergeDispatches();
-    expect(pendingMerge).toHaveLength(1);
-    expect(
-      await repo.markPageMergeQueued({
-        runId: result.run.id,
-        sourcePageId: 'image-page',
-        sourceVersion: 'v1',
-        sourceContentHash: 'sha256:image-page',
-        knowledgeGeneration: 0,
-        effectiveKnowledgeHash: 'sha256:image-merged',
-        jobId: 'merge-job-1',
-      }),
-    ).toBe(true);
-    expect(
-      await repo.beginPageMerge({
-        runId: result.run.id,
-        sourcePageId: 'image-page',
-        sourceVersion: 'v1',
-        sourceContentHash: 'sha256:image-page',
-        knowledgeGeneration: 0,
-        effectiveKnowledgeHash: 'sha256:image-merged',
-      }),
-    ).toBe(true);
-    await db.transaction().execute(async (trx) => {
-      expect(
-        await repo.completePageMergePublication(
-          {
-            runId: result.run.id,
-            sourcePageId: 'image-page',
-            sourceVersion: 'v1',
-            sourceContentHash: 'sha256:image-page',
-            knowledgeGeneration: 0,
-            mergedEffectiveKnowledgeHash: 'sha256:image-merged',
-          },
-          trx as never,
-        ),
-      ).toBe(true);
-    });
-    const merged = await sql<{
-      status: string;
-      phase: string;
-      mergeStatus: string;
-      mergedHash: string;
-      aggregateJobId: string | null;
-    }>`
-      select run.status, run.phase,
-        page.merge_status as "mergeStatus",
-        page.merged_effective_knowledge_hash as "mergedHash",
-        run.aggregate_job_id as "aggregateJobId"
-      from knowledge_space_compile_runs run
-      join knowledge_space_compile_run_pages page on page.run_id = run.id
-      where run.id = ${result.run.id}
-    `.execute(db);
-    expect(merged.rows).toEqual([
-      {
-        status: 'aggregate_pending',
-        phase: 'final_aggregate',
-        mergeStatus: 'succeeded',
-        mergedHash: 'sha256:image-merged',
-        aggregateJobId: null,
-      },
-    ]);
-    logEvidence('page_merge_publication', merged.rows[0]);
-
-    await repo.startAggregation(result.run.id, 'final_aggregate');
-    await repo.completeAggregation({
-      runId: result.run.id,
-      importedArtifactCount: 1,
-      quarantinedArtifactCount: 0,
-      catalogHash: 'sha256:final-aggregate',
-      phase: 'final_aggregate',
-    });
-    const finished = await sql<{ status: string; phase: string }>`
-      select status, phase
-      from knowledge_space_compile_runs
-      where id = ${result.run.id}
-    `.execute(db);
-    expect(finished.rows).toEqual([{ status: 'partial', phase: 'complete' }]);
-    logEvidence('final_aggregate_partial', finished.rows[0]);
   });
 
-  it('lets an image worker claim a pending outbox row before the queue acknowledgement', async () => {
-    const result = await createPendingImageRun(repo, db, 'race-worker-first');
-
-    expect(
-      await repo.beginPageImages({
-        runId: result.run.id,
-        sourcePageId: 'race-worker-first',
-        sourceVersion: 'v1',
-        sourceContentHash: 'sha256:race-worker-first',
-        knowledgeGeneration: 0,
-      }),
-    ).toBe(true);
-
-    const page = await readImageDispatchState(db, result.run.id);
-    expect(page).toEqual({ imageStatus: 'processing', imageJobId: null });
-  });
-
-  it('acknowledges a worker-first image job without regressing processing to queued', async () => {
-    const result = await createPendingImageRun(repo, db, 'race-queue-ack');
-    await sql`
-      update knowledge_space_compile_run_pages
-      set image_status = 'processing'
-      where run_id = ${result.run.id}
-    `.execute(db);
-
-    expect(
-      await repo.markPageImageQueued({
-        runId: result.run.id,
-        sourcePageId: 'race-queue-ack',
-        sourceVersion: 'v1',
-        sourceContentHash: 'sha256:race-queue-ack',
-        knowledgeGeneration: 0,
-        jobId: 'image-job-worker-first',
-      }),
-    ).toBe(true);
-
-    const page = await readImageDispatchState(db, result.run.id);
-    expect(page).toEqual({
-      imageStatus: 'processing',
-      imageJobId: 'image-job-worker-first',
-    });
-  });
-
-  it('skips merge and opens final aggregate when no image produced searchable content', async () => {
-    const result = await repo.createRun({
-      workspaceId: 'workspace-1',
-      spaceId: 'space-no-image-content',
-      trigger: 'manual_compile',
-      compilerVersion: 'compiler-v1',
-      promptVersion: 'prompt-v1',
-      catalogSnapshot: [],
-      catalogHash: 'sha256:before-images',
-      aggregateRequired: true,
-      sources: [
+  it('persists the target page scope for a page-scoped Run', async () => {
+    const [created] = await repo.requestRuns({
+      requests: [
         {
-          sourcePageId: 'failed-image-page',
-          sourceVersion: 'v1',
-          sourceContentHash: 'sha256:failed-image-page',
-          expectedImageCount: 1,
-          imageStatus: 'pending',
-          mergeStatus: 'waiting_images',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-scoped',
+          trigger: 'page_retry',
+          targetSourcePageIds: ['page-x', 'page-y'],
         },
       ],
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
     });
-    await sql`
-      update knowledge_space_compile_run_pages
-      set status = 'succeeded', finished_at = now()
-      where run_id = ${result.run.id}
+    expect(created.disposition).toBe('created');
+    const row = await sql<{ targetSourcePageIds: string[] | null }>`
+      select target_source_page_ids as "targetSourcePageIds"
+      from knowledge_space_compile_runs where id = ${created.run!.id}
     `.execute(db);
+    expect(row.rows[0].targetSourcePageIds).toEqual(['page-x', 'page-y']);
+  });
+
+  it('keeps ordinary page updates page-scoped and unions changes for one follow-up', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name)
+      values ('space-page-update', 'workspace-1', 'Page update');
+      insert into pages (id, workspace_id, space_id) values
+        ('page-update-a', 'workspace-1', 'space-page-update'),
+        ('page-update-b', 'workspace-1', 'space-page-update')
+    `.execute(db);
+
+    const [first] = await repo.requestIncrementalCompileForPages({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-update-a'],
+      trigger: 'page_update',
+      removed: false,
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+    expect(first.disposition).toBe('created');
+    expect(first.run?.targetSourcePageIds).toEqual(['page-update-a']);
+
+    // Once initialized, a second page cannot be added to the frozen RunPage
+    // plan. It is durably unioned into the bounded follow-up scope instead.
     await sql`
       update knowledge_space_compile_runs
-      set status = 'aggregating', phase = 'initial_aggregate',
-          succeeded_page_count = 1
-      where id = ${result.run.id}
+      set initialized_at = now(), status = 'compiling'
+      where id = ${first.run!.id}
     `.execute(db);
-    await repo.completeAggregation({
-      runId: result.run.id,
-      importedArtifactCount: 1,
-      quarantinedArtifactCount: 0,
-      catalogHash: 'sha256:initial',
-      phase: 'initial_aggregate',
-    });
-    await repo.markPageImageQueued({
-      runId: result.run.id,
-      sourcePageId: 'failed-image-page',
-      sourceVersion: 'v1',
-      sourceContentHash: 'sha256:failed-image-page',
-      knowledgeGeneration: 0,
-      jobId: 'failed-image-job',
-    });
-    await repo.beginPageImages({
-      runId: result.run.id,
-      sourcePageId: 'failed-image-page',
-      sourceVersion: 'v1',
-      sourceContentHash: 'sha256:failed-image-page',
-      knowledgeGeneration: 0,
-    });
-    await repo.completePageImages({
-      runId: result.run.id,
-      sourcePageId: 'failed-image-page',
-      sourceVersion: 'v1',
-      sourceContentHash: 'sha256:failed-image-page',
-      knowledgeGeneration: 0,
-      status: 'failed',
-      expected: 1,
-      succeeded: 0,
-      failed: 1,
-      skipped: 0,
+    const [second] = await repo.requestIncrementalCompileForPages({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-update-b'],
+      trigger: 'page_update',
+      removed: false,
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
     });
 
-    const evidence = await sql<{
-      status: string;
-      phase: string;
-      mergeStatus: string;
-    }>`
-      select run.status, run.phase, page.merge_status as "mergeStatus"
-      from knowledge_space_compile_runs run
-      join knowledge_space_compile_run_pages page on page.run_id = run.id
-      where run.id = ${result.run.id}
+    expect(second.disposition).toBe('rerun_requested');
+    expect(second.run?.rerunRequested).toBe(true);
+    expect(
+      [...((second.run?.targetSourcePageIds as string[] | null) ?? [])].sort(),
+    ).toEqual(['page-update-a', 'page-update-b']);
+  });
+
+  it('narrows the follow-up of an initialized full-Space Run to the changed page', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name)
+      values ('space-full-active', 'workspace-1', 'Full active');
+      insert into pages (id, workspace_id, space_id)
+      values ('page-full-active', 'workspace-1', 'space-full-active')
     `.execute(db);
-    expect(evidence.rows).toEqual([
-      {
-        status: 'aggregate_pending',
-        phase: 'final_aggregate',
-        mergeStatus: 'skipped',
-      },
+    const [full] = await repo.requestRuns({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-full-active',
+          trigger: 'manual_compile',
+        },
+      ],
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+    await sql`
+      update knowledge_space_compile_runs
+      set initialized_at = now(), status = 'compiling'
+      where id = ${full.run!.id}
+    `.execute(db);
+
+    const [updated] = await repo.requestIncrementalCompileForPages({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-full-active'],
+      trigger: 'page_update',
+      removed: false,
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+
+    expect(updated.disposition).toBe('rerun_requested');
+    expect(updated.run?.targetSourcePageIds).toEqual(['page-full-active']);
+  });
+
+  it('unions target pages when coalescing two page-scoped requests', async () => {
+    const [first] = await repo.requestRuns({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-scoped-union',
+          trigger: 'page_retry',
+          targetSourcePageIds: ['page-a'],
+        },
+      ],
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+    const [second] = await repo.requestRuns({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-scoped-union',
+          trigger: 'page_retry',
+          targetSourcePageIds: ['page-a', 'page-b'],
+        },
+      ],
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+    expect(second.disposition).toBe('coalesced');
+    expect(second.run!.id).toBe(first.run!.id);
+    const row = await sql<{ targetSourcePageIds: string[] | null }>`
+      select target_source_page_ids as "targetSourcePageIds"
+      from knowledge_space_compile_runs where id = ${first.run!.id}
+    `.execute(db);
+    expect([...(row.rows[0].targetSourcePageIds ?? [])].sort()).toEqual([
+      'page-a',
+      'page-b',
     ]);
-    logEvidence('no_image_content_final_barrier', evidence.rows[0]);
+  });
+
+  it('widens a page-scoped Run to full-Space when a full request coalesces', async () => {
+    const [scoped] = await repo.requestRuns({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-scoped-widen',
+          trigger: 'page_retry',
+          targetSourcePageIds: ['page-a'],
+        },
+      ],
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+    const [full] = await repo.requestRuns({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-scoped-widen',
+          trigger: 'manual_compile',
+        },
+      ],
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+    expect(full.disposition).toBe('coalesced');
+    expect(full.run!.id).toBe(scoped.run!.id);
+    const row = await sql<{ targetSourcePageIds: string[] | null }>`
+      select target_source_page_ids as "targetSourcePageIds"
+      from knowledge_space_compile_runs where id = ${scoped.run!.id}
+    `.execute(db);
+    expect(row.rows[0].targetSourcePageIds).toBeNull();
   });
 });
 
@@ -525,7 +470,9 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       id varchar primary key,
       workspace_id varchar not null,
       name varchar not null,
-      knowledge_generation integer not null default 0
+      knowledge_generation integer not null default 0,
+      deleted_at timestamptz,
+      updated_at timestamptz not null default now()
     );
     create table knowledge_space_compile_runs (
       id varchar primary key default ('run-' || nextval('run_id_seq')),
@@ -544,6 +491,8 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       prompt_version varchar not null,
       catalog_snapshot jsonb not null,
       catalog_hash varchar not null,
+      target_source_page_ids jsonb,
+      aggregate_required boolean not null default true,
       aggregate_job_id varchar,
       aggregate_started_at timestamptz,
       imported_artifact_count integer not null default 0,
@@ -554,7 +503,20 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       started_at timestamptz,
       finished_at timestamptz,
       created_at timestamptz not null default now(),
-      updated_at timestamptz not null default now()
+      updated_at timestamptz not null default now(),
+      initialized_at timestamptz,
+      space_job_id varchar,
+      space_job_dispatched_at timestamptz,
+      space_job_sequence integer not null default 0,
+      space_job_queued_at timestamptz,
+      space_job_recovery_count integer not null default 0,
+      execution_token varchar,
+      execution_lease_expires_at timestamptz,
+      worker_id varchar,
+      heartbeat_at timestamptz,
+      last_yield_at timestamptz,
+      last_yield_reason varchar,
+      rerun_requested boolean not null default false
     );
     create table knowledge_space_compile_run_pages (
       id varchar primary key default ('run-page-' || nextval('run_page_id_seq')),
@@ -584,50 +546,190 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       updated_at timestamptz not null default now(),
       unique (run_id, source_page_id)
     );
+    create table knowledge_space_compile_run_images (
+      id varchar primary key,
+      run_id varchar not null,
+      run_page_id varchar not null
+    );
+    create table pages (
+      id varchar primary key,
+      workspace_id varchar not null,
+      space_id varchar not null,
+      deleted_at timestamptz
+    );
+    create table knowledge_sources (
+      id varchar primary key,
+      workspace_id varchar not null,
+      source_space_id varchar not null,
+      source_page_id varchar not null,
+      stale_at timestamptz
+    );
+    create table knowledge_artifact_contributions (
+      id varchar primary key,
+      workspace_id varchar not null,
+      space_id varchar not null,
+      source_page_id varchar not null,
+      artifact_id varchar not null
+    );
+    create table knowledge_pages (
+      id varchar primary key,
+      workspace_id varchar not null,
+      space_id varchar not null,
+      page_type varchar,
+      compile_scope varchar not null,
+      stale_at timestamptz
+    );
+    create table knowledge_parent_sections (
+      id varchar primary key,
+      workspace_id varchar not null,
+      knowledge_page_id varchar not null,
+      stale_at timestamptz
+    );
+    create table knowledge_claims (
+      id varchar primary key,
+      workspace_id varchar not null,
+      knowledge_page_id varchar not null,
+      stale_at timestamptz
+    );
+    create table knowledge_chunks (
+      id varchar primary key,
+      workspace_id varchar not null,
+      knowledge_page_id varchar not null,
+      stale_at timestamptz
+    );
+    create table knowledge_links (
+      id varchar primary key,
+      workspace_id varchar not null,
+      from_knowledge_page_id varchar not null,
+      stale_at timestamptz
+    );
+    create table knowledge_graph_edges (
+      id varchar primary key,
+      workspace_id varchar not null,
+      from_knowledge_page_id varchar not null,
+      stale_at timestamptz
+    );
+    create unique index uq_active_run on knowledge_space_compile_runs (
+      workspace_id, space_id
+    ) where status in ('queued', 'compiling', 'aggregate_pending', 'aggregating');
     insert into spaces (id, workspace_id, name) values
       ('space-reused', 'workspace-1', 'Reused'),
       ('space-mixed', 'workspace-1', 'Mixed'),
       ('space-images', 'workspace-1', 'Images'),
-      ('space-no-image-content', 'workspace-1', 'No image content')
+      ('space-no-image-content', 'workspace-1', 'No image content'),
+      ('space-request', 'workspace-1', 'Request'),
+      ('space-rerun', 'workspace-1', 'Rerun'),
+      ('space-reuse-query', 'workspace-1', 'Reuse query'),
+      ('space-removed', 'workspace-1', 'Removed'),
+      ('space-fair-old', 'workspace-1', 'Fair old'),
+      ('space-fair-continuation', 'workspace-1', 'Fair continuation'),
+      ('space-fair-merge', 'workspace-1', 'Fair merge'),
+      ('space-scoped', 'workspace-1', 'Page scoped'),
+      ('space-scoped-union', 'workspace-1', 'Page scoped union'),
+      ('space-scoped-widen', 'workspace-1', 'Page scoped widen')
   `.execute(db);
 }
 
-async function createPendingImageRun(
-  repo: KnowledgeSpaceCompilationRepo,
+async function seedInitializedRemovedSourcePlan(
   db: Kysely<unknown>,
-  sourcePageId: string,
-) {
-  const result = await repo.createRun({
-    workspaceId: 'workspace-1',
-    spaceId: 'space-images',
-    trigger: 'manual_compile',
-    compilerVersion: 'compiler-v1',
-    promptVersion: 'prompt-v1',
-    catalogSnapshot: [],
-    catalogHash: 'sha256:image-race',
-    aggregateRequired: true,
-    sources: [
-      {
-        sourcePageId,
-        sourceVersion: 'v1',
-        sourceContentHash: `sha256:${sourcePageId}`,
-        expectedImageCount: 1,
-        imageStatus: 'pending',
-        mergeStatus: 'waiting_images',
-      },
-    ],
-  });
-  await sql`
-    update knowledge_space_compile_run_pages
-    set status = 'succeeded', finished_at = now()
-    where run_id = ${result.run.id}
-  `.execute(db);
+  runId: string,
+): Promise<void> {
   await sql`
     update knowledge_space_compile_runs
-    set status = 'compiling', phase = 'images', succeeded_page_count = 1
-    where id = ${result.run.id}
+    set initialized_at = now(), status = 'compiling', space_job_sequence = 7,
+        execution_token = 'old-token', aggregate_required = false
+    where id = ${runId}
   `.execute(db);
-  return result;
+  await sql`
+    insert into knowledge_space_compile_run_pages (
+      id, run_id, workspace_id, space_id, source_page_id,
+      expected_source_version, expected_source_content_hash, status
+    ) values (
+      'removed-run-page', ${runId}, 'workspace-1', 'space-removed',
+      'removed-page', 'v1', 'sha256:removed', 'running'
+    )
+  `.execute(db);
+  await sql`
+    insert into knowledge_space_compile_run_images (id, run_id, run_page_id)
+    values ('removed-run-image', ${runId}, 'removed-run-page')
+  `.execute(db);
+  await sql`
+    insert into knowledge_sources (
+      id, workspace_id, source_space_id, source_page_id
+    ) values ('source-removed', 'workspace-1', 'space-removed', 'removed-page');
+    insert into knowledge_pages (
+      id, workspace_id, space_id, page_type, compile_scope
+    ) values
+      ('artifact-removed', 'workspace-1', 'space-removed', 'concept', 'page'),
+      ('overview-removed', 'workspace-1', 'space-removed', 'overview', 'space');
+    insert into knowledge_artifact_contributions (
+      id, workspace_id, space_id, source_page_id, artifact_id
+    ) values (
+      'contribution-removed', 'workspace-1', 'space-removed', 'removed-page',
+      'artifact-removed'
+    );
+    insert into knowledge_parent_sections values (
+      'parent-removed', 'workspace-1', 'artifact-removed', null
+    );
+    insert into knowledge_claims values (
+      'claim-removed', 'workspace-1', 'artifact-removed', null
+    );
+    insert into knowledge_chunks values (
+      'chunk-removed', 'workspace-1', 'artifact-removed', null
+    );
+    insert into knowledge_links values (
+      'link-removed', 'workspace-1', 'artifact-removed', null
+    );
+    insert into knowledge_graph_edges values (
+      'edge-removed', 'workspace-1', 'overview-removed', null
+    )
+  `.execute(db);
+}
+
+async function readRemovedSourceReplanEvidence(
+  db: Kysely<unknown>,
+  runId: string,
+) {
+  const result = await sql<{
+    sourceStale: boolean;
+    artifactStale: boolean;
+    overviewStale: boolean;
+    childStaleCount: number;
+    contributionCount: number;
+    initializedAt: Date | null;
+    aggregateRequired: boolean;
+    status: string;
+    phase: string;
+    sequence: number;
+    runPageCount: number;
+    runImageCount: number;
+  }>`
+    select
+      (select stale_at is not null from knowledge_sources
+       where id = 'source-removed') as "sourceStale",
+      (select stale_at is not null from knowledge_pages
+       where id = 'artifact-removed') as "artifactStale",
+      (select stale_at is not null from knowledge_pages
+       where id = 'overview-removed') as "overviewStale",
+      ((select count(*) from knowledge_parent_sections where stale_at is not null)
+       + (select count(*) from knowledge_claims where stale_at is not null)
+       + (select count(*) from knowledge_chunks where stale_at is not null)
+       + (select count(*) from knowledge_links where stale_at is not null)
+       + (select count(*) from knowledge_graph_edges where stale_at is not null)
+      )::integer as "childStaleCount",
+      (select count(*)::integer from knowledge_artifact_contributions
+       where id = 'contribution-removed') as "contributionCount",
+      run.initialized_at as "initializedAt",
+      run.aggregate_required as "aggregateRequired", run.status, run.phase,
+      run.space_job_sequence as sequence,
+      (select count(*)::integer from knowledge_space_compile_run_pages
+       where run_id = run.id) as "runPageCount",
+      (select count(*)::integer from knowledge_space_compile_run_images
+       where run_id = run.id) as "runImageCount"
+    from knowledge_space_compile_runs run
+    where run.id = ${runId}
+  `.execute(db);
+  return result.rows[0];
 }
 
 async function readImageDispatchState(db: Kysely<unknown>, runId: string) {

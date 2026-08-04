@@ -48,6 +48,29 @@ export interface KnowledgeCompileResult {
   jobIds: string[];
 }
 
+export type KnowledgeCompileRunDisposition =
+  | "created"
+  | "coalesced"
+  | "rerun_requested";
+
+export interface KnowledgeCompileSpacesResult {
+  requestedSpaceCount: number;
+  acceptedRunCount: number;
+  coalescedRunCount: number;
+  rerunRequestedCount: number;
+  runs: Array<{
+    spaceId: string;
+    runId: string;
+    disposition: KnowledgeCompileRunDisposition;
+  }>;
+}
+
+export interface KnowledgeSpaceOperationResult {
+  runId: string;
+  mode: "incremental" | "force_rebuild";
+  knowledgeGeneration: number;
+}
+
 export type KnowledgeAdminSpaceAction =
   | "retry_compile"
   | "reindex_access"
@@ -63,86 +86,17 @@ export interface KnowledgeRetryPagesResult {
   jobIds: string[];
 }
 
-export type KnowledgePageCompileStatus =
-  | "not_started"
-  | "queued"
-  | "running"
-  | "succeeded"
-  | "skipped"
-  | "failed";
-
-export type KnowledgePageCompileStage =
-  | "queued"
-  | "read_source"
-  | "image_enrichment"
-  | "analysis"
-  | "generation"
-  | "merge"
-  | "validation"
-  | "import"
-  | "completed";
-
-export interface KnowledgeDiagnosticsPage {
-  pageId: string;
-  slugId: string;
-  title: string;
+export interface KnowledgeCancelRunResult {
+  disposition: "cancelled" | "already_terminal";
+  runId: string;
   spaceId: string;
-  spaceName: string;
-  spaceSlug: string;
-  updatedAt: string;
-  deletedAt: string | null;
-  textLength: number;
-  knowledgeSourceCount: number;
-  staleSourceCount: number;
-  oldestStaleSourceAt: string | null;
-  knowledgePageSourceCount: number;
-  knowledgeChunkCount: number;
-  missingEmbeddingChunkCount: number;
-  lastCompiledAt: string | null;
-  lastAccessPolicyIndexedAt: string | null;
-  staleAccessPolicyCount: number;
-  compileStatus: KnowledgePageCompileStatus;
-  compileStage: KnowledgePageCompileStage | null;
-  compileAttemptCount: number;
-  compileErrorCode: string | null;
-  compileErrorMessage: string | null;
-  lastSucceededAt: string | null;
-  servingLastSuccessfulVersion: boolean;
-}
-
-export interface KnowledgeDiagnosticsJob {
-  id: string;
-  name: string;
-  state: string;
-  workspaceId?: string;
-  spaceId?: string;
-  pageIds: string[];
-  timestamp?: number;
-  processedOn?: number;
-  finishedOn?: number;
-  failedReason?: string;
-}
-
-export interface KnowledgeCompileStatus {
-  spaceId: string;
-  status:
-    | "queued"
-    | "running"
-    | "succeeded"
-    | "partial"
-    | "failed"
-    | "superseded";
-  jobId: string;
-  lastRunId: string;
-  durationMs: number | null;
-  sourceCount: number;
-  succeededPageCount?: number;
-  failedPageCount?: number;
-  skippedPageCount?: number;
-  importedArtifactCount: number;
-  quarantinedArtifactCount: number;
-  failureReason?: string;
-  updatedAt?: number;
+  status: KnowledgeRunStatus;
+  phase: KnowledgeRunPhase;
+  previousStatus?: KnowledgeRunStatus;
+  previousPhase?: KnowledgeRunPhase;
+  removedJobCount: number;
+  fencedActiveJobCount: number;
+  cleanupErrorCount: number;
 }
 
 export interface KnowledgeQueueCounts {
@@ -156,67 +110,221 @@ export interface KnowledgeQueueCounts {
   completed: number;
 }
 
-export type KnowledgeQueueKind = "text" | "image";
-
 export interface KnowledgeQueueSnapshot extends KnowledgeQueueCounts {
   sampledAt: string | null;
 }
 
-export type KnowledgeQueueSnapshots = Partial<
-  Record<KnowledgeQueueKind, KnowledgeQueueSnapshot>
->;
+export type KnowledgeRunStatus =
+  | "queued"
+  | "compiling"
+  | "aggregate_pending"
+  | "aggregating"
+  | "succeeded"
+  | "partial"
+  | "failed"
+  | "superseded"
+  | "cancelled";
 
-export interface KnowledgeCompilationStageProgress {
+export type KnowledgeRunPhase =
+  | "text"
+  | "initial_aggregate"
+  | "images"
+  | "image_merge"
+  | "final_aggregate"
+  | "complete";
+
+export interface KnowledgeRunDiagnosticsSummary {
+  sampledAt: string;
+  activeRunCount: number;
+  activeSpaceSlotRunCount: number;
+  waitingInitializationCount: number;
+  queuedRunCount: number;
+  recentCompletedCount: number;
+  recentFailedCount: number;
+  recentYieldCount: number;
+  longestCurrentSlotWaitMs: number | null;
+  statusCounts: Record<string, number>;
+  phaseCounts: Record<string, number>;
+  imageStatusCounts: Record<string, number>;
+  dispatch: {
+    spaceUnacknowledged: number;
+    imageUnacknowledged: number;
+  };
+  recovery: {
+    expiredExecutionLeases: number;
+    spaceRecovering: number;
+    spaceRecoveryExhausted: number;
+    imageRecovering: number;
+    imageRecoveryExhausted: number;
+  };
+  failureCategories: {
+    budgetTimeout: number;
+    provider: number;
+    publication: number;
+    infrastructure: number;
+    other: number;
+  };
+  queues?: {
+    space: KnowledgeQueueSnapshot;
+    image: KnowledgeQueueSnapshot;
+  };
+  workerEvents: {
+    windowMs: number;
+    stalled: number;
+    lockRenewalFailed: number;
+    source: "process_local";
+  };
+}
+
+export interface KnowledgeRunDiagnostic {
+  runId: string;
+  spaceId: string;
+  spaceName: string;
+  status: KnowledgeRunStatus;
+  mode: "incremental" | "force_rebuild";
+  phase: KnowledgeRunPhase;
+  knowledgeGeneration: number;
+  queueState:
+    | "waiting_initialization"
+    | "text_continuation"
+    | "image_merge_continuation"
+    | "queued"
+    | null;
+  spaceJobSequence: number;
+  lastYieldAt: string | null;
+  lastYieldReason: string | null;
+  workerId: string | null;
+  errorCode: string | null;
+  initializedAt: string | null;
+  queuedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  runDurationMs: number;
+  currentSliceWaitMs: number | null;
+  progress: {
+    text: KnowledgeRunProgressCount;
+    images: KnowledgeRunProgressCount;
+    merge: KnowledgeRunProgressCount;
+  };
+}
+
+export interface KnowledgeRunProgressCount {
   expected: number;
   succeeded: number;
   failed: number;
   skipped: number;
-  pending: number;
-  waiting: number;
-  lastAttemptError?: string;
 }
 
-export interface KnowledgeCompileRunProgress {
-  runId: string;
-  spaceId: string;
-  spaceName: string;
-  status: KnowledgeCompileStatus["status"];
-  mode?: "update" | "force";
-  phase?: string;
-  generation?: number;
-  createdAt?: string;
-  updatedAt?: string;
-  completedAt?: string;
-  progress: {
-    text: KnowledgeCompilationStageProgress;
-    image: KnowledgeCompilationStageProgress;
-    merge: KnowledgeCompilationStageProgress;
+export interface KnowledgeRunDiagnosticsPage {
+  items: KnowledgeRunDiagnostic[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface KnowledgeRunPageDiagnostic {
+  runPageId: string;
+  sourcePageId: string;
+  title: string;
+  slugId: string | null;
+  status: string;
+  imageStatus: string;
+  mergeStatus: string;
+  expectedImageCount: number;
+  succeededImageCount: number;
+  failedImageCount: number;
+  skippedImageCount: number;
+  errorCode: string | null;
+  errorCategory:
+    | "budget_timeout"
+    | "provider"
+    | "publication"
+    | "infrastructure"
+    | "other"
+    | null;
+  errorSummary: string | null;
+  errorDetail?: string;
+  queuedAt: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  updatedAt: string;
+  imageFailures: {
+    retryableExhausted: number;
+    permanent: number;
   };
 }
 
-export interface KnowledgeQuarantinedArtifact {
-  id: string;
-  workspaceId: string;
-  spaceId: string;
-  artifactId: string | null;
-  artifactKind: string | null;
-  compilerRunId: string | null;
-  compileTaskId: string | null;
-  reasonCodes: string[];
-  createdAt: string;
+export interface KnowledgeRunPageDiagnosticsPage {
+  run: { runId: string; spaceId: string; spaceName: string };
+  items: KnowledgeRunPageDiagnostic[];
+  total: number;
+  page: number;
+  limit: number;
 }
 
-export interface KnowledgeDiagnosticsResult {
-  pages: KnowledgeDiagnosticsPage[];
-  jobs: KnowledgeDiagnosticsJob[];
-  queueCounts: KnowledgeQueueCounts;
-  compileStatuses: KnowledgeCompileStatus[];
-  canViewGlobalQueues?: boolean;
-  queueSnapshots?: KnowledgeQueueSnapshots;
-  compileRuns?: KnowledgeCompileRunProgress[];
-  retrieval?: KnowledgeRetrievalDiagnosticsSummary;
-  quarantines: KnowledgeQuarantinedArtifact[];
-  quality?: KnowledgeQualityReport;
+export interface KnowledgePageLogItem {
+  runPageId: string;
+  runId: string;
+  sourcePageId: string;
+  spaceId: string;
+  spaceName: string;
+  title: string;
+  slugId: string | null;
+  status: string;
+  imageStatus: string;
+  mergeStatus: string;
+  expectedImageCount: number;
+  succeededImageCount: number;
+  failedImageCount: number;
+  skippedImageCount: number;
+  errorCode: string | null;
+  errorCategory:
+    | "budget_timeout"
+    | "provider"
+    | "publication"
+    | "infrastructure"
+    | "other"
+    | null;
+  errorSummary: string | null;
+  errorDetail?: string;
+  queuedAt: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  durationMs: number | null;
+  lastCompiledAt: string | null;
+  updatedAt: string;
+  imageFailures: {
+    retryableExhausted: number;
+    permanent: number;
+  };
+}
+
+export interface KnowledgePageLogPage {
+  items: KnowledgePageLogItem[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface KnowledgeWorkerCapacityEstimate {
+  workerCount: number | null;
+  capacity: number | null;
+  exact: false;
+  source: "bullmq_client_list" | "unsupported" | "unavailable";
+  concurrency: number;
+  lockDuration: number;
+  stalledInterval: number;
+  maxStalledCount: number;
+}
+
+export interface KnowledgeWorkerDiagnostics {
+  sampledAt: string;
+  databaseMaxPool: number;
+  schedulingAuthority: "postgresql";
+  space: KnowledgeWorkerCapacityEstimate;
+  image: KnowledgeWorkerCapacityEstimate;
 }
 
 export interface KnowledgeRetrievalDiagnosticsSummary {
@@ -261,6 +369,25 @@ export interface KnowledgeQualityReport {
   summary: KnowledgeQualitySummary;
   spaces: KnowledgeSpaceHealth[];
   topIssues: KnowledgeQualityIssue[];
+}
+
+export interface KnowledgeQuarantinedArtifact {
+  id: string;
+  workspaceId: string;
+  spaceId: string;
+  artifactId: string | null;
+  artifactKind: string | null;
+  compilerRunId: string | null;
+  compileTaskId: string | null;
+  reasonCodes: string[];
+  createdAt: string;
+}
+
+export interface KnowledgeQuarantineDiagnosticsPage {
+  items: KnowledgeQuarantinedArtifact[];
+  total: number;
+  page: number;
+  limit: number;
 }
 
 export interface KnowledgeGraphNode {

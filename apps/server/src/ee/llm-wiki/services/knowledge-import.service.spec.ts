@@ -15,6 +15,55 @@ describe('KnowledgeImportService', () => {
     ).toEqual([]);
   });
 
+  it('rejects more than 200 chunks before materialization or publication', async () => {
+    const artifact = {
+      artifactId: 'artifact-too-large',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      title: 'Too large',
+      contentMarkdown: '# Too large',
+      sourcePageIds: ['source-1'],
+      artifactKind: 'source_summary' as const,
+      compilerVersion: 'compiler@1',
+      promptVersion: 'prompt@1',
+      chunks: Array.from({ length: 201 }, (_, index) => ({
+        text: `chunk-${index}`,
+      })),
+    };
+    const capsuleRepo = { upsertCompiledArtifacts: jest.fn() };
+    const materializer = createMaterializer();
+    const embeddingProvider = { embedQuery: jest.fn() };
+    const service = new KnowledgeImportService(
+      {} as KnowledgeSourceRepo,
+      capsuleRepo as unknown as KnowledgeCapsuleRepo,
+      {
+        validateCompileResult: jest.fn().mockReturnValue({
+          accepted: [artifact],
+          quarantined: [],
+        }),
+      } as unknown as KnowledgeArtifactValidatorService,
+      embeddingProvider as never,
+      {} as never,
+      createTransactionDb() as never,
+      {} as never,
+      createContributionRepo() as never,
+      materializer as never,
+    );
+
+    await expect(
+      service.importCompileResult({
+        input: { ...compileInput(), compileMode: 'pages' },
+        artifacts: [artifact],
+      }),
+    ).rejects.toMatchObject({
+      code: 'page_complexity_limit',
+      limitKind: 'chunks',
+    });
+    expect(materializer.materializeSourceUpdate).not.toHaveBeenCalled();
+    expect(embeddingProvider.embedQuery).not.toHaveBeenCalled();
+    expect(capsuleRepo.upsertCompiledArtifacts).not.toHaveBeenCalled();
+  });
+
   it('embeds imported chunks when compiler artifacts do not include embeddings', async () => {
     const artifact = {
       artifactId: 'artifact-1',
@@ -783,6 +832,7 @@ describe('KnowledgeImportService', () => {
       previousSourceContributions: [previous],
       affectedContributions: [other],
       incomingArtifacts: [artifact],
+      operationBudget: expect.anything(),
     });
     expect(
       capsuleRepo.markSourceArtifactsStaleBySourcePageIds,
@@ -929,6 +979,7 @@ describe('KnowledgeImportService', () => {
       previousSourceContributions: [previous],
       affectedContributions: [previous, other],
       incomingArtifacts: [],
+      operationBudget: expect.anything(),
     });
     expect(publicationGuard).toHaveBeenCalledWith(trx);
     expect(sourceRepo.markSourcesStale).toHaveBeenCalledWith(

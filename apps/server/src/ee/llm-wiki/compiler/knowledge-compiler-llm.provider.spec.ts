@@ -101,20 +101,49 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     (generateText as jest.Mock).mockResolvedValue({
       output: JSON.parse(analysisJson),
     });
-    const timeoutSpy = jest
-      .spyOn(AbortSignal, 'timeout')
-      .mockReturnValue(new AbortController().signal);
+    const timeoutSpy = jest.spyOn(global, 'setTimeout');
 
     await createProvider({
       aiDriver: 'openai',
       compilerTimeoutMs: 45_000,
     }).analyze({ system: 'system', prompt: 'prompt' });
 
-    expect(timeoutSpy).toHaveBeenCalledWith(45_000);
+    expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 45_000);
     expect(generateText).toHaveBeenCalledWith(
       expect.objectContaining({ abortSignal: expect.any(AbortSignal) }),
     );
     timeoutSpy.mockRestore();
+  });
+
+  it('binds initial and repair requests to the same parent deadline', async () => {
+    (createOpenAI as jest.Mock).mockReturnValue(
+      jest.fn().mockReturnValue('compiler-model'),
+    );
+    let resolveRepair!: (value: unknown) => void;
+    (generateText as jest.Mock)
+      .mockResolvedValueOnce({ output: { version: 1 } })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveRepair = resolve;
+          }),
+      );
+    const parent = new AbortController();
+
+    const operation = createProvider({ aiDriver: 'openai' }).analyze(
+      { system: 'system', prompt: 'prompt' },
+      { abortSignal: parent.signal },
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(generateText).toHaveBeenCalledTimes(2);
+    const repairSignal = (generateText as jest.Mock).mock.calls[1][0]
+      .abortSignal as AbortSignal;
+    parent.abort(new Error('page deadline'));
+    expect(repairSignal.aborted).toBe(true);
+    resolveRepair({ output: JSON.parse(analysisJson) });
+    await expect(operation).resolves.toMatchObject({ synopsis: 'Summary' });
   });
 
   it('classifies TimeoutError as a retryable timeout', async () => {

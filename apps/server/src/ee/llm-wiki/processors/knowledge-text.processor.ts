@@ -1,7 +1,7 @@
 import { Logger, OnModuleDestroy } from '@nestjs/common';
 import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
-import { QueueName } from '../../../integrations/queue/constants';
+import { Job, UnrecoverableError } from 'bullmq';
+import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import { KnowledgeTextJobHandler } from '../services/knowledge-text-job.handler';
 
 @Processor(QueueName.KNOWLEDGE_TEXT_QUEUE, { concurrency: 2 })
@@ -16,6 +16,11 @@ export class KnowledgeTextProcessor
   }
 
   async process(job: Job) {
+    if (!SUPPORTED_TEXT_JOBS.has(job.name as QueueJob)) {
+      throw new UnrecoverableError(
+        `Unsupported Knowledge Text job ${job.name}.`,
+      );
+    }
     return this.handler.handle(job);
   }
 
@@ -25,11 +30,10 @@ export class KnowledgeTextProcessor
   }
 
   @OnWorkerEvent('failed')
-  async onError(job: Job) {
+  onError(job: Job) {
     this.logger.error(
       `Error processing ${job.name} job. Reason: ${job.failedReason}`,
     );
-    await this.handler.onFailed(job);
   }
 
   @OnWorkerEvent('completed')
@@ -41,3 +45,12 @@ export class KnowledgeTextProcessor
     if (this.worker) await this.worker.close();
   }
 }
+
+const SUPPORTED_TEXT_JOBS = new Set<QueueJob>([
+  QueueJob.PAGE_CONTENT_UPDATED,
+  QueueJob.KNOWLEDGE_REINDEX_ACCESS,
+  QueueJob.KNOWLEDGE_REBUILD_EMBEDDINGS,
+  QueueJob.KNOWLEDGE_MARK_SOURCES_STALE,
+  QueueJob.REVIEW_DISCOVER,
+  QueueJob.REVIEW_NEGOTIATE,
+]);

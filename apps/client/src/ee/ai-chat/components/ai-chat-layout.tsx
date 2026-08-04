@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useChatInfoQuery } from "../queries/ai-chat-query";
 import { useChatStream } from "../hooks/use-chat-stream";
@@ -16,6 +16,7 @@ export default function AiChatLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const chatInfoQuery = useChatInfoQuery(chatId);
+  const [isEditingHistory, setIsEditingHistory] = useState(false);
 
   // If the URL points at a chat the user does not own, the info fetch 404s.
   // Bounce them back to /ai so they cannot interact with any chat UI (including
@@ -33,6 +34,7 @@ export default function AiChatLayout() {
     progressStage,
     error,
     sendMessage,
+    editMessage,
     stopGeneration,
     hydrateFromServer,
   } = useChatStream(chatId);
@@ -56,6 +58,10 @@ export default function AiChatLayout() {
   );
 
   const autoSentRef = useRef(false);
+
+  useEffect(() => {
+    setIsEditingHistory(false);
+  }, [chatId]);
 
   useEffect(() => {
     if (chatInfoQuery.data?.messages) {
@@ -102,6 +108,8 @@ export default function AiChatLayout() {
             streamingContent={streamingContent}
             streamingToolCalls={streamingToolCalls}
             progressStage={progressStage}
+            onEditMessage={editMessage}
+            onEditingStateChange={setIsEditingHistory}
           />
           {error && (
             <div
@@ -117,6 +125,7 @@ export default function AiChatLayout() {
           <div className={classes.inputArea}>
             <ChatInput
               isStreaming={isStreaming}
+              disabled={isEditingHistory}
               onSend={handleSend}
               onStop={stopGeneration}
               chatId={chatId}

@@ -36,6 +36,18 @@
   gap: var(--mantine-spacing-sm);
 }
 
+.metricCard {
+  min-width: 0;
+  padding: var(--mantine-spacing-sm);
+  border: 1px solid
+    light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+  border-radius: var(--mantine-radius-sm);
+  background: light-dark(
+    var(--mantine-color-gray-0),
+    var(--mantine-color-dark-6)
+  );
+}
+
 .metricItem {
   padding: var(--mantine-spacing-sm) 0;
   border-top: 1px solid

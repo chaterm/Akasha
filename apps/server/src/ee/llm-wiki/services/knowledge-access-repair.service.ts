@@ -21,66 +21,61 @@ export class KnowledgeAccessRepairService {
     workspaceId: string;
     spaceId: string;
   }): Promise<KnowledgeAccessRepairResult> {
-    const sources = await this.sourceRepo.findSourcesBySpace(input);
-    const sourcePageIds = unique(
-      sources.map((source) => source.sourcePageId).filter(Boolean),
-    );
+    let scannedCount = 0;
+    let driftCount = 0;
+    let repairedCount = 0;
+    let afterSourcePageId: string | undefined;
 
-    if (sourcePageIds.length === 0) {
-      return {
-        scannedCount: 0,
-        driftCount: 0,
-        repairedCount: 0,
-      };
-    }
+    do {
+      const sourcePageIds = await this.sourceRepo.findSourcePageIdsBySpaceBatch(
+        {
+          ...input,
+          ...(afterSourcePageId ? { afterSourcePageId } : {}),
+          limit: 200,
+        },
+      );
+      if (sourcePageIds.length === 0) break;
+      scannedCount += sourcePageIds.length;
 
-    const [computedSnapshots, storedPolicies] = await Promise.all([
-      this.accessIndexer.computePolicySnapshots({
-        workspaceId: input.workspaceId,
-        sourcePageIds,
-      }),
-      this.accessPolicyRepo.findPoliciesForSources({
-        workspaceId: input.workspaceId,
-        sourcePageIds,
-      }),
-    ]);
-    const storedBySourcePageId = new Map(
-      storedPolicies.map((policy) => [policy.sourcePageId, policy]),
-    );
-    const driftedSourcePageIds = computedSnapshots
-      .filter((snapshot) => {
-        const stored = storedBySourcePageId.get(snapshot.sourcePageId);
+      const [computedSnapshots, storedPolicies] = await Promise.all([
+        this.accessIndexer.computePolicySnapshots({
+          workspaceId: input.workspaceId,
+          sourcePageIds,
+        }),
+        this.accessPolicyRepo.findPoliciesForSources({
+          workspaceId: input.workspaceId,
+          sourcePageIds,
+        }),
+      ]);
+      const storedBySourcePageId = new Map(
+        storedPolicies.map((policy) => [policy.sourcePageId, policy]),
+      );
+      const driftedSourcePageIds = computedSnapshots
+        .filter((snapshot) => {
+          const stored = storedBySourcePageId.get(snapshot.sourcePageId);
+          return (
+            !stored ||
+            stored.staleAt !== null ||
+            stored.policyHash !== snapshot.policyHash ||
+            stored.restrictedAncestorCount !== snapshot.restrictedAncestorCount
+          );
+        })
+        .map((snapshot) => snapshot.sourcePageId);
 
-        return (
-          !stored ||
-          stored.staleAt !== null ||
-          stored.policyHash !== snapshot.policyHash ||
-          stored.restrictedAncestorCount !== snapshot.restrictedAncestorCount
-        );
-      })
-      .map((snapshot) => snapshot.sourcePageId);
+      driftCount += driftedSourcePageIds.length;
+      if (driftedSourcePageIds.length > 0) {
+        const repairResult = await this.accessIndexer.reindexSourcePages({
+          workspaceId: input.workspaceId,
+          sourcePageIds: driftedSourcePageIds,
+        });
+        repairedCount += repairResult.indexedCount;
+      }
+      afterSourcePageId =
+        sourcePageIds.length === 200
+          ? sourcePageIds[sourcePageIds.length - 1]
+          : undefined;
+    } while (afterSourcePageId);
 
-    if (driftedSourcePageIds.length === 0) {
-      return {
-        scannedCount: sourcePageIds.length,
-        driftCount: 0,
-        repairedCount: 0,
-      };
-    }
-
-    const repairResult = await this.accessIndexer.reindexSourcePages({
-      workspaceId: input.workspaceId,
-      sourcePageIds: driftedSourcePageIds,
-    });
-
-    return {
-      scannedCount: sourcePageIds.length,
-      driftCount: driftedSourcePageIds.length,
-      repairedCount: repairResult.indexedCount,
-    };
+    return { scannedCount, driftCount, repairedCount };
   }
-}
-
-function unique(values: string[]): string[] {
-  return [...new Set(values)];
 }

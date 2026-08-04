@@ -42,13 +42,15 @@ type AiKnowledgeChatInput = {
   mentionedPageIds?: string[];
   contextPageId?: string;
   attachmentIds?: string[];
+  responseMode?: 'knowledge' | 'general';
   onToken?: (token: string) => void;
-  onStage?: (stage: 'generation') => void;
+  onStage?: (stage: 'understanding' | 'retrieval' | 'generation') => void;
 };
 
 export type AiKnowledgeChatResult = {
   answer: string;
-  answerMode: 'knowledge' | 'no_match';
+  answerMode: 'knowledge' | 'no_match' | 'general';
+  retrievalQuery?: string;
   citations: ReturnType<
     KnowledgeContextPackService['buildContextPack']
   >['citations'];
@@ -73,7 +75,7 @@ export type AiKnowledgeChatResult = {
   completenessNotice: ReturnType<
     KnowledgeContextPackService['buildContextPack']
   >['completenessNotice'];
-  retrievalDiagnostics: KnowledgeRetrievalDiagnostics & {
+  retrievalDiagnostics?: KnowledgeRetrievalDiagnostics & {
     mode: ReturnType<KnowledgeRetrievalService['retrieve']> extends Promise<
       infer Result
     >
@@ -103,16 +105,24 @@ export class AiKnowledgeChatService {
       throw new ForbiddenException('AI knowledge chat is disabled');
     }
 
+    if (input.responseMode === 'general') {
+      return this.answerFromGeneralKnowledge(input);
+    }
+
+    const retrievalQuery = await this.rewriteRetrievalQuery(input);
+    const contextualRetrievalQuery =
+      retrievalQuery.trim() !== input.query.trim() ? retrievalQuery : undefined;
+    input.onStage?.('retrieval');
     const retrieval = await this.retrieval.retrieve({
       workspaceId: input.workspaceId,
       userId: input.userId,
-      query: input.query,
+      query: retrievalQuery,
       spaceIds: input.spaceIds,
     });
     const chunkCitations = retrieval.chunks.length
       ? await this.citationResolver.resolveForChunks({
           workspaceId: input.workspaceId,
-          query: input.query,
+          query: retrievalQuery,
           chunks: retrieval.chunks,
         })
       : undefined;
@@ -142,21 +152,12 @@ export class AiKnowledgeChatService {
       pack.primary.some((entry) => entry.sourceWindows.length > 0);
 
     if (!hasKnowledgeEvidence) {
-      const noMatchAnswer = buildNoMatchAnswer(input.query);
-      input.onStage?.('generation');
-      input.onToken?.(noMatchAnswer);
+      const generalAnswer = await this.answerFromGeneralKnowledge(input);
       return {
-        answer: noMatchAnswer,
-        answerMode: 'no_match',
-        citations: [],
-        citationEvidence: [],
-        retrievedSources: [],
-        snippets: [],
-        warnings: pack.warnings,
-        retrievalReasons: pack.retrievalReasons,
-        budget: pack.budget,
-        completenessNotice: pack.completenessNotice,
-        retrievalDiagnostics,
+        ...generalAnswer,
+        ...(contextualRetrievalQuery
+          ? { retrievalQuery: contextualRetrievalQuery }
+          : {}),
       };
     }
 
@@ -168,44 +169,65 @@ export class AiKnowledgeChatService {
       chatContext: input.chatContext,
     };
     let rawAnswer = '';
+    let generatedAnswer: ParsedGeneratedAnswer = {
+      mode: 'knowledge',
+      content: '',
+      hasExplicitModeMarker: false,
+    };
+    const streamed = Boolean(this.answerProvider.stream);
     input.onStage?.('generation');
     if (this.answerProvider.stream) {
-      const sanitizer = new CitationStreamSanitizer(input.onToken);
+      const streamRouter = new KnowledgeAnswerStreamRouter(input.onToken);
       for await (const token of this.answerProvider.stream(answerInput)) {
         rawAnswer += token;
-        sanitizer.push(token);
+        streamRouter.push(token);
       }
-      sanitizer.finish();
+      streamRouter.finish();
+      generatedAnswer = parseGeneratedAnswer(rawAnswer);
     } else {
       rawAnswer = await this.answerProvider.answer(answerInput);
-      input.onToken?.(stripCitationMarkers(rawAnswer));
+      generatedAnswer = parseGeneratedAnswer(rawAnswer);
     }
-    let cleanAnswer = stripCitationMarkers(rawAnswer);
+    if (
+      generatedAnswer.mode === 'no_match' ||
+      generatedAnswer.mode === 'general'
+    ) {
+      const generalAnswer = await this.answerFromGeneralKnowledge({
+        ...input,
+        onStage: undefined,
+      });
+      return {
+        ...generalAnswer,
+        ...(contextualRetrievalQuery
+          ? { retrievalQuery: contextualRetrievalQuery }
+          : {}),
+      };
+    }
+    let cleanAnswer = stripCitationMarkers(generatedAnswer.content);
     if (!cleanAnswer) {
       cleanAnswer = buildGenerationUnavailableAnswer(input.query);
       input.onToken?.(cleanAnswer);
+    } else if (!streamed) {
+      input.onToken?.(cleanAnswer);
     }
-    const citedSourceIds = extractCitedSourceIds(rawAnswer);
-    const evidenceBackedSourceIds = new Set([
-      ...explicit.citations.map((citation) => citation.sourcePageId),
-      ...pack.primary.flatMap((entry) =>
-        entry.sourceWindows.map((window) => window.sourcePageId),
-      ),
-    ]);
-    const citations = filterCitationsByUsedSourceIds(
+    const sourceWindows = pack.primary.flatMap((entry) => entry.sourceWindows);
+    const citations = resolveAnswerCitations(
       allCitations,
-      citedSourceIds,
-      evidenceBackedSourceIds,
+      generatedAnswer.hasExplicitModeMarker
+        ? extractCitedSourceIds(rawAnswer)
+        : new Set<string>(),
+      sourceWindows,
+      explicit.citations.map((citation) => citation.sourcePageId),
     );
 
     return {
       answer: cleanAnswer,
       answerMode: 'knowledge',
+      ...(contextualRetrievalQuery
+        ? { retrievalQuery: contextualRetrievalQuery }
+        : {}),
       citations,
-      citationEvidence: buildCitationEvidence(
-        citations,
-        pack.primary.flatMap((entry) => entry.sourceWindows),
-      ),
+      citationEvidence: buildCitationEvidence(citations, sourceWindows),
       retrievedSources: allCitations,
       snippets: pack.primary.map((entry) => ({
         id: entry.id,
@@ -224,6 +246,80 @@ export class AiKnowledgeChatService {
 
   isEnabledForWorkspace(workspace: Workspace): boolean {
     return isKnowledgeAiEnabledForWorkspace(workspace);
+  }
+
+  private async answerFromGeneralKnowledge(
+    input: AiKnowledgeChatInput,
+  ): Promise<AiKnowledgeChatResult> {
+    const answerInput: KnowledgeAnswerProviderInput = {
+      query: input.query,
+      context: '',
+      chatContext: input.chatContext,
+      mode: 'general',
+    };
+    const disclaimer = buildGeneralKnowledgeDisclaimer(input.query);
+    let generatedAnswer = '';
+
+    input.onStage?.('generation');
+    input.onToken?.(disclaimer);
+    if (this.answerProvider.stream) {
+      const sanitizer = new CitationStreamSanitizer(input.onToken);
+      for await (const token of this.answerProvider.stream(answerInput)) {
+        generatedAnswer += token;
+        sanitizer.push(token);
+      }
+      sanitizer.finish();
+    } else {
+      generatedAnswer = await this.answerProvider.answer(answerInput);
+      input.onToken?.(stripCitationMarkers(generatedAnswer));
+    }
+
+    const cleanAnswer =
+      stripCitationMarkers(generatedAnswer) ||
+      buildGenerationUnavailableAnswer(input.query);
+    if (!generatedAnswer.trim()) {
+      input.onToken?.(cleanAnswer);
+    }
+
+    return this.buildGeneralKnowledgeResult(input.query, cleanAnswer);
+  }
+
+  private buildGeneralKnowledgeResult(
+    query: string,
+    cleanAnswer: string,
+  ): AiKnowledgeChatResult {
+    const pack = this.contextPack.buildContextPack({});
+    return {
+      answer: `${buildGeneralKnowledgeDisclaimer(query)}${cleanAnswer}`,
+      answerMode: 'general',
+      citations: [],
+      citationEvidence: [],
+      retrievedSources: [],
+      snippets: [],
+      warnings: pack.warnings,
+      retrievalReasons: [],
+      budget: pack.budget,
+      completenessNotice: pack.completenessNotice,
+    };
+  }
+
+  private async rewriteRetrievalQuery(
+    input: AiKnowledgeChatInput,
+  ): Promise<string> {
+    if (!input.chatContext?.length || !this.answerProvider.rewriteQuery) {
+      return input.query;
+    }
+
+    input.onStage?.('understanding');
+    try {
+      const rewritten = await this.answerProvider.rewriteQuery({
+        query: input.query,
+        chatContext: input.chatContext,
+      });
+      return rewritten.trim() || input.query;
+    } catch {
+      return input.query;
+    }
   }
 
   private async loadExplicitContext(input: AiKnowledgeChatInput): Promise<{
@@ -322,6 +418,25 @@ type KnowledgeContextPack = ReturnType<
 >;
 
 const CITATION_MARKER_PATTERN = /\[\[cite:([^\]\s]+)\]\]/g;
+const KNOWLEDGE_ANSWER_MARKER = '[[answer:knowledge]]';
+const GENERAL_ANSWER_MARKER = '[[answer:general]]';
+const KNOWLEDGE_NO_MATCH_MARKER = '[[knowledge:no_match]]';
+
+type GeneratedAnswerMode = 'knowledge' | 'general' | 'no_match';
+type ParsedGeneratedAnswer = {
+  mode: GeneratedAnswerMode;
+  content: string;
+  hasExplicitModeMarker: boolean;
+};
+
+const ANSWER_MODE_MARKERS: Array<{
+  marker: string;
+  mode: GeneratedAnswerMode;
+}> = [
+  { marker: KNOWLEDGE_ANSWER_MARKER, mode: 'knowledge' },
+  { marker: GENERAL_ANSWER_MARKER, mode: 'general' },
+  { marker: KNOWLEDGE_NO_MATCH_MARKER, mode: 'no_match' },
+];
 
 function buildAnswerContext(pack: KnowledgeContextPack): string {
   if (pack.primary.length === 0) {
@@ -369,6 +484,25 @@ function stripCitationMarkers(answer: string): string {
     .trim();
 }
 
+function parseGeneratedAnswer(answer: string): ParsedGeneratedAnswer {
+  const content = answer.trimStart();
+  const matchedMode = ANSWER_MODE_MARKERS.find(({ marker }) =>
+    content.startsWith(marker),
+  );
+  if (!matchedMode) {
+    return {
+      mode: 'knowledge',
+      content: answer,
+      hasExplicitModeMarker: false,
+    };
+  }
+  return {
+    mode: matchedMode.mode,
+    content: content.slice(matchedMode.marker.length).trimStart(),
+    hasExplicitModeMarker: true,
+  };
+}
+
 function filterCitationsByUsedSourceIds(
   citations: KnowledgeCitation[],
   citedSourceIds: Set<string>,
@@ -382,6 +516,23 @@ function filterCitationsByUsedSourceIds(
     (citation) =>
       citedSourceIds.has(citation.sourcePageId) &&
       evidenceBackedSourceIds.has(citation.sourcePageId),
+  );
+}
+
+function resolveAnswerCitations(
+  citations: KnowledgeCitation[],
+  citedSourceIds: Set<string>,
+  sourceWindows: KnowledgeSourceWindow[],
+  explicitSourceIds: string[],
+): KnowledgeCitation[] {
+  const evidenceBackedSourceIds = new Set([
+    ...explicitSourceIds,
+    ...sourceWindows.map((window) => window.sourcePageId),
+  ]);
+  return filterCitationsByUsedSourceIds(
+    citations,
+    citedSourceIds,
+    evidenceBackedSourceIds,
   );
 }
 
@@ -427,12 +578,12 @@ function uniqueCitations(citations: KnowledgeCitation[]): KnowledgeCitation[] {
   });
 }
 
-function buildNoMatchAnswer(query: string): string {
+function buildGeneralKnowledgeDisclaimer(query: string): string {
   if (/\p{Script=Han}/u.test(query)) {
-    return '在当前选择的知识库中没有找到足够的相关内容。请尝试换一种问法，或扩大知识空间范围后重试。';
+    return '> 以下回答基于通用模型知识，未引用企业知识库。\n\n';
   }
 
-  return "I couldn't find enough relevant information in the selected knowledge base. Try rephrasing the question or selecting more knowledge spaces.";
+  return '> This answer uses general model knowledge and does not cite the workspace knowledge base.\n\n';
 }
 
 function buildGenerationUnavailableAnswer(query: string): string {
@@ -479,6 +630,76 @@ class CitationStreamSanitizer {
 
   private output(value: string): void {
     if (value) this.emit?.(value);
+  }
+}
+
+class KnowledgeAnswerStreamRouter {
+  private buffer = '';
+  private decision: 'pending' | GeneratedAnswerMode = 'pending';
+  private awaitingAnswerContent = false;
+  private readonly sanitizer: CitationStreamSanitizer;
+
+  constructor(private readonly emit?: (token: string) => void) {
+    this.sanitizer = new CitationStreamSanitizer(emit);
+  }
+
+  push(token: string): void {
+    if (this.decision === 'no_match' || this.decision === 'general') return;
+    if (this.decision === 'knowledge') {
+      this.pushAnswerContent(token);
+      return;
+    }
+
+    this.buffer += token;
+    const content = this.buffer.trimStart();
+    if (!content) return;
+    const matchedMode = ANSWER_MODE_MARKERS.find(({ marker }) =>
+      content.startsWith(marker),
+    );
+    if (matchedMode) {
+      const answerContent = content.slice(matchedMode.marker.length);
+      this.buffer = '';
+      this.startMode(matchedMode.mode, answerContent);
+      return;
+    }
+    if (
+      ANSWER_MODE_MARKERS.some(({ marker }) => marker.startsWith(content))
+    ) {
+      return;
+    }
+
+    this.decision = 'knowledge';
+    this.sanitizer.push(this.buffer);
+    this.buffer = '';
+  }
+
+  finish(): void {
+    if (this.decision === 'pending') {
+      const parsed = parseGeneratedAnswer(this.buffer);
+      this.buffer = '';
+      this.startMode(parsed.mode, parsed.content);
+    }
+    if (this.decision === 'knowledge') {
+      this.sanitizer.finish();
+    }
+  }
+
+  private startMode(mode: GeneratedAnswerMode, content: string): void {
+    this.decision = mode;
+    if (mode !== 'knowledge') return;
+    this.awaitingAnswerContent = true;
+    this.pushAnswerContent(content);
+  }
+
+  private pushAnswerContent(content: string): void {
+    if (this.awaitingAnswerContent) {
+      const trimmedContent = content.trimStart();
+      if (!trimmedContent) return;
+      this.awaitingAnswerContent = false;
+      this.sanitizer.push(trimmedContent);
+      return;
+    }
+    this.sanitizer.push(content);
   }
 }
 

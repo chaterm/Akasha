@@ -39,7 +39,14 @@ import {
 } from './llm-wiki.constants';
 import { AdminKnowledgeSpaceActionDto } from './dto/admin-space-action.dto';
 import { CompileSpacesDto } from './dto/compile-spaces.dto';
-import { AdminKnowledgeDiagnosticsDto } from './dto/admin-diagnostics.dto';
+import { CancelKnowledgeRunDto } from './dto/cancel-knowledge-run.dto';
+import {
+  AdminKnowledgePageLogDto,
+  AdminKnowledgeQuarantineListDto,
+  AdminKnowledgeRunListDto,
+  AdminKnowledgeRunPagesQueryDto,
+  AdminKnowledgeRunSummaryDto,
+} from './dto/admin-diagnostics.dto';
 import { AdminKnowledgeRetryPagesDto } from './dto/admin-retry-pages.dto';
 import { ImportCompileResultDto } from './dto/import-compile-result.dto';
 import { KnowledgeGraphDto } from './dto/knowledge-graph.dto';
@@ -55,14 +62,9 @@ import { KnowledgeSpaceCompilationService } from './services/knowledge-space-com
 import { KnowledgeSpaceResetService } from './services/knowledge-space-reset.service';
 import {
   buildKnowledgeAdminActionJobId,
-  buildKnowledgeCompileJobId,
-  buildKnowledgeRunKey,
   uniqueValues,
 } from './services/knowledge-queue.utils';
-import {
-  KnowledgeAdminSpaceAction,
-  KnowledgeCompileTrigger,
-} from './types/knowledge-queue.types';
+import { KnowledgeAdminSpaceAction } from './types/knowledge-queue.types';
 import { getPageTitle } from '../../common/helpers';
 import { jsonToMarkdown } from '../../collaboration/collaboration.util';
 
@@ -220,23 +222,16 @@ export class LlmWikiController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     this.assertKnowledgeOperationAllowed(user, workspace);
-    const sources = await this.sourceExporter.exportSpaceSources({
-      workspaceId: workspace.id,
-      spaceId,
-    });
-    const run = await this.spaceCompilation.startSpaceRun({
-      workspaceId: workspace.id,
-      spaceId,
-      trigger: 'manual_compile',
-      mode: 'incremental',
-      confirmationSpaceName: dto.confirmationSpaceName,
-      sources,
-    });
-    if (!run) {
-      throw new ConflictException(
-        'A newer knowledge update has already replaced this request.',
-      );
-    }
+    const [request] = await this.spaceCompilation.requestRuns([
+      {
+        workspaceId: workspace.id,
+        spaceId,
+        trigger: 'manual_compile',
+        confirmationSpaceName: dto.confirmationSpaceName,
+        scanRemovedSources: true,
+      },
+    ]);
+    const run = request.run!;
     const result = {
       runId: run.id,
       mode: 'incremental' as const,
@@ -255,15 +250,10 @@ export class LlmWikiController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     this.assertKnowledgeOperationAllowed(user, workspace);
-    const sources = await this.sourceExporter.exportSpaceSources({
-      workspaceId: workspace.id,
-      spaceId,
-    });
     const reset = await this.spaceReset.forceRebuild({
       workspaceId: workspace.id,
       spaceId,
       confirmationSpaceName: dto.confirmationSpaceName,
-      sources,
     });
     const result = {
       runId: reset.run.id,
@@ -287,19 +277,43 @@ export class LlmWikiController {
 
     this.assertAdmin(user, 'AI knowledge compile is restricted to admins');
 
-    const result = await this.enqueueCompileSpaces({
-      workspaceId: workspace.id,
-      spaceIds: dto.spaceIds,
-      trigger: 'manual_compile',
-    });
+    const spaceIds = uniqueValues(dto.spaceIds);
+    const requests = await this.spaceCompilation.requestRuns(
+      spaceIds.map((spaceId) => ({
+        workspaceId: workspace.id,
+        spaceId,
+        trigger: 'manual_compile',
+        scanRemovedSources: true,
+      })),
+    );
+    const runs = requests.map((request, index) => ({
+      spaceId: request.run!.spaceId ?? spaceIds[index],
+      runId: request.run!.id,
+      disposition: request.disposition as
+        | 'created'
+        | 'coalesced'
+        | 'rerun_requested',
+    }));
+    const result = {
+      requestedSpaceCount: spaceIds.length,
+      acceptedRunCount: runs.length,
+      coalescedRunCount: runs.filter((run) => run.disposition === 'coalesced')
+        .length,
+      rerunRequestedCount: runs.filter(
+        (run) => run.disposition === 'rerun_requested',
+      ).length,
+      runs,
+    };
 
     this.auditService.log({
       event: AuditEvent.KNOWLEDGE_COMPILE_QUEUED,
       resourceType: AuditResource.KNOWLEDGE,
       resourceId: workspace.id,
       metadata: {
-        spaceIds: uniqueValues(dto.spaceIds),
-        queuedSpaceCount: result.queuedSpaceCount,
+        spaceIds,
+        acceptedRunCount: result.acceptedRunCount,
+        coalescedRunCount: result.coalescedRunCount,
+        rerunRequestedCount: result.rerunRequestedCount,
       },
     });
 
@@ -340,42 +354,226 @@ export class LlmWikiController {
   }
 
   @HttpCode(HttpStatus.OK)
-  @Post('admin/diagnostics')
-  async getDiagnostics(
-    @Body() dto: AdminKnowledgeDiagnosticsDto,
+  @Post('admin/diagnostics/summary')
+  async getRunDiagnosticsSummary(
+    @Body() dto: AdminKnowledgeRunSummaryDto,
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
   ) {
-    if (!this.chatService.isEnabledForWorkspace(workspace)) {
-      throw new ForbiddenException('AI knowledge chat is disabled');
-    }
+    this.assertDiagnosticsEnabled(workspace);
+    const spaceIds = await this.findAuthorizedDiagnosticSpaceIds(
+      dto.spaceIds,
+      user,
+      workspace,
+    );
+    return this.diagnosticsService.getRunDiagnosticsSummary({
+      workspaceId: workspace.id,
+      spaceIds,
+      enforceSpaceScope: true,
+      canViewGlobalQueues: user.role === UserRole.OWNER,
+    });
+  }
 
-    const candidateSpaceIds =
-      await this.diagnosticsService.findWorkspaceSpaceIds({
-        workspaceId: workspace.id,
-        requestedSpaceIds: dto.spaceIds,
-      });
-    const authorizedSpaceIds =
+  @HttpCode(HttpStatus.OK)
+  @Post('admin/diagnostics/runs')
+  async getRunDiagnostics(
+    @Body() dto: AdminKnowledgeRunListDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertDiagnosticsEnabled(workspace);
+    const spaceIds = await this.findAuthorizedDiagnosticSpaceIds(
+      dto.spaceIds,
+      user,
+      workspace,
+    );
+    return this.diagnosticsService.listRunDiagnostics({
+      workspaceId: workspace.id,
+      spaceIds,
+      enforceSpaceScope: true,
+      statuses: dto.statuses,
+      phases: dto.phases,
+      search: dto.search,
+      page: dto.page,
+      limit: dto.limit,
+    });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('admin/diagnostics/page-log')
+  async getPageCompilationLog(
+    @Body() dto: AdminKnowledgePageLogDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertDiagnosticsEnabled(workspace);
+    const spaceIds = await this.findAuthorizedDiagnosticSpaceIds(
+      dto.spaceIds,
+      user,
+      workspace,
+    );
+    return this.diagnosticsService.listPageCompilationLog({
+      workspaceId: workspace.id,
+      spaceIds,
+      enforceSpaceScope: true,
+      statuses: dto.statuses,
+      search: dto.search,
+      from: dto.from,
+      to: dto.to,
+      page: dto.page,
+      limit: dto.limit,
+      includeSensitiveErrors:
+        user.role === UserRole.OWNER || user.role === UserRole.ADMIN,
+    });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('admin/diagnostics/quality')
+  async getQualityDiagnostics(
+    @Body() dto: AdminKnowledgeRunSummaryDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertDiagnosticsEnabled(workspace);
+    const spaceIds = await this.findAuthorizedDiagnosticSpaceIds(
+      dto.spaceIds,
+      user,
+      workspace,
+    );
+    return this.diagnosticsService.getQualityDiagnostics({
+      workspaceId: workspace.id,
+      spaceIds,
+    });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('admin/diagnostics/quarantine')
+  async getQuarantineDiagnostics(
+    @Body() dto: AdminKnowledgeQuarantineListDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertDiagnosticsEnabled(workspace);
+    if (user.role !== UserRole.OWNER) {
+      throw new ForbiddenException(
+        'Knowledge quarantine diagnostics are restricted to workspace owners',
+      );
+    }
+    const spaceIds = await this.findAuthorizedDiagnosticSpaceIds(
+      dto.spaceIds,
+      user,
+      workspace,
+    );
+    return this.diagnosticsService.listQuarantineDiagnostics({
+      workspaceId: workspace.id,
+      spaceIds,
+      page: dto.page,
+      limit: dto.limit,
+    });
+  }
+
+  @Get('admin/diagnostics/retrieval')
+  async getRetrievalDiagnostics(
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertDiagnosticsEnabled(workspace);
+    if (user.role !== UserRole.OWNER) {
+      throw new ForbiddenException(
+        'Knowledge retrieval diagnostics are restricted to workspace owners',
+      );
+    }
+    return this.diagnosticsService.getRetrievalDiagnostics({
+      workspaceId: workspace.id,
+    });
+  }
+
+  @Get('admin/diagnostics/runs/:runId/pages')
+  async getRunPageDiagnostics(
+    @Param('runId', ParseUUIDPipe) runId: string,
+    @Query() dto: AdminKnowledgeRunPagesQueryDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertDiagnosticsEnabled(workspace);
+    const spaceId = await this.diagnosticsService.findRunDiagnosticSpaceId({
+      workspaceId: workspace.id,
+      runId,
+    });
+    if (!spaceId) throw new NotFoundException('Knowledge Run not found');
+    const allowedSpaceIds =
       await this.spaceAuthorization.filterReadableSpaceIds({
         user: {
           id: user.id,
           role: user.role ?? UserRole.MEMBER,
           workspaceId: workspace.id,
         },
-        spaceIds: candidateSpaceIds,
+        spaceIds: [spaceId],
       });
-
-    return this.diagnosticsService.getWorkspaceDiagnostics({
+    const result = await this.diagnosticsService.listRunPageDiagnostics({
       workspaceId: workspace.id,
-      spaceIds: authorizedSpaceIds,
-      enforceSpaceScope: true,
-      canViewGlobalQueues: user.role === UserRole.OWNER,
-      includeDetailedDiagnostics:
-        user.role === UserRole.OWNER || user.role === UserRole.ADMIN,
-      statuses: dto.statuses,
-      stages: dto.stages,
+      runId,
+      allowedSpaceIds,
+      page: dto.page,
       limit: dto.limit,
+      includeSensitiveErrors:
+        user.role === UserRole.OWNER || user.role === UserRole.ADMIN,
     });
+    if (!result) throw new NotFoundException('Knowledge Run not found');
+    return result;
+  }
+
+  @Get('admin/diagnostics/workers')
+  async getKnowledgeWorkerDiagnostics(
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertDiagnosticsEnabled(workspace);
+    if (user.role !== UserRole.OWNER) {
+      throw new ForbiddenException(
+        'Knowledge worker diagnostics are restricted to workspace owners',
+      );
+    }
+    return this.diagnosticsService.getWorkerDiagnostics();
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('admin/compilation-runs/:runId/cancel')
+  async cancelKnowledgeCompilationRun(
+    @Param('runId', ParseUUIDPipe) runId: string,
+    @Body() dto: CancelKnowledgeRunDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertKnowledgeOperationAllowed(user, workspace);
+    const reason =
+      dto.reason
+        ?.replace(/[\u0000-\u001f\u007f]+/g, ' ')
+        .trim()
+        .slice(0, 400) || undefined;
+    const result = await this.spaceCompilation.cancelRun({
+      workspaceId: workspace.id,
+      runId,
+      reason,
+    });
+    if (result.disposition === 'cancelled') {
+      this.auditService.log({
+        event: AuditEvent.KNOWLEDGE_COMPILE_CANCELLED,
+        resourceType: AuditResource.KNOWLEDGE,
+        resourceId: runId,
+        spaceId: result.spaceId,
+        metadata: {
+          runId,
+          previousStatus: result.previousStatus,
+          previousPhase: result.previousPhase,
+          reason,
+          removedJobCount: result.removedJobCount,
+          fencedActiveJobCount: result.fencedActiveJobCount,
+          cleanupErrorCount: result.cleanupErrorCount,
+        },
+      });
+    }
+    return result;
   }
 
   @HttpCode(HttpStatus.OK)
@@ -413,20 +611,6 @@ export class LlmWikiController {
       pages.push(page);
       pagesBySpace.set(page.spaceId, pages);
     }
-    const activeRuns = await Promise.all(
-      [...pagesBySpace.keys()].map((spaceId) =>
-        this.spaceCompilation.hasActiveRun({
-          workspaceId: workspace.id,
-          spaceId,
-        }),
-      ),
-    );
-    if (activeRuns.some(Boolean)) {
-      throw new ConflictException(
-        'Space knowledge compilation is currently running.',
-      );
-    }
-
     const retryablePageIds = new Set(
       await this.diagnosticsService.findRetryableFailedPageIds({
         workspaceId: workspace.id,
@@ -439,33 +623,16 @@ export class LlmWikiController {
       );
     }
 
-    const jobIds: string[] = [];
-    const retryGroups = [];
-    for (const [spaceId, pages] of pagesBySpace) {
-      const sources = await this.sourceExporter.exportPageSources({
+    const requests = await this.spaceCompilation.requestRuns(
+      [...pagesBySpace.entries()].map(([spaceId, spacePages]) => ({
         workspaceId: workspace.id,
         spaceId,
-        sourcePageIds: pages.map((page) => page.id),
-      });
-      const sourceByPageId = new Map(
-        sources.map((source) => [source.sourcePageId, source] as const),
-      );
-      if (pages.some((page) => !sourceByPageId.has(page.id))) {
-        throw new BadRequestException(
-          'One or more source pages are unavailable for retry',
-        );
-      }
-      retryGroups.push({ spaceId, pages, sourceByPageId });
-    }
-    for (const { pages, sourceByPageId } of retryGroups) {
-      for (const page of pages) {
-        jobIds.push(
-          await this.spaceCompilation.queuePageRetry(
-            sourceByPageId.get(page.id)!,
-          ),
-        );
-      }
-    }
+        trigger: 'page_retry',
+        // Compile only the selected failed pages, not the whole Space.
+        targetSourcePageIds: spacePages.map((page) => page.id),
+      })),
+    );
+    const jobIds = requests.map((request) => request.run!.id);
 
     this.auditService.log({
       event: AuditEvent.KNOWLEDGE_COMPILE_QUEUED,
@@ -526,6 +693,32 @@ export class LlmWikiController {
     }
   }
 
+  private assertDiagnosticsEnabled(workspace: Workspace): void {
+    if (!this.chatService.isEnabledForWorkspace(workspace)) {
+      throw new ForbiddenException('AI knowledge chat is disabled');
+    }
+  }
+
+  private async findAuthorizedDiagnosticSpaceIds(
+    requestedSpaceIds: string[] | undefined,
+    user: User,
+    workspace: Workspace,
+  ): Promise<string[]> {
+    const candidateSpaceIds =
+      await this.diagnosticsService.findWorkspaceSpaceIds({
+        workspaceId: workspace.id,
+        requestedSpaceIds,
+      });
+    return this.spaceAuthorization.filterReadableSpaceIds({
+      user: {
+        id: user.id,
+        role: user.role ?? UserRole.MEMBER,
+        workspaceId: workspace.id,
+      },
+      spaceIds: candidateSpaceIds,
+    });
+  }
+
   private assertKnowledgeOperationAllowed(
     user: User,
     workspace: Workspace,
@@ -550,35 +743,6 @@ export class LlmWikiController {
       resourceId: spaceId,
       metadata: result,
     });
-  }
-
-  private async enqueueCompileSpaces(input: {
-    workspaceId: string;
-    spaceIds: string[];
-    trigger: KnowledgeCompileTrigger;
-  }): Promise<{ queuedSpaceCount: number; jobIds: string[] }> {
-    const spaceIds = uniqueValues(input.spaceIds);
-    const jobIds: string[] = [];
-
-    for (const spaceId of spaceIds) {
-      const jobId = buildKnowledgeCompileJobId({
-        workspaceId: input.workspaceId,
-        spaceId,
-        runKey: buildKnowledgeRunKey(input.trigger),
-      });
-      await this.knowledgeQueue.add(
-        QueueJob.KNOWLEDGE_COMPILE_SPACE,
-        {
-          workspaceId: input.workspaceId,
-          spaceId,
-          trigger: input.trigger,
-        },
-        { jobId },
-      );
-      jobIds.push(jobId);
-    }
-
-    return { queuedSpaceCount: jobIds.length, jobIds };
   }
 
   private async enqueueAdminSpaceAction(input: {

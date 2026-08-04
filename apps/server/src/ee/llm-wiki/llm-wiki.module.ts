@@ -12,7 +12,6 @@ import { KnowledgeRetrievalRankerService } from './services/knowledge-retrieval-
 import { KnowledgeContextPackService } from './services/knowledge-context-pack.service';
 import { KnowledgeCitationResolverService } from './services/knowledge-citation-resolver.service';
 import { KnowledgeDiagnosticsService } from './services/knowledge-diagnostics.service';
-import { KnowledgeQualityService } from './services/knowledge-quality.service';
 import { KnowledgeGraphService } from './services/knowledge-graph.service';
 import { AiKnowledgeChatService } from './services/ai-knowledge-chat.service';
 import { ConfiguredKnowledgeAnswerProvider } from './services/knowledge-answer-provider.service';
@@ -41,6 +40,12 @@ import { ConfiguredKnowledgeImageUnderstandingProvider } from './services/knowle
 import { KnowledgeImageEnrichmentService } from './services/knowledge-image-enrichment.service';
 import { KnowledgeSpaceResetService } from './services/knowledge-space-reset.service';
 import { KnowledgeTextJobHandler } from './services/knowledge-text-job.handler';
+import { KnowledgePageCompilationService } from './services/knowledge-page-compilation.service';
+import { KnowledgeSpaceRunnerService } from './services/knowledge-space-runner.service';
+import { KnowledgeSpaceProcessor } from './processors/knowledge-space.processor';
+import { KnowledgeRunReaperService } from './services/knowledge-run-reaper.service';
+import { KnowledgeImageReaperService } from './services/knowledge-image-reaper.service';
+import { KnowledgeQualityService } from './services/knowledge-quality.service';
 
 @Module({
   imports: [NoopAuditModule, ReviewModule],
@@ -72,6 +77,10 @@ import { KnowledgeTextJobHandler } from './services/knowledge-text-job.handler';
     KnowledgeSpaceCompilationService,
     KnowledgeSpaceResetService,
     KnowledgeSpaceAggregatorService,
+    KnowledgePageCompilationService,
+    KnowledgeSpaceRunnerService,
+    KnowledgeRunReaperService,
+    KnowledgeImageReaperService,
     KnowledgeTextJobHandler,
     KnowledgeLinkResolverService,
     {
@@ -98,6 +107,7 @@ import { KnowledgeTextJobHandler } from './services/knowledge-text-job.handler';
     },
     KnowledgeTextProcessor,
     KnowledgeImageProcessor,
+    KnowledgeSpaceProcessor,
   ],
   exports: [
     KnowledgeSourceAuthorizationService,
@@ -110,7 +120,6 @@ import { KnowledgeTextJobHandler } from './services/knowledge-text-job.handler';
     KnowledgeContextPackService,
     KnowledgeCitationResolverService,
     KnowledgeDiagnosticsService,
-    KnowledgeQualityService,
     KnowledgeGraphService,
     AiKnowledgeChatService,
   ],

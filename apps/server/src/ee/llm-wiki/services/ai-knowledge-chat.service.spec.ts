@@ -10,7 +10,7 @@ import {
 } from './ai-knowledge-chat.service';
 
 describe('AiKnowledgeChatService', () => {
-  it('retrieves, packs authorized chunk context, and returns answer without raw capsules', async () => {
+  it('does not associate sources when a knowledge answer omits citation markers', async () => {
     const retrieval = {
       retrieve: jest.fn().mockResolvedValue({
         mode: 'high_completeness',
@@ -81,7 +81,9 @@ describe('AiKnowledgeChatService', () => {
     const answerProvider = {
       answer: jest
         .fn()
-        .mockResolvedValue('Kafka is used for async events. [[cite:page-1]]'),
+        .mockResolvedValue(
+          '[[answer:knowledge]]Kafka is used for async events.',
+        ),
     };
     const citationResolver = {
       resolveForCapsules: jest.fn(),
@@ -125,21 +127,8 @@ describe('AiKnowledgeChatService', () => {
     ).resolves.toEqual({
       answer: 'Kafka is used for async events.',
       answerMode: 'knowledge',
-      citations: [{ sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1' }],
-      citationEvidence: [
-        {
-          sourcePageId: 'page-1',
-          title: 'Kafka',
-          url: '/p/page-1',
-          excerpts: [
-            {
-              text: '登记批准日期：2026年06月05日',
-              sourceRange: { startOffset: 0, endOffset: 18 },
-              quoteHash: 'sha256:quote',
-            },
-          ],
-        },
-      ],
+      citations: [],
+      citationEvidence: [],
       retrievedSources: [
         { sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1' },
       ],
@@ -236,31 +225,317 @@ describe('AiKnowledgeChatService', () => {
         '# Chaterm\nCitation IDs: [[cite:page-1]]\n登记批准日期：2026年06月05日\n## Verified source evidence 1: Kafka\nCitation ID: [[cite:page-1]]\n登记批准日期：2026年06月05日',
       chatContext: ['Previous turn'],
     });
+    expect(answerProvider.answer).toHaveBeenCalledTimes(1);
   });
 
-  it('returns a deterministic no-match answer without calling the model', async () => {
-    const answer = jest.fn().mockResolvedValue('must not be used');
+  it('automatically answers with general knowledge when retrieval has no verified evidence', async () => {
+    const answer = jest.fn().mockResolvedValue('Kafka is an event platform.');
+    const onToken = jest.fn();
     const service = createService({
       answerProvider: { answer },
     });
 
-    await expect(
-      service.chat({
-        workspaceId: 'workspace-1',
-        userId: 'user-1',
-        query: 'Kafka?',
-        spaceIds: ['space-1'],
-        workspace: workspace({ aiChat: true }),
-      }),
-    ).resolves.toMatchObject({
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: 'Kafka?',
+      spaceIds: ['space-1'],
+      workspace: workspace({ aiChat: true }),
+      onToken,
+    });
+
+    expect(answer).toHaveBeenCalledWith({
+      query: 'Kafka?',
+      context: '',
+      chatContext: undefined,
+      mode: 'general',
+    });
+    expect(answer).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
       answer:
-        "I couldn't find enough relevant information in the selected knowledge base. Try rephrasing the question or selecting more knowledge spaces.",
-      answerMode: 'no_match',
+        '> This answer uses general model knowledge and does not cite the workspace knowledge base.\n\nKafka is an event platform.',
+      answerMode: 'general',
       citations: [],
       citationEvidence: [],
       retrievedSources: [],
     });
-    expect(answer).not.toHaveBeenCalled();
+    expect(onToken.mock.calls.map(([text]) => text).join('')).toBe(
+      result.answer,
+    );
+  });
+
+  it('regenerates a clean streaming general answer without knowledge context', async () => {
+    const onToken = jest.fn();
+    const stream = jest
+      .fn()
+      .mockImplementationOnce(() =>
+        (async function* () {
+          yield '[[answer:';
+          yield 'general]]\n';
+          yield '知识库中提到了公司推荐接口。';
+        })(),
+      )
+      .mockImplementationOnce(() =>
+        (async function* () {
+          yield '孙悟空是文学角色，';
+          yield '没有现实世界中的公司。';
+        })(),
+      );
+    const service = createService(
+      verifiedKnowledgeOverrides({ stream } as never),
+    );
+
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: '孙悟空的公司是什么',
+      spaceIds: ['space-1'],
+      onToken,
+    });
+
+    expect(result).toMatchObject({
+      answer:
+        '> 以下回答基于通用模型知识，未引用企业知识库。\n\n孙悟空是文学角色，没有现实世界中的公司。',
+      answerMode: 'general',
+      citations: [],
+      citationEvidence: [],
+      retrievedSources: [],
+    });
+    expect(onToken.mock.calls.map(([text]) => text).join('')).toBe(
+      result.answer,
+    );
+    expect(onToken.mock.calls.map(([text]) => text).join('')).not.toContain(
+      '[[answer:general]]',
+    );
+    expect(onToken.mock.calls.map(([text]) => text).join('')).not.toContain(
+      '知识库中提到了公司推荐接口',
+    );
+    expect(stream).toHaveBeenCalledTimes(2);
+    expect(stream).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        query: '孙悟空的公司是什么',
+        context: expect.stringContaining('公司推荐接口'),
+      }),
+    );
+    expect(stream).toHaveBeenNthCalledWith(2, {
+      query: '孙悟空的公司是什么',
+      context: '',
+      chatContext: undefined,
+      mode: 'general',
+    });
+  });
+
+  it('regenerates a clean non-streaming general answer without knowledge context', async () => {
+    const onToken = jest.fn();
+    const answer = jest
+      .fn()
+      .mockResolvedValueOnce(
+        '[[answer:general]]\n知识库中提到了公司推荐接口。',
+      )
+      .mockResolvedValueOnce('孙悟空没有现实世界中的公司。');
+    const service = createService(verifiedKnowledgeOverrides({ answer }));
+
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: '孙悟空的公司是什么',
+      spaceIds: ['space-1'],
+      onToken,
+    });
+
+    expect(result).toMatchObject({
+      answer:
+        '> 以下回答基于通用模型知识，未引用企业知识库。\n\n孙悟空没有现实世界中的公司。',
+      answerMode: 'general',
+      citations: [],
+      citationEvidence: [],
+      retrievedSources: [],
+    });
+    expect(onToken.mock.calls.map(([text]) => text).join('')).toBe(
+      result.answer,
+    );
+    expect(result.answer).not.toContain('知识库中提到了公司推荐接口');
+    expect(answer).toHaveBeenCalledTimes(2);
+    expect(answer).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        context: expect.stringContaining('公司推荐接口'),
+      }),
+    );
+    expect(answer).toHaveBeenNthCalledWith(2, {
+      query: '孙悟空的公司是什么',
+      context: '',
+      chatContext: undefined,
+      mode: 'general',
+    });
+  });
+
+  it('does not associate cited sources without an explicit knowledge marker', async () => {
+    const service = createService(
+      verifiedKnowledgeOverrides({
+        answer: jest
+          .fn()
+          .mockResolvedValue(
+            '公司推荐接口用于推荐公司。 [[cite:page-company-api]]',
+          ),
+      }),
+    );
+
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: '公司推荐接口有什么作用？',
+      spaceIds: ['space-1'],
+    });
+
+    expect(result.answer).toBe('公司推荐接口用于推荐公司。');
+    expect(result.citations).toEqual([]);
+    expect(result.citationEvidence).toEqual([]);
+  });
+
+  it('keeps a second general generation only as a legacy no-match fallback', async () => {
+    const answer = jest
+      .fn()
+      .mockResolvedValueOnce('[[knowledge:no_match]]')
+      .mockResolvedValueOnce('孙悟空没有现实世界中的公司。');
+    const service = createService(verifiedKnowledgeOverrides({ answer }));
+
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: '孙悟空的公司是什么',
+      spaceIds: ['space-1'],
+    });
+
+    expect(result.answerMode).toBe('general');
+    expect(answer).toHaveBeenCalledTimes(2);
+    expect(answer).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ context: '', mode: 'general' }),
+    );
+  });
+
+  it('answers from general model knowledge only after an explicit request', async () => {
+    const retrieval = { retrieve: jest.fn() };
+    const answer = jest.fn().mockResolvedValue('Shanghai summers are hot.');
+    const onToken = jest.fn();
+    const service = createService({
+      retrieval,
+      answerProvider: { answer },
+    });
+
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: 'What is Shanghai weather like in July?',
+      spaceIds: ['space-1'],
+      chatContext: ['user: What is the weather today?'],
+      responseMode: 'general',
+      onToken,
+    });
+
+    expect(retrieval.retrieve).not.toHaveBeenCalled();
+    expect(answer).toHaveBeenCalledTimes(1);
+    expect(answer).toHaveBeenCalledWith({
+      query: 'What is Shanghai weather like in July?',
+      context: '',
+      chatContext: ['user: What is the weather today?'],
+      mode: 'general',
+    });
+    expect(result).toMatchObject({
+      answer:
+        '> This answer uses general model knowledge and does not cite the workspace knowledge base.\n\nShanghai summers are hot.',
+      answerMode: 'general',
+      citations: [],
+      citationEvidence: [],
+      retrievedSources: [],
+      snippets: [],
+    });
+    expect(onToken.mock.calls.map(([text]) => text).join('')).toBe(
+      result.answer,
+    );
+  });
+
+  it('rewrites a follow-up question with conversation history before retrieval', async () => {
+    const rewriteQuery = jest.fn().mockResolvedValue('Codex 的套餐多少钱');
+    const onStage = jest.fn();
+    const retrieval = {
+      retrieve: jest.fn().mockResolvedValue({
+        mode: 'high_completeness',
+        chunks: [],
+        capsules: [],
+        completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+      }),
+    };
+    const service = createService({
+      retrieval,
+      answerProvider: { rewriteQuery } as never,
+    });
+
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: '套餐多少钱',
+      spaceIds: ['space-1'],
+      chatContext: [
+        'user: Codex 开通目前可以看到哪些人已经开通了',
+        'assistant: 可以在 Codex 管理页面查看。',
+      ],
+      onStage,
+    });
+
+    expect(rewriteQuery).toHaveBeenCalledWith({
+      query: '套餐多少钱',
+      chatContext: [
+        'user: Codex 开通目前可以看到哪些人已经开通了',
+        'assistant: 可以在 Codex 管理页面查看。',
+      ],
+    });
+    expect(retrieval.retrieve).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: 'Codex 的套餐多少钱',
+      spaceIds: ['space-1'],
+    });
+    expect(onStage.mock.calls.map(([stage]) => stage)).toEqual([
+      'understanding',
+      'retrieval',
+      'generation',
+    ]);
+    expect(result.retrievalQuery).toBe('Codex 的套餐多少钱');
+  });
+
+  it('uses the original question when contextual query rewriting fails', async () => {
+    const retrieval = {
+      retrieve: jest.fn().mockResolvedValue({
+        mode: 'high_completeness',
+        chunks: [],
+        capsules: [],
+        completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+      }),
+    };
+    const service = createService({
+      retrieval,
+      answerProvider: {
+        rewriteQuery: jest.fn().mockRejectedValue(new Error('model timeout')),
+      } as never,
+    });
+
+    await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: '套餐多少钱',
+      spaceIds: ['space-1'],
+      chatContext: ['user: Codex 开通'],
+    });
+
+    expect(retrieval.retrieve).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: '套餐多少钱',
+      spaceIds: ['space-1'],
+    });
   });
 
   it('adds verified raw source evidence when the compiled summary omitted the requested URL', async () => {
@@ -276,7 +551,7 @@ describe('AiKnowledgeChatService', () => {
       answer: jest
         .fn()
         .mockResolvedValue(
-          '接口 URL 是 /customized_query_sql，方法是 POST。 [[cite:page-dms]]',
+          '[[answer:knowledge]]接口 URL 是 /customized_query_sql，方法是 POST。 [[cite:page-dms]]',
         ),
     };
     const service = createService({
@@ -423,7 +698,7 @@ describe('AiKnowledgeChatService', () => {
       answer: jest
         .fn()
         .mockResolvedValue(
-          'Chaterm 的软件著作权生效时间是 2026 年 06 月 05 日。 [[cite:page-used]]',
+          '[[answer:knowledge]]Chaterm 的软件著作权生效时间是 2026 年 06 月 05 日。 [[cite:page-used]]',
         ),
     };
     const service = createService({
@@ -530,7 +805,7 @@ describe('AiKnowledgeChatService', () => {
     );
   });
 
-  it('does not promote a cited retrieval result without verified source excerpts to trusted evidence', async () => {
+  it('uses general knowledge without promoting summary-only retrieval as trusted evidence', async () => {
     const citation = {
       sourcePageId: 'page-summary-only',
       title: 'Compiled summary only',
@@ -602,12 +877,17 @@ describe('AiKnowledgeChatService', () => {
     });
 
     expect(result).toMatchObject({
-      answerMode: 'no_match',
+      answerMode: 'general',
       citations: [],
       citationEvidence: [],
       retrievedSources: [],
     });
-    expect(answer).not.toHaveBeenCalled();
+    expect(answer).toHaveBeenCalledWith({
+      query: 'What is the exact fact?',
+      context: '',
+      chatContext: undefined,
+      mode: 'general',
+    });
   });
 
   it('returns a visible diagnostic answer when the configured model produces no text', async () => {
@@ -694,7 +974,9 @@ describe('AiKnowledgeChatService', () => {
   it('loads authorized current pages, mentions, and owned attachments as explicit context', async () => {
     const answer = jest
       .fn()
-      .mockResolvedValue('Use the current page. [[cite:page-current]]');
+      .mockResolvedValue(
+        '[[answer:knowledge]]Use the current page. [[cite:page-current]]',
+      );
     const service = createService({
       answerProvider: { answer },
       pageRepo: {
@@ -758,6 +1040,101 @@ describe('AiKnowledgeChatService', () => {
     ]);
   });
 });
+
+function verifiedKnowledgeOverrides(
+  answerProvider: Partial<KnowledgeAnswerProvider>,
+) {
+  const sourceWindow = {
+    sourcePageId: 'page-company-api',
+    title: 'CCC推荐公司',
+    url: '/p/company-api',
+    text: '公司推荐接口用于根据用户信息推荐公司。',
+    sourceRange: { startOffset: 0, endOffset: 20 },
+    quoteHash: 'sha256:company-api',
+  };
+  const knowledgePack = {
+    context: '# CCC推荐公司\n公司推荐接口用于根据用户信息推荐公司。',
+    citations: [
+      {
+        sourcePageId: sourceWindow.sourcePageId,
+        title: sourceWindow.title,
+        url: sourceWindow.url,
+      },
+    ],
+    primary: [
+      {
+        id: 'chunk-company-api',
+        kind: 'chunk' as const,
+        title: 'CCC推荐公司',
+        text: sourceWindow.text,
+        citationSourcePageIds: [sourceWindow.sourcePageId],
+        retrievalReasons: ['semantic'],
+        sourceWindows: [sourceWindow],
+      },
+    ],
+    warnings: [],
+    retrievalReasons: ['semantic'],
+    budget: {
+      maxContextLength: 12000,
+      usedContextLength: 30,
+      remainingContextLength: 11970,
+      includedItemCount: 1,
+      omittedItemCount: 0,
+      responseReserve: 0,
+      perItemMaxLength: 12000,
+    },
+    completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+  };
+  const emptyPack = {
+    ...knowledgePack,
+    context: '',
+    citations: [],
+    primary: [],
+    retrievalReasons: [],
+    budget: {
+      ...knowledgePack.budget,
+      usedContextLength: 0,
+      remainingContextLength: 12000,
+      includedItemCount: 0,
+    },
+  };
+
+  return {
+    retrieval: {
+      retrieve: jest.fn().mockResolvedValue({
+        mode: 'high_completeness',
+        chunks: [
+          chunk('chunk-company-api', 'kp-company-api', sourceWindow.text),
+        ],
+        capsules: [],
+        diagnostics: {},
+      }),
+    },
+    citationResolver: {
+      resolveForChunks: jest.fn().mockResolvedValue([
+        {
+          chunk: chunk(
+            'chunk-company-api',
+            'kp-company-api',
+            sourceWindow.text,
+          ),
+          pageTitle: 'CCC推荐公司',
+          retrievalReasons: ['semantic'],
+          sourceWindows: [sourceWindow],
+          warnings: [],
+          citations: knowledgePack.citations,
+        },
+      ]),
+    },
+    contextPack: {
+      buildContextPack: jest
+        .fn()
+        .mockReturnValueOnce(knowledgePack)
+        .mockReturnValueOnce(emptyPack),
+    },
+    answerProvider,
+  };
+}
 
 function createService(
   overrides: {

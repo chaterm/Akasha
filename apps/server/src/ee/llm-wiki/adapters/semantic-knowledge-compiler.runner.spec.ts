@@ -587,6 +587,29 @@ describe('SemanticKnowledgeCompilerRunner', () => {
       'exactly one source_summary',
     );
   });
+
+  it('rejects more than 20 generated artifacts before materialization', async () => {
+    const provider = createProvider();
+    provider.generate.mockResolvedValueOnce({
+      version: '1',
+      artifacts: [
+        generation.artifacts[0],
+        ...Array.from({ length: 20 }, (_, index) => ({
+          ...generation.artifacts[1],
+          canonicalKey: `concept-${index}`,
+        })),
+      ],
+    });
+    const runner = new TestSemanticKnowledgeCompilerRunner(
+      provider,
+      createCompilationRepo(),
+    );
+
+    await expect(runner.compileSpace(compileInput())).rejects.toMatchObject({
+      code: 'page_complexity_limit',
+      retryable: false,
+    });
+  });
 });
 
 class TestSemanticKnowledgeCompilerRunner extends SemanticKnowledgeCompilerRunner {

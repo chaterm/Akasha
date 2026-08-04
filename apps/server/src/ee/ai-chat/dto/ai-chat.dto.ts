@@ -1,5 +1,6 @@
 import {
   IsArray,
+  IsIn,
   IsOptional,
   IsString,
   MaxLength,
@@ -35,11 +36,25 @@ export class SendAiChatMessageDto {
   @IsArray()
   @IsString({ each: true })
   spaceIds?: string[];
+
+  @IsOptional()
+  @IsIn(['knowledge', 'general'])
+  responseMode?: 'knowledge' | 'general';
 }
 
 export class ChatIdDto {
   @IsString()
   chatId: string;
+}
+
+export class EditAiChatMessageDto extends ChatIdDto {
+  @IsString()
+  messageId: string;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(4000)
+  content: string;
 }
 
 export class UpdateAiChatTitleDto extends ChatIdDto {

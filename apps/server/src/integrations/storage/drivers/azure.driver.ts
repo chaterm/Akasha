@@ -37,8 +37,7 @@ export class AzureDriver implements StorageDriver {
     }
 
     this.accountUrl =
-      config.endpoint ??
-      `https://${config.accountName}.blob.core.windows.net`;
+      config.endpoint ?? `https://${config.accountName}.blob.core.windows.net`;
 
     this.sharedKeyCredential = new StorageSharedKeyCredential(
       config.accountName,
@@ -95,9 +94,14 @@ export class AzureDriver implements StorageDriver {
     }
   }
 
-  async read(filePath: string): Promise<Buffer> {
+  async read(
+    filePath: string,
+    options?: { abortSignal?: AbortSignal },
+  ): Promise<Buffer> {
     try {
-      return await this.blockBlob(filePath).downloadToBuffer();
+      return await this.blockBlob(filePath).downloadToBuffer(0, undefined, {
+        abortSignal: options?.abortSignal,
+      });
     } catch (err) {
       throw new Error(
         `Failed to read file from Azure: ${(err as Error).message}`,

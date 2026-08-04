@@ -71,13 +71,32 @@ describe('ConfiguredKnowledgeEmbeddingProvider', () => {
   });
 
   it('returns null for empty input and provider failures', async () => {
-    const service = new ConfiguredKnowledgeEmbeddingProvider(environment() as never);
+    const service = new ConfiguredKnowledgeEmbeddingProvider(
+      environment() as never,
+    );
 
     await expect(service.embedQuery('  ')).resolves.toBeNull();
     expect(embed).not.toHaveBeenCalled();
 
     (embed as jest.Mock).mockRejectedValue(new Error('provider unavailable'));
     await expect(service.embedQuery('Akasha wiki')).resolves.toBeNull();
+  });
+
+  it('combines the parent signal with a 30 second request timeout', async () => {
+    (embed as jest.Mock).mockResolvedValue({ embedding: [0.1] });
+    const timeoutSpy = jest.spyOn(global, 'setTimeout');
+    const parent = new AbortController();
+    const service = new ConfiguredKnowledgeEmbeddingProvider(
+      environment() as never,
+    );
+
+    await service.embedQuery('Akasha wiki', { abortSignal: parent.signal });
+
+    expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 30_000);
+    expect(embed).toHaveBeenCalledWith(
+      expect.objectContaining({ abortSignal: expect.any(AbortSignal) }),
+    );
+    timeoutSpy.mockRestore();
   });
 });
 

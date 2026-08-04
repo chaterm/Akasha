@@ -14,6 +14,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { AiChatService } from './ai-chat.service';
 import {
   ChatIdDto,
+  EditAiChatMessageDto,
   ListAiChatsDto,
   SearchAiChatsDto,
   SendAiChatMessageDto,
@@ -126,6 +127,7 @@ export class AiChatController {
         contextPageId: dto.contextPageId,
         attachmentIds: dto.attachmentIds,
         spaceIds: dto.spaceIds,
+        responseMode: dto.responseMode,
         onEvent: (event) => {
           if (event.type === 'chat_created') chatCreatedEmitted = true;
           if (event.type === 'content') contentEmitted = true;
@@ -149,6 +151,8 @@ export class AiChatController {
         retrievalReasons: result.retrievalReasons,
         completenessNotice: result.completenessNotice,
         answerMode: result.answerMode,
+        retrievalQuery: result.retrievalQuery,
+        canExpandScope: result.canExpandScope,
       });
       writeRaw(res, 'data: [DONE]\n\n');
     } catch (error) {
@@ -158,6 +162,68 @@ export class AiChatController {
           error instanceof Error
             ? error.message
             : 'Failed to send chat message',
+        retryable: false,
+      });
+    } finally {
+      endSse(res);
+    }
+  }
+
+  @Post('edit-message')
+  async editMessage(
+    @Body() dto: EditAiChatMessageDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+    @Res() res: SseReply,
+  ) {
+    this.prepareSse(res);
+
+    try {
+      let contentEmitted = false;
+      let supersededEmitted = false;
+      const result = await this.aiChatService.editMessage({
+        workspace,
+        user,
+        chatId: dto.chatId,
+        messageId: dto.messageId,
+        content: dto.content,
+        onEvent: (event) => {
+          if (event.type === 'content') contentEmitted = true;
+          if (event.type === 'superseded') supersededEmitted = true;
+          writeSse(res, event);
+        },
+      });
+
+      if (result.superseded) {
+        if (!supersededEmitted) {
+          writeSse(res, { type: 'superseded', chatId: result.chatId });
+        }
+      } else {
+        if (!contentEmitted && result.answer) {
+          writeSse(res, { type: 'content', text: result.answer });
+        }
+        writeSse(res, {
+          type: 'done',
+          messageId: result.assistantMessageId,
+          citations: result.citations,
+          citationEvidence: result.citationEvidence,
+          retrievedSources: result.retrievedSources,
+          retrievalDiagnostics: result.retrievalDiagnostics,
+          retrievalReasons: result.retrievalReasons,
+          completenessNotice: result.completenessNotice,
+          answerMode: result.answerMode,
+          retrievalQuery: result.retrievalQuery,
+          canExpandScope: result.canExpandScope,
+        });
+      }
+      writeRaw(res, 'data: [DONE]\n\n');
+    } catch (error) {
+      writeSse(res, {
+        type: 'error',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Failed to edit chat message',
         retryable: false,
       });
     } finally {

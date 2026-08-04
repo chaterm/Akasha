@@ -134,18 +134,6 @@ export class KnowledgeAccessPolicyRepo {
     });
   }
 
-  async markScopeStale(
-    input: { workspaceId: string; spaceId: string },
-    trx?: KyselyTransaction,
-  ): Promise<void> {
-    await dbOrTx(this.db, trx)
-      .updateTable('knowledgeSourceAccessPolicy')
-      .set({ staleAt: new Date() })
-      .where('workspaceId', '=', input.workspaceId)
-      .where('sourceSpaceId', '=', input.spaceId)
-      .execute();
-  }
-
   async replacePolicySnapshot(
     input: ReplacePolicySnapshotInput,
     trx?: KyselyTransaction,

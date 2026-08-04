@@ -5,6 +5,8 @@ import { PagePermissionRepo } from '@akasha/db/repos/page/page-permission.repo';
 import { PageRepo } from '@akasha/db/repos/page/page.repo';
 import { SourcePageRestrictedAncestorRequirements } from '@akasha/db/repos/page/types/page-permission.types';
 
+const ACCESS_REINDEX_BATCH_SIZE = 200;
+
 type IndexedRequirement = {
   requirementId: string;
   restrictedPageId: string;
@@ -54,6 +56,30 @@ export class KnowledgeAccessIndexerService {
       return [];
     }
 
+    const snapshots: KnowledgeAccessPolicySnapshot[] = [];
+    const sourcePageIds = [...new Set(input.sourcePageIds)];
+    for (
+      let offset = 0;
+      offset < sourcePageIds.length;
+      offset += ACCESS_REINDEX_BATCH_SIZE
+    ) {
+      snapshots.push(
+        ...(await this.computePolicySnapshotBatch({
+          workspaceId: input.workspaceId,
+          sourcePageIds: sourcePageIds.slice(
+            offset,
+            offset + ACCESS_REINDEX_BATCH_SIZE,
+          ),
+        })),
+      );
+    }
+    return snapshots;
+  }
+
+  private async computePolicySnapshotBatch(input: {
+    workspaceId: string;
+    sourcePageIds: string[];
+  }): Promise<KnowledgeAccessPolicySnapshot[]> {
     const pageRefs = await this.pageRepo.findExistingPageRefs({
       workspaceId: input.workspaceId,
       pageIds: input.sourcePageIds,
@@ -69,7 +95,10 @@ export class KnowledgeAccessIndexerService {
         livePageIds,
       );
     const requirementsBySource = new Map(
-      requirements.map((requirement) => [requirement.sourcePageId, requirement]),
+      requirements.map((requirement) => [
+        requirement.sourcePageId,
+        requirement,
+      ]),
     );
 
     return livePageRefs.map((page) => {
@@ -85,13 +114,6 @@ export class KnowledgeAccessIndexerService {
         requirements: indexedRequirements,
       };
     });
-  }
-
-  async markScopeStale(input: {
-    workspaceId: string;
-    spaceId: string;
-  }): Promise<void> {
-    await this.accessPolicyRepo.markScopeStale(input);
   }
 }
 

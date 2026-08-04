@@ -2,6 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import ms, { StringValue } from 'ms';
 
+const DEFAULT_AI_CHAT_MAX_INPUT_CHARS = 700_000;
+const MIN_AI_CHAT_MAX_INPUT_CHARS = 4_096;
+
 @Injectable()
 export class EnvironmentService {
   constructor(private configService: ConfigService) {}
@@ -50,7 +53,18 @@ export class EnvironmentService {
   }
 
   getDatabaseMaxPool(): number {
-    return parseInt(this.configService.get<string>('DATABASE_MAX_POOL', '10'));
+    return Number(
+      this.configService.get<string | number>('DATABASE_MAX_POOL', 25),
+    );
+  }
+
+  getDatabaseStatementTimeoutMs(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'DATABASE_STATEMENT_TIMEOUT_MS',
+        30_000,
+      ),
+    );
   }
 
   getRedisUrl(): string {
@@ -297,6 +311,19 @@ export class EnvironmentService {
     );
   }
 
+  getAiChatMaxInputChars(): number {
+    const configured = Number(
+      this.configService.get<string | number>(
+        'AI_CHAT_MAX_INPUT_CHARS',
+        DEFAULT_AI_CHAT_MAX_INPUT_CHARS,
+      ),
+    );
+    return Number.isFinite(configured) &&
+      configured >= MIN_AI_CHAT_MAX_INPUT_CHARS
+      ? Math.floor(configured)
+      : DEFAULT_AI_CHAT_MAX_INPUT_CHARS;
+  }
+
   getAiVisionModel(): string {
     return this.configService.get<string>('AI_VISION_MODEL', 'qwen3.7-plus');
   }
@@ -315,6 +342,84 @@ export class EnvironmentService {
       this.configService.get<string | number>(
         'KNOWLEDGE_IMAGE_TIMEOUT_MS',
         120_000,
+      ),
+    );
+  }
+
+  getKnowledgePageDeadlineMs(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_PAGE_DEADLINE_MS',
+        900_000,
+      ),
+    );
+  }
+
+  getKnowledgeAggregateDeadlineMs(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_AGGREGATE_DEADLINE_MS',
+        300_000,
+      ),
+    );
+  }
+
+  getKnowledgeImageJobDeadlineMs(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_IMAGE_JOB_DEADLINE_MS',
+        180_000,
+      ),
+    );
+  }
+
+  getKnowledgeSpaceConcurrency(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_SPACE_CONCURRENCY',
+        10,
+      ),
+    );
+  }
+
+  getKnowledgeImageConcurrency(): number {
+    return Number(
+      this.configService.get<string | number>('KNOWLEDGE_IMAGE_CONCURRENCY', 5),
+    );
+  }
+
+  getKnowledgeSpaceSliceMaxPages(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_SPACE_SLICE_MAX_PAGES',
+        5,
+      ),
+    );
+  }
+
+  getKnowledgeSpaceSliceMaxMs(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_SPACE_SLICE_MAX_MS',
+        300_000,
+      ),
+    );
+  }
+
+  getKnowledgeSpaceHeartbeatMs(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_SPACE_HEARTBEAT_MS',
+        30_000,
+      ),
+    );
+  }
+
+  getKnowledgeSpaceLeaseTtlMs(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_SPACE_LEASE_TTL_MS',
+        180_000,
       ),
     );
   }

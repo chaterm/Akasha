@@ -5,15 +5,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { QueueJob, QueueName } from '../../integrations/queue/constants';
 import { Queue } from 'bullmq';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
-import { PageRepo } from '../repos/page/page.repo';
-import { KnowledgeCompilationRepo } from '../repos/llm-wiki/knowledge-compilation.repo';
 import { KnowledgeSpaceCompilationRepo } from '../repos/llm-wiki/knowledge-space-compilation.repo';
-import {
-  buildKnowledgeCompileCoalesceKey,
-  buildKnowledgeCompilePageJobId,
-  KNOWLEDGE_COMPILE_DELAY_MS,
-  KNOWLEDGE_COMPILE_RETRY_BACKOFF_MS,
-} from '../../ee/llm-wiki/services/knowledge-queue.utils';
 import {
   DEFAULT_KNOWLEDGE_COMPILER_VERSION,
   DEFAULT_KNOWLEDGE_PROMPT_VERSION,
@@ -31,11 +23,9 @@ export class PageListener {
 
   constructor(
     private readonly environmentService: EnvironmentService,
-    private readonly pageRepo: PageRepo,
     @InjectQueue(QueueName.SEARCH_QUEUE) private searchQueue: Queue,
     @InjectQueue(QueueName.KNOWLEDGE_TEXT_QUEUE)
     private knowledgeQueue: Queue,
-    private readonly compilationRepo: KnowledgeCompilationRepo,
     private readonly runRepo: KnowledgeSpaceCompilationRepo,
   ) {}
 
@@ -50,7 +40,7 @@ export class PageListener {
 
     await this.enqueueKnowledgeAccessReindex(workspaceId, pageIds);
     if (!event.skipKnowledgeCompile) {
-      await this.enqueueKnowledgeCompileForPages(workspaceId, pageIds);
+      await this.requestKnowledgeRuns(workspaceId, pageIds, false);
     }
   }
 
@@ -60,7 +50,7 @@ export class PageListener {
 
     await this.searchQueue.add(QueueJob.PAGE_UPDATED, { pageIds });
     await this.enqueueKnowledgeAccessReindex(workspaceId, pageIds);
-    await this.enqueueKnowledgeCompileForPages(workspaceId, pageIds);
+    await this.requestKnowledgeRuns(workspaceId, pageIds, false);
   }
 
   @OnEvent(EventName.PAGE_DELETED)
@@ -70,7 +60,7 @@ export class PageListener {
       await this.searchQueue.add(QueueJob.PAGE_DELETED, { pageIds });
     }
 
-    await this.enqueueKnowledgeSourceInvalidation(workspaceId, pageIds);
+    await this.requestKnowledgeRuns(workspaceId, pageIds, true);
   }
 
   @OnEvent(EventName.PAGE_SOFT_DELETED)
@@ -81,7 +71,7 @@ export class PageListener {
       await this.searchQueue.add(QueueJob.PAGE_SOFT_DELETED, { pageIds });
     }
 
-    await this.enqueueKnowledgeSourceInvalidation(workspaceId, pageIds);
+    await this.requestKnowledgeRuns(workspaceId, pageIds, true);
   }
 
   @OnEvent(EventName.PAGE_RESTORED)
@@ -97,7 +87,7 @@ export class PageListener {
       'source_artifacts',
     );
     await this.enqueueKnowledgeAccessReindex(workspaceId, pageIds);
-    await this.enqueueKnowledgeCompileForPages(workspaceId, pageIds);
+    await this.requestKnowledgeRuns(workspaceId, pageIds, false);
   }
 
   isTypesense(): boolean {
@@ -130,64 +120,20 @@ export class PageListener {
     });
   }
 
-  private async enqueueKnowledgeCompileForPages(
+  private async requestKnowledgeRuns(
     workspaceId: string,
     pageIds: string[],
+    removed: boolean,
   ): Promise<void> {
     if (!workspaceId || pageIds.length === 0) return;
 
-    const pageRefs = await this.pageRepo.findExistingPageRefs({
+    await this.runRepo.requestIncrementalCompileForPages({
       workspaceId,
-      pageIds,
+      sourcePageIds: pageIds,
+      trigger: 'page_update',
+      removed,
+      compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+      promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
     });
-
-    const activeBySpace = new Map<string, boolean>();
-    for (const page of pageRefs) {
-      if (page.deletedAt) continue;
-      let hasActiveRun = activeBySpace.get(page.spaceId);
-      if (hasActiveRun === undefined) {
-        hasActiveRun = await this.runRepo.hasActiveRun({
-          workspaceId,
-          spaceId: page.spaceId,
-        });
-        activeBySpace.set(page.spaceId, hasActiveRun);
-      }
-      if (hasActiveRun) continue;
-      const jobId = buildKnowledgeCompilePageJobId({
-        workspaceId,
-        spaceId: page.spaceId,
-        sourcePageId: page.id,
-        runKey: buildKnowledgeCompileCoalesceKey(),
-      });
-      await this.compilationRepo.queueAttempt({
-        workspaceId,
-        spaceId: page.spaceId,
-        sourcePageId: page.id,
-        sourceVersion: undefined,
-        sourceContentHash: undefined,
-        compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
-        promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
-        compilerRunId: jobId,
-        compileTaskId: jobId,
-      });
-      await this.knowledgeQueue.add(
-        QueueJob.KNOWLEDGE_COMPILE_PAGES,
-        {
-          workspaceId,
-          spaceId: page.spaceId,
-          sourcePageIds: [page.id],
-          trigger: 'page_update',
-        },
-        {
-          delay: KNOWLEDGE_COMPILE_DELAY_MS,
-          attempts: 3,
-          backoff: {
-            type: 'exponential',
-            delay: KNOWLEDGE_COMPILE_RETRY_BACKOFF_MS,
-          },
-          jobId,
-        },
-      );
-    }
   }
 }

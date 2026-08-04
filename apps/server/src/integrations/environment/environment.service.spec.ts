@@ -29,12 +29,83 @@ describe('EnvironmentService', () => {
     expect(service.getKnowledgeCompilerTimeoutMs()).toBe(120_000);
   });
 
+  it('defaults database and compilation execution limits', () => {
+    expect(service.getDatabaseMaxPool()).toBe(25);
+    expect(service.getDatabaseStatementTimeoutMs()).toBe(30_000);
+    expect(service.getKnowledgePageDeadlineMs()).toBe(900_000);
+    expect(service.getKnowledgeAggregateDeadlineMs()).toBe(300_000);
+    expect(service.getKnowledgeImageJobDeadlineMs()).toBe(180_000);
+    expect(service.getKnowledgeSpaceConcurrency()).toBe(10);
+    expect(service.getKnowledgeImageConcurrency()).toBe(5);
+    expect(service.getKnowledgeSpaceSliceMaxPages()).toBe(5);
+    expect(service.getKnowledgeSpaceSliceMaxMs()).toBe(300_000);
+    expect(service.getKnowledgeSpaceHeartbeatMs()).toBe(30_000);
+    expect(service.getKnowledgeSpaceLeaseTtlMs()).toBe(180_000);
+  });
+
+  it('reads configured database and compilation execution limits', () => {
+    const configuredValues: Record<string, string> = {
+      DATABASE_MAX_POOL: '40',
+      DATABASE_STATEMENT_TIMEOUT_MS: '45000',
+      KNOWLEDGE_PAGE_DEADLINE_MS: '600000',
+      KNOWLEDGE_AGGREGATE_DEADLINE_MS: '360000',
+      KNOWLEDGE_IMAGE_JOB_DEADLINE_MS: '240000',
+      KNOWLEDGE_SPACE_CONCURRENCY: '7',
+      KNOWLEDGE_IMAGE_CONCURRENCY: '4',
+      KNOWLEDGE_SPACE_SLICE_MAX_PAGES: '8',
+      KNOWLEDGE_SPACE_SLICE_MAX_MS: '420000',
+      KNOWLEDGE_SPACE_HEARTBEAT_MS: '20000',
+      KNOWLEDGE_SPACE_LEASE_TTL_MS: '150000',
+    };
+    const configured = new EnvironmentService({
+      get: jest.fn((key: string, fallback: unknown) =>
+        key in configuredValues ? configuredValues[key] : fallback,
+      ),
+    } as unknown as ConfigService);
+
+    expect(configured.getDatabaseMaxPool()).toBe(40);
+    expect(configured.getDatabaseStatementTimeoutMs()).toBe(45_000);
+    expect(configured.getKnowledgePageDeadlineMs()).toBe(600_000);
+    expect(configured.getKnowledgeAggregateDeadlineMs()).toBe(360_000);
+    expect(configured.getKnowledgeImageJobDeadlineMs()).toBe(240_000);
+    expect(configured.getKnowledgeSpaceConcurrency()).toBe(7);
+    expect(configured.getKnowledgeImageConcurrency()).toBe(4);
+    expect(configured.getKnowledgeSpaceSliceMaxPages()).toBe(8);
+    expect(configured.getKnowledgeSpaceSliceMaxMs()).toBe(420_000);
+    expect(configured.getKnowledgeSpaceHeartbeatMs()).toBe(20_000);
+    expect(configured.getKnowledgeSpaceLeaseTtlMs()).toBe(150_000);
+  });
+
   it('reads a configured knowledge compiler timeout', () => {
     const configured = new EnvironmentService({
       get: jest.fn(() => '45000'),
     } as unknown as ConfigService);
 
     expect(configured.getKnowledgeCompilerTimeoutMs()).toBe(45_000);
+  });
+
+  it('defaults the AI chat input safeguard to 700K characters', () => {
+    expect(service.getAiChatMaxInputChars()).toBe(700_000);
+  });
+
+  it('reads a configured AI chat input safeguard', () => {
+    const configured = new EnvironmentService({
+      get: jest.fn((key: string, fallback: unknown) =>
+        key === 'AI_CHAT_MAX_INPUT_CHARS' ? '500000' : fallback,
+      ),
+    } as unknown as ConfigService);
+
+    expect(configured.getAiChatMaxInputChars()).toBe(500_000);
+  });
+
+  it('rejects an AI chat input safeguard too small for the fixed prompt', () => {
+    const configured = new EnvironmentService({
+      get: jest.fn((key: string, fallback: unknown) =>
+        key === 'AI_CHAT_MAX_INPUT_CHARS' ? '1' : fallback,
+      ),
+    } as unknown as ConfigService);
+
+    expect(configured.getAiChatMaxInputChars()).toBe(700_000);
   });
 
   it('defaults the image understanding model and timeout', () => {

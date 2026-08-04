@@ -38,6 +38,7 @@ export default function AsideChatPanel() {
   const [, setAsideState] = useAtom(asideStateAtom);
   const [chatId, setChatId] = useState<string | undefined>(undefined);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [isEditingHistory, setIsEditingHistory] = useState(false);
   const [contextPages, setContextPages] = useState<PageMention[]>([]);
   const { pageSlug } = useParams();
   const slugId = extractPageSlugId(pageSlug);
@@ -52,6 +53,7 @@ export default function AsideChatPanel() {
     progressStage,
     error,
     sendMessage,
+    editMessage,
     stopGeneration,
     hydrateFromServer,
   } = useChatStream(chatId, {
@@ -60,6 +62,10 @@ export default function AsideChatPanel() {
     },
   });
   const knowledgeScope = useKnowledgeScope();
+
+  useEffect(() => {
+    setIsEditingHistory(false);
+  }, [chatId]);
 
   useEffect(() => {
     if (page && !chatId) {
@@ -99,6 +105,7 @@ export default function AsideChatPanel() {
         return;
       }
       event.preventDefault();
+      setIsEditingHistory(false);
       setChatId(undefined);
       if (page) {
         setContextPages([
@@ -110,6 +117,7 @@ export default function AsideChatPanel() {
   );
 
   const handleSelectChat = useCallback((selectedChatId: string) => {
+    setIsEditingHistory(false);
     setChatId(selectedChatId);
     setHistoryOpen(false);
   }, []);
@@ -269,6 +277,8 @@ export default function AsideChatPanel() {
               streamingContent={streamingContent}
               streamingToolCalls={streamingToolCalls}
               progressStage={progressStage}
+              onEditMessage={editMessage}
+              onEditingStateChange={setIsEditingHistory}
             />
           </div>
         </>
@@ -301,6 +311,7 @@ export default function AsideChatPanel() {
       <div className={classes.inputArea}>
         <ChatInput
           isStreaming={isStreaming}
+          disabled={isEditingHistory}
           onSend={handleSend}
           onStop={stopGeneration}
           placeholder={t("Ask the knowledge base...")}

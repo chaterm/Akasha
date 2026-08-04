@@ -9,12 +9,14 @@ import { KnowledgeAccessRepairService } from './knowledge-access-repair.service'
 describe('KnowledgeAccessRepairService', () => {
   it('repairs only sources whose stored policy is missing, stale, or hash-drifted', async () => {
     const accessIndexer = {
-      computePolicySnapshots: jest.fn().mockResolvedValue([
-        snapshot('source-1', 'hash-current-1'),
-        snapshot('source-2', 'hash-current-2'),
-        snapshot('source-3', 'hash-current-3'),
-        snapshot('source-4', 'hash-current-4'),
-      ]),
+      computePolicySnapshots: jest
+        .fn()
+        .mockResolvedValue([
+          snapshot('source-1', 'hash-current-1'),
+          snapshot('source-2', 'hash-current-2'),
+          snapshot('source-3', 'hash-current-3'),
+          snapshot('source-4', 'hash-current-4'),
+        ]),
       reindexSourcePages: jest.fn().mockResolvedValue({ indexedCount: 3 }),
     };
     const service = createService({
@@ -79,6 +81,41 @@ describe('KnowledgeAccessRepairService', () => {
 
     expect(accessIndexer.reindexSourcePages).not.toHaveBeenCalled();
   });
+
+  it('repairs a large space through the same 200-source keyset boundary', async () => {
+    const sources = Array.from({ length: 201 }, (_, index) =>
+      source(`source-${String(index).padStart(3, '0')}`),
+    );
+    const accessIndexer = {
+      computePolicySnapshots: jest
+        .fn()
+        .mockImplementation(async ({ sourcePageIds }) =>
+          sourcePageIds.map((sourcePageId) =>
+            snapshot(sourcePageId, 'current'),
+          ),
+        ),
+      reindexSourcePages: jest
+        .fn()
+        .mockImplementation(async ({ sourcePageIds }) => ({
+          indexedCount: sourcePageIds.length,
+        })),
+    };
+    const service = createService({ accessIndexer, sources, policies: [] });
+
+    await expect(
+      service.repairSpace({ workspaceId: 'workspace-1', spaceId: 'space-1' }),
+    ).resolves.toEqual({
+      scannedCount: 201,
+      driftCount: 201,
+      repairedCount: 201,
+    });
+
+    expect(
+      accessIndexer.computePolicySnapshots.mock.calls.map(
+        ([input]) => input.sourcePageIds.length,
+      ),
+    ).toEqual([200, 1]);
+  });
 });
 
 function createService(overrides: {
@@ -96,10 +133,22 @@ function createService(overrides: {
   accessIndexer?: Partial<KnowledgeAccessIndexerService>;
 }) {
   const sourceRepo = {
-    findSourcesBySpace: jest.fn().mockResolvedValue(overrides.sources ?? []),
+    findSourcePageIdsBySpaceBatch: jest
+      .fn()
+      .mockImplementation(async (input) => {
+        const ids = (overrides.sources ?? []).map(
+          (entry) => entry.sourcePageId,
+        );
+        const start = input.afterSourcePageId
+          ? ids.findIndex((id) => id === input.afterSourcePageId) + 1
+          : 0;
+        return ids.slice(start, start + input.limit);
+      }),
   };
   const accessPolicyRepo = {
-    findPoliciesForSources: jest.fn().mockResolvedValue(overrides.policies ?? []),
+    findPoliciesForSources: jest
+      .fn()
+      .mockResolvedValue(overrides.policies ?? []),
   };
   const accessIndexer = {
     computePolicySnapshots: jest.fn().mockResolvedValue([]),

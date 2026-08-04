@@ -9,6 +9,8 @@ const migrationFiles = [
   '20260728T100000-reliable-knowledge-compilation.ts',
   '20260728T110000-knowledge-image-attachment-version.ts',
   '20260728T120000-knowledge-image-run-page-skips.ts',
+  '20260731T100000-multi-space-compilation.ts',
+  '20260803T100000-persist-knowledge-run-plan.ts',
 ] as const;
 const migrationPaths = migrationFiles.map((file) =>
   resolve(__dirname, 'migrations', file),
@@ -25,7 +27,13 @@ describe('reliable knowledge compilation migration sequence', () => {
   it('orders the dependent migrations and keeps conservative backfill semantics', async () => {
     expect([...migrationFiles].sort()).toEqual(migrationFiles);
 
-    const [reliable, attachmentVersion, skippedImages] = await Promise.all(
+    const [
+      reliable,
+      attachmentVersion,
+      skippedImages,
+      multiSpace,
+      persistedPlan,
+    ] = await Promise.all(
       migrationPaths.map((migrationPath) => readFile(migrationPath, 'utf8')),
     );
 
@@ -45,6 +53,13 @@ describe('reliable knowledge compilation migration sequence', () => {
     expect(skippedImages).toContain(
       'succeeded_image_count + failed_image_count + skipped_image_count',
     );
+    expect(multiSpace).not.toContain(".addColumn('skipped_image_count'");
+    expect(multiSpace).toContain(
+      ".createTable('knowledge_space_compile_run_images')",
+    );
+    expect(persistedPlan).toContain(
+      ".addColumn('aggregate_required', 'boolean'",
+    );
   });
 
   it('keeps generated database and entity contracts aligned with the schema', async () => {
@@ -57,6 +72,10 @@ describe('reliable knowledge compilation migration sequence', () => {
     const runPages = interfaceBody(
       databaseTypes,
       'KnowledgeSpaceCompileRunPages',
+    );
+    const runImages = interfaceBody(
+      databaseTypes,
+      'KnowledgeSpaceCompileRunImages',
     );
     const attempts = interfaceBody(
       databaseTypes,
@@ -71,17 +90,23 @@ describe('reliable knowledge compilation migration sequence', () => {
     expect(runs).toContain('knowledgeGeneration: Generated<number>;');
     expect(runs).toContain('mode: Generated<string>;');
     expect(runs).toContain('phase: Generated<string>;');
+    expect(runs).toContain('initializedAt: Timestamp | null;');
+    expect(runs).toContain('aggregateRequired: Generated<boolean>;');
+    expect(runs).toContain('spaceJobSequence: Generated<number>;');
     expect(runPages).toContain('expectedImageCount: Generated<number>;');
     expect(runPages).toContain('succeededImageCount: Generated<number>;');
     expect(runPages).toContain('failedImageCount: Generated<number>;');
     expect(runPages).toContain('skippedImageCount: Generated<number>;');
     expect(runPages).toContain('imageStatus: Generated<string>;');
     expect(runPages).toContain('mergeStatus: Generated<string>;');
+    expect(runImages).toContain('imageOrdinal: number;');
+    expect(runImages).toContain('expectedAttachmentVersion: Timestamp;');
     expect(attempts).toContain('effectiveKnowledgeHash: string | null;');
     expect(attempts).toContain('lastSuccessfulEffectiveHash: string | null;');
     expect(extractions).toContain('attachmentVersion: Timestamp | null;');
 
     expect(entityTypes).toContain('Selectable<KnowledgeSpaceCompileRunPages>');
+    expect(entityTypes).toContain('Selectable<KnowledgeSpaceCompileRunImages>');
     expect(entityTypes).toContain('Selectable<KnowledgeImageExtractions>');
   });
 });
@@ -122,9 +147,9 @@ describePostgres(
       await db.destroy();
     });
 
-    it('preserves legacy rows through 100000 -> 110000 -> 120000 -> down -> up', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
+    it('preserves legacy rows through the full sequence -> down -> up', async () => {
       const migrations = migrationPaths.map((migrationPath) =>
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         require(migrationPath),
       ) as Migration[];
 
@@ -132,6 +157,7 @@ describePostgres(
       await expectCurrentSchema(db);
       await expectLegacyRowsUseConservativeDefaults(db);
       await expectConstraintsAreEnforced(db);
+      await expectMillisecondAttachmentFence(db);
       await logSequenceEvidence('first_up', schema, db);
 
       await sql`
@@ -179,6 +205,15 @@ async function createProductionShapedFixture(
   db: Kysely<unknown>,
 ): Promise<void> {
   await sql`
+    create function gen_uuid_v7() returns uuid
+    language sql as 'select gen_random_uuid()';
+    create table workspaces (
+      id uuid primary key
+    );
+    create table attachments (
+      id uuid primary key,
+      updated_at timestamptz not null
+    );
     create table spaces (
       id uuid primary key,
       workspace_id uuid not null,
@@ -200,7 +235,8 @@ async function createProductionShapedFixture(
       prompt_version varchar not null,
       catalog_snapshot jsonb not null default '[]'::jsonb,
       catalog_hash varchar not null,
-      created_at timestamptz not null default now()
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
     );
     create table knowledge_space_compile_run_pages (
       id uuid primary key,
@@ -235,6 +271,14 @@ async function createProductionShapedFixture(
       status varchar not null,
       attempt_count integer not null default 0,
       created_at timestamptz not null default now()
+    );
+
+    insert into workspaces (id) values (
+      '00000000-0000-0000-0000-000000000010'
+    );
+    insert into attachments (id, updated_at) values (
+      '00000000-0000-0000-0000-000000000030',
+      '2026-07-31T01:02:03.123456Z'
     );
 
     insert into spaces (id, workspace_id, slug, name) values (
@@ -306,23 +350,52 @@ async function expectCurrentSchema(db: Kysely<unknown>): Promise<void> {
           and column_name = 'attachment_version')
         or (table_name = 'knowledge_space_compile_run_pages'
           and column_name = 'skipped_image_count')
+        or (table_name = 'knowledge_space_compile_runs'
+          and column_name in (
+            'initialized_at', 'aggregate_required', 'space_job_sequence',
+            'space_job_recovery_count', 'execution_token',
+            'rerun_requested'
+          ))
       )
     order by table_name, column_name
   `.execute(db);
-  expect(columns.rows).toEqual([
-    {
-      tableName: 'knowledge_image_extractions',
-      columnName: 'attachment_version',
-      isNullable: 'YES',
-      columnDefault: null,
-    },
-    {
-      tableName: 'knowledge_space_compile_run_pages',
-      columnName: 'skipped_image_count',
-      isNullable: 'NO',
-      columnDefault: '0',
-    },
-  ]);
+  expect(columns.rows).toEqual(
+    expect.arrayContaining([
+      {
+        tableName: 'knowledge_image_extractions',
+        columnName: 'attachment_version',
+        isNullable: 'YES',
+        columnDefault: null,
+      },
+      {
+        tableName: 'knowledge_space_compile_run_pages',
+        columnName: 'skipped_image_count',
+        isNullable: 'NO',
+        columnDefault: '0',
+      },
+      expect.objectContaining({
+        tableName: 'knowledge_space_compile_runs',
+        columnName: 'aggregate_required',
+        isNullable: 'NO',
+        columnDefault: 'true',
+      }),
+      expect.objectContaining({
+        tableName: 'knowledge_space_compile_runs',
+        columnName: 'space_job_sequence',
+        isNullable: 'NO',
+        columnDefault: '0',
+      }),
+    ]),
+  );
+
+  const imageTable = await sql<{ tableName: string | null }>`
+    select to_regclass(
+      current_schema() || '.knowledge_space_compile_run_images'
+    )::text as "tableName"
+  `.execute(db);
+  expect(imageTable.rows[0]?.tableName).toContain(
+    'knowledge_space_compile_run_images',
+  );
 
   const constraint = await sql<{ validated: boolean }>`
     select convalidated as validated
@@ -341,6 +414,7 @@ async function expectLegacyRowsUseConservativeDefaults(
     generation: number;
     mode: string;
     phase: string;
+    aggregateRequired: boolean;
     sourceVersion: string;
     expectedImages: number;
     succeededImages: number;
@@ -354,6 +428,7 @@ async function expectLegacyRowsUseConservativeDefaults(
       space.knowledge_generation as generation,
       run.mode,
       run.phase,
+      run.aggregate_required as "aggregateRequired",
       run_page.expected_source_version as "sourceVersion",
       run_page.expected_image_count as "expectedImages",
       run_page.succeeded_image_count as "succeededImages",
@@ -372,6 +447,7 @@ async function expectLegacyRowsUseConservativeDefaults(
       generation: 0,
       mode: 'incremental',
       phase: 'text',
+      aggregateRequired: true,
       sourceVersion: 'legacy-version',
       expectedImages: 0,
       succeededImages: 0,
@@ -400,6 +476,46 @@ async function expectConstraintsAreEnforced(
           skipped_image_count = 1
     `.execute(db),
   ).rejects.toMatchObject({ code: '23514' });
+  await expect(
+    sql`
+      update knowledge_space_compile_runs
+      set space_job_recovery_count = 4
+    `.execute(db),
+  ).rejects.toMatchObject({ code: '23514' });
+  await expect(
+    sql`
+      insert into knowledge_space_compile_run_images (
+        run_id, run_page_id, workspace_id, space_id, source_page_id,
+        attachment_id, image_ordinal, file_name, mime_type,
+        expected_attachment_version, status
+      ) values (
+        '00000000-0000-0000-0000-000000000002',
+        '00000000-0000-0000-0000-000000000003',
+        '00000000-0000-0000-0000-000000000010',
+        '00000000-0000-0000-0000-000000000001',
+        '00000000-0000-0000-0000-000000000020',
+        '00000000-0000-0000-0000-000000000030',
+        50, 'invalid.png', 'image/png', now(), 'pending'
+      )
+    `.execute(db),
+  ).rejects.toMatchObject({ code: '23514' });
+  await expect(
+    sql`
+      insert into knowledge_space_compile_run_images (
+        run_id, run_page_id, workspace_id, space_id, source_page_id,
+        attachment_id, image_ordinal, file_name, mime_type,
+        expected_attachment_version, status, failure_class
+      ) values (
+        '00000000-0000-0000-0000-000000000002',
+        '00000000-0000-0000-0000-000000000003',
+        '00000000-0000-0000-0000-000000000010',
+        '00000000-0000-0000-0000-000000000001',
+        '00000000-0000-0000-0000-000000000020',
+        '00000000-0000-0000-0000-000000000030',
+        0, 'invalid.png', 'image/png', now(), 'failed', null
+      )
+    `.execute(db),
+  ).rejects.toMatchObject({ code: '23514' });
 }
 
 async function expectLegacySchemaAndRowsRemain(
@@ -415,10 +531,21 @@ async function expectLegacySchemaAndRowsRemain(
         'attachment_version', 'image_status', 'image_job_id', 'merge_status',
         'merge_job_id', 'target_effective_knowledge_hash',
         'merged_effective_knowledge_hash', 'effective_knowledge_hash',
-        'last_successful_effective_hash'
+        'last_successful_effective_hash', 'initialized_at', 'space_job_id',
+        'space_job_dispatched_at', 'space_job_sequence',
+        'space_job_queued_at', 'space_job_recovery_count', 'execution_token',
+        'execution_lease_expires_at', 'worker_id', 'heartbeat_at',
+        'last_yield_at', 'last_yield_reason', 'rerun_requested'
       )
   `.execute(db);
   expect(addedColumns.rows).toEqual([{ count: 0 }]);
+
+  const imageTable = await sql<{ tableName: string | null }>`
+    select to_regclass(
+      current_schema() || '.knowledge_space_compile_run_images'
+    )::text as "tableName"
+  `.execute(db);
+  expect(imageTable.rows).toEqual([{ tableName: null }]);
 
   const rows = await sql<{
     slug: string;
@@ -448,6 +575,41 @@ async function expectLegacySchemaAndRowsRemain(
       contentHash: 'legacy-image-hash',
     },
   ]);
+}
+
+async function expectMillisecondAttachmentFence(
+  db: Kysely<unknown>,
+): Promise<void> {
+  await sql`
+    insert into knowledge_space_compile_run_images (
+      id, run_id, run_page_id, workspace_id, space_id, source_page_id,
+      attachment_id, image_ordinal, file_name, mime_type, file_size,
+      expected_attachment_version, status
+    ) values (
+      '00000000-0000-0000-0000-000000000040',
+      '00000000-0000-0000-0000-000000000002',
+      '00000000-0000-0000-0000-000000000003',
+      '00000000-0000-0000-0000-000000000010',
+      '00000000-0000-0000-0000-000000000001',
+      '00000000-0000-0000-0000-000000000020',
+      '00000000-0000-0000-0000-000000000030',
+      0, 'diagram.png', 'image/png', 10,
+      '2026-07-31T01:02:03.123Z', 'pending'
+    )
+    on conflict (id) do nothing
+  `.execute(db);
+  const fence = await sql<{ exactMatch: boolean; millisecondMatch: boolean }>`
+    select
+      image.expected_attachment_version = attachment.updated_at
+        as "exactMatch",
+      date_trunc('milliseconds', image.expected_attachment_version)
+        = date_trunc('milliseconds', attachment.updated_at)
+        as "millisecondMatch"
+    from knowledge_space_compile_run_images image
+    join attachments attachment on attachment.id = image.attachment_id
+    where image.id = '00000000-0000-0000-0000-000000000040'
+  `.execute(db);
+  expect(fence.rows).toEqual([{ exactMatch: false, millisecondMatch: true }]);
 }
 
 async function logSequenceEvidence(

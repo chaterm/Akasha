@@ -126,6 +126,8 @@ describe('KnowledgeVectorIndexService', () => {
     expect(findActiveChunks).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
+      afterChunkId: undefined,
+      limit: 50,
     });
     expect(embeddingProvider.embedQuery).toHaveBeenNthCalledWith(
       1,
@@ -155,7 +157,7 @@ describe('KnowledgeVectorIndexService', () => {
     });
   });
 
-  it('does not persist a partial rebuild when embedding generation fails', async () => {
+  it('commits successful embeddings when one chunk fails', async () => {
     const embeddingProvider = {
       embedQuery: jest
         .fn()
@@ -183,8 +185,57 @@ describe('KnowledgeVectorIndexService', () => {
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
       }),
-    ).rejects.toThrow('chunk-2');
-    expect(persistEmbeddings).not.toHaveBeenCalled();
+    ).resolves.toEqual({
+      rebuiltChunkCount: 1,
+      failedChunkIds: ['chunk-2'],
+    });
+    expect(persistEmbeddings).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      chunks: [expect.objectContaining({ id: 'chunk-1', vector: [0.1] })],
+    });
+  });
+
+  it('limits a maintenance batch to 50 chunks and embeds at concurrency 2', async () => {
+    let active = 0;
+    let maxActive = 0;
+    const embeddingProvider = {
+      embedQuery: jest.fn().mockImplementation(async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await Promise.resolve();
+        active -= 1;
+        return {
+          vector: [0.1],
+          profile: 'c'.repeat(64),
+          model: 'embedding-v2',
+          dimensions: 1,
+        };
+      }),
+    };
+    const chunks = Array.from({ length: 50 }, (_, index) => ({
+      id: `chunk-${String(index).padStart(3, '0')}`,
+      text: `body-${index}`,
+      headingPath: [],
+    }));
+    const service = serviceWithRebuilder({
+      embeddingProvider,
+      findActiveChunks: jest.fn().mockResolvedValue(chunks),
+      persistEmbeddings: jest.fn().mockResolvedValue(undefined),
+      ensureProfileIndex: jest.fn().mockResolvedValue('created'),
+    });
+
+    await expect(
+      service.rebuildSpaceEmbeddings({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+      }),
+    ).resolves.toMatchObject({
+      rebuiltChunkCount: 50,
+      nextCursor: 'chunk-049',
+    });
+    expect(maxActive).toBe(2);
+    expect(embeddingProvider.embedQuery).toHaveBeenCalledTimes(50);
   });
 
   it('finishes an empty active chunk scope without provider or database writes', async () => {
@@ -230,6 +281,8 @@ function serviceWithRebuilder(input: {
     protected findActiveChunksForSpace(scope: {
       workspaceId: string;
       spaceId: string;
+      afterChunkId?: string;
+      limit: number;
     }) {
       return input.findActiveChunks(scope);
     }

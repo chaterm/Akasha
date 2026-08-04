@@ -1,10 +1,88 @@
-import { normalizeReviewResultReferences } from './review.service';
+import { generateText } from 'ai';
+import {
+  normalizeReviewResultReferences,
+  ReviewService,
+} from './review.service';
 import {
   draftContentSchema,
   resolvedReviewSchema,
   type ReviewResult,
 } from './review.schema';
 import type { StructuredWiki } from './structured-wiki';
+
+jest.mock('ai', () => ({ generateText: jest.fn() }));
+jest.mock('@ai-sdk/openai-compatible', () => ({
+  createOpenAICompatible: jest.fn(() => ({
+    chatModel: jest.fn(() => 'review-model'),
+  })),
+}));
+
+describe('ReviewService external call bounds', () => {
+  it('applies a hard timeout to review and negotiation model calls', async () => {
+    (generateText as jest.Mock)
+      .mockResolvedValueOnce({
+        text: JSON.stringify({ version: '2', items: [] }),
+      })
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          title: 'New page',
+          body: 'Body',
+          applyOperation: ['create-page'],
+          targetDocId: null,
+          notes: '',
+        }),
+      });
+    const timeoutSpy = jest.spyOn(global, 'setTimeout');
+    const service = new ReviewService({
+      getOpenAiApiKey: jest.fn(() => 'key'),
+      getOpenAiApiUrl: jest.fn(() => 'https://example.test/v1'),
+      getAiChatModel: jest.fn(() => 'chat-model'),
+      getKnowledgeCompilerTimeoutMs: jest.fn(() => 120_000),
+    } as never);
+    const wiki: StructuredWiki = {
+      version: '1',
+      folders: [],
+      documents: [],
+    };
+    const source = {
+      load: jest.fn().mockResolvedValue(wiki),
+      getDocument: jest.fn().mockResolvedValue(null),
+      listFolders: jest.fn().mockResolvedValue([]),
+    };
+
+    await service.reviewWiki(source);
+    await service.negotiateDraft(
+      source,
+      {
+        id: 'review-1',
+        type: 'missing-page',
+        title: 'New page',
+        detail: 'Missing.',
+        recommendation: 'Create it.',
+        relatedDocIds: [],
+        searchQueries: [],
+        outline: [],
+      },
+      '采纳',
+    );
+
+    expect(timeoutSpy).toHaveBeenCalledTimes(2);
+    expect(timeoutSpy).toHaveBeenNthCalledWith(
+      1,
+      expect.any(Function),
+      120_000,
+    );
+    expect(generateText).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ abortSignal: expect.any(AbortSignal) }),
+    );
+    expect(generateText).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ abortSignal: expect.any(AbortSignal) }),
+    );
+    timeoutSpy.mockRestore();
+  });
+});
 
 describe('normalizeReviewResultReferences', () => {
   it('rewrites bare document UUIDs into canonical [id=...] tokens', () => {

@@ -261,6 +261,39 @@ describe('KnowledgeRetrievalRankerService', () => {
       }),
     ).toBe(false);
   });
+
+  it('keeps positive lexical candidates for the answer model to assess', () => {
+    const ranker = new KnowledgeRetrievalRankerService();
+    const ranked = ranker.fuseRecallLists({
+      recallLists: [
+        {
+          signal: 'lexical',
+          candidates: [
+            {
+              chunk: chunk(
+                'chunk-lexical',
+                'kp-lexical',
+                null,
+                'Database backup retention settings',
+              ),
+              page: page('kp-lexical', 'Backup operations'),
+              sourcePageIds: ['source-lexical'],
+              signals: ['lexical'],
+              signalScore: 0.01,
+            },
+          ],
+        },
+      ],
+      limit: 10,
+    });
+
+    expect(
+      ranker.isCandidateRelevant({
+        query: 'employee vacation policy',
+        candidate: ranked[0],
+      }),
+    ).toBe(true);
+  });
 });
 
 function page(id: string, title = `Title ${id}`) {

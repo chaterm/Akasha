@@ -1,122 +1,11 @@
 import { createHash } from 'crypto';
 import { KnowledgeAdminSpaceAction } from '../types/knowledge-queue.types';
 
-export const KNOWLEDGE_COMPILE_DELAY_MS = 5000;
-
 // Image extraction persists a 30-second first retryAfter. A slightly longer
 // BullMQ base delay guarantees that each page retry can actually reclaim the
 // image cache lease and make another VLM attempt. Exponential 31s/62s delays
 // remain bounded enough for an interactive manual retry.
 export const KNOWLEDGE_COMPILE_RETRY_BACKOFF_MS = 31_000;
-
-export function buildKnowledgeCompileJobId(input: {
-  workspaceId: string;
-  spaceId: string;
-  runKey?: string;
-  now?: number;
-}): string {
-  return buildKnowledgeJobId({
-    prefix: 'knowledge-compile-space',
-    workspaceId: input.workspaceId,
-    spaceId: input.spaceId,
-    runKey: input.runKey,
-    now: input.now,
-  });
-}
-
-export function buildKnowledgeCompilePageJobId(input: {
-  workspaceId: string;
-  spaceId: string;
-  sourcePageId: string;
-  runKey?: string;
-  now?: number;
-}): string {
-  return [
-    'knowledge-compile-pages',
-    input.workspaceId,
-    input.spaceId,
-    input.sourcePageId,
-    input.runKey ?? buildKnowledgeRunKey('run', input.now),
-  ].join('__');
-}
-
-export function buildKnowledgeCompilePageImagesJobId(input: {
-  workspaceId: string;
-  spaceId: string;
-  runId?: string;
-  sourcePageId: string;
-  sourceContentHash: string;
-  knowledgeGeneration: number;
-}): string {
-  const contentKey = createHash('sha256')
-    .update(input.sourceContentHash)
-    .digest('hex');
-  return [
-    'knowledge-compile-page-images',
-    input.workspaceId,
-    input.spaceId,
-    input.runId ?? 'standalone',
-    input.sourcePageId,
-    String(input.knowledgeGeneration),
-    contentKey,
-  ].join('__');
-}
-
-export function buildKnowledgeMergePageImagesJobId(input: {
-  workspaceId: string;
-  spaceId: string;
-  runId?: string;
-  sourcePageId: string;
-  sourceContentHash: string;
-  effectiveKnowledgeHash: string;
-  knowledgeGeneration: number;
-}): string {
-  const contentKey = createHash('sha256')
-    .update(input.sourceContentHash)
-    .digest('hex');
-  const effectiveKey = createHash('sha256')
-    .update(input.effectiveKnowledgeHash)
-    .digest('hex');
-  return [
-    'knowledge-merge-page-images',
-    input.workspaceId,
-    input.spaceId,
-    input.runId ?? 'standalone',
-    input.sourcePageId,
-    String(input.knowledgeGeneration),
-    contentKey,
-    effectiveKey,
-  ].join('__');
-}
-
-export function buildKnowledgeRetryPageJobId(input: {
-  workspaceId: string;
-  spaceId: string;
-  sourcePageId: string;
-  sourceContentHash: string;
-}): string {
-  const contentKey = createHash('sha256')
-    .update(input.sourceContentHash)
-    .digest('hex');
-  return [
-    'knowledge-retry-page',
-    input.workspaceId,
-    input.spaceId,
-    input.sourcePageId,
-    contentKey,
-  ].join('__');
-}
-
-export function buildKnowledgeAggregateSpaceJobId(input: {
-  runId: string;
-  phase?: 'initial_aggregate' | 'final_aggregate';
-}): string {
-  return [
-    'knowledge-aggregate-space',
-    input.runId,
-    ...(input.phase ? [input.phase] : []),
-  ].join('__');
-}
 
 export function buildKnowledgeAdminActionJobId(input: {
   action: KnowledgeAdminSpaceAction;
@@ -146,6 +35,38 @@ export function buildKnowledgeAdminActionJobId(input: {
   });
 }
 
+export function buildKnowledgeRebuildEmbeddingsContinuationJobId(input: {
+  workspaceId: string;
+  spaceId: string;
+  afterChunkId: string;
+}): string {
+  const cursorKey = createHash('sha256')
+    .update(input.afterChunkId)
+    .digest('hex');
+  return [
+    'knowledge-rebuild-embeddings',
+    input.workspaceId,
+    input.spaceId,
+    cursorKey,
+  ].join('__');
+}
+
+export function buildKnowledgeReindexAccessContinuationJobId(input: {
+  workspaceId: string;
+  spaceId: string;
+  afterSourcePageId: string;
+}): string {
+  const cursorKey = createHash('sha256')
+    .update(input.afterSourcePageId)
+    .digest('hex');
+  return [
+    'knowledge-reindex-access',
+    input.workspaceId,
+    input.spaceId,
+    cursorKey,
+  ].join('__');
+}
+
 export function buildReviewDiscoverJobId(input: {
   workspaceId: string;
   spaceId: string;
@@ -166,15 +87,8 @@ export function buildReviewNegotiateJobId(input: {
   ].join('__');
 }
 
-export function buildKnowledgeRunKey(label: string, now = Date.now()): string {
+function buildKnowledgeRunKey(label: string, now = Date.now()): string {
   return `${label}-${now.toString(36)}`;
-}
-
-export function buildKnowledgeCompileCoalesceKey(
-  now = Date.now(),
-  windowMs = KNOWLEDGE_COMPILE_DELAY_MS,
-): string {
-  return `page-update-${Math.floor(now / windowMs)}`;
 }
 
 export function uniqueValues(values: string[]): string[] {

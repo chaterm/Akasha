@@ -102,6 +102,45 @@ describePostgres('KnowledgeImageExtractionRepo PostgreSQL round trip', () => {
     ]);
     logEvidence('after_revalidation', evidence);
   });
+
+  it('batches a 66000-image snapshot lookup below the PostgreSQL parameter limit', async () => {
+    await repo.claim(
+      {
+        workspaceId: 'workspace-1',
+        attachmentId: 'attachment-1',
+        attachmentVersion,
+        cacheFingerprint: 'sha256:same-image-and-config',
+        contentHash: 'sha256:same-image-bytes',
+        model: 'qwen3.7-plus',
+        promptVersion: 'image-prompt-v1',
+      },
+      150_000,
+    );
+    const images = [
+      {
+        sourcePageId: 'page-1',
+        attachmentId: 'attachment-1',
+        attachmentVersion: attachmentVersion.toISOString(),
+      },
+      ...Array.from({ length: 65_999 }, (_, index) => ({
+        sourcePageId: `missing-page-${index}`,
+        attachmentId: `missing-attachment-${index}`,
+        attachmentVersion: attachmentVersion.toISOString(),
+      })),
+    ];
+
+    await expect(
+      repo.findCurrentReadyForSnapshotImages({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        images,
+        model: 'qwen3.7-plus',
+        promptVersion: 'image-prompt-v1',
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ id: 'ready-same-fingerprint' }),
+    ]);
+  });
 });
 
 async function createFixture(

@@ -65,7 +65,43 @@ export function sendChatMessage(
     contextPageId?: string;
     attachmentIds?: string[];
     spaceIds?: string[];
+    responseMode?: "knowledge" | "general";
   },
+  onEvent: (event: AiChatStreamEvent) => void,
+  onError?: (error: string) => void,
+  onComplete?: () => void,
+): AbortController {
+  return streamChatRequest(
+    "/api/ai/chats/send",
+    params,
+    onEvent,
+    onError,
+    onComplete,
+  );
+}
+
+export function editChatMessage(
+  params: {
+    chatId: string;
+    messageId: string;
+    content: string;
+  },
+  onEvent: (event: AiChatStreamEvent) => void,
+  onError?: (error: string) => void,
+  onComplete?: () => void,
+): AbortController {
+  return streamChatRequest(
+    "/api/ai/chats/edit-message",
+    params,
+    onEvent,
+    onError,
+    onComplete,
+  );
+}
+
+function streamChatRequest(
+  url: string,
+  params: Record<string, unknown>,
   onEvent: (event: AiChatStreamEvent) => void,
   onError?: (error: string) => void,
   onComplete?: () => void,
@@ -74,7 +110,7 @@ export function sendChatMessage(
 
   (async () => {
     try {
-      const response = await fetch("/api/ai/chats/send", {
+      const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(params),

@@ -218,6 +218,28 @@ export class KnowledgeSourceRepo {
       .execute();
   }
 
+  async findSourcePageIdsBySpaceBatch(input: {
+    workspaceId: string;
+    spaceId: string;
+    afterSourcePageId?: string;
+    limit: number;
+  }): Promise<string[]> {
+    const rows = await this.db
+      .selectFrom('knowledgeSources')
+      .select('sourcePageId')
+      .distinct()
+      .where('workspaceId', '=', input.workspaceId)
+      .where('sourceSpaceId', '=', input.spaceId)
+      .where('deletedAt', 'is', null)
+      .$if(Boolean(input.afterSourcePageId), (query) =>
+        query.where('sourcePageId', '>', input.afterSourcePageId!),
+      )
+      .orderBy('sourcePageId', 'asc')
+      .limit(input.limit)
+      .execute();
+    return rows.map((row) => row.sourcePageId);
+  }
+
   async findActiveSourcePageIdsBySpace(input: {
     workspaceId: string;
     spaceId: string;

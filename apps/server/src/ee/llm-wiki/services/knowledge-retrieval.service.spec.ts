@@ -12,6 +12,26 @@ import { KnowledgeSourceAuthorizationService } from './knowledge-source-authoriz
 import { KnowledgeRetrievalService } from './knowledge-retrieval.service';
 
 describe('KnowledgeRetrievalService', () => {
+  it('passes an upstream cancellation signal to query embedding', async () => {
+    const abortController = new AbortController();
+    const embeddingProvider = {
+      embedQuery: jest.fn().mockResolvedValue(null),
+    };
+    const service = createService({ embeddingProvider });
+
+    await service.retrieve({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: 'bounded query',
+      spaceIds: ['space-1'],
+      abortSignal: abortController.signal,
+    });
+
+    expect(embeddingProvider.embedQuery).toHaveBeenCalledWith('bounded query', {
+      abortSignal: abortController.signal,
+    });
+  });
+
   it('pushes principals into bounded recall without enumerating sources and runs one final authorization pass', async () => {
     const capsuleRepo = {
       findDenseChunkCandidates: jest

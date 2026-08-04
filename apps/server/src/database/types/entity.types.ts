@@ -56,6 +56,7 @@ import {
   KnowledgeSourceAnalyses,
   KnowledgeSources,
   KnowledgeSpaceCompileRunPages,
+  KnowledgeSpaceCompileRunImages,
   KnowledgeSpaceCompileRuns,
   UserMfa as _UserMFA,
   UserSessions,
@@ -106,6 +107,14 @@ export type InsertableKnowledgeSpaceCompileRunPage =
   Insertable<KnowledgeSpaceCompileRunPages>;
 export type UpdatableKnowledgeSpaceCompileRunPage = Updateable<
   Omit<KnowledgeSpaceCompileRunPages, 'id'>
+>;
+
+export type KnowledgeSpaceCompileRunImage =
+  Selectable<KnowledgeSpaceCompileRunImages>;
+export type InsertableKnowledgeSpaceCompileRunImage =
+  Insertable<KnowledgeSpaceCompileRunImages>;
+export type UpdatableKnowledgeSpaceCompileRunImage = Updateable<
+  Omit<KnowledgeSpaceCompileRunImages, 'id'>
 >;
 
 export type KnowledgeSourceAnalysis = Selectable<KnowledgeSourceAnalyses>;

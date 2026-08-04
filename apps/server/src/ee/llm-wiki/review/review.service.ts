@@ -15,6 +15,7 @@ import {
 } from './review.schema';
 import { StructuredWiki, WikiDocument } from './structured-wiki';
 import { WikiSource } from './wiki-source';
+import { createBoundedAbortSignal } from '../services/knowledge-operation-budget';
 
 export const REVIEW_SYSTEM_PROMPT = [
   'You are a meticulous knowledge-base reviewer for a personal/team wiki.',
@@ -184,11 +185,21 @@ export class ReviewService {
     const wiki = await source.load();
     const serialized = serializeWikiForReview(wiki);
 
-    const { text } = await generateText({
-      model: this.createModel(),
-      system: `${REVIEW_SYSTEM_PROMPT}\n\n${REVIEW_OUTPUT_SHAPE}`,
-      prompt: serialized,
-    });
+    const boundedSignal = createBoundedAbortSignal(
+      undefined,
+      this.environmentService.getKnowledgeCompilerTimeoutMs(),
+    );
+    let text: string;
+    try {
+      ({ text } = await generateText({
+        model: this.createModel(),
+        system: `${REVIEW_SYSTEM_PROMPT}\n\n${REVIEW_OUTPUT_SHAPE}`,
+        prompt: serialized,
+        abortSignal: boundedSignal.signal,
+      }));
+    } finally {
+      boundedSignal.dispose();
+    }
 
     const parsedJson = extractJson(text);
     const result = reviewResultSchema.parse(parsedJson);
@@ -246,11 +257,21 @@ export class ReviewService {
       '</user_feedback>',
     ].join('\n');
 
-    const { text } = await generateText({
-      model: this.createModel(),
-      system: `${NEGOTIATION_SYSTEM_PROMPT}\n\n${DRAFT_OUTPUT_SHAPE}`,
-      prompt,
-    });
+    const boundedSignal = createBoundedAbortSignal(
+      undefined,
+      this.environmentService.getKnowledgeCompilerTimeoutMs(),
+    );
+    let text: string;
+    try {
+      ({ text } = await generateText({
+        model: this.createModel(),
+        system: `${NEGOTIATION_SYSTEM_PROMPT}\n\n${DRAFT_OUTPUT_SHAPE}`,
+        prompt,
+        abortSignal: boundedSignal.signal,
+      }));
+    } finally {
+      boundedSignal.dispose();
+    }
 
     const parsedJson = extractJson(text);
     return draftContentSchema.parse(parsedJson);

@@ -39,10 +39,17 @@ import { KnowledgeQuarantineRepo } from '@akasha/db/repos/llm-wiki/knowledge-qua
 import { KnowledgeCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-compilation.repo';
 import { KnowledgeArtifactContributionRepo } from '@akasha/db/repos/llm-wiki/knowledge-artifact-contribution.repo';
 import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
+import { KnowledgeSpaceExecutionRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-execution.repo';
 import { KnowledgeReviewApplicationRepo } from '@akasha/db/repos/llm-wiki/knowledge-review-application.repo';
 import { KnowledgeReviewSnapshotRepo } from '@akasha/db/repos/llm-wiki/knowledge-review-snapshot.repo';
 import { KnowledgeImageExtractionRepo } from '@akasha/db/repos/llm-wiki/knowledge-image-extraction.repo';
 import { AiChatRepo } from '@akasha/db/repos/ai-chat/ai-chat.repo';
+import { buildDatabasePostgresOptions } from './database-postgres-options';
+
+export {
+  buildDatabasePostgresOptions,
+  buildMigrationPostgresOptions,
+} from './database-postgres-options';
 
 @Global()
 @Module({
@@ -54,18 +61,7 @@ import { AiChatRepo } from '@akasha/db/repos/ai-chat/ai-chat.repo';
         dialect: new PostgresJSDialect({
           postgres: postgres(
             normalizePostgresUrl(environmentService.getDatabaseURL()),
-            {
-              max: environmentService.getDatabaseMaxPool(),
-              onnotice: () => {},
-              types: {
-                bigint: {
-                  to: 20,
-                  from: [20, 1700],
-                  serialize: (value: number) => value.toString(),
-                  parse: (value: string) => Number.parseInt(value),
-                },
-              },
-            },
+            buildDatabasePostgresOptions(environmentService),
           ),
         }),
         plugins: [new CamelCasePlugin()],
@@ -114,6 +110,7 @@ import { AiChatRepo } from '@akasha/db/repos/ai-chat/ai-chat.repo';
     KnowledgeCompilationRepo,
     KnowledgeArtifactContributionRepo,
     KnowledgeSpaceCompilationRepo,
+    KnowledgeSpaceExecutionRepo,
     KnowledgeImageExtractionRepo,
     AiChatRepo,
     PageListener,
@@ -151,6 +148,7 @@ import { AiChatRepo } from '@akasha/db/repos/ai-chat/ai-chat.repo';
     KnowledgeCompilationRepo,
     KnowledgeArtifactContributionRepo,
     KnowledgeSpaceCompilationRepo,
+    KnowledgeSpaceExecutionRepo,
     KnowledgeImageExtractionRepo,
     AiChatRepo,
   ],

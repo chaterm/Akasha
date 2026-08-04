@@ -35,6 +35,7 @@ const FILE_ATTACHMENTS_DISABLED = true;
 
 type Props = {
   isStreaming: boolean;
+  disabled?: boolean;
   onSend: (
     content: string,
     mentions: PageMention[],
@@ -110,6 +111,7 @@ function editorJsonToText(json: any): string {
 
 export default function ChatInput({
   isStreaming,
+  disabled = false,
   onSend,
   onStop,
   placeholder,
@@ -134,7 +136,7 @@ export default function ChatInput({
 
   const handleFileSelect = useCallback(
     async (files: FileList | null) => {
-      if (!files?.length) return;
+      if (disabled || !files?.length) return;
 
       const room = MAX_ATTACHMENTS_PER_MESSAGE - pendingAttachments.length;
       if (room <= 0) {
@@ -192,7 +194,7 @@ export default function ChatInput({
         fileInputRef.current.value = "";
       }
     },
-    [pendingAttachments.length, t],
+    [disabled, pendingAttachments.length, t],
   );
 
   const removeAttachment = useCallback((id: string) => {
@@ -200,7 +202,7 @@ export default function ChatInput({
   }, []);
 
   const handleSubmit = useCallback(() => {
-    if (!editor || isStreaming) return;
+    if (!editor || isStreaming || disabled) return;
     const json = editor.getJSON();
     const text = editorJsonToText(json).trim();
     const readyAttachments = pendingAttachments.filter((a) => !a.uploading);
@@ -211,7 +213,7 @@ export default function ChatInput({
     editor.commands.clearContent();
     editor.commands.focus();
     setPendingAttachments([]);
-  }, [isStreaming, pendingAttachments]);
+  }, [disabled, isStreaming, pendingAttachments]);
 
   const handleSubmitRef = useRef(handleSubmit);
   handleSubmitRef.current = handleSubmit;
@@ -283,7 +285,7 @@ export default function ChatInput({
       },
     },
     content: "",
-    editable: true,
+    editable: !disabled,
     immediatelyRender: true,
     shouldRerenderOnTransaction: false,
     autofocus: autofocus ? "end" : false,
@@ -293,10 +295,11 @@ export default function ChatInput({
   });
 
   useEffect(() => {
-    if (editor && autofocus) {
+    editor?.setEditable?.(!disabled);
+    if (editor && autofocus && !disabled) {
       editor.commands.focus();
     }
-  }, [editor]);
+  }, [autofocus, disabled, editor]);
 
   const hasContent =
     !isEmpty ||
@@ -315,7 +318,7 @@ export default function ChatInput({
           accept={ACCEPTED_FILE_TYPES}
           multiple
           aria-label={t("Add files")}
-          disabled={FILE_ATTACHMENTS_DISABLED}
+          disabled={disabled || FILE_ATTACHMENTS_DISABLED}
           tabIndex={-1}
           style={{ display: "none" }}
           onChange={(e) => handleFileSelect(e.target.files)}
@@ -333,6 +336,7 @@ export default function ChatInput({
                   <button
                     type="button"
                     className={classes.attachmentChipRemove}
+                    disabled={disabled}
                     onClick={() => onRemoveContextPage(page.id)}
                     aria-label={`Remove ${page.title}`}
                   >
@@ -358,6 +362,7 @@ export default function ChatInput({
                   <button
                     type="button"
                     className={classes.attachmentChipRemove}
+                    disabled={disabled}
                     onClick={() => removeAttachment(attachment.id)}
                     aria-label={`Remove ${attachment.fileName}`}
                   >
@@ -384,6 +389,7 @@ export default function ChatInput({
               <button
                 type="button"
                 className={classes.plusButton}
+                disabled={disabled}
                 onClick={() => setPlusMenuOpen((o) => !o)}
                 aria-label="Add content"
               >
@@ -400,6 +406,7 @@ export default function ChatInput({
                   setPlusMenuOpen(false);
                 }}
                 disabled={
+                  disabled ||
                   FILE_ATTACHMENTS_DISABLED ||
                   pendingAttachments.length >= MAX_ATTACHMENTS_PER_MESSAGE
                 }
@@ -424,6 +431,7 @@ export default function ChatInput({
               <button
                 type="button"
                 className={classes.plusMenuItem}
+                disabled={disabled}
                 onClick={() => {
                   editor?.commands.insertContent("@");
                   editor?.commands.focus();
@@ -452,7 +460,7 @@ export default function ChatInput({
               type="button"
               className={classes.sendButton}
               onClick={handleSubmit}
-              disabled={!hasContent}
+              disabled={disabled || !hasContent}
               aria-label="Send message"
             >
               <IconArrowUp size={16} stroke={2.5} />
