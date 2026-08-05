@@ -31,52 +31,65 @@ describe('AiChatService', () => {
       getUserSpaceIds: jest.fn(),
     };
     const knowledgeChat = {
-      chat: jest.fn().mockResolvedValue({
-        answer: 'answer',
-        answerMode: 'knowledge',
-        citations: [
-          { sourcePageId: 'page-1', title: 'Page', url: '/p/page-1' },
-        ],
-        citationEvidence: [
-          {
-            sourcePageId: 'page-1',
-            title: 'Page',
-            url: '/p/page-1',
-            excerpts: [
-              {
-                text: 'Verified excerpt',
-                sourceRange: { startOffset: 10, endOffset: 26 },
-                quoteHash: 'sha256:verified',
-              },
-            ],
-          },
-        ],
-        retrievedSources: [
-          { sourcePageId: 'page-1', title: 'Page', url: '/p/page-1' },
-          { sourcePageId: 'page-2', title: 'Other', url: '/p/page-2' },
-        ],
-        snippets: [
-          {
-            id: 'chunk-1',
-            title: 'Page',
-            text: 'Verified excerpt',
-            retrievalReasons: ['lexical'],
-            sourceWindows: [
-              {
-                sourcePageId: 'page-1',
-                title: 'Page',
-                url: '/p/page-1',
-                text: 'Verified excerpt',
-                sourceRange: { startOffset: 10, endOffset: 26 },
-                quoteHash: 'sha256:verified',
-              },
-            ],
-          },
-        ],
-        retrievalReasons: ['lexical'],
-        completenessNotice: 'notice',
-        retrievalDiagnostics: diagnostics(),
-        retrievalQuery: 'rewritten hello',
+      chat: jest.fn().mockImplementation(async (input) => {
+        input.onThinking({
+          step: 'understanding',
+          status: 'started',
+          stats: { historyMessageCount: 0 },
+        });
+        input.onThinking({
+          step: 'understanding',
+          status: 'completed',
+          durationMs: 12.5,
+          stats: { historyMessageCount: 0, queryRewritten: false },
+        });
+        return {
+          answer: 'answer',
+          answerMode: 'knowledge',
+          citations: [
+            { sourcePageId: 'page-1', title: 'Page', url: '/p/page-1' },
+          ],
+          citationEvidence: [
+            {
+              sourcePageId: 'page-1',
+              title: 'Page',
+              url: '/p/page-1',
+              excerpts: [
+                {
+                  text: 'Verified excerpt',
+                  sourceRange: { startOffset: 10, endOffset: 26 },
+                  quoteHash: 'sha256:verified',
+                },
+              ],
+            },
+          ],
+          retrievedSources: [
+            { sourcePageId: 'page-1', title: 'Page', url: '/p/page-1' },
+            { sourcePageId: 'page-2', title: 'Other', url: '/p/page-2' },
+          ],
+          snippets: [
+            {
+              id: 'chunk-1',
+              title: 'Page',
+              text: 'Verified excerpt',
+              retrievalReasons: ['lexical'],
+              sourceWindows: [
+                {
+                  sourcePageId: 'page-1',
+                  title: 'Page',
+                  url: '/p/page-1',
+                  text: 'Verified excerpt',
+                  sourceRange: { startOffset: 10, endOffset: 26 },
+                  quoteHash: 'sha256:verified',
+                },
+              ],
+            },
+          ],
+          retrievalReasons: ['lexical'],
+          completenessNotice: 'notice',
+          retrievalDiagnostics: diagnostics(),
+          retrievalQuery: 'rewritten hello',
+        };
       }),
     };
     const queryAuditRepo = {
@@ -125,6 +138,14 @@ describe('AiChatService', () => {
       completenessNotice: 'notice',
       answerMode: 'knowledge',
       retrievalQuery: 'rewritten hello',
+      thinkingTrace: [
+        {
+          step: 'understanding',
+          status: 'completed',
+          durationMs: 12.5,
+          stats: { historyMessageCount: 0, queryRewritten: false },
+        },
+      ],
     });
 
     expect(repo.createChat).toHaveBeenCalledWith({
@@ -145,6 +166,7 @@ describe('AiChatService', () => {
       attachmentIds: undefined,
       onToken: expect.any(Function),
       onStage: expect.any(Function),
+      onThinking: expect.any(Function),
     });
     expect(repo.addMessage).toHaveBeenNthCalledWith(1, {
       workspaceId: 'workspace-1',
@@ -189,6 +211,14 @@ describe('AiChatService', () => {
         completenessNotice: 'notice',
         answerMode: 'knowledge',
         retrievalQuery: 'rewritten hello',
+        thinkingTrace: [
+          {
+            step: 'understanding',
+            status: 'completed',
+            durationMs: 12.5,
+            stats: { historyMessageCount: 0, queryRewritten: false },
+          },
+        ],
         spaceIds: ['space-2'],
       },
     });
@@ -392,6 +422,7 @@ describe('AiChatService', () => {
       responseMode: 'general',
       onToken: expect.any(Function),
       onStage: expect.any(Function),
+      onThinking: expect.any(Function),
     });
     expect(repo.addMessage).not.toHaveBeenCalled();
     expect(repo.addAssistantMessageIfCurrent).toHaveBeenCalledWith(

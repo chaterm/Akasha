@@ -309,6 +309,103 @@ describe("ChatMessage knowledge evidence", () => {
     expect(screen.getByText("Understanding the conversation...")).toBeTruthy();
   });
 
+  it("renders live knowledge work as an expanded thinking timeline", () => {
+    render(
+      <MantineProvider>
+        <MemoryRouter>
+          <ChatMessage
+            message={{
+              id: "message-streaming-thinking",
+              chatId: "chat-1",
+              role: "assistant",
+              content: null,
+              toolCalls: null,
+              metadata: null,
+              createdAt: "2026-07-29T00:00:00.000Z",
+            }}
+            isStreaming
+            streamingContent=""
+            thinkingSteps={[
+              {
+                step: "understanding",
+                status: "completed",
+                durationMs: 320,
+                stats: {
+                  historyMessageCount: 2,
+                  queryRewritten: true,
+                },
+              },
+              {
+                step: "searching",
+                status: "started",
+                startedAt: Date.now(),
+              },
+            ]}
+          />
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+
+    const summary = screen
+      .getByText("Searching the knowledge base...")
+      .closest("summary");
+    expect(summary?.closest("details")?.open).toBe(true);
+    expect(
+      screen.getByText("Understand and analyze the question"),
+    ).toBeTruthy();
+    expect(screen.getByText("Find relevant knowledge")).toBeTruthy();
+    expect(
+      screen.getByText("Used 2 recent messages to clarify the question"),
+    ).toBeTruthy();
+  });
+
+  it("keeps a completed thinking timeline folded in persisted messages", () => {
+    render(
+      <MantineProvider>
+        <MemoryRouter>
+          <ChatMessage
+            message={{
+              id: "message-completed-thinking",
+              chatId: "chat-1",
+              role: "assistant",
+              content: "Grounded answer",
+              toolCalls: null,
+              metadata: {
+                thinkingTrace: [
+                  {
+                    step: "searching",
+                    status: "completed",
+                    durationMs: 900,
+                    stats: { matchedChunkCount: 20, sourceCount: 4 },
+                  },
+                  {
+                    step: "analyzing",
+                    status: "completed",
+                    durationMs: 80,
+                    stats: { includedItemCount: 2, sourceCount: 2 },
+                    outcome: "knowledge",
+                  },
+                ],
+              },
+              createdAt: "2026-07-29T00:00:00.000Z",
+            }}
+          />
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+
+    const summary = screen.getByText("Search completed").closest("summary");
+    const details = summary?.closest("details");
+    expect(details?.open).toBe(false);
+    expect(screen.getByText("Results are only visible to you")).toBeTruthy();
+    fireEvent.click(summary!);
+    expect(details?.open).toBe(true);
+    expect(screen.getByText("Found 20 relevant knowledge chunks")).toBeTruthy();
+    expect(
+      screen.getByText("Selected 2 knowledge items for the answer"),
+    ).toBeTruthy();
+  });
+
   it("keeps a contextual retrieval query folded inside answer evidence", () => {
     render(
       <MantineProvider>

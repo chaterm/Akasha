@@ -63,6 +63,7 @@ describe('AiChatController', () => {
       'Content-Type',
       'text/event-stream',
     );
+    expect(response.setHeader).toHaveBeenCalledWith('X-Accel-Buffering', 'no');
     expect(response.write.mock.calls.map(([payload]) => payload)).toEqual([
       'data: {"type":"chat_created","chatId":"chat-1"}\n\n',
       'data: {"type":"content","text":"Chaterm 企业版软件的登记批准日期是2026年06月05日。"}\n\n',
@@ -79,6 +80,14 @@ describe('AiChatController', () => {
         assistantMessageId: 'message-assistant-1',
         answer: 'General answer',
         answerMode: 'general',
+        thinkingTrace: [
+          {
+            step: 'preparing',
+            status: 'completed',
+            durationMs: 1200,
+            outcome: 'general',
+          },
+        ],
       }),
     };
     const controller = new AiChatController(
@@ -101,7 +110,7 @@ describe('AiChatController', () => {
       expect.objectContaining({ responseMode: 'general' }),
     );
     expect(response.write).toHaveBeenCalledWith(
-      'data: {"type":"done","messageId":"message-assistant-1","answerMode":"general"}\n\n',
+      'data: {"type":"done","messageId":"message-assistant-1","answerMode":"general","thinkingTrace":[{"step":"preparing","status":"completed","durationMs":1200,"outcome":"general"}]}\n\n',
     );
   });
 

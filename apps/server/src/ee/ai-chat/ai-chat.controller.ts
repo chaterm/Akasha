@@ -153,6 +153,7 @@ export class AiChatController {
         answerMode: result.answerMode,
         retrievalQuery: result.retrievalQuery,
         canExpandScope: result.canExpandScope,
+        thinkingTrace: result.thinkingTrace,
       });
       writeRaw(res, 'data: [DONE]\n\n');
     } catch (error) {
@@ -214,6 +215,7 @@ export class AiChatController {
           answerMode: result.answerMode,
           retrievalQuery: result.retrievalQuery,
           canExpandScope: result.canExpandScope,
+          thinkingTrace: result.thinkingTrace,
         });
       }
       writeRaw(res, 'data: [DONE]\n\n');
@@ -236,6 +238,7 @@ export class AiChatController {
     raw.setHeader('Content-Type', 'text/event-stream');
     raw.setHeader('Cache-Control', 'no-cache, no-transform');
     raw.setHeader('Connection', 'keep-alive');
+    raw.setHeader('X-Accel-Buffering', 'no');
     raw.flushHeaders?.();
   }
 }

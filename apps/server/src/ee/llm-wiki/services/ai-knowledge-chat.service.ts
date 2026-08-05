@@ -51,7 +51,37 @@ type AiKnowledgeChatInput = {
   responseMode?: 'knowledge' | 'general';
   onToken?: (token: string) => void;
   onStage?: (stage: 'understanding' | 'retrieval' | 'generation') => void;
+  onThinking?: (event: AiChatThinkingEvent) => void;
   debugTiming?: AiChatDebugTiming;
+};
+
+export type AiChatThinkingStep =
+  | 'understanding'
+  | 'searching'
+  | 'analyzing'
+  | 'preparing'
+  | 'fallback';
+
+export type AiChatThinkingStatus =
+  | 'started'
+  | 'completed'
+  | 'skipped'
+  | 'failed';
+
+export type AiChatThinkingStats = {
+  historyMessageCount?: number;
+  queryRewritten?: boolean;
+  matchedChunkCount?: number;
+  sourceCount?: number;
+  includedItemCount?: number;
+};
+
+export type AiChatThinkingEvent = {
+  step: AiChatThinkingStep;
+  status: AiChatThinkingStatus;
+  durationMs?: number;
+  stats?: AiChatThinkingStats;
+  outcome?: 'knowledge' | 'insufficient' | 'general';
 };
 
 export type AiKnowledgeChatResult = {
@@ -112,8 +142,9 @@ export class AiKnowledgeChatService {
       throw new ForbiddenException('AI knowledge chat is disabled');
     }
 
+    const thinking = new AiChatThinkingProgress(input.onThinking);
     if (input.responseMode === 'general') {
-      return this.answerFromGeneralKnowledge(input);
+      return this.answerFromGeneralKnowledge(input, thinking, 'preparing');
     }
 
     // One request-scoped authorization cache, bound to this (workspace, user),
@@ -125,10 +156,17 @@ export class AiKnowledgeChatService {
       chatId: input.chatId,
     });
 
+    thinking.start('understanding', {
+      historyMessageCount: input.chatContext?.length ?? 0,
+    });
     const retrievalQuery = await this.rewriteRetrievalQuery(input);
     const contextualRetrievalQuery =
       retrievalQuery.trim() !== input.query.trim() ? retrievalQuery : undefined;
+    thinking.complete('understanding', {
+      queryRewritten: Boolean(contextualRetrievalQuery),
+    });
     input.onStage?.('retrieval');
+    thinking.start('searching');
     const retrieval = await measureAiChatPhase(
       input.debugTiming,
       'retrieval.total',
@@ -150,6 +188,18 @@ export class AiKnowledgeChatService {
         fallbackUsed: result.diagnostics?.accessPolicyFallbackUsed ?? false,
       }),
     );
+    thinking.complete('searching', {
+      matchedChunkCount:
+        retrieval.diagnostics?.authorizedChunkCount ?? retrieval.chunks.length,
+      sourceCount:
+        retrieval.diagnostics?.finalAuthorizedSourceCount ??
+        unique(
+          retrieval.chunks.flatMap(
+            (candidate) => candidate.sourcePageIds ?? [],
+          ),
+        ).length,
+    });
+    thinking.start('analyzing');
     const chunkCitations = retrieval.chunks.length
       ? await measureAiChatPhase(
           input.debugTiming,
@@ -219,8 +269,21 @@ export class AiKnowledgeChatService {
       explicit.context.trim().length > 0 ||
       pack.primary.some((entry) => entry.sourceWindows.length > 0);
 
+    thinking.complete(
+      'analyzing',
+      {
+        includedItemCount: pack.budget.includedItemCount,
+        sourceCount: allCitations.length,
+      },
+      hasKnowledgeEvidence ? 'knowledge' : 'insufficient',
+    );
+
     if (!hasKnowledgeEvidence) {
-      const generalAnswer = await this.answerFromGeneralKnowledge(input);
+      const generalAnswer = await this.answerFromGeneralKnowledge(
+        input,
+        thinking,
+        'fallback',
+      );
       return {
         ...generalAnswer,
         ...(contextualRetrievalQuery
@@ -245,6 +308,7 @@ export class AiKnowledgeChatService {
     };
     const streamed = Boolean(this.answerProvider.stream);
     input.onStage?.('generation');
+    thinking.start('preparing');
     if (this.answerProvider.stream) {
       const streamRouter = new KnowledgeAnswerStreamRouter(input.onToken);
       const generationStartedAt = performance.now();
@@ -283,10 +347,15 @@ export class AiKnowledgeChatService {
       generatedAnswer.mode === 'no_match' ||
       generatedAnswer.mode === 'general'
     ) {
-      const generalAnswer = await this.answerFromGeneralKnowledge({
-        ...input,
-        onStage: undefined,
-      });
+      thinking.complete('preparing', undefined, 'insufficient');
+      const generalAnswer = await this.answerFromGeneralKnowledge(
+        {
+          ...input,
+          onStage: undefined,
+        },
+        thinking,
+        'fallback',
+      );
       return {
         ...generalAnswer,
         ...(contextualRetrievalQuery
@@ -302,6 +371,7 @@ export class AiKnowledgeChatService {
     } else if (!streamed) {
       input.onToken?.(cleanAnswer);
     }
+    thinking.complete('preparing', undefined, 'knowledge');
     const sourceWindows = pack.primary.flatMap((entry) => entry.sourceWindows);
     const citations = resolveAnswerCitations(
       allCitations,
@@ -342,6 +412,11 @@ export class AiKnowledgeChatService {
 
   private async answerFromGeneralKnowledge(
     input: AiKnowledgeChatInput,
+    thinking = new AiChatThinkingProgress(input.onThinking),
+    thinkingStep: Extract<
+      AiChatThinkingStep,
+      'preparing' | 'fallback'
+    > = 'preparing',
   ): Promise<AiKnowledgeChatResult> {
     const answerInput: KnowledgeAnswerProviderInput = {
       query: input.query,
@@ -353,6 +428,7 @@ export class AiKnowledgeChatService {
     let generatedAnswer = '';
 
     input.onStage?.('generation');
+    thinking.start(thinkingStep);
     input.onToken?.(disclaimer);
     if (this.answerProvider.stream) {
       const sanitizer = new CitationStreamSanitizer(input.onToken);
@@ -394,6 +470,8 @@ export class AiKnowledgeChatService {
     if (!generatedAnswer.trim()) {
       input.onToken?.(cleanAnswer);
     }
+
+    thinking.complete(thinkingStep, undefined, 'general');
 
     return this.buildGeneralKnowledgeResult(input.query, cleanAnswer);
   }
@@ -567,6 +645,53 @@ export function isKnowledgeAiEnabledForWorkspace(
   }
 
   return (aiSettings as Record<string, unknown>).chat === true;
+}
+
+class AiChatThinkingProgress {
+  private readonly startedAt = new Map<AiChatThinkingStep, number>();
+  private readonly startedStats = new Map<
+    AiChatThinkingStep,
+    AiChatThinkingStats
+  >();
+
+  constructor(private readonly emit?: (event: AiChatThinkingEvent) => void) {}
+
+  start(step: AiChatThinkingStep, stats?: AiChatThinkingStats): void {
+    this.startedAt.set(step, performance.now());
+    if (stats) this.startedStats.set(step, stats);
+    this.emit?.({
+      step,
+      status: 'started',
+      ...(stats ? { stats } : {}),
+    });
+  }
+
+  complete(
+    step: AiChatThinkingStep,
+    stats?: AiChatThinkingStats,
+    outcome?: AiChatThinkingEvent['outcome'],
+  ): void {
+    const startedAt = this.startedAt.get(step);
+    const mergedStats = {
+      ...this.startedStats.get(step),
+      ...stats,
+    };
+    this.startedAt.delete(step);
+    this.startedStats.delete(step);
+    this.emit?.({
+      step,
+      status: 'completed',
+      ...(startedAt === undefined
+        ? {}
+        : { durationMs: roundDuration(performance.now() - startedAt) }),
+      ...(Object.keys(mergedStats).length ? { stats: mergedStats } : {}),
+      ...(outcome ? { outcome } : {}),
+    });
+  }
+}
+
+function roundDuration(durationMs: number): number {
+  return Math.round(durationMs * 10) / 10;
 }
 
 type KnowledgeContextPack = ReturnType<
