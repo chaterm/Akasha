@@ -164,6 +164,31 @@ describe('KnowledgeSpaceCompilationService', () => {
     expect(fixture.repo.promoteDuePageCompileSchedules).not.toHaveBeenCalled();
   });
 
+  it('removes a confirmed page from the delayed queue without dispatching', async () => {
+    const fixture = createService();
+    fixture.repo.removeDelayedPageCompilation.mockResolvedValue({
+      scheduleId: 'schedule-1',
+      sourcePageId: 'page-1',
+      spaceId: 'space-1',
+      pageName: 'Page 1',
+    });
+
+    await expect(
+      fixture.service.removeDelayedPageCompilation({
+        workspaceId: 'workspace-1',
+        scheduleId: 'schedule-1',
+        confirmationPageName: 'Page 1',
+      }),
+    ).resolves.toEqual(expect.objectContaining({ scheduleId: 'schedule-1' }));
+
+    expect(fixture.repo.removeDelayedPageCompilation).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      scheduleId: 'schedule-1',
+      confirmationPageName: 'Page 1',
+    });
+    expect(fixture.repo.promoteDuePageCompileSchedules).not.toHaveBeenCalled();
+  });
+
   it('initializes against the prior completed Run instead of its own queued placeholder', async () => {
     const source = sourceSnapshot();
     const fixture = createService({
@@ -193,6 +218,49 @@ describe('KnowledgeSpaceCompilationService', () => {
       lease(),
       expect.objectContaining({
         pages: [expect.objectContaining({ status: 'skipped' })],
+      }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        aggregateRequired: false,
+        pageCompilationRequired: false,
+      }),
+    );
+  });
+
+  it('reuses compiled knowledge when only sourceVersion changed and content hashes are identical', async () => {
+    const previouslyCompiledSource = sourceSnapshot();
+    const currentSource = {
+      ...previouslyCompiledSource,
+      sourceVersion: 'v2',
+    };
+    const fixture = createService({
+      exportedSources: [currentSource],
+      reuseCandidates: [reuseCandidate(previouslyCompiledSource)],
+      latestAggregateRun: {
+        id: 'prior-complete-run',
+        compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+        promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+        knowledgeGeneration: 4,
+        currentKnowledgeGeneration: 4,
+        catalogHash: 'sha256:catalog',
+      },
+      hasActiveOverview: true,
+    });
+
+    const result = await fixture.service.initializeLeasedRun(lease());
+
+    expect(fixture.executionRepo.initializeRun).toHaveBeenCalledWith(
+      lease(),
+      expect.objectContaining({
+        pages: [
+          expect.objectContaining({
+            expectedSourceVersion: 'v2',
+            expectedSourceContentHash: currentSource.contentHash,
+            status: 'skipped',
+            errorCode: 'unchanged',
+          }),
+        ],
       }),
     );
     expect(result).toEqual(
@@ -357,6 +425,7 @@ function createService(
     requestRuns: jest.fn().mockResolvedValue([]),
     requestIncrementalCompileForPages: jest.fn().mockResolvedValue([]),
     markDelayedPageForImmediateCompilation: jest.fn(),
+    removeDelayedPageCompilation: jest.fn(),
     promoteDuePageCompileSchedules: jest.fn().mockResolvedValue({
       selectedPageCount: 0,
       promotedPageCount: 0,

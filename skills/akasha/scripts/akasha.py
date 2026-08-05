@@ -46,6 +46,13 @@ def _build_parser() -> argparse.ArgumentParser:
     query.add_argument("question")
     query.add_argument("--space-id", action="append", dest="space_ids")
 
+    space = commands.add_parser("space", help="List readable spaces")
+    space_commands = space.add_subparsers(dest="space_command", required=True)
+    space_commands.add_parser(
+        "list",
+        help="List readable spaces to choose a query --space-id",
+    )
+
     citation = commands.add_parser(
         "citation",
         help="Read an ACL-authorized shared Page by its internal URL",
@@ -96,6 +103,32 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Read a page from the personal space",
     )
     get_page.add_argument("page_id")
+
+    delete_page = page_commands.add_parser(
+        "delete",
+        help="Move a personal space page to the trash",
+    )
+    delete_page.add_argument("page_id")
+
+    restore_page = page_commands.add_parser(
+        "restore",
+        help="Restore a personal space page from the trash",
+    )
+    restore_page.add_argument("page_id")
+
+    recent_page = page_commands.add_parser(
+        "recent",
+        help="List recently updated personal space pages",
+    )
+    recent_page.add_argument("--limit", type=int, default=20)
+    recent_page.add_argument("--cursor")
+
+    trash_page = page_commands.add_parser(
+        "trash",
+        help="List trashed personal space pages to restore",
+    )
+    trash_page.add_argument("--limit", type=int, default=20)
+    trash_page.add_argument("--cursor")
 
     return parser
 
@@ -314,6 +347,21 @@ def main(
             )
             return 0
 
+        if args.command == "space" and args.space_command == "list":
+            client, identity = _create_client(
+                factory,
+                credential_file=credential_file,
+            )
+            spaces = client.list_space_summaries()
+            _write_json(
+                output,
+                _with_skill_update_notice(
+                    {"items": spaces, "meta": {"count": len(spaces)}},
+                    identity,
+                ),
+            )
+            return 0
+
         if args.command == "citation" and args.citation_command == "get":
             client, identity = _create_client(
                 factory,
@@ -392,6 +440,60 @@ def main(
             _write_json(
                 output,
                 _with_skill_update_notice(_page_write_result(result), identity),
+            )
+            return 0
+
+        if args.command == "page" and args.page_command == "delete":
+            client, identity = _create_client(
+                factory,
+                credential_file=credential_file,
+            )
+            result = client.delete_personal_page(args.page_id)
+            _write_json(
+                output,
+                _with_skill_update_notice(result, identity),
+            )
+            return 0
+
+        if args.command == "page" and args.page_command == "restore":
+            client, identity = _create_client(
+                factory,
+                credential_file=credential_file,
+            )
+            result = client.restore_personal_page(args.page_id)
+            _write_json(
+                output,
+                _with_skill_update_notice(result, identity),
+            )
+            return 0
+
+        if args.command == "page" and args.page_command == "recent":
+            client, identity = _create_client(
+                factory,
+                credential_file=credential_file,
+            )
+            result = client.list_recent_personal_pages(
+                limit=args.limit,
+                cursor=args.cursor,
+            )
+            _write_json(
+                output,
+                _with_skill_update_notice(result, identity),
+            )
+            return 0
+
+        if args.command == "page" and args.page_command == "trash":
+            client, identity = _create_client(
+                factory,
+                credential_file=credential_file,
+            )
+            result = client.list_deleted_personal_pages(
+                limit=args.limit,
+                cursor=args.cursor,
+            )
+            _write_json(
+                output,
+                _with_skill_update_notice(result, identity),
             )
             return 0
     except (CredentialError, AuthenticationError) as error:

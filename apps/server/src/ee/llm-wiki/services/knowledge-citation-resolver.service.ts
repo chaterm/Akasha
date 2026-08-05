@@ -17,6 +17,10 @@ import { KnowledgeAuthorizationCache } from './knowledge-source-authorization.ca
 import { KnowledgeSourceRepo } from '@akasha/db/repos/llm-wiki/knowledge-source.repo';
 import { KnowledgeSourceChunk } from '@akasha/db/types/entity.types';
 import { chunkKnowledgeSource } from '../chunking/knowledge-structural-chunker';
+import {
+  AiChatDebugTiming,
+  measureAiChatPhase,
+} from '../../../common/observability/ai-chat-debug-timing';
 
 const MIN_RAW_EVIDENCE_SCORE = 2;
 
@@ -55,6 +59,7 @@ export class KnowledgeCitationResolverService {
     userId: string;
     capsules: KnowledgePage[];
     authCache?: KnowledgeAuthorizationCache;
+    debugTiming?: AiChatDebugTiming;
   }): Promise<CapsuleCitationEntry[]> {
     const readableSourceIdsByCapsule = new Map<string, string[]>();
     const allReadableSourceIds = new Set<string>();
@@ -101,20 +106,28 @@ export class KnowledgeCitationResolverService {
     workspaceId: string;
     query?: string;
     chunks: KnowledgeRetrievalResult['chunks'];
+    debugTiming?: AiChatDebugTiming;
   }): Promise<ChunkCitationEntry[]> {
     const allSourcePageIds = unique(
       input.chunks.flatMap((entry) => entry.sourcePageIds),
     );
-    const pagesById = await this.findSourcePages(
-      allSourcePageIds,
-      input.workspaceId,
-      true,
+    const pagesById = await measureAiChatPhase(
+      input.debugTiming,
+      'citations.load_source_pages',
+      () => this.findSourcePages(allSourcePageIds, input.workspaceId, true),
+      (result) => ({ loadedSourcePageCount: result.size }),
     );
     const sourceTexts = this.sourceRepo?.findActiveSourceTextsByPageIds
-      ? await this.sourceRepo.findActiveSourceTextsByPageIds({
-          workspaceId: input.workspaceId,
-          sourcePageIds: allSourcePageIds,
-        })
+      ? await measureAiChatPhase(
+          input.debugTiming,
+          'citations.load_source_texts',
+          () =>
+            this.sourceRepo!.findActiveSourceTextsByPageIds({
+              workspaceId: input.workspaceId,
+              sourcePageIds: allSourcePageIds,
+            }),
+          (result) => ({ loadedSourceTextCount: result.length }),
+        )
       : [];
     const evidenceTextByPageId = new Map(
       allSourcePageIds.map((sourcePageId) => [
@@ -125,18 +138,30 @@ export class KnowledgeCitationResolverService {
           '',
       ]),
     );
-    const sourceRefsByChunkId = await this.findChunkSourceRefsByChunkId({
-      workspaceId: input.workspaceId,
-      chunks: input.chunks,
-      readableSourcePageIds: allSourcePageIds,
-    });
-    const rawSourceWindowsByPageId = await this.findRawSourceWindows({
-      workspaceId: input.workspaceId,
-      query: input.query ?? '',
-      sourcePageIds: allSourcePageIds,
-      pagesById,
-      evidenceTextByPageId,
-    });
+    const sourceRefsByChunkId = await measureAiChatPhase(
+      input.debugTiming,
+      'citations.load_chunk_source_refs',
+      () =>
+        this.findChunkSourceRefsByChunkId({
+          workspaceId: input.workspaceId,
+          chunks: input.chunks,
+          readableSourcePageIds: allSourcePageIds,
+        }),
+      (result) => ({ chunkWithSourceRefCount: result.size }),
+    );
+    const rawSourceWindowsByPageId = await measureAiChatPhase(
+      input.debugTiming,
+      'citations.load_raw_source_windows',
+      () =>
+        this.findRawSourceWindows({
+          workspaceId: input.workspaceId,
+          query: input.query ?? '',
+          sourcePageIds: allSourcePageIds,
+          pagesById,
+          evidenceTextByPageId,
+        }),
+      (result) => ({ sourceWithWindowCount: result.size }),
+    );
 
     return input.chunks.map((entry) => ({
       chunk: entry.parentSection

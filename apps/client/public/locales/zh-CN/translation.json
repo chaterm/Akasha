@@ -1219,6 +1219,8 @@
   "Enter the exact space name to continue:": "输入完全一致的空间名称后继续：",
   "Immediate compile": "立即编译",
   "Page compilation queued": "页面已进入编译队列",
+  "Remove from queue": "移除队列",
+  "Page removed from delayed queue": "页面已从延迟队列移除",
   "Type the page name to confirm": "输入页面名称以确认",
   "Enter the exact page name to continue:": "输入完全一致的页面名称后继续：",
   "This page will skip the remaining delay and enter the compilation queue immediately. Later edits will start a new one-hour delay.": "该页面将跳过剩余等待时间并立即进入编译队列。后续编辑会重新开始一小时等待。",

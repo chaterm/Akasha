@@ -20,6 +20,7 @@ import type {
   KnowledgePageLogPage,
   KnowledgeQuarantineDiagnosticsPage,
   KnowledgeQuarantinedArtifact,
+  KnowledgeRemoveDelayedPageResult,
   KnowledgeRetrievalDiagnosticsSummary,
   KnowledgeRetryPagesResult,
   KnowledgeRunDiagnostic,
@@ -263,6 +264,27 @@ export async function immediatelyCompileDelayedPage(params: {
   return unwrapApiData(
     await response.json(),
   ) as KnowledgeImmediateDelayedPageCompileResult;
+}
+
+export async function removeDelayedPageFromQueue(params: {
+  scheduleId: string;
+  confirmationPageName: string;
+}): Promise<KnowledgeRemoveDelayedPageResult> {
+  const response = await fetch(
+    `/api/llm-wiki/admin/diagnostics/delayed-pages/${encodeURIComponent(params.scheduleId)}/remove`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        confirmationPageName: params.confirmationPageName,
+      }),
+    },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response));
+  return unwrapApiData(
+    await response.json(),
+  ) as KnowledgeRemoveDelayedPageResult;
 }
 
 export async function getKnowledgeRunPageDiagnostics(params: {

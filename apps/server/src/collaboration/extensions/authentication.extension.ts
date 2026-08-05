@@ -29,8 +29,15 @@ export class AuthenticationExtension implements Extension {
   ) {}
 
   async onAuthenticate(data: onAuthenticatePayload) {
-    const { documentName, token } = data;
+    const { documentName, token, requestParameters } = data;
     const pageId = getPageId(documentName);
+
+    // The UI's read mode must also be read-only at the collaboration layer.
+    // This only narrows access; permission checks below can independently force
+    // any connection into read-only mode.
+    if (requestParameters.get('readOnly') === 'true') {
+      data.connectionConfig.readOnly = true;
+    }
 
     let jwtPayload: JwtCollabPayload;
 

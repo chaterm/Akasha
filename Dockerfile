@@ -1,6 +1,10 @@
 FROM node:22-slim AS base
 
-RUN npm install -g pnpm@10.4.0
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+
+RUN npm install -g pnpm@10.4.0 \
+    && pnpm config set store-dir /pnpm/store
 
 FROM base AS builder
 
@@ -8,19 +12,22 @@ WORKDIR /app
 
 COPY . .
 
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=akasha-pnpm-linux-amd64,target=/pnpm/store,sharing=locked \
+    pnpm install --frozen-lockfile
+
 RUN pnpm build
+
 
 FROM base AS installer
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends curl bash \
-  && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends curl bash tzdata \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV TZ=Asia/Shanghai
 
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
-    && echo $TZ > /etc/timezone
+    && echo "$TZ" > /etc/timezone
 
 WORKDIR /app
 
@@ -41,13 +48,13 @@ COPY --from=builder /app/.npmrc /app/.npmrc
 # Copy patches
 COPY --from=builder /app/patches /app/patches
 
-RUN chown -R node:node /app
+RUN --mount=type=cache,id=akasha-pnpm-linux-amd64,target=/pnpm/store,sharing=locked \
+    pnpm install --frozen-lockfile --prod
+
+RUN mkdir -p /app/data/storage \
+    && chown -R node:node /app
 
 USER node
-
-RUN pnpm install --frozen-lockfile --prod
-
-RUN mkdir -p /app/data/storage
 
 VOLUME ["/app/data/storage"]
 

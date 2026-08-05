@@ -24,6 +24,10 @@ import {
 } from './knowledge-retrieval.service';
 import { KnowledgeSourceAuthorizationService } from './knowledge-source-authorization.service';
 import { KnowledgeAuthorizationCache } from './knowledge-source-authorization.cache';
+import {
+  AiChatDebugTiming,
+  measureAiChatPhase,
+} from '../../../common/observability/ai-chat-debug-timing';
 
 export { KnowledgeAnswerProvider, KnowledgeAnswerProviderInput };
 
@@ -47,6 +51,7 @@ type AiKnowledgeChatInput = {
   responseMode?: 'knowledge' | 'general';
   onToken?: (token: string) => void;
   onStage?: (stage: 'understanding' | 'retrieval' | 'generation') => void;
+  debugTiming?: AiChatDebugTiming;
 };
 
 export type AiKnowledgeChatResult = {
@@ -124,34 +129,84 @@ export class AiKnowledgeChatService {
     const contextualRetrievalQuery =
       retrievalQuery.trim() !== input.query.trim() ? retrievalQuery : undefined;
     input.onStage?.('retrieval');
-    const retrieval = await this.retrieval.retrieve({
-      workspaceId: input.workspaceId,
-      userId: input.userId,
-      query: retrievalQuery,
-      spaceIds: input.spaceIds,
-      authCache,
-    });
-    const chunkCitations = retrieval.chunks.length
-      ? await this.citationResolver.resolveForChunks({
+    const retrieval = await measureAiChatPhase(
+      input.debugTiming,
+      'retrieval.total',
+      () =>
+        this.retrieval.retrieve({
           workspaceId: input.workspaceId,
+          userId: input.userId,
           query: retrievalQuery,
-          chunks: retrieval.chunks,
-        })
+          spaceIds: input.spaceIds,
+          authCache,
+          ...(input.debugTiming ? { debugTiming: input.debugTiming } : {}),
+        }),
+      (result) => ({
+        retrievalMode: result.mode,
+        chunkCount: result.chunks.length,
+        capsuleCount: result.capsules.length,
+        embeddingAvailable:
+          result.diagnostics?.queryEmbeddingAvailable ?? false,
+        fallbackUsed: result.diagnostics?.accessPolicyFallbackUsed ?? false,
+      }),
+    );
+    const chunkCitations = retrieval.chunks.length
+      ? await measureAiChatPhase(
+          input.debugTiming,
+          'citations.resolve_chunks',
+          () =>
+            this.citationResolver.resolveForChunks({
+              workspaceId: input.workspaceId,
+              query: retrievalQuery,
+              chunks: retrieval.chunks,
+              ...(input.debugTiming ? { debugTiming: input.debugTiming } : {}),
+            }),
+          (citations) => ({ resolvedChunkCount: citations.length }),
+        )
       : undefined;
     const capsuleCitations =
       !chunkCitations && retrieval.capsules.length
-        ? await this.citationResolver.resolveForCapsules({
-            workspaceId: input.workspaceId,
-            userId: input.userId,
-            capsules: retrieval.capsules,
-            authCache,
-          })
+        ? await measureAiChatPhase(
+            input.debugTiming,
+            'citations.resolve_capsules',
+            () =>
+              this.citationResolver.resolveForCapsules({
+                workspaceId: input.workspaceId,
+                userId: input.userId,
+                capsules: retrieval.capsules,
+                authCache,
+                ...(input.debugTiming
+                  ? { debugTiming: input.debugTiming }
+                  : {}),
+              }),
+            (citations) => ({ resolvedCapsuleCount: citations.length }),
+          )
         : undefined;
+    const contextPackStartedAt = performance.now();
     const pack = this.contextPack.buildContextPack({
       chunks: chunkCitations,
       capsules: capsuleCitations,
     });
-    const explicit = await this.loadExplicitContext(input, authCache);
+    input.debugTiming?.record(
+      'context.build_pack',
+      performance.now() - contextPackStartedAt,
+      {
+        includedItemCount: pack.budget.includedItemCount,
+        contextChars: pack.budget.usedContextLength,
+      },
+    );
+    const explicit = await measureAiChatPhase(
+      input.debugTiming,
+      'context.load_explicit',
+      () => this.loadExplicitContext(input, authCache),
+      (result) => ({
+        explicitContextChars: result.context.length,
+        explicitCitationCount: result.citations.length,
+        requestedPageCount:
+          (input.contextPageId ? 1 : 0) + (input.mentionedPageIds?.length ?? 0),
+        attachmentCount: input.attachmentIds?.length ?? 0,
+      }),
+    );
     const allCitations = uniqueCitations([
       ...explicit.citations,
       ...pack.citations,
@@ -192,14 +247,36 @@ export class AiKnowledgeChatService {
     input.onStage?.('generation');
     if (this.answerProvider.stream) {
       const streamRouter = new KnowledgeAnswerStreamRouter(input.onToken);
-      for await (const token of this.answerProvider.stream(answerInput)) {
-        rawAnswer += token;
-        streamRouter.push(token);
-      }
+      const generationStartedAt = performance.now();
+      let providerFirstTokenLogged = false;
+      await measureAiChatPhase(
+        input.debugTiming,
+        'generation.provider',
+        async () => {
+          for await (const token of this.answerProvider.stream!(answerInput)) {
+            if (!providerFirstTokenLogged && token) {
+              providerFirstTokenLogged = true;
+              input.debugTiming?.record(
+                'generation.provider_first_token',
+                performance.now() - generationStartedAt,
+                { attempt: 'knowledge' },
+              );
+            }
+            rawAnswer += token;
+            streamRouter.push(token);
+          }
+        },
+        { attempt: 'knowledge', streamed: true },
+      );
       streamRouter.finish();
       generatedAnswer = parseGeneratedAnswer(rawAnswer);
     } else {
-      rawAnswer = await this.answerProvider.answer(answerInput);
+      rawAnswer = await measureAiChatPhase(
+        input.debugTiming,
+        'generation.provider',
+        () => this.answerProvider.answer(answerInput),
+        { attempt: 'knowledge', streamed: false },
+      );
       generatedAnswer = parseGeneratedAnswer(rawAnswer);
     }
     if (
@@ -279,13 +356,35 @@ export class AiKnowledgeChatService {
     input.onToken?.(disclaimer);
     if (this.answerProvider.stream) {
       const sanitizer = new CitationStreamSanitizer(input.onToken);
-      for await (const token of this.answerProvider.stream(answerInput)) {
-        generatedAnswer += token;
-        sanitizer.push(token);
-      }
+      const generationStartedAt = performance.now();
+      let providerFirstTokenLogged = false;
+      await measureAiChatPhase(
+        input.debugTiming,
+        'generation.provider',
+        async () => {
+          for await (const token of this.answerProvider.stream!(answerInput)) {
+            if (!providerFirstTokenLogged && token) {
+              providerFirstTokenLogged = true;
+              input.debugTiming?.record(
+                'generation.provider_first_token',
+                performance.now() - generationStartedAt,
+                { attempt: 'general' },
+              );
+            }
+            generatedAnswer += token;
+            sanitizer.push(token);
+          }
+        },
+        { attempt: 'general', streamed: true },
+      );
       sanitizer.finish();
     } else {
-      generatedAnswer = await this.answerProvider.answer(answerInput);
+      generatedAnswer = await measureAiChatPhase(
+        input.debugTiming,
+        'generation.provider',
+        () => this.answerProvider.answer(answerInput),
+        { attempt: 'general', streamed: false },
+      );
       input.onToken?.(stripCitationMarkers(generatedAnswer));
     }
 
@@ -322,15 +421,29 @@ export class AiKnowledgeChatService {
     input: AiKnowledgeChatInput,
   ): Promise<string> {
     if (!input.chatContext?.length || !this.answerProvider.rewriteQuery) {
+      input.debugTiming?.mark('context.rewrite_skipped', {
+        reason: !input.chatContext?.length
+          ? 'no_history'
+          : 'provider_not_configured',
+      });
       return input.query;
     }
 
     input.onStage?.('understanding');
     try {
-      const rewritten = await this.answerProvider.rewriteQuery({
-        query: input.query,
-        chatContext: input.chatContext,
-      });
+      const rewritten = await measureAiChatPhase(
+        input.debugTiming,
+        'context.rewrite',
+        () =>
+          this.answerProvider.rewriteQuery!({
+            query: input.query,
+            chatContext: input.chatContext!,
+          }),
+        {
+          historyMessageCount: input.chatContext.length,
+          historyChars: input.chatContext.join('\n').length,
+        },
+      );
       return rewritten.trim() || input.query;
     } catch {
       return input.query;
@@ -352,17 +465,31 @@ export class AiKnowledgeChatService {
     ]);
 
     if (requestedPageIds.length && this.pageRepo && this.sourceAuthorization) {
-      const readablePageIds =
-        await this.sourceAuthorization.filterReadableSources({
-          workspaceId: input.workspaceId,
-          userId: input.userId,
-          sourcePageIds: requestedPageIds,
-          cache: authCache,
-        });
-      const pages = await this.pageRepo.findManyByIds(readablePageIds, {
-        workspaceId: input.workspaceId,
-        includeTextContent: true,
-      });
+      const readablePageIds = await measureAiChatPhase(
+        input.debugTiming,
+        'context.authorize_explicit_pages',
+        () =>
+          this.sourceAuthorization!.filterReadableSources({
+            workspaceId: input.workspaceId,
+            userId: input.userId,
+            sourcePageIds: requestedPageIds,
+            cache: authCache,
+          }),
+        (result) => ({
+          requestedPageCount: requestedPageIds.length,
+          readablePageCount: result.length,
+        }),
+      );
+      const pages = await measureAiChatPhase(
+        input.debugTiming,
+        'context.load_explicit_pages',
+        () =>
+          this.pageRepo!.findManyByIds(readablePageIds, {
+            workspaceId: input.workspaceId,
+            includeTextContent: true,
+          }),
+        (result) => ({ loadedPageCount: result.length }),
+      );
       const pageById = new Map(pages.map((page) => [page.id, page]));
       for (const pageId of requestedPageIds) {
         const page = pageById.get(pageId);
@@ -385,10 +512,20 @@ export class AiKnowledgeChatService {
     }
 
     if (input.attachmentIds?.length && this.attachmentRepo) {
-      const attachments = await Promise.all(
-        unique(input.attachmentIds).map((id) =>
-          this.attachmentRepo!.findByIdWithContent(id),
-        ),
+      const uniqueAttachmentIds = unique(input.attachmentIds);
+      const attachments = await measureAiChatPhase(
+        input.debugTiming,
+        'context.load_attachments',
+        () =>
+          Promise.all(
+            uniqueAttachmentIds.map((id) =>
+              this.attachmentRepo!.findByIdWithContent(id),
+            ),
+          ),
+        (result) => ({
+          requestedAttachmentCount: uniqueAttachmentIds.length,
+          loadedAttachmentCount: result.filter(Boolean).length,
+        }),
       );
       for (const attachment of attachments) {
         if (

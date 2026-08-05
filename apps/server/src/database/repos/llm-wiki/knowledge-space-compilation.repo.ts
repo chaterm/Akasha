@@ -483,6 +483,50 @@ export class KnowledgeSpaceCompilationRepo {
     return updated.rows[0] ?? null;
   }
 
+  /** Removes one confirmed page from the delayed compilation queue. */
+  async removeDelayedPageCompilation(input: {
+    workspaceId: string;
+    scheduleId: string;
+    confirmationPageName: string;
+  }): Promise<{
+    scheduleId: string;
+    sourcePageId: string;
+    spaceId: string;
+    pageName: string;
+  } | null> {
+    const deleted = await sql<{
+      scheduleId: string;
+      sourcePageId: string;
+      spaceId: string;
+      pageName: string;
+    }>`
+      DELETE FROM knowledge_page_compile_schedules AS schedule
+      USING pages AS source_page, spaces AS space
+      WHERE schedule.id = ${input.scheduleId}
+        AND schedule.workspace_id = ${input.workspaceId}
+        AND source_page.id = schedule.source_page_id
+        AND source_page.workspace_id = schedule.workspace_id
+        AND source_page.deleted_at IS NULL
+        AND space.id = schedule.space_id
+        AND space.workspace_id = schedule.workspace_id
+        AND space.deleted_at IS NULL
+        AND COALESCE(
+          NULLIF(source_page.title, ''),
+          source_page.slug_id,
+          source_page.id::text
+        ) = ${input.confirmationPageName}
+      RETURNING schedule.id AS "scheduleId",
+                schedule.source_page_id AS "sourcePageId",
+                schedule.space_id AS "spaceId",
+                COALESCE(
+                  NULLIF(source_page.title, ''),
+                  source_page.slug_id,
+                  source_page.id::text
+                ) AS "pageName"
+    `.execute(this.db);
+    return deleted.rows[0] ?? null;
+  }
+
   /**
    * Atomically promotes due page schedules into page-scoped Space Runs. The
    * schedule rows and Run request share one PostgreSQL transaction, while

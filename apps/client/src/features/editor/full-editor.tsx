@@ -1,5 +1,5 @@
 import classes from "@/features/editor/styles/editor.module.css";
-import React, { useEffect } from "react";
+import React from "react";
 import { TitleEditor } from "@/features/editor/title-editor";
 import PageEditor from "@/features/editor/page-editor";
 import {
@@ -21,11 +21,13 @@ import { PageVerificationBadge } from "@/ee/page-verification";
 import { useTranslation } from "react-i18next";
 import { IContributor } from "@/features/page/types/page.types.ts";
 import { FixedToolbar } from "@/features/editor/components/fixed-toolbar/fixed-toolbar";
-import { PageEditMode } from "@/features/user/types/user.types.ts";
 import { useAsideTriggerProps } from "@/hooks/use-toggle-aside.tsx";
 import { DeletedPageBanner } from "@/features/page/trash/components/deleted-page-banner.tsx";
 import clsx from "clsx";
-import { currentPageEditModeAtom } from "@/features/editor/atoms/editor-atoms.ts";
+import {
+  PageEditMode,
+  usePageEditMode,
+} from "@/features/editor/page-edit-mode-context";
 
 const MemoizedTitleEditor = React.memo(TitleEditor);
 const MemoizedPageEditor = React.memo(PageEditor);
@@ -37,10 +39,6 @@ type PageUser = {
   name: string;
   avatarUrl: string;
 };
-
-// Module-level flag: survives component unmount/remount on page navigation,
-// reset only on full page reload (i.e. a new app session).
-let defaultEditModeApplied = false;
 
 export interface FullEditorProps {
   pageId: string;
@@ -69,21 +67,8 @@ export function FullEditor({
   const fullPageWidth = user.settings?.preferences?.fullPageWidth;
   const editorToolbarEnabled =
     user.settings?.preferences?.editorToolbar ?? false;
-  const [currentPageEditMode, setCurrentPageEditMode] = useAtom(
-    currentPageEditModeAtom,
-  );
-  const userPageEditMode =
-    user.settings?.preferences?.pageEditMode ?? PageEditMode.Edit;
-  const isEditMode = currentPageEditMode === PageEditMode.Edit;
-
-  // Apply the user's saved preference only once on initial load, not on every
-  // page navigation — so the mode sticks across navigations within a session.
-  useEffect(() => {
-    if (!defaultEditModeApplied) {
-      setCurrentPageEditMode(userPageEditMode as PageEditMode);
-      defaultEditModeApplied = true;
-    }
-  }, [userPageEditMode, setCurrentPageEditMode]);
+  const { pageEditMode } = usePageEditMode();
+  const isEditMode = pageEditMode === PageEditMode.Edit;
 
   return (
     <Container
@@ -108,6 +93,7 @@ export function FullEditor({
         readOnly={!editable}
       />
       <MemoizedPageEditor
+        key={pageEditMode}
         pageId={pageId}
         editable={editable}
         content={content}

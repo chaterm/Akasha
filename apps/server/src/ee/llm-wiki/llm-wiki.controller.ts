@@ -43,6 +43,7 @@ import { CancelKnowledgeRunDto } from './dto/cancel-knowledge-run.dto';
 import {
   AdminKnowledgeDelayedPageListDto,
   AdminKnowledgeImmediateCompileDelayedPageDto,
+  AdminKnowledgeRemoveDelayedPageDto,
   AdminKnowledgePageLogDto,
   AdminKnowledgeQuarantineListDto,
   AdminKnowledgeRunListDto,
@@ -460,6 +461,46 @@ export class LlmWikiController {
     });
     return {
       accepted: true,
+      scheduleId: result.scheduleId,
+      sourcePageId: result.sourcePageId,
+      spaceId: result.spaceId,
+    };
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('admin/diagnostics/delayed-pages/:scheduleId/remove')
+  async removeDelayedPageFromQueue(
+    @Param('scheduleId', ParseUUIDPipe) scheduleId: string,
+    @Body() dto: AdminKnowledgeRemoveDelayedPageDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertKnowledgeOperationAllowed(user, workspace);
+    const result = await this.spaceCompilation.removeDelayedPageCompilation({
+      workspaceId: workspace.id,
+      scheduleId,
+      confirmationPageName: dto.confirmationPageName,
+    });
+    if (!result) {
+      throw new BadRequestException(
+        'Delayed page is unavailable or page name confirmation does not match',
+      );
+    }
+
+    this.auditService.log({
+      event: AuditEvent.KNOWLEDGE_DELAYED_PAGE_REMOVED,
+      resourceType: AuditResource.KNOWLEDGE,
+      resourceId: result.sourcePageId,
+      spaceId: result.spaceId,
+      metadata: {
+        action: 'remove_delayed_page_from_queue',
+        scheduleId: result.scheduleId,
+        sourcePageId: result.sourcePageId,
+        pageName: result.pageName,
+      },
+    });
+    return {
+      removed: true,
       scheduleId: result.scheduleId,
       sourcePageId: result.sourcePageId,
       spaceId: result.spaceId,
