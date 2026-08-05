@@ -20,6 +20,10 @@ import { AiKnowledgeChatService } from '../llm-wiki/services/ai-knowledge-chat.s
 import { AttachmentRepo } from '@akasha/db/repos/attachment/attachment.repo';
 import { KnowledgeQueryAuditRepo } from '@akasha/db/repos/llm-wiki/knowledge-query-audit.repo';
 import { createHash } from 'crypto';
+import {
+  AiChatDebugTiming,
+  measureAiChatPhase,
+} from '../../common/observability/ai-chat-debug-timing';
 
 export type AiChatStreamEvent =
   | { type: 'chat_created'; chatId: string }
@@ -152,52 +156,87 @@ export class AiChatService {
       throw new BadRequestException('Message content is required');
     }
 
-    const chat = input.chatId
-      ? await this.getOwnedChat({
-          workspaceId: input.workspace.id,
-          userId: input.user.id,
-          chatId: input.chatId,
-        })
-      : await this.aiChatRepo.createChat({
-          workspaceId: input.workspace.id,
-          creatorId: input.user.id,
-          title: buildTitle(content),
-        });
+    const debugTiming = AiChatDebugTiming.create(this.logger, {
+      workspaceId: input.workspace.id,
+      operation: 'send',
+    });
+    const chat = await measureAiChatPhase(
+      debugTiming,
+      'request.chat',
+      () =>
+        input.chatId
+          ? this.getOwnedChat({
+              workspaceId: input.workspace.id,
+              userId: input.user.id,
+              chatId: input.chatId,
+            })
+          : this.aiChatRepo.createChat({
+              workspaceId: input.workspace.id,
+              creatorId: input.user.id,
+              title: buildTitle(content),
+            }),
+      { existingChat: Boolean(input.chatId) },
+    );
+    debugTiming?.setChatId(chat.id);
     input.onEvent?.({ type: 'chat_created', chatId: chat.id });
 
     if (input.attachmentIds?.length && this.attachmentRepo) {
-      await this.attachmentRepo.claimAttachmentsForChat(
-        input.attachmentIds,
-        chat.id,
-        input.user.id,
-        input.workspace.id,
+      await measureAiChatPhase(
+        debugTiming,
+        'request.claim_attachments',
+        () =>
+          this.attachmentRepo!.claimAttachmentsForChat(
+            input.attachmentIds!,
+            chat.id,
+            input.user.id,
+            input.workspace.id,
+          ),
+        { attachmentCount: input.attachmentIds.length },
       );
     }
 
-    const previousMessages = input.chatId
-      ? await this.aiChatRepo.findMessages({
-          workspaceId: input.workspace.id,
-          chatId: chat.id,
-          limit: 20,
-        })
-      : [];
+    const previousMessages = await measureAiChatPhase(
+      debugTiming,
+      'request.load_history',
+      () =>
+        input.chatId
+          ? this.aiChatRepo.findMessages({
+              workspaceId: input.workspace.id,
+              chatId: chat.id,
+              limit: 20,
+            })
+          : Promise.resolve([]),
+      (messages) => ({ historyMessageCount: messages.length }),
+    );
 
     input.onEvent?.({ type: 'progress', stage: 'permissions' });
-    const readableSpaceIds = await this.getDefaultReadableSpaceIds({
-      workspaceId: input.workspace.id,
-      user: input.user,
-    });
+    const readableSpaceIds = await measureAiChatPhase(
+      debugTiming,
+      'request.resolve_spaces',
+      () =>
+        this.getDefaultReadableSpaceIds({
+          workspaceId: input.workspace.id,
+          user: input.user,
+        }),
+      (spaceIds) => ({ readableSpaceCount: spaceIds.length }),
+    );
     const spaceIds = resolveRequestedSpaceIds(input.spaceIds, readableSpaceIds);
 
-    const userMessage = await this.aiChatRepo.addMessage({
-      workspaceId: input.workspace.id,
-      chatId: chat.id,
-      userId: input.user.id,
-      role: 'user',
-      content,
-      toolCalls: null,
-      metadata: buildUserMetadata(input, spaceIds) as never,
-    });
+    const userMessage = await measureAiChatPhase(
+      debugTiming,
+      'request.persist_user_message',
+      () =>
+        this.aiChatRepo.addMessage({
+          workspaceId: input.workspace.id,
+          chatId: chat.id,
+          userId: input.user.id,
+          role: 'user',
+          content,
+          toolCalls: null,
+          metadata: buildUserMetadata(input, spaceIds) as never,
+        }),
+      { selectedSpaceCount: spaceIds.length },
+    );
 
     return this.generateAndPersistAnswer({
       workspace: input.workspace,
@@ -214,6 +253,7 @@ export class AiChatService {
       attachmentIds: input.attachmentIds,
       responseMode: input.responseMode,
       onEvent: input.onEvent,
+      debugTiming,
     });
   }
 
@@ -225,13 +265,26 @@ export class AiChatService {
       throw new BadRequestException('Message content is required');
     }
 
-    const edit = await this.aiChatRepo.editUserMessageAndSoftDeleteTail({
+    const debugTiming = AiChatDebugTiming.create(this.logger, {
       workspaceId: input.workspace.id,
-      userId: input.user.id,
-      chatId: input.chatId,
-      messageId: input.messageId,
-      content,
+      operation: 'edit',
     });
+    debugTiming?.setChatId(input.chatId);
+    const edit = await measureAiChatPhase(
+      debugTiming,
+      'request.edit_and_load_history',
+      () =>
+        this.aiChatRepo.editUserMessageAndSoftDeleteTail({
+          workspaceId: input.workspace.id,
+          userId: input.user.id,
+          chatId: input.chatId,
+          messageId: input.messageId,
+          content,
+        }),
+      (result) => ({
+        historyMessageCount: result?.previousMessages.length ?? 0,
+      }),
+    );
     if (!edit) {
       throw new NotFoundException('Message not found');
     }
@@ -245,10 +298,16 @@ export class AiChatService {
     input.onEvent?.({ type: 'progress', stage: 'permissions' });
 
     const storedContext = readStoredUserContext(edit.message.metadata);
-    const readableSpaceIds = await this.getDefaultReadableSpaceIds({
-      workspaceId: input.workspace.id,
-      user: input.user,
-    });
+    const readableSpaceIds = await measureAiChatPhase(
+      debugTiming,
+      'request.resolve_spaces',
+      () =>
+        this.getDefaultReadableSpaceIds({
+          workspaceId: input.workspace.id,
+          user: input.user,
+        }),
+      (spaceIds) => ({ readableSpaceCount: spaceIds.length }),
+    );
     const spaceIds = resolveRequestedSpaceIds(
       storedContext.spaceIds,
       readableSpaceIds,
@@ -270,6 +329,7 @@ export class AiChatService {
       responseMode: storedContext.responseMode,
       requireCurrentAnchor: true,
       onEvent: input.onEvent,
+      debugTiming,
     });
   }
 
@@ -289,29 +349,50 @@ export class AiChatService {
     responseMode?: 'knowledge' | 'general';
     requireCurrentAnchor?: boolean;
     onEvent?: (event: AiChatStreamEvent) => void;
+    debugTiming?: AiChatDebugTiming;
   }): Promise<SendAiChatMessageResult> {
     const canExpandScope =
       Boolean(input.requestedSpaceIds?.length) &&
       input.spaceIds.length < input.readableSpaceCount;
 
-    const answer = await this.knowledgeChat.chat({
-      workspaceId: input.workspace.id,
-      userId: input.user.id,
-      chatId: input.chatId,
-      query: input.content,
-      spaceIds: input.spaceIds,
-      chatContext: input.previousMessages
-        .filter((message) => message.content)
-        .slice(-15)
-        .map((message) => `${message.role}: ${message.content}`),
-      workspace: input.workspace,
-      mentionedPageIds: input.mentionedPageIds,
-      contextPageId: input.contextPageId,
-      attachmentIds: input.attachmentIds,
-      responseMode: input.responseMode,
-      onToken: (text) => input.onEvent?.({ type: 'content', text }),
-      onStage: (stage) => input.onEvent?.({ type: 'progress', stage }),
-    });
+    const chatContext = input.previousMessages
+      .filter((message) => message.content)
+      .slice(-15)
+      .map((message) => `${message.role}: ${message.content}`);
+    const answer = await measureAiChatPhase(
+      input.debugTiming,
+      'knowledge.total',
+      () =>
+        this.knowledgeChat.chat({
+          workspaceId: input.workspace.id,
+          userId: input.user.id,
+          chatId: input.chatId,
+          query: input.content,
+          spaceIds: input.spaceIds,
+          chatContext,
+          workspace: input.workspace,
+          mentionedPageIds: input.mentionedPageIds,
+          contextPageId: input.contextPageId,
+          attachmentIds: input.attachmentIds,
+          responseMode: input.responseMode,
+          onToken: (text) => {
+            if (text) {
+              input.debugTiming?.markFirstContent({ source: 'answer' });
+            }
+            input.onEvent?.({ type: 'content', text });
+          },
+          onStage: (stage) => {
+            input.debugTiming?.mark('knowledge.stage', { stage });
+            input.onEvent?.({ type: 'progress', stage });
+          },
+          ...(input.debugTiming ? { debugTiming: input.debugTiming } : {}),
+        }),
+      {
+        historyMessageCount: chatContext.length,
+        selectedSpaceCount: input.spaceIds.length,
+        responseMode: input.responseMode ?? 'knowledge',
+      },
+    );
 
     const assistantMetadata = {
       citations: answer.citations,
@@ -327,43 +408,57 @@ export class AiChatService {
       ...(answer.answerMode === 'no_match' ? { canExpandScope } : {}),
       spaceIds: input.spaceIds,
     } as never;
-    const assistantMessage = input.requireCurrentAnchor
-      ? await this.aiChatRepo.addAssistantMessageIfCurrent({
-          workspaceId: input.workspace.id,
-          userId: input.user.id,
-          chatId: input.chatId,
-          anchorMessageId: input.anchorMessage.id,
-          anchorUpdatedAt: input.anchorMessage.updatedAt,
-          content: answer.answer,
-          metadata: assistantMetadata,
-        })
-      : await this.aiChatRepo.addMessage({
-          workspaceId: input.workspace.id,
-          chatId: input.chatId,
-          userId: null,
-          role: 'assistant',
-          content: answer.answer,
-          toolCalls: null,
-          metadata: assistantMetadata,
-        });
+    const assistantMessage = await measureAiChatPhase(
+      input.debugTiming,
+      'response.persist_assistant_message',
+      () =>
+        input.requireCurrentAnchor
+          ? this.aiChatRepo.addAssistantMessageIfCurrent({
+              workspaceId: input.workspace.id,
+              userId: input.user.id,
+              chatId: input.chatId,
+              anchorMessageId: input.anchorMessage.id,
+              anchorUpdatedAt: input.anchorMessage.updatedAt,
+              content: answer.answer,
+              metadata: assistantMetadata,
+            })
+          : this.aiChatRepo.addMessage({
+              workspaceId: input.workspace.id,
+              chatId: input.chatId,
+              userId: null,
+              role: 'assistant',
+              content: answer.answer,
+              toolCalls: null,
+              metadata: assistantMetadata,
+            }),
+    );
     if (!assistantMessage) {
       input.onEvent?.({ type: 'superseded', chatId: input.chatId });
+      input.debugTiming?.complete({ status: 'superseded' });
       return { chatId: input.chatId, superseded: true };
     }
 
-    await this.recordQueryAudit({
-      workspaceId: input.workspace.id,
-      userId: input.user.id,
-      query: input.content,
-      spaceIds: input.spaceIds,
+    await measureAiChatPhase(input.debugTiming, 'response.record_audit', () =>
+      this.recordQueryAudit({
+        workspaceId: input.workspace.id,
+        userId: input.user.id,
+        query: input.content,
+        spaceIds: input.spaceIds,
+        answerMode: answer.answerMode,
+        citationCount: answer.citations.length,
+        retrievedSourceCount: answer.retrievedSources.length,
+        retrievalDiagnostics: answer.retrievalDiagnostics,
+        snippets: answer.snippets ?? [],
+        trustedCitationIds: answer.citations.map(
+          (citation) => citation.sourcePageId,
+        ),
+      }),
+    );
+    input.debugTiming?.complete({
+      status: 'ok',
       answerMode: answer.answerMode,
       citationCount: answer.citations.length,
       retrievedSourceCount: answer.retrievedSources.length,
-      retrievalDiagnostics: answer.retrievalDiagnostics,
-      snippets: answer.snippets ?? [],
-      trustedCitationIds: answer.citations.map(
-        (citation) => citation.sourcePageId,
-      ),
     });
 
     return {

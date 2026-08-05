@@ -228,6 +228,49 @@ describe('KnowledgeSpaceCompilationService', () => {
     );
   });
 
+  it('reuses compiled knowledge when only sourceVersion changed and content hashes are identical', async () => {
+    const previouslyCompiledSource = sourceSnapshot();
+    const currentSource = {
+      ...previouslyCompiledSource,
+      sourceVersion: 'v2',
+    };
+    const fixture = createService({
+      exportedSources: [currentSource],
+      reuseCandidates: [reuseCandidate(previouslyCompiledSource)],
+      latestAggregateRun: {
+        id: 'prior-complete-run',
+        compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+        promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+        knowledgeGeneration: 4,
+        currentKnowledgeGeneration: 4,
+        catalogHash: 'sha256:catalog',
+      },
+      hasActiveOverview: true,
+    });
+
+    const result = await fixture.service.initializeLeasedRun(lease());
+
+    expect(fixture.executionRepo.initializeRun).toHaveBeenCalledWith(
+      lease(),
+      expect.objectContaining({
+        pages: [
+          expect.objectContaining({
+            expectedSourceVersion: 'v2',
+            expectedSourceContentHash: currentSource.contentHash,
+            status: 'skipped',
+            errorCode: 'unchanged',
+          }),
+        ],
+      }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        aggregateRequired: false,
+        pageCompilationRequired: false,
+      }),
+    );
+  });
+
   it('resumes an initialized Run without repeating whole-Space planning', async () => {
     const fixture = createService();
     fixture.executionRepo.findLeasedRun.mockResolvedValue({

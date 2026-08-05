@@ -17,6 +17,10 @@ import {
 } from './knowledge-retrieval-ranker.service';
 import { KnowledgeSourceAuthorizationService } from './knowledge-source-authorization.service';
 import { KnowledgeAuthorizationCache } from './knowledge-source-authorization.cache';
+import {
+  AiChatDebugTiming,
+  measureAiChatPhase,
+} from '../../../common/observability/ai-chat-debug-timing';
 
 export const KNOWLEDGE_COMPLETENESS_NOTICE =
   'Some knowledge may be unavailable because access is permission-scoped.';
@@ -73,6 +77,7 @@ export class KnowledgeRetrievalService {
     candidateLimit?: number;
     abortSignal?: AbortSignal;
     authCache?: KnowledgeAuthorizationCache;
+    debugTiming?: AiChatDebugTiming;
   }): Promise<KnowledgeRetrievalResult> {
     const candidateLimit = input.candidateLimit ?? 20;
     const authCache =
@@ -89,19 +94,33 @@ export class KnowledgeRetrievalService {
       return emptyResult();
     }
 
-    const user = await authCache.getUser(() =>
-      this.userRepo.findById(input.userId, input.workspaceId),
+    const user = await measureAiChatPhase(
+      input.debugTiming,
+      'retrieval.load_user',
+      () =>
+        authCache.getUser(() =>
+          this.userRepo.findById(input.userId, input.workspaceId),
+        ),
+      (result) => ({ userFound: Boolean(result) }),
     );
     if (!user) {
       return emptyResult();
     }
 
     const requestedSpaceIds = unique(input.spaceIds);
-    const readableSpaceIds =
-      await this.spaceAuthorization.filterReadableSpaceIds({
-        user,
-        spaceIds: requestedSpaceIds,
-      });
+    const readableSpaceIds = await measureAiChatPhase(
+      input.debugTiming,
+      'retrieval.authorize_spaces',
+      () =>
+        this.spaceAuthorization.filterReadableSpaceIds({
+          user,
+          spaceIds: requestedSpaceIds,
+        }),
+      (result) => ({
+        requestedSpaceCount: requestedSpaceIds.length,
+        readableSpaceCount: result.length,
+      }),
+    );
     // Reuse this space-readability decision for the source authorization passes
     // later in this request instead of re-querying the same spaces.
     authCache.recordSpaces(requestedSpaceIds, new Set(readableSpaceIds));
@@ -109,14 +128,29 @@ export class KnowledgeRetrievalService {
       return emptyResult();
     }
 
-    const queryEmbedding = input.abortSignal
-      ? await this.embeddingProvider.embedQuery(input.query, {
-          abortSignal: input.abortSignal,
-        })
-      : await this.embeddingProvider.embedQuery(input.query);
+    const queryEmbedding = await measureAiChatPhase(
+      input.debugTiming,
+      'retrieval.embed_query',
+      () =>
+        input.abortSignal
+          ? this.embeddingProvider.embedQuery(input.query, {
+              abortSignal: input.abortSignal,
+            })
+          : this.embeddingProvider.embedQuery(input.query),
+      (result) => ({
+        embeddingAvailable: Boolean(result),
+        embeddingDimensions: result?.dimensions ?? 0,
+        embeddingModel: result?.model,
+      }),
+    );
     const queryEmbeddingAvailable = Boolean(queryEmbedding);
     const sourceCandidateLimit = candidateLimit * 10;
-    const groupIds = await this.groupUserRepo.getUserGroupIds(input.userId);
+    const groupIds = await measureAiChatPhase(
+      input.debugTiming,
+      'retrieval.load_principals',
+      () => this.groupUserRepo.getUserGroupIds(input.userId),
+      (result) => ({ groupCount: result.length }),
+    );
     const principals = [
       { principalType: 'user' as const, principalId: input.userId },
       ...groupIds.map((groupId) => ({
@@ -163,7 +197,12 @@ export class KnowledgeRetrievalService {
         recallChannel('evidence', authorizationMode),
         recallChannel('memory', authorizationMode),
       ]);
-    const policyRecall = await recall('policy');
+    const policyRecall = await measureAiChatPhase(
+      input.debugTiming,
+      'retrieval.policy_recall',
+      () => recall('policy'),
+      (result) => recallCounts(result),
+    );
     let selectedRecall = policyRecall;
     let accessPolicyFallbackUsed = false;
 
@@ -175,12 +214,24 @@ export class KnowledgeRetrievalService {
             candidate,
           }),
       );
+    let rankingStartedAt = performance.now();
     let rankedCandidates = rankRelevantRecall(selectedRecall);
+    input.debugTiming?.record(
+      'retrieval.rank_candidates',
+      performance.now() - rankingStartedAt,
+      { rankedCandidateCount: rankedCandidates.length, pass: 'policy' },
+    );
     let fallbackRecall: Awaited<ReturnType<typeof recall>> | null = null;
     if (rankedCandidates.length === 0) {
       accessPolicyFallbackUsed = true;
-      fallbackRecall = await recall('final-authorization-fallback');
+      fallbackRecall = await measureAiChatPhase(
+        input.debugTiming,
+        'retrieval.fallback_recall',
+        () => recall('final-authorization-fallback'),
+        (result) => recallCounts(result),
+      );
       selectedRecall = fallbackRecall;
+      rankingStartedAt = performance.now();
       rankedCandidates = rankRelevantRecall(selectedRecall).map(
         (candidate) => ({
           ...candidate,
@@ -191,6 +242,11 @@ export class KnowledgeRetrievalService {
             'final-authorization-fallback' as const,
           ],
         }),
+      );
+      input.debugTiming?.record(
+        'retrieval.rank_candidates',
+        performance.now() - rankingStartedAt,
+        { rankedCandidateCount: rankedCandidates.length, pass: 'fallback' },
       );
     }
 
@@ -236,23 +292,37 @@ export class KnowledgeRetrievalService {
       );
     }
 
-    const sourceRows = await this.capsuleRepo.findChunkSourcePageIdsByChunkIds({
-      workspaceId: input.workspaceId,
-      chunkIds: rankedCandidates.map((candidate) => candidate.chunk.id),
-    });
+    const sourceRows = await measureAiChatPhase(
+      input.debugTiming,
+      'retrieval.load_chunk_sources',
+      () =>
+        this.capsuleRepo.findChunkSourcePageIdsByChunkIds({
+          workspaceId: input.workspaceId,
+          chunkIds: rankedCandidates.map((candidate) => candidate.chunk.id),
+        }),
+      (result) => ({ sourceRowCount: result.length }),
+    );
     const sourcesByChunkId = new Map(
       sourceRows.map((row) => [row.chunkId, row.sourcePageIds]),
     );
     const allSourcePageIds = unique(
       sourceRows.flatMap((row) => row.sourcePageIds),
     );
-    const readableSourcePageIds =
-      await this.sourceAuthorization.filterReadableSources({
-        workspaceId: input.workspaceId,
-        userId: input.userId,
-        sourcePageIds: allSourcePageIds,
-        cache: authCache,
-      });
+    const readableSourcePageIds = await measureAiChatPhase(
+      input.debugTiming,
+      'retrieval.authorize_sources',
+      () =>
+        this.sourceAuthorization.filterReadableSources({
+          workspaceId: input.workspaceId,
+          userId: input.userId,
+          sourcePageIds: allSourcePageIds,
+          cache: authCache,
+        }),
+      (result) => ({
+        candidateSourceCount: allSourcePageIds.length,
+        readableSourceCount: result.length,
+      }),
+    );
     const readableSourceSet = new Set(readableSourcePageIds);
 
     const authorizedChunks: KnowledgeRetrievalResult['chunks'] = [];
@@ -276,17 +346,26 @@ export class KnowledgeRetrievalService {
         });
       }
     }
-    const graphExpansion = await this.expandGraph({
-      workspaceId: input.workspaceId,
-      userId: input.userId,
-      readableSpaceIds,
-      principals,
-      seedPageIds: unique(
-        authorizedChunks.map((candidate) => candidate.page.id),
-      ),
-      candidateLimit,
-      authCache,
-    });
+    const graphExpansion = await measureAiChatPhase(
+      input.debugTiming,
+      'retrieval.graph_expansion',
+      () =>
+        this.expandGraph({
+          workspaceId: input.workspaceId,
+          userId: input.userId,
+          readableSpaceIds,
+          principals,
+          seedPageIds: unique(
+            authorizedChunks.map((candidate) => candidate.page.id),
+          ),
+          candidateLimit,
+          authCache,
+        }),
+      (result) => ({
+        graphCandidateCount: result.candidateCount,
+        graphChunkCount: result.chunks.length,
+      }),
+    );
     const selectedChunks = blendDirectAndGraph(
       authorizedChunks,
       graphExpansion.chunks,
@@ -527,6 +606,40 @@ function candidateSourceIds(
   ],
 ): string[] {
   return unique(recall.flat(2).flatMap((candidate) => candidate.sourcePageIds));
+}
+
+function recallCounts(
+  recall: [
+    [
+      KnowledgeChunkCandidate[],
+      KnowledgeChunkCandidate[],
+      KnowledgeChunkCandidate[],
+    ],
+    [
+      KnowledgeChunkCandidate[],
+      KnowledgeChunkCandidate[],
+      KnowledgeChunkCandidate[],
+    ],
+  ],
+): Record<string, number> {
+  const [evidenceRecall, memoryRecall] = recall;
+  const [evidenceDense, evidenceLexical, evidenceTitle] = evidenceRecall;
+  const [memoryDense, memoryLexical, memoryTitle] = memoryRecall;
+  return {
+    denseCandidateCount: uniqueCandidateCount([
+      ...evidenceDense,
+      ...memoryDense,
+    ]),
+    lexicalCandidateCount: uniqueCandidateCount([
+      ...evidenceLexical,
+      ...memoryLexical,
+    ]),
+    titleCandidateCount: uniqueCandidateCount([
+      ...evidenceTitle,
+      ...memoryTitle,
+    ]),
+    totalCandidateCount: uniqueCandidateCount(recall.flat(2)),
+  };
 }
 
 function unique(values: string[]): string[] {

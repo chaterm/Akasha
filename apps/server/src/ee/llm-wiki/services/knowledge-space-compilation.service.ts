@@ -317,6 +317,10 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
         readyImages,
       });
       const candidate = candidateByPageId.get(source.sourcePageId);
+      // sourceVersion is derived from page.updatedAt and is therefore only a
+      // concurrency fence. Compilation reuse is content-addressed: a page that
+      // was touched but returned to identical content keeps the same hashes and
+      // can safely reuse its published knowledge artifacts.
       const reusable =
         !forcePageCompilation &&
         !remainingSourcesAffectedByRemoval.has(source.sourcePageId) &&
@@ -325,9 +329,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
         Boolean(candidate?.activeSourceId) &&
         Boolean(candidate?.activeSummaryId) &&
         Boolean(candidate?.activeSummaryChunkId) &&
-        candidate?.lastSuccessfulSourceVersion === source.sourceVersion &&
         candidate?.lastSuccessfulSourceHash === source.contentHash &&
-        candidate?.contributionSourceVersion === source.sourceVersion &&
         candidate?.contributionSourceHash === source.contentHash &&
         candidate?.contributionCompilerVersion === run.compilerVersion &&
         candidate?.contributionPromptVersion === run.promptVersion &&
