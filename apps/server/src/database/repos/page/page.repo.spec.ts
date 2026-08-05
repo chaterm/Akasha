@@ -1,3 +1,4 @@
+import { EventName } from '../../../common/events/event.contants';
 import { PageRepo } from './page.repo';
 
 type QueryCall = {
@@ -305,3 +306,66 @@ describe('PageRepo', () => {
     });
   });
 });
+
+describe('PageRepo update events', () => {
+  it('emits actual updated page ids grouped by their persisted workspace', async () => {
+    const { repo, eventEmitter } = createUpdateRepo([
+      { id: 'page-1', workspaceId: 'workspace-1' },
+      { id: 'page-2', workspaceId: 'workspace-2' },
+    ]);
+
+    const result = await repo.updatePages({ title: 'updated' }, [
+      'page-slug-1',
+      'page-slug-2',
+    ]);
+
+    expect(result.numUpdatedRows).toBe(2n);
+    expect(eventEmitter.emit).toHaveBeenCalledWith(EventName.PAGE_UPDATED, {
+      pageIds: ['page-1'],
+      workspaceId: 'workspace-1',
+      skipKnowledgeCompile: false,
+    });
+    expect(eventEmitter.emit).toHaveBeenCalledWith(EventName.PAGE_UPDATED, {
+      pageIds: ['page-2'],
+      workspaceId: 'workspace-2',
+      skipKnowledgeCompile: false,
+    });
+  });
+
+  it('marks collaboration content persistence for post-commit scheduling', async () => {
+    const { repo, eventEmitter } = createUpdateRepo([
+      { id: 'page-1', workspaceId: 'workspace-1' },
+    ]);
+
+    await repo.updatePage(
+      { content: { type: 'doc' }, textContent: 'text' },
+      'page-1',
+    );
+
+    expect(eventEmitter.emit).toHaveBeenCalledWith(EventName.PAGE_UPDATED, {
+      pageIds: ['page-1'],
+      workspaceId: 'workspace-1',
+      skipKnowledgeCompile: true,
+    });
+  });
+});
+
+function createUpdateRepo(
+  updatedPages: Array<{ id: string; workspaceId: string }>,
+) {
+  const query = {
+    set: jest.fn(),
+    where: jest.fn(),
+    returning: jest.fn(),
+    execute: jest.fn().mockResolvedValue(updatedPages),
+  };
+  query.set.mockReturnValue(query);
+  query.where.mockReturnValue(query);
+  query.returning.mockReturnValue(query);
+  const db = {
+    updateTable: jest.fn().mockReturnValue(query),
+  };
+  const eventEmitter = { emit: jest.fn() };
+  const repo = new PageRepo(db as never, {} as never, eventEmitter as never);
+  return { repo, eventEmitter };
+}

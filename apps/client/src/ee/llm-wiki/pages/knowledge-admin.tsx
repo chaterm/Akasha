@@ -31,6 +31,7 @@ import {
   IconDatabaseSearch,
   IconDotsVertical,
   IconInfoCircle,
+  IconPlayerPlay,
   IconPlayerStop,
   IconRefresh,
 } from "@tabler/icons-react";
@@ -44,6 +45,7 @@ import useUserRole from "@/hooks/use-user-role";
 import {
   cancelKnowledgeCompilationRun,
   forceRebuildKnowledgeSpace,
+  getKnowledgeDelayedPageDiagnostics,
   getKnowledgePageCompilationLog,
   getKnowledgeQualityDiagnostics,
   getKnowledgeQuarantineDiagnostics,
@@ -52,6 +54,7 @@ import {
   getKnowledgeRunDiagnosticsSummary,
   getKnowledgeRunPageDiagnostics,
   getKnowledgeWorkerDiagnostics,
+  immediatelyCompileDelayedPage,
   retryKnowledgePages,
   runKnowledgeAdminAction,
   updateKnowledgeSpace,
@@ -59,6 +62,8 @@ import {
 import classes from "../styles/knowledge-admin.module.css";
 import type {
   KnowledgeAdminSpaceAction,
+  KnowledgeDelayedPageDiagnosticsPage,
+  KnowledgeDelayedPageStatus,
   KnowledgePageLogItem,
   KnowledgeQualityReport,
   KnowledgeQuarantineDiagnosticsPage,
@@ -138,8 +143,13 @@ type ConfirmedRunCancellation = {
   spaceName: string;
 };
 
+type ConfirmedDelayedPageCompilation = {
+  scheduleId: string;
+  pageName: string;
+};
+
 type RunStatusFilter = KnowledgeRunStatus | "active";
-type DiagnosticsSection = "runs" | "log" | "health";
+type DiagnosticsSection = "runs" | "delayed" | "log" | "health";
 
 export default function KnowledgeAdminPage() {
   const { t } = useTranslation();
@@ -155,6 +165,16 @@ export default function KnowledgeAdminPage() {
   const [runPageDetailPage, setRunPageDetailPage] = useState(1);
   const [activeSection, setActiveSection] =
     useState<DiagnosticsSection>("runs");
+  const [delayedStatus, setDelayedStatus] =
+    useState<KnowledgeDelayedPageStatus | null>(null);
+  const [delayedSearch, setDelayedSearch] = useState("");
+  const [delayedPage, setDelayedPage] = useState(1);
+  const [confirmedDelayedPage, setConfirmedDelayedPage] =
+    useState<ConfirmedDelayedPageCompilation | null>(null);
+  const [delayedPageConfirmationName, setDelayedPageConfirmationName] =
+    useState("");
+  const [delayedPageConfirmationError, setDelayedPageConfirmationError] =
+    useState<string | null>(null);
   const [quarantinePage, setQuarantinePage] = useState(1);
   const [logRange, setLogRange] = useState<PageLogRange>("24h");
   const [logStatus, setLogStatus] = useState<string | null>(null);
@@ -309,11 +329,34 @@ export default function KnowledgeAdminPage() {
     refetchInterval: knowledgeDiagnosticsRefetchInterval,
     refetchIntervalInBackground: false,
   });
+  const delayedPageQuery = useQuery({
+    queryKey: [
+      "knowledge-delayed-pages",
+      allSpacesSelected,
+      selectedSpaceIds,
+      delayedStatus,
+      delayedSearch,
+      delayedPage,
+    ],
+    queryFn: () =>
+      getKnowledgeDelayedPageDiagnostics({
+        ...diagnosticsScope,
+        ...(delayedStatus ? { statuses: [delayedStatus] } : {}),
+        ...(delayedSearch.trim() ? { search: delayedSearch.trim() } : {}),
+        page: delayedPage,
+        limit: PAGE_SIZE,
+      }),
+    enabled: activeSection === "delayed" && diagnosticsScopeReady,
+    refetchInterval: knowledgeDiagnosticsRefetchInterval,
+    refetchIntervalInBackground: false,
+  });
 
   const refreshRunViews = () => {
     void runSummaryQuery.refetch();
     void runListQuery.refetch();
     if (selectedRunId) void runPageDetailQuery.refetch();
+    if (activeSection === "delayed") void delayedPageQuery.refetch();
+    if (activeSection === "log") void pageLogQuery.refetch();
   };
 
   const confirmedCompilationMutation = useMutation({
@@ -338,6 +381,18 @@ export default function KnowledgeAdminPage() {
       refreshRunViews();
     },
     onError: (error) => setConfirmationError(error.message),
+  });
+  const immediateDelayedPageMutation = useMutation({
+    mutationFn: immediatelyCompileDelayedPage,
+    retry: false,
+    onSuccess: () => {
+      setConfirmedDelayedPage(null);
+      setDelayedPageConfirmationName("");
+      setDelayedPageConfirmationError(null);
+      notifications.show({ message: t("Page compilation queued") });
+      refreshRunViews();
+    },
+    onError: (error) => setDelayedPageConfirmationError(error.message),
   });
   const actionMutation = useMutation({
     mutationFn: runKnowledgeAdminAction,
@@ -428,6 +483,14 @@ export default function KnowledgeAdminPage() {
     setCancelReason("");
     cancelRunMutation.reset();
   };
+  const openImmediateDelayedPageCompilation = (
+    target: ConfirmedDelayedPageCompilation,
+  ) => {
+    setConfirmedDelayedPage(target);
+    setDelayedPageConfirmationName("");
+    setDelayedPageConfirmationError(null);
+    immediateDelayedPageMutation.reset();
+  };
 
   return (
     <>
@@ -457,7 +520,11 @@ export default function KnowledgeAdminPage() {
               <Button
                 variant="default"
                 leftSection={<IconRefresh size={16} />}
-                loading={runSummaryQuery.isFetching || runListQuery.isFetching}
+                loading={
+                  runSummaryQuery.isFetching ||
+                  runListQuery.isFetching ||
+                  delayedPageQuery.isFetching
+                }
                 disabled={!diagnosticsScopeReady}
                 onClick={refreshRunViews}
               >
@@ -540,6 +607,69 @@ export default function KnowledgeAdminPage() {
                     }
                   >
                     {t("Confirm")}
+                  </Button>
+                </Group>
+              </Stack>
+            )}
+          </Modal>
+
+          <Modal
+            opened={confirmedDelayedPage !== null}
+            onClose={() => {
+              if (!immediateDelayedPageMutation.isPending) {
+                setConfirmedDelayedPage(null);
+              }
+            }}
+            title={t("Immediate compile")}
+            centered
+          >
+            {confirmedDelayedPage && (
+              <Stack gap="md">
+                <Alert color="orange" icon={<IconPlayerPlay size={18} />}>
+                  {t(
+                    "This page will skip the remaining delay and enter the compilation queue immediately. Later edits will start a new one-hour delay.",
+                  )}
+                </Alert>
+                <Text size="sm">
+                  {t("Enter the exact page name to continue:")}{" "}
+                  <Text component="span" fw={700}>
+                    {confirmedDelayedPage.pageName}
+                  </Text>
+                </Text>
+                <TextInput
+                  label={t("Type the page name to confirm")}
+                  value={delayedPageConfirmationName}
+                  onChange={(event) => {
+                    setDelayedPageConfirmationName(event.currentTarget.value);
+                    setDelayedPageConfirmationError(null);
+                  }}
+                  error={delayedPageConfirmationError}
+                  data-autofocus
+                />
+                <Group justify="flex-end">
+                  <Button
+                    variant="default"
+                    disabled={immediateDelayedPageMutation.isPending}
+                    onClick={() => setConfirmedDelayedPage(null)}
+                  >
+                    {t("Cancel")}
+                  </Button>
+                  <Button
+                    color="orange"
+                    leftSection={<IconPlayerPlay size={16} />}
+                    loading={immediateDelayedPageMutation.isPending}
+                    disabled={
+                      delayedPageConfirmationName !==
+                      confirmedDelayedPage.pageName
+                    }
+                    onClick={() =>
+                      immediateDelayedPageMutation.mutate({
+                        scheduleId: confirmedDelayedPage.scheduleId,
+                        confirmationPageName: delayedPageConfirmationName,
+                      })
+                    }
+                  >
+                    {t("Immediate compile")}
                   </Button>
                 </Group>
               </Stack>
@@ -749,6 +879,7 @@ export default function KnowledgeAdminPage() {
                       : value;
                 setSpaceSelection(nextValue);
                 setRunPage(1);
+                setDelayedPage(1);
                 setQuarantinePage(1);
                 setSelectedRunId(null);
               }}
@@ -769,7 +900,7 @@ export default function KnowledgeAdminPage() {
             value={activeSection}
             onChange={(value) =>
               setActiveSection(
-                value === "health" || value === "log"
+                value === "health" || value === "log" || value === "delayed"
                   ? (value as DiagnosticsSection)
                   : "runs",
               )
@@ -777,12 +908,37 @@ export default function KnowledgeAdminPage() {
           >
             <Tabs.List>
               <Tabs.Tab value="runs">{t("Compilation runs")}</Tabs.Tab>
+              <Tabs.Tab value="delayed">{t("Delayed queue")}</Tabs.Tab>
               <Tabs.Tab value="log">{t("Compilation log")}</Tabs.Tab>
               <Tabs.Tab value="health">{t("Health and quarantine")}</Tabs.Tab>
             </Tabs.List>
           </Tabs>
 
-          {activeSection === "log" ? (
+          {activeSection === "delayed" ? (
+            <DelayedCompilationQueue
+              query={delayedPageQuery}
+              status={delayedStatus}
+              setStatus={(value) => {
+                setDelayedStatus(value);
+                setDelayedPage(1);
+              }}
+              search={delayedSearch}
+              setSearch={(value) => {
+                setDelayedSearch(value);
+                setDelayedPage(1);
+              }}
+              page={delayedPage}
+              setPage={setDelayedPage}
+              spaceSlugById={spaceSlugById}
+              isAdmin={isAdmin}
+              onImmediateCompile={openImmediateDelayedPageCompilation}
+              compilingScheduleId={
+                immediateDelayedPageMutation.isPending
+                  ? (immediateDelayedPageMutation.variables?.scheduleId ?? null)
+                  : null
+              }
+            />
+          ) : activeSection === "log" ? (
             <PageCompilationLog
               query={pageLogQuery}
               range={logRange}
@@ -1132,6 +1288,214 @@ export default function KnowledgeAdminPage() {
         </Stack>
       </Container>
     </>
+  );
+}
+
+function DelayedCompilationQueue({
+  query,
+  status,
+  setStatus,
+  search,
+  setSearch,
+  page,
+  setPage,
+  spaceSlugById,
+  isAdmin,
+  onImmediateCompile,
+  compilingScheduleId,
+}: {
+  query: UseQueryResult<KnowledgeDelayedPageDiagnosticsPage, Error>;
+  status: KnowledgeDelayedPageStatus | null;
+  setStatus: (value: KnowledgeDelayedPageStatus | null) => void;
+  search: string;
+  setSearch: (value: string) => void;
+  page: number;
+  setPage: (value: number) => void;
+  spaceSlugById: Map<string, string>;
+  isAdmin: boolean;
+  onImmediateCompile: (target: ConfirmedDelayedPageCompilation) => void;
+  compilingScheduleId: string | null;
+}) {
+  const { t } = useTranslation();
+  const data = query.data;
+  const items = data?.items ?? [];
+  const pageCount = Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE));
+
+  return (
+    <section className={classes.panel}>
+      <Group justify="space-between" mb="md">
+        <div>
+          <Title order={2} size="h5">
+            {t("Delayed compilation queue")}
+          </Title>
+          <Text size="sm" c="dimmed">
+            {t(
+              "Automatic page creates and updates compile after one hour without further edits. Manual and force compilation remain immediate.",
+            )}
+          </Text>
+        </div>
+        {query.isFetching && <Loader size="sm" />}
+      </Group>
+
+      <div className={classes.metricGrid}>
+        <Metric
+          label={t("Waiting pages")}
+          value={data?.summary.waitingPageCount ?? 0}
+        />
+        <Metric
+          label={t("Ready for dispatch")}
+          value={data?.summary.duePageCount ?? 0}
+        />
+        <Metric
+          label={t("Affected spaces")}
+          value={data?.summary.affectedSpaceCount ?? 0}
+        />
+        <Metric
+          label={t("Next eligible")}
+          value={formatDate(data?.summary.nextEligibleAt ?? null)}
+        />
+      </div>
+
+      <Group gap="sm" my="md" align="flex-end">
+        <Select
+          label={t("Status")}
+          data={[
+            { value: "waiting", label: t("Waiting") },
+            { value: "due", label: t("Ready for dispatch") },
+          ]}
+          value={status}
+          onChange={(value) =>
+            setStatus(value as KnowledgeDelayedPageStatus | null)
+          }
+          placeholder={t("All statuses")}
+          clearable
+          w={160}
+        />
+        <TextInput
+          label={t("Search page or space")}
+          value={search}
+          onChange={(event) => setSearch(event.currentTarget.value)}
+          placeholder={t("Title, slug, or space")}
+          w={280}
+        />
+      </Group>
+
+      {query.isError && (
+        <Alert color="red" icon={<IconAlertTriangle size={18} />}>
+          {query.error.message}
+        </Alert>
+      )}
+      {query.isLoading ? (
+        <Loader size="sm" />
+      ) : items.length === 0 ? (
+        <Text size="sm" c="dimmed">
+          {t("No pages are waiting for delayed compilation.")}
+        </Text>
+      ) : (
+        <>
+          <Table.ScrollContainer minWidth={isAdmin ? 1180 : 1080}>
+            <Table highlightOnHover verticalSpacing="sm">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>{t("Page")}</Table.Th>
+                  <Table.Th>{t("Space")}</Table.Th>
+                  <Table.Th>{t("Status")}</Table.Th>
+                  <Table.Th>{t("Trigger")}</Table.Th>
+                  <Table.Th>{t("Changes")}</Table.Th>
+                  <Table.Th>{t("Last changed")}</Table.Th>
+                  <Table.Th>{t("Eligible at")}</Table.Th>
+                  <Table.Th>{t("Remaining")}</Table.Th>
+                  {isAdmin && <Table.Th>{t("Actions")}</Table.Th>}
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {items.map((item) => {
+                  const spaceSlug = spaceSlugById.get(item.spaceId);
+                  const pageUrl = spaceSlug
+                    ? buildPageUrl(spaceSlug, item.slugId, item.title)
+                    : null;
+                  return (
+                    <Table.Tr key={item.scheduleId}>
+                      <Table.Td>
+                        {pageUrl ? (
+                          <Text
+                            component={Link}
+                            to={pageUrl}
+                            size="sm"
+                            c="blue"
+                            style={{ textDecoration: "none" }}
+                          >
+                            {item.title || item.slugId || item.sourcePageId}
+                          </Text>
+                        ) : (
+                          <Text size="sm">
+                            {item.title || item.slugId || item.sourcePageId}
+                          </Text>
+                        )}
+                      </Table.Td>
+                      <Table.Td>{item.spaceName}</Table.Td>
+                      <Table.Td>
+                        <StateBadge
+                          value={
+                            item.status === "due"
+                              ? "ready_for_dispatch"
+                              : "waiting"
+                          }
+                          label={
+                            item.status === "due"
+                              ? t("Ready for dispatch")
+                              : t("Waiting")
+                          }
+                        />
+                      </Table.Td>
+                      <Table.Td>{humanizeState(item.trigger)}</Table.Td>
+                      <Table.Td>{item.changeCount}</Table.Td>
+                      <Table.Td>{formatDate(item.lastChangedAt)}</Table.Td>
+                      <Table.Td>{formatDate(item.eligibleAt)}</Table.Td>
+                      <Table.Td>
+                        {item.status === "due"
+                          ? t("Awaiting dispatch")
+                          : formatDuration(item.remainingWaitMs)}
+                      </Table.Td>
+                      {isAdmin && (
+                        <Table.Td>
+                          <Button
+                            size="xs"
+                            variant="light"
+                            color="orange"
+                            leftSection={<IconPlayerPlay size={14} />}
+                            loading={compilingScheduleId === item.scheduleId}
+                            onClick={() =>
+                              onImmediateCompile({
+                                scheduleId: item.scheduleId,
+                                pageName:
+                                  item.title ||
+                                  item.slugId ||
+                                  item.sourcePageId,
+                              })
+                            }
+                          >
+                            {t("Immediate compile")}
+                          </Button>
+                        </Table.Td>
+                      )}
+                    </Table.Tr>
+                  );
+                })}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
+          <Group justify="space-between" mt="md">
+            <Text size="sm" c="dimmed">
+              {t("Scheduled pages")}: {data?.total ?? 0}
+            </Text>
+            {pageCount > 1 && (
+              <Pagination value={page} onChange={setPage} total={pageCount} />
+            )}
+          </Group>
+        </>
+      )}
+    </section>
   );
 }
 
@@ -1734,20 +2098,23 @@ function Metric({ label, value }: { label: string; value: number | string }) {
   );
 }
 
-function StateBadge({ value }: { value: string }) {
+function StateBadge({ value, label }: { value: string; label?: string }) {
   const color =
     value === "cancelled" || value === "superseded"
       ? "gray"
       : value === "failed" || value === "provider" || value === "publication"
         ? "red"
-        : value === "partial" || value === "budget_timeout"
+        : value === "partial" ||
+            value === "budget_timeout" ||
+            value === "due" ||
+            value === "ready_for_dispatch"
           ? "orange"
           : value === "succeeded" || value === "complete"
             ? "green"
             : "blue";
   return (
     <Badge color={color} variant="light">
-      {humanizeState(value)}
+      {label ?? humanizeState(value)}
     </Badge>
   );
 }

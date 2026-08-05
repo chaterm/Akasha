@@ -10,7 +10,7 @@ import {
 import { PaginationOptions } from '@akasha/db/pagination/pagination-options';
 import { executeWithCursorPagination } from '@akasha/db/pagination/cursor-pagination';
 import { validate as isValidUUID } from 'uuid';
-import { ExpressionBuilder, sql } from 'kysely';
+import { ExpressionBuilder, sql, UpdateResult } from 'kysely';
 import { DB } from '@akasha/db/types/db';
 import { jsonArrayFrom, jsonObjectFrom } from 'kysely/helpers/postgres';
 import { SpaceMemberRepo } from '@akasha/db/repos/space/space-member.repo';
@@ -317,7 +317,7 @@ export class PageRepo {
     pageIds: string[],
     trx?: KyselyTransaction,
   ) {
-    const result = await dbOrTx(this.db, trx)
+    const updatedPages = await dbOrTx(this.db, trx)
       .updateTable('pages')
       .set({ ...updatePageData, updatedAt: new Date() })
       .where(
@@ -325,14 +325,31 @@ export class PageRepo {
         'in',
         pageIds,
       )
-      .executeTakeFirst();
+      .returning(['id', 'workspaceId'])
+      .execute();
 
-    this.eventEmitter.emit(EventName.PAGE_UPDATED, {
-      pageIds: pageIds,
-      workspaceId: updatePageData.workspaceId,
-    });
+    const pageIdsByWorkspace = new Map<string, string[]>();
+    for (const page of updatedPages) {
+      const workspacePageIds = pageIdsByWorkspace.get(page.workspaceId) ?? [];
+      workspacePageIds.push(page.id);
+      pageIdsByWorkspace.set(page.workspaceId, workspacePageIds);
+    }
 
-    return result;
+    // Collaboration persistence publishes PAGE_CONTENT_UPDATED only after its
+    // transaction succeeds. Let that durable queue job schedule compilation so
+    // one content save is not counted twice and a rolled-back save is not queued.
+    const skipKnowledgeCompile = ['content', 'textContent', 'ydoc'].some(
+      (field) => Object.prototype.hasOwnProperty.call(updatePageData, field),
+    );
+    for (const [workspaceId, updatedPageIds] of pageIdsByWorkspace) {
+      this.eventEmitter.emit(EventName.PAGE_UPDATED, {
+        pageIds: updatedPageIds,
+        workspaceId,
+        skipKnowledgeCompile,
+      });
+    }
+
+    return new UpdateResult(BigInt(updatedPages.length), undefined);
   }
 
   async insertPage(

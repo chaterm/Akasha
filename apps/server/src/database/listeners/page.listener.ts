@@ -8,6 +8,7 @@ import { EnvironmentService } from '../../integrations/environment/environment.s
 import { KnowledgeSpaceCompilationRepo } from '../repos/llm-wiki/knowledge-space-compilation.repo';
 import {
   DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+  KNOWLEDGE_PAGE_COMPILE_QUIET_PERIOD_MS,
   DEFAULT_KNOWLEDGE_PROMPT_VERSION,
 } from '../../ee/llm-wiki/llm-wiki.constants';
 
@@ -40,7 +41,7 @@ export class PageListener {
 
     await this.enqueueKnowledgeAccessReindex(workspaceId, pageIds);
     if (!event.skipKnowledgeCompile) {
-      await this.requestKnowledgeRuns(workspaceId, pageIds, false);
+      await this.scheduleKnowledgeRuns(workspaceId, pageIds, 'page_created');
     }
   }
 
@@ -50,7 +51,9 @@ export class PageListener {
 
     await this.searchQueue.add(QueueJob.PAGE_UPDATED, { pageIds });
     await this.enqueueKnowledgeAccessReindex(workspaceId, pageIds);
-    await this.requestKnowledgeRuns(workspaceId, pageIds, false);
+    if (!event.skipKnowledgeCompile) {
+      await this.scheduleKnowledgeRuns(workspaceId, pageIds, 'page_updated');
+    }
   }
 
   @OnEvent(EventName.PAGE_DELETED)
@@ -134,6 +137,28 @@ export class PageListener {
       removed,
       compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
       promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+    });
+  }
+
+  private async scheduleKnowledgeRuns(
+    workspaceId: string,
+    pageIds: string[],
+    trigger: 'page_created' | 'page_updated',
+  ): Promise<void> {
+    if (!workspaceId || pageIds.length === 0) return;
+
+    const scheduledPageCount =
+      await this.runRepo.scheduleIncrementalCompileForPages({
+        workspaceId,
+        sourcePageIds: pageIds,
+        trigger,
+        quietPeriodMs: KNOWLEDGE_PAGE_COMPILE_QUIET_PERIOD_MS,
+      });
+    this.logger.log({
+      event: 'knowledge_pages_debounce_scheduled',
+      trigger,
+      requestedPageCount: pageIds.length,
+      scheduledPageCount,
     });
   }
 }

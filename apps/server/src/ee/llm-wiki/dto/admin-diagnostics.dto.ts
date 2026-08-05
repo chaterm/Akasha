@@ -36,6 +36,8 @@ const PAGE_LOG_STATUSES = [
   'skipped',
 ] as const;
 
+const DELAYED_PAGE_STATUSES = ['waiting', 'due'] as const;
+
 const RUN_PHASES = [
   'text',
   'initial_aggregate',
@@ -82,6 +84,37 @@ export class AdminKnowledgeRunListDto extends AdminKnowledgeRunSummaryDto {
   @Min(1)
   @Max(100)
   limit?: number;
+}
+
+export class AdminKnowledgeDelayedPageListDto extends AdminKnowledgeRunSummaryDto {
+  @IsOptional()
+  @IsArray()
+  @IsIn(DELAYED_PAGE_STATUSES, { each: true })
+  statuses?: (typeof DELAYED_PAGE_STATUSES)[number][];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  search?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+}
+
+export class AdminKnowledgeImmediateCompileDelayedPageDto {
+  @IsString()
+  @MaxLength(255)
+  confirmationPageName: string;
 }
 
 export class AdminKnowledgeQuarantineListDto extends AdminKnowledgeRunSummaryDto {

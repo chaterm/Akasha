@@ -41,6 +41,8 @@ import { AdminKnowledgeSpaceActionDto } from './dto/admin-space-action.dto';
 import { CompileSpacesDto } from './dto/compile-spaces.dto';
 import { CancelKnowledgeRunDto } from './dto/cancel-knowledge-run.dto';
 import {
+  AdminKnowledgeDelayedPageListDto,
+  AdminKnowledgeImmediateCompileDelayedPageDto,
   AdminKnowledgePageLogDto,
   AdminKnowledgeQuarantineListDto,
   AdminKnowledgeRunListDto,
@@ -397,6 +399,71 @@ export class LlmWikiController {
       page: dto.page,
       limit: dto.limit,
     });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('admin/diagnostics/delayed-pages')
+  async getDelayedPageDiagnostics(
+    @Body() dto: AdminKnowledgeDelayedPageListDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertDiagnosticsEnabled(workspace);
+    const spaceIds = await this.findAuthorizedDiagnosticSpaceIds(
+      dto.spaceIds,
+      user,
+      workspace,
+    );
+    return this.diagnosticsService.listDelayedPageDiagnostics({
+      workspaceId: workspace.id,
+      spaceIds,
+      enforceSpaceScope: true,
+      statuses: dto.statuses,
+      search: dto.search,
+      page: dto.page,
+      limit: dto.limit,
+    });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('admin/diagnostics/delayed-pages/:scheduleId/immediate-compile')
+  async immediatelyCompileDelayedPage(
+    @Param('scheduleId', ParseUUIDPipe) scheduleId: string,
+    @Body() dto: AdminKnowledgeImmediateCompileDelayedPageDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertKnowledgeOperationAllowed(user, workspace);
+    const result =
+      await this.spaceCompilation.requestImmediateDelayedPageCompilation({
+        workspaceId: workspace.id,
+        scheduleId,
+        confirmationPageName: dto.confirmationPageName,
+      });
+    if (!result) {
+      throw new BadRequestException(
+        'Delayed page is unavailable or page name confirmation does not match',
+      );
+    }
+
+    this.auditService.log({
+      event: AuditEvent.KNOWLEDGE_COMPILE_QUEUED,
+      resourceType: AuditResource.KNOWLEDGE,
+      resourceId: result.sourcePageId,
+      spaceId: result.spaceId,
+      metadata: {
+        action: 'immediate_compile_delayed_page',
+        scheduleId: result.scheduleId,
+        sourcePageId: result.sourcePageId,
+        pageName: result.pageName,
+      },
+    });
+    return {
+      accepted: true,
+      scheduleId: result.scheduleId,
+      sourcePageId: result.sourcePageId,
+      spaceId: result.spaceId,
+    };
   }
 
   @HttpCode(HttpStatus.OK)

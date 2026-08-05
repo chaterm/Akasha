@@ -145,6 +145,61 @@ describe('scalable Knowledge Run diagnostics', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('derives retryability from the latest durable RunPage', async () => {
+    const latestAlias = { alias: 'latest' };
+    const latestQuery: Record<string, jest.Mock> = {};
+    for (const method of ['select', 'where', 'distinctOn', 'orderBy']) {
+      latestQuery[method] = jest.fn(() => latestQuery);
+    }
+    latestQuery.as = jest.fn(() => latestAlias);
+
+    const currentQuery: Record<string, jest.Mock> = {};
+    for (const method of ['select', 'where']) {
+      currentQuery[method] = jest.fn(() => currentQuery);
+    }
+    currentQuery.execute = jest
+      .fn()
+      .mockResolvedValue([{ sourcePageId: 'page-failed' }]);
+
+    const db = {
+      selectFrom: jest.fn((source: unknown) =>
+        source === 'knowledgeSpaceCompileRunPages as runPage'
+          ? latestQuery
+          : currentQuery,
+      ),
+    };
+    const service = new KnowledgeDiagnosticsService(
+      db as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+
+    await expect(
+      service.findRetryableFailedPageIds({
+        workspaceId: 'workspace-1',
+        sourcePageIds: ['page-failed', 'page-succeeded', 'page-failed'],
+      }),
+    ).resolves.toEqual(['page-failed']);
+
+    expect(db.selectFrom).not.toHaveBeenCalledWith(
+      'knowledgeCompilationAttempts',
+    );
+    expect(latestQuery.where).toHaveBeenCalledWith(
+      'runPage.sourcePageId',
+      'in',
+      ['page-failed', 'page-succeeded'],
+    );
+    expect(latestQuery.distinctOn).toHaveBeenCalledWith('runPage.sourcePageId');
+    expect(currentQuery.where).toHaveBeenCalledWith(
+      'latest.status',
+      '=',
+      'failed',
+    );
+  });
+
   it('loads quality, quarantine, and retrieval only through independent diagnostics calls', async () => {
     const qualityService = {
       getReport: jest.fn().mockResolvedValue('quality'),

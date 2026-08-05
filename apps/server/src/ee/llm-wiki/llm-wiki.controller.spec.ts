@@ -721,6 +721,101 @@ describe('LlmWikiController', () => {
     });
   });
 
+  it('scopes delayed page diagnostics to readable Spaces', async () => {
+    const diagnosticsService = {
+      findWorkspaceSpaceIds: jest
+        .fn()
+        .mockResolvedValue(['space-readable', 'space-private']),
+      listDelayedPageDiagnostics: jest.fn().mockResolvedValue({
+        items: [],
+        total: 0,
+      }),
+    };
+    const controller = createController({
+      diagnosticsService,
+      spaceAuthorization: {
+        filterReadableSpaceIds: jest.fn().mockResolvedValue(['space-readable']),
+      },
+    });
+
+    await expect(
+      controller.getDelayedPageDiagnostics(
+        { statuses: ['waiting'], page: 1, limit: 50 },
+        user(),
+        workspace(),
+      ),
+    ).resolves.toEqual({ items: [], total: 0 });
+    expect(diagnosticsService.listDelayedPageDiagnostics).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-readable'],
+      enforceSpaceScope: true,
+      statuses: ['waiting'],
+      search: undefined,
+      page: 1,
+      limit: 50,
+    });
+  });
+
+  it('immediately compiles a delayed page only after exact-name confirmation', async () => {
+    const auditService = { log: jest.fn() };
+    const spaceCompilation = {
+      requestImmediateDelayedPageCompilation: jest.fn().mockResolvedValue({
+        scheduleId: '11111111-1111-4111-8111-111111111111',
+        sourcePageId: 'page-1',
+        spaceId: 'space-1',
+        pageName: 'BeeGFS deployment',
+      }),
+    };
+    const controller = createController({ auditService, spaceCompilation });
+
+    await expect(
+      controller.immediatelyCompileDelayedPage(
+        '11111111-1111-4111-8111-111111111111',
+        { confirmationPageName: 'BeeGFS deployment' },
+        adminUser(),
+        workspace(),
+      ),
+    ).resolves.toEqual({
+      accepted: true,
+      scheduleId: '11111111-1111-4111-8111-111111111111',
+      sourcePageId: 'page-1',
+      spaceId: 'space-1',
+    });
+    expect(
+      spaceCompilation.requestImmediateDelayedPageCompilation,
+    ).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      scheduleId: '11111111-1111-4111-8111-111111111111',
+      confirmationPageName: 'BeeGFS deployment',
+    });
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          action: 'immediate_compile_delayed_page',
+        }),
+      }),
+    );
+  });
+
+  it('rejects immediate delayed-page compilation for non-admin users', async () => {
+    const spaceCompilation = {
+      requestImmediateDelayedPageCompilation: jest.fn(),
+    };
+    const controller = createController({ spaceCompilation });
+
+    await expect(
+      controller.immediatelyCompileDelayedPage(
+        '11111111-1111-4111-8111-111111111111',
+        { confirmationPageName: 'BeeGFS deployment' },
+        user(),
+        workspace(),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(
+      spaceCompilation.requestImmediateDelayedPageCompilation,
+    ).not.toHaveBeenCalled();
+  });
+
   it('does not reveal a RunPage detail outside the readable Space scope', async () => {
     const diagnosticsService = {
       findRunDiagnosticSpaceId: jest.fn().mockResolvedValue('space-private'),
@@ -1212,6 +1307,7 @@ function createController(
       findWorkspaceSpaceIds: jest.fn().mockResolvedValue([]),
       getRunDiagnosticsSummary: jest.fn(),
       listRunDiagnostics: jest.fn(),
+      listDelayedPageDiagnostics: jest.fn(),
       findRunDiagnosticSpaceId: jest.fn(),
       listRunPageDiagnostics: jest.fn(),
       getWorkerDiagnostics: jest.fn(),

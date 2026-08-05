@@ -26,6 +26,7 @@ import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import {
   DEFAULT_KNOWLEDGE_COMPILER_VERSION,
   DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
+  KNOWLEDGE_PAGE_COMPILE_QUIET_PERIOD_MS,
   DEFAULT_KNOWLEDGE_PROMPT_VERSION,
 } from '../llm-wiki.constants';
 import { KnowledgeSourceSnapshot } from '../types/source-snapshot.types';
@@ -156,6 +157,30 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     return results;
   }
 
+  async scheduleIncrementalCompileForPages(input: {
+    workspaceId: string;
+    sourcePageIds: string[];
+    trigger: 'page_created' | 'page_updated';
+  }) {
+    return this.runRepo.scheduleIncrementalCompileForPages({
+      ...input,
+      quietPeriodMs: KNOWLEDGE_PAGE_COMPILE_QUIET_PERIOD_MS,
+    });
+  }
+
+  async requestImmediateDelayedPageCompilation(input: {
+    workspaceId: string;
+    scheduleId: string;
+    confirmationPageName: string;
+  }) {
+    const result =
+      await this.runRepo.markDelayedPageForImmediateCompilation(input);
+    if (result) {
+      await this.dispatchPending();
+    }
+    return result;
+  }
+
   async initializeLeasedRun(lease: SpaceExecutionLease) {
     if (!this.executionRepo) {
       throw new Error(
@@ -242,6 +267,9 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     const candidateByPageId = new Map(
       reuseCandidates.map((candidate) => [candidate.sourcePageId, candidate]),
     );
+    // An explicit retry must execute the compiler again even when an older
+    // successful publication for the same source snapshot is still usable.
+    const forcePageCompilation = run.trigger === 'page_retry';
     const readyExtractionByAttachmentId = currentReadyExtractionMap(
       sources,
       readyExtractions,
@@ -282,6 +310,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       });
       const candidate = candidateByPageId.get(source.sourcePageId);
       const reusable =
+        !forcePageCompilation &&
         !remainingSourcesAffectedByRemoval.has(source.sourcePageId) &&
         overflowImageCount === 0 &&
         allImagesReady &&
@@ -405,10 +434,32 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     if (this.dispatching) return;
     this.dispatching = true;
     try {
+      await this.promoteDuePageSchedules();
       await this.dispatchPendingSpaceSlices();
       await this.dispatchPendingRunImages();
     } finally {
       this.dispatching = false;
+    }
+  }
+
+  private async promoteDuePageSchedules(): Promise<void> {
+    const batchSize = 500;
+    // Bound a single polling pass while still absorbing ordinary bulk edits
+    // without waiting for many five-second intervals.
+    for (let batch = 0; batch < 20; batch += 1) {
+      const result = await this.runRepo.promoteDuePageCompileSchedules({
+        compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+        promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+        limit: batchSize,
+      });
+      if (result.selectedPageCount === 0) return;
+      this.logger.log({
+        event: 'knowledge_delayed_pages_promoted',
+        selectedPageCount: result.selectedPageCount,
+        promotedPageCount: result.promotedPageCount,
+        runRequestCount: result.runRequestCount,
+      });
+      if (result.selectedPageCount < batchSize) return;
     }
   }
 

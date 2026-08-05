@@ -12,3 +12,4 @@ export const DEFAULT_KNOWLEDGE_COMPILER_VERSION = 'akasha-semantic-compiler-v1';
 export const DEFAULT_KNOWLEDGE_PROMPT_VERSION = 'akasha-llm-wiki-v2';
 export const DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION =
   'akasha-page-image-understanding-v1';
+export const KNOWLEDGE_PAGE_COMPILE_QUIET_PERIOD_MS = 60 * 60 * 1_000;

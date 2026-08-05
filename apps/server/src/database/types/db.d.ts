@@ -642,6 +642,20 @@ export interface KnowledgeSources {
   workspaceId: string;
 }
 
+export interface KnowledgePageCompileSchedules {
+  changeCount: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  eligibleAt: Timestamp;
+  firstChangedAt: Timestamp;
+  id: Generated<string>;
+  lastChangedAt: Timestamp;
+  sourcePageId: string;
+  spaceId: string;
+  trigger: string;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
 export interface KnowledgeSpaceCompileRunPages {
   createdAt: Generated<Timestamp>;
   errorCode: string | null;
@@ -1112,6 +1126,7 @@ export interface DB {
   knowledgeLinkSources: KnowledgeLinkSources;
   knowledgePages: KnowledgePages;
   knowledgePageSources: KnowledgePageSources;
+  knowledgePageCompileSchedules: KnowledgePageCompileSchedules;
   knowledgeParentSections: KnowledgeParentSections;
   knowledgeParentSectionSources: KnowledgeParentSectionSources;
   knowledgeQuarantinedArtifacts: KnowledgeQuarantinedArtifacts;

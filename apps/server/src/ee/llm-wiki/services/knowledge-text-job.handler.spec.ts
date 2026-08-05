@@ -102,7 +102,7 @@ describe('KnowledgeTextJobHandler maintenance boundary', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('keeps content-updated pages available and requests durable space runs', async () => {
+  it('keeps content-updated pages available and schedules delayed compilation', async () => {
     const fixture = createFixture();
 
     await fixture.handler.handle(
@@ -117,11 +117,15 @@ describe('KnowledgeTextJobHandler maintenance boundary', () => {
       sourcePageIds: ['page-1', 'page-2', 'page-1'],
     });
     expect(
-      fixture.spaceCompilation.requestIncrementalCompileForPages,
+      fixture.spaceCompilation.scheduleIncrementalCompileForPages,
     ).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       sourcePageIds: ['page-1', 'page-2'],
+      trigger: 'page_updated',
     });
+    expect(
+      fixture.spaceCompilation.requestIncrementalCompileForPages,
+    ).not.toHaveBeenCalled();
     expect(fixture.sourceRepo.markSourcesStale).not.toHaveBeenCalled();
   });
 
@@ -250,6 +254,7 @@ function createFixture() {
   };
   const spaceCompilation = {
     requestIncrementalCompileForPages: jest.fn(),
+    scheduleIncrementalCompileForPages: jest.fn(),
   };
   const vectorIndex = {
     rebuildSpaceEmbeddings: jest

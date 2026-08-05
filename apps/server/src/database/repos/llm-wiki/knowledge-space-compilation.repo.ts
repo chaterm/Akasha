@@ -350,150 +350,238 @@ export class KnowledgeSpaceCompilationRepo {
     const results = [];
     for (const request of input.requests) {
       results.push(
-        await executeTx(this.db, async (trx) => {
-          const now = new Date();
-          const space = await trx
-            .selectFrom('spaces')
-            .select(['id', 'name', 'knowledgeGeneration'])
-            .where('id', '=', request.spaceId)
-            .where('workspaceId', '=', request.workspaceId)
-            .where('deletedAt', 'is', null)
-            .forUpdate()
-            .executeTakeFirst();
-          if (!space) {
-            return {
-              disposition: 'rejected' as const,
-              reason: 'space_not_found' as const,
-              run: null,
-            };
-          }
-          if (
-            request.confirmationSpaceName !== undefined &&
-            request.confirmationSpaceName !== space.name
-          ) {
-            return {
-              disposition: 'rejected' as const,
-              reason: 'space_name_mismatch' as const,
-              run: null,
-            };
-          }
-
-          const requestTargetSourcePageIds = normalizeTargetSourcePageIds(
-            request.targetSourcePageIds,
-          );
-          const pageScoped = requestTargetSourcePageIds !== null;
-
-          let activeRun = await trx
-            .selectFrom('knowledgeSpaceCompileRuns')
-            .selectAll()
-            .where('workspaceId', '=', request.workspaceId)
-            .where('spaceId', '=', request.spaceId)
-            .where('status', 'in', NONTERMINAL_RUN_STATUSES)
-            .forUpdate()
-            .executeTakeFirst();
-
-          // A page-scoped Run must not scan the whole Space for removed
-          // sources: it only knows about its target pages, and a Space-wide
-          // scan would wrongly retire every page it did not export.
-          const removedSourcePageIds = pageScoped
-            ? []
-            : await this.resolveRemovedSourcePageIds(trx, request);
-          if (removedSourcePageIds.length > 0) {
-            activeRun = await this.invalidateRemovedSourcesAndReplanInTx(
-              trx,
-              request,
-              removedSourcePageIds,
-              activeRun,
-              now,
-            );
-          }
-
-          const disposition = decideSpaceRunRequest(activeRun);
-          if (disposition === 'coalesced') {
-            const scope = reconcileRunTargetScope({
-              runTargetSourcePageIds: parseTargetSourcePageIds(
-                activeRun!.targetSourcePageIds,
-              ),
-              requestTargetSourcePageIds:
-                requestTargetSourcePageIds ?? undefined,
-            });
-            if (scope.changed) {
-              const widened = await trx
-                .updateTable('knowledgeSpaceCompileRuns')
-                .set({
-                  targetSourcePageIds:
-                    scope.targetSourcePageIds as JsonValue | null,
-                  updatedAt: now,
-                })
-                .where('id', '=', activeRun!.id)
-                .where('status', 'in', NONTERMINAL_RUN_STATUSES)
-                .returningAll()
-                .executeTakeFirst();
-              return { disposition, run: widened ?? activeRun! };
-            }
-            return { disposition, run: activeRun! };
-          }
-          if (disposition === 'rerun_requested') {
-            // The active Run has already frozen its RunPages, so newly changed
-            // pages belong to the follow-up. Persist the union on the current
-            // Run and let finishRun() carry that bounded scope forward. This
-            // avoids turning an ordinary page edit into another full-Space
-            // snapshot while still coalescing repeated edits durably.
-            const scope = reconcileFollowUpTargetScope({
-              runTargetSourcePageIds: parseTargetSourcePageIds(
-                activeRun!.targetSourcePageIds,
-              ),
-              requestTargetSourcePageIds:
-                requestTargetSourcePageIds ?? undefined,
-              rerunAlreadyRequested: activeRun!.rerunRequested,
-            });
-            const run = await trx
-              .updateTable('knowledgeSpaceCompileRuns')
-              .set({
-                rerunRequested: true,
-                ...(scope.changed
-                  ? {
-                      targetSourcePageIds:
-                        scope.targetSourcePageIds as JsonValue | null,
-                    }
-                  : {}),
-                updatedAt: now,
-              })
-              .where('id', '=', activeRun!.id)
-              .where('status', 'in', NONTERMINAL_RUN_STATUSES)
-              .returningAll()
-              .executeTakeFirst();
-            return { disposition, run: run ?? activeRun! };
-          }
-
-          const run = await trx
-            .insertInto('knowledgeSpaceCompileRuns')
-            .values({
-              workspaceId: request.workspaceId,
-              spaceId: request.spaceId,
-              trigger: request.trigger,
-              mode: 'incremental',
-              knowledgeGeneration: space.knowledgeGeneration,
-              phase: 'text',
-              status: 'queued',
-              expectedPageCount: 0,
-              compilerVersion: input.compilerVersion,
-              promptVersion: input.promptVersion,
-              catalogSnapshot: [] as JsonValue,
-              catalogHash: 'pending-initialization',
-              targetSourcePageIds:
-                requestTargetSourcePageIds as JsonValue | null,
-              queuedAt: now,
-              spaceJobQueuedAt: now,
-              updatedAt: now,
-            })
-            .returningAll()
-            .executeTakeFirstOrThrow();
-          return { disposition, run };
-        }),
+        await executeTx(this.db, (trx) =>
+          this.requestRunInTx(trx, request, {
+            compilerVersion: input.compilerVersion,
+            promptVersion: input.promptVersion,
+          }),
+        ),
       );
     }
     return results;
+  }
+
+  /**
+   * Adds or postpones page-level automatic compilation. The unique page row
+   * is the durable trailing-debounce state, so every later edit moves the
+   * eligibility time forward without creating a Space Run or Redis job.
+   */
+  async scheduleIncrementalCompileForPages(input: {
+    workspaceId: string;
+    sourcePageIds: string[];
+    trigger: 'page_created' | 'page_updated';
+    quietPeriodMs: number;
+    changedAt?: Date;
+  }): Promise<number> {
+    const sourcePageIds = [...new Set(input.sourcePageIds)];
+    if (sourcePageIds.length === 0) return 0;
+    const quietPeriodMs = Math.max(0, input.quietPeriodMs);
+    // Production scheduling uses the database clock so application-instance
+    // clock skew cannot shorten a quiet period. Tests may inject changedAt.
+    const changedAt = input.changedAt
+      ? sql<Date>`${input.changedAt}`
+      : sql<Date>`clock_timestamp()`;
+    const eligibleAt = input.changedAt
+      ? sql<Date>`${new Date(input.changedAt.getTime() + quietPeriodMs)}`
+      : sql<Date>`clock_timestamp() + (${quietPeriodMs} * interval '1 millisecond')`;
+    const scheduled = await sql<{ id: string }>`
+      INSERT INTO knowledge_page_compile_schedules (
+        workspace_id,
+        space_id,
+        source_page_id,
+        trigger,
+        change_count,
+        first_changed_at,
+        last_changed_at,
+        eligible_at,
+        created_at,
+        updated_at
+      )
+      SELECT
+        page.workspace_id,
+        page.space_id,
+        page.id,
+        ${input.trigger},
+        1,
+        ${changedAt},
+        ${changedAt},
+        ${eligibleAt},
+        ${changedAt},
+        ${changedAt}
+      FROM pages AS page
+      INNER JOIN spaces AS space
+        ON space.id = page.space_id
+       AND space.workspace_id = page.workspace_id
+       AND space.deleted_at IS NULL
+      WHERE page.workspace_id = ${input.workspaceId}
+        AND page.id IN (${sql.join(sourcePageIds)})
+        AND page.deleted_at IS NULL
+      ON CONFLICT (workspace_id, source_page_id) DO UPDATE
+      SET space_id = EXCLUDED.space_id,
+          trigger = EXCLUDED.trigger,
+          change_count = knowledge_page_compile_schedules.change_count + 1,
+          last_changed_at = greatest(
+            knowledge_page_compile_schedules.last_changed_at,
+            EXCLUDED.last_changed_at
+          ),
+          eligible_at = greatest(
+            knowledge_page_compile_schedules.eligible_at,
+            EXCLUDED.eligible_at
+          ),
+          updated_at = greatest(
+            knowledge_page_compile_schedules.updated_at,
+            EXCLUDED.updated_at
+          )
+      RETURNING id
+    `.execute(this.db);
+    return scheduled.rows.length;
+  }
+
+  /** Sets one confirmed delayed page due now; later edits can postpone it. */
+  async markDelayedPageForImmediateCompilation(input: {
+    workspaceId: string;
+    scheduleId: string;
+    confirmationPageName: string;
+  }): Promise<{
+    scheduleId: string;
+    sourcePageId: string;
+    spaceId: string;
+    pageName: string;
+  } | null> {
+    const updated = await sql<{
+      scheduleId: string;
+      sourcePageId: string;
+      spaceId: string;
+      pageName: string;
+    }>`
+      UPDATE knowledge_page_compile_schedules AS schedule
+      SET eligible_at = clock_timestamp(),
+          updated_at = clock_timestamp()
+      FROM pages AS source_page, spaces AS space
+      WHERE schedule.id = ${input.scheduleId}
+        AND schedule.workspace_id = ${input.workspaceId}
+        AND source_page.id = schedule.source_page_id
+        AND source_page.workspace_id = schedule.workspace_id
+        AND source_page.deleted_at IS NULL
+        AND space.id = schedule.space_id
+        AND space.workspace_id = schedule.workspace_id
+        AND space.deleted_at IS NULL
+        AND COALESCE(
+          NULLIF(source_page.title, ''),
+          source_page.slug_id,
+          source_page.id::text
+        ) = ${input.confirmationPageName}
+      RETURNING schedule.id AS "scheduleId",
+                schedule.source_page_id AS "sourcePageId",
+                schedule.space_id AS "spaceId",
+                COALESCE(
+                  NULLIF(source_page.title, ''),
+                  source_page.slug_id,
+                  source_page.id::text
+                ) AS "pageName"
+    `.execute(this.db);
+    return updated.rows[0] ?? null;
+  }
+
+  /**
+   * Atomically promotes due page schedules into page-scoped Space Runs. The
+   * schedule rows and Run request share one PostgreSQL transaction, while
+   * SKIP LOCKED lets multiple application instances drain disjoint batches.
+   */
+  async promoteDuePageCompileSchedules(input: {
+    compilerVersion: string;
+    promptVersion: string;
+    limit?: number;
+    now?: Date;
+  }): Promise<{
+    selectedPageCount: number;
+    promotedPageCount: number;
+    runRequestCount: number;
+  }> {
+    const limit = Math.min(Math.max(input.limit ?? 500, 1), 2_000);
+    return executeTx(this.db, async (trx) => {
+      const dueAt = input.now
+        ? sql<Date>`${input.now}`
+        : sql<Date>`clock_timestamp()`;
+      const schedules = await trx
+        .selectFrom('knowledgePageCompileSchedules')
+        .select(['id', 'workspaceId', 'sourcePageId'])
+        .where('eligibleAt', '<=', dueAt)
+        .orderBy('eligibleAt', 'asc')
+        .orderBy('id', 'asc')
+        .limit(limit)
+        .forUpdate()
+        .skipLocked()
+        .execute();
+      if (schedules.length === 0) {
+        return {
+          selectedPageCount: 0,
+          promotedPageCount: 0,
+          runRequestCount: 0,
+        };
+      }
+
+      const pageIds = schedules.map((schedule) => schedule.sourcePageId);
+      const validPages = await trx
+        .selectFrom('pages as page')
+        .innerJoin('spaces as space', (join) =>
+          join
+            .onRef('space.id', '=', 'page.spaceId')
+            .onRef('space.workspaceId', '=', 'page.workspaceId'),
+        )
+        .select(['page.workspaceId', 'page.spaceId', 'page.id'])
+        .where('page.id', 'in', pageIds)
+        .where('page.deletedAt', 'is', null)
+        .where('space.deletedAt', 'is', null)
+        .execute();
+      const pagesByScope = new Map<string, typeof validPages>();
+      for (const page of validPages) {
+        const key = `${page.workspaceId}:${page.spaceId}`;
+        const pages = pagesByScope.get(key) ?? [];
+        pages.push(page);
+        pagesByScope.set(key, pages);
+      }
+
+      // Lock Spaces in a deterministic order to avoid cross-instance
+      // deadlocks when a large due batch spans several Spaces.
+      const scopes = [...pagesByScope.values()].sort((left, right) => {
+        const a = `${left[0].workspaceId}:${left[0].spaceId}`;
+        const b = `${right[0].workspaceId}:${right[0].spaceId}`;
+        return a.localeCompare(b);
+      });
+      let runRequestCount = 0;
+      for (const pages of scopes) {
+        const page = pages[0];
+        const result = await this.requestRunInTx(
+          trx,
+          {
+            workspaceId: page.workspaceId,
+            spaceId: page.spaceId,
+            trigger: 'debounced_page_change',
+            targetSourcePageIds: pages.map((item) => item.id),
+          },
+          input,
+        );
+        if (result.disposition !== 'rejected') runRequestCount += 1;
+      }
+
+      // Invalid/deleted pages are discarded too. Valid rows have normally
+      // already been removed by requestRunInTx; the exact-ID delete is
+      // intentionally idempotent.
+      await trx
+        .deleteFrom('knowledgePageCompileSchedules')
+        .where(
+          'id',
+          'in',
+          schedules.map((schedule) => schedule.id),
+        )
+        .execute();
+      return {
+        selectedPageCount: schedules.length,
+        promotedPageCount: validPages.length,
+        runRequestCount,
+      };
+    });
   }
 
   async requestIncrementalCompileForPages(input: {
@@ -559,6 +647,208 @@ export class KnowledgeSpaceCompilationRepo {
     >[0],
   ) {
     return this.requestIncrementalCompileForPages(input);
+  }
+
+  private async requestRunInTx(
+    trx: KyselyTransaction,
+    request: SpaceRunRequest,
+    versions: { compilerVersion: string; promptVersion: string },
+  ) {
+    const now = new Date();
+    const requestTargetSourcePageIds = normalizeTargetSourcePageIds(
+      request.targetSourcePageIds,
+    );
+    // Delayed schedule rows are always locked before the Space row. Force
+    // rebuild follows the same order, preventing a promotion/manual-request
+    // deadlock across application instances.
+    await this.lockScheduledPagesCoveredByRequest(
+      trx,
+      request,
+      requestTargetSourcePageIds,
+    );
+    const space = await trx
+      .selectFrom('spaces')
+      .select(['id', 'name', 'knowledgeGeneration'])
+      .where('id', '=', request.spaceId)
+      .where('workspaceId', '=', request.workspaceId)
+      .where('deletedAt', 'is', null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!space) {
+      return {
+        disposition: 'rejected' as const,
+        reason: 'space_not_found' as const,
+        run: null,
+      };
+    }
+    if (
+      request.confirmationSpaceName !== undefined &&
+      request.confirmationSpaceName !== space.name
+    ) {
+      return {
+        disposition: 'rejected' as const,
+        reason: 'space_name_mismatch' as const,
+        run: null,
+      };
+    }
+
+    const pageScoped = requestTargetSourcePageIds !== null;
+
+    let activeRun = await trx
+      .selectFrom('knowledgeSpaceCompileRuns')
+      .selectAll()
+      .where('workspaceId', '=', request.workspaceId)
+      .where('spaceId', '=', request.spaceId)
+      .where('status', 'in', NONTERMINAL_RUN_STATUSES)
+      .forUpdate()
+      .executeTakeFirst();
+
+    // A page-scoped Run must not scan the whole Space for removed sources: it
+    // only knows about its target pages, and a Space-wide scan would wrongly
+    // retire every page it did not export.
+    const removedSourcePageIds = pageScoped
+      ? []
+      : await this.resolveRemovedSourcePageIds(trx, request);
+    if (removedSourcePageIds.length > 0) {
+      activeRun = await this.invalidateRemovedSourcesAndReplanInTx(
+        trx,
+        request,
+        removedSourcePageIds,
+        activeRun,
+        now,
+      );
+    }
+
+    const disposition = decideSpaceRunRequest(activeRun);
+    if (disposition === 'coalesced') {
+      const scope = reconcileRunTargetScope({
+        runTargetSourcePageIds: parseTargetSourcePageIds(
+          activeRun!.targetSourcePageIds,
+        ),
+        requestTargetSourcePageIds: requestTargetSourcePageIds ?? undefined,
+      });
+      let run = activeRun!;
+      if (scope.changed) {
+        run =
+          (await trx
+            .updateTable('knowledgeSpaceCompileRuns')
+            .set({
+              targetSourcePageIds:
+                scope.targetSourcePageIds as JsonValue | null,
+              updatedAt: now,
+            })
+            .where('id', '=', activeRun!.id)
+            .where('status', 'in', NONTERMINAL_RUN_STATUSES)
+            .returningAll()
+            .executeTakeFirst()) ?? activeRun!;
+      }
+      await this.clearScheduledPagesCoveredByRequest(
+        trx,
+        request,
+        requestTargetSourcePageIds,
+      );
+      return { disposition, run };
+    }
+    if (disposition === 'rerun_requested') {
+      // The active Run has already frozen its RunPages, so newly changed
+      // pages belong to the follow-up. Persist the union on the current Run
+      // and let finishRun() carry that bounded scope forward.
+      const scope = reconcileFollowUpTargetScope({
+        runTargetSourcePageIds: parseTargetSourcePageIds(
+          activeRun!.targetSourcePageIds,
+        ),
+        requestTargetSourcePageIds: requestTargetSourcePageIds ?? undefined,
+        rerunAlreadyRequested: activeRun!.rerunRequested,
+      });
+      const run = await trx
+        .updateTable('knowledgeSpaceCompileRuns')
+        .set({
+          rerunRequested: true,
+          ...(scope.changed
+            ? {
+                targetSourcePageIds:
+                  scope.targetSourcePageIds as JsonValue | null,
+              }
+            : {}),
+          updatedAt: now,
+        })
+        .where('id', '=', activeRun!.id)
+        .where('status', 'in', NONTERMINAL_RUN_STATUSES)
+        .returningAll()
+        .executeTakeFirst();
+      await this.clearScheduledPagesCoveredByRequest(
+        trx,
+        request,
+        requestTargetSourcePageIds,
+      );
+      return { disposition, run: run ?? activeRun! };
+    }
+
+    const run = await trx
+      .insertInto('knowledgeSpaceCompileRuns')
+      .values({
+        workspaceId: request.workspaceId,
+        spaceId: request.spaceId,
+        trigger: request.trigger,
+        mode: 'incremental',
+        knowledgeGeneration: space.knowledgeGeneration,
+        phase: 'text',
+        status: 'queued',
+        expectedPageCount: 0,
+        compilerVersion: versions.compilerVersion,
+        promptVersion: versions.promptVersion,
+        catalogSnapshot: [] as JsonValue,
+        catalogHash: 'pending-initialization',
+        targetSourcePageIds: requestTargetSourcePageIds as JsonValue | null,
+        queuedAt: now,
+        spaceJobQueuedAt: now,
+        updatedAt: now,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await this.clearScheduledPagesCoveredByRequest(
+      trx,
+      request,
+      requestTargetSourcePageIds,
+    );
+    return { disposition, run };
+  }
+
+  /** Immediate/manual work supersedes delayed page rows it already covers. */
+  private async lockScheduledPagesCoveredByRequest(
+    trx: KyselyTransaction,
+    request: SpaceRunRequest,
+    targetSourcePageIds: string[] | null,
+  ): Promise<void> {
+    let query = trx
+      .selectFrom('knowledgePageCompileSchedules')
+      .select('id')
+      .where('workspaceId', '=', request.workspaceId)
+      .where('spaceId', '=', request.spaceId);
+    if (targetSourcePageIds) {
+      query = query.where('sourcePageId', 'in', targetSourcePageIds);
+    }
+    await query
+      .orderBy('eligibleAt', 'asc')
+      .orderBy('id', 'asc')
+      .forUpdate()
+      .execute();
+  }
+
+  /** Immediate/manual work supersedes delayed page rows it already covers. */
+  private async clearScheduledPagesCoveredByRequest(
+    trx: KyselyTransaction,
+    request: SpaceRunRequest,
+    targetSourcePageIds: string[] | null,
+  ): Promise<void> {
+    let deletion = trx
+      .deleteFrom('knowledgePageCompileSchedules')
+      .where('workspaceId', '=', request.workspaceId)
+      .where('spaceId', '=', request.spaceId);
+    if (targetSourcePageIds) {
+      deletion = deletion.where('sourcePageId', 'in', targetSourcePageIds);
+    }
+    await deletion.execute();
   }
 
   private async resolveRemovedSourcePageIds(
@@ -743,6 +1033,15 @@ export class KnowledgeSpaceCompilationRepo {
   }) {
     return executeTx(this.db, async (trx) => {
       const now = new Date();
+      await trx
+        .selectFrom('knowledgePageCompileSchedules')
+        .select('id')
+        .where('workspaceId', '=', input.workspaceId)
+        .where('spaceId', '=', input.spaceId)
+        .orderBy('eligibleAt', 'asc')
+        .orderBy('id', 'asc')
+        .forUpdate()
+        .execute();
       const space = await trx
         .selectFrom('spaces')
         .select(['id', 'name', 'knowledgeGeneration'])
@@ -760,6 +1059,14 @@ export class KnowledgeSpaceCompilationRepo {
           reason: 'space_name_mismatch' as const,
         };
       }
+
+      // The immediate rebuild covers the latest version of every page in the
+      // Space, so any delayed automatic work is redundant.
+      await trx
+        .deleteFrom('knowledgePageCompileSchedules')
+        .where('workspaceId', '=', input.workspaceId)
+        .where('spaceId', '=', input.spaceId)
+        .execute();
 
       const oldRuns = await trx
         .selectFrom('knowledgeSpaceCompileRuns')

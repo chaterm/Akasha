@@ -11,8 +11,11 @@ const describePostgres = integrationDatabaseUrl ? describe : describe.skip;
 describePostgres('KnowledgeSpaceCompilationRepo PostgreSQL round trip', () => {
   const schema = `akasha_incremental_run_${process.pid}_${Date.now()}`;
   let client: ReturnType<typeof postgres>;
+  let secondClient: ReturnType<typeof postgres>;
   let db: Kysely<unknown>;
+  let secondDb: Kysely<unknown>;
   let repo: KnowledgeSpaceCompilationRepo;
+  let secondRepo: KnowledgeSpaceCompilationRepo;
 
   beforeAll(async () => {
     client = postgres(normalizePostgresUrl(integrationDatabaseUrl!), {
@@ -27,11 +30,22 @@ describePostgres('KnowledgeSpaceCompilationRepo PostgreSQL round trip', () => {
     await sql.raw(`set search_path to "${schema}"`).execute(db);
     await createFixture(db);
     repo = new KnowledgeSpaceCompilationRepo(db as never);
+    secondClient = postgres(normalizePostgresUrl(integrationDatabaseUrl!), {
+      max: 1,
+      onnotice: () => {},
+    });
+    secondDb = new Kysely({
+      dialect: new PostgresJSDialect({ postgres: secondClient }),
+      plugins: [new CamelCasePlugin()],
+    });
+    await sql.raw(`set search_path to "${schema}"`).execute(secondDb);
+    secondRepo = new KnowledgeSpaceCompilationRepo(secondDb as never);
   });
 
   afterAll(async () => {
     if (!db) return;
     await sql.raw(`drop schema if exists "${schema}" cascade`).execute(db);
+    await secondDb?.destroy();
     await db.destroy();
   });
 
@@ -460,12 +474,261 @@ describePostgres('KnowledgeSpaceCompilationRepo PostgreSQL round trip', () => {
     `.execute(db);
     expect(row.rows[0].targetSourcePageIds).toBeNull();
   });
+
+  it('applies a one-hour trailing debounce and atomically promotes the latest page', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name)
+      values ('space-debounce', 'workspace-1', 'Debounce');
+      insert into pages (id, workspace_id, space_id)
+      values ('page-debounce', 'workspace-1', 'space-debounce')
+    `.execute(db);
+    const firstChange = new Date('2026-08-05T10:00:00.000Z');
+    const lastChange = new Date('2026-08-05T10:40:00.000Z');
+    await repo.scheduleIncrementalCompileForPages({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-debounce'],
+      trigger: 'page_created',
+      quietPeriodMs: 60 * 60 * 1_000,
+      changedAt: firstChange,
+    });
+    await repo.scheduleIncrementalCompileForPages({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-debounce'],
+      trigger: 'page_updated',
+      quietPeriodMs: 60 * 60 * 1_000,
+      changedAt: lastChange,
+    });
+
+    const schedule = await sql<{
+      changeCount: number;
+      firstChangedAt: Date;
+      lastChangedAt: Date;
+      eligibleAt: Date;
+    }>`
+      select change_count::integer as "changeCount",
+             first_changed_at as "firstChangedAt",
+             last_changed_at as "lastChangedAt",
+             eligible_at as "eligibleAt"
+      from knowledge_page_compile_schedules
+      where source_page_id = 'page-debounce'
+    `.execute(db);
+    expect(schedule.rows[0]).toEqual({
+      changeCount: 2,
+      firstChangedAt: firstChange,
+      lastChangedAt: lastChange,
+      eligibleAt: new Date('2026-08-05T11:40:00.000Z'),
+    });
+
+    await expect(
+      repo.promoteDuePageCompileSchedules({
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+        now: new Date('2026-08-05T11:39:59.999Z'),
+      }),
+    ).resolves.toEqual({
+      selectedPageCount: 0,
+      promotedPageCount: 0,
+      runRequestCount: 0,
+    });
+    await expect(
+      repo.promoteDuePageCompileSchedules({
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+        now: new Date('2026-08-05T11:40:00.000Z'),
+      }),
+    ).resolves.toEqual({
+      selectedPageCount: 1,
+      promotedPageCount: 1,
+      runRequestCount: 1,
+    });
+    const promoted = await sql<{
+      trigger: string;
+      targetSourcePageIds: string[];
+      scheduleCount: number;
+    }>`
+      select trigger,
+             target_source_page_ids as "targetSourcePageIds",
+             (select count(*)::integer
+              from knowledge_page_compile_schedules
+              where source_page_id = 'page-debounce') as "scheduleCount"
+      from knowledge_space_compile_runs
+      where space_id = 'space-debounce'
+    `.execute(db);
+    expect(promoted.rows).toEqual([
+      {
+        trigger: 'debounced_page_change',
+        targetSourcePageIds: ['page-debounce'],
+        scheduleCount: 0,
+      },
+    ]);
+  });
+
+  it('requires the exact page name before making one delayed page immediately due', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name)
+      values ('space-immediate-page', 'workspace-1', 'Immediate page');
+      insert into pages (id, workspace_id, space_id, title, slug_id)
+      values (
+        'page-immediate-page',
+        'workspace-1',
+        'space-immediate-page',
+        'BeeGFS deployment',
+        'beegfs-deployment'
+      )
+    `.execute(db);
+    await repo.scheduleIncrementalCompileForPages({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-immediate-page'],
+      trigger: 'page_updated',
+      quietPeriodMs: 60 * 60 * 1_000,
+      changedAt: new Date('2099-08-05T10:00:00.000Z'),
+    });
+    const scheduled = await sql<{ id: string; eligibleAt: Date }>`
+      select id, eligible_at as "eligibleAt"
+      from knowledge_page_compile_schedules
+      where source_page_id = 'page-immediate-page'
+    `.execute(db);
+
+    await expect(
+      repo.markDelayedPageForImmediateCompilation({
+        workspaceId: 'workspace-1',
+        scheduleId: scheduled.rows[0].id,
+        confirmationPageName: 'wrong page',
+      }),
+    ).resolves.toBeNull();
+    const unchanged = await sql<{ eligibleAt: Date }>`
+      select eligible_at as "eligibleAt"
+      from knowledge_page_compile_schedules
+      where id = ${scheduled.rows[0].id}
+    `.execute(db);
+    expect(unchanged.rows[0].eligibleAt).toEqual(scheduled.rows[0].eligibleAt);
+
+    await expect(
+      repo.markDelayedPageForImmediateCompilation({
+        workspaceId: 'workspace-1',
+        scheduleId: scheduled.rows[0].id,
+        confirmationPageName: 'BeeGFS deployment',
+      }),
+    ).resolves.toEqual({
+      scheduleId: scheduled.rows[0].id,
+      sourcePageId: 'page-immediate-page',
+      spaceId: 'space-immediate-page',
+      pageName: 'BeeGFS deployment',
+    });
+    await expect(
+      repo.promoteDuePageCompileSchedules({
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+      }),
+    ).resolves.toEqual({
+      selectedPageCount: 1,
+      promotedPageCount: 1,
+      runRequestCount: 1,
+    });
+  });
+
+  it('keeps manual Space compilation immediate and clears covered delays', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name)
+      values ('space-manual-immediate', 'workspace-1', 'Manual immediate');
+      insert into pages (id, workspace_id, space_id)
+      values ('page-manual-immediate', 'workspace-1', 'space-manual-immediate')
+    `.execute(db);
+    await repo.scheduleIncrementalCompileForPages({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-manual-immediate'],
+      trigger: 'page_updated',
+      quietPeriodMs: 60 * 60 * 1_000,
+    });
+
+    const [result] = await repo.requestRuns({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-manual-immediate',
+          trigger: 'manual_compile',
+        },
+      ],
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+
+    expect(result.disposition).toBe('created');
+    const remaining = await sql<{ count: number }>`
+      select count(*)::integer as count
+      from knowledge_page_compile_schedules
+      where space_id = 'space-manual-immediate'
+    `.execute(db);
+    expect(remaining.rows).toEqual([{ count: 0 }]);
+  });
+
+  it('lets two application instances promote disjoint due pages without duplicate active Runs', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name)
+      values ('space-multi-instance-delay', 'workspace-1', 'Multi instance');
+      insert into pages (id, workspace_id, space_id) values
+        ('page-multi-instance-a', 'workspace-1', 'space-multi-instance-delay'),
+        ('page-multi-instance-b', 'workspace-1', 'space-multi-instance-delay')
+    `.execute(db);
+    const changedAt = new Date('2026-08-05T08:00:00.000Z');
+    await repo.scheduleIncrementalCompileForPages({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-multi-instance-a', 'page-multi-instance-b'],
+      trigger: 'page_updated',
+      quietPeriodMs: 0,
+      changedAt,
+    });
+
+    const results = await Promise.all([
+      repo.promoteDuePageCompileSchedules({
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+        limit: 1,
+        now: changedAt,
+      }),
+      secondRepo.promoteDuePageCompileSchedules({
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+        limit: 1,
+        now: changedAt,
+      }),
+    ]);
+
+    expect(
+      results.reduce((sum, result) => sum + result.selectedPageCount, 0),
+    ).toBe(2);
+    const evidence = await sql<{
+      runCount: number;
+      targetSourcePageIds: string[];
+      scheduleCount: number;
+    }>`
+      select count(*)::integer as "runCount",
+             (select target_source_page_ids
+              from knowledge_space_compile_runs
+              where space_id = 'space-multi-instance-delay'
+                and status in ('queued', 'compiling', 'aggregate_pending', 'aggregating')
+              limit 1) as "targetSourcePageIds",
+             (select count(*)::integer
+              from knowledge_page_compile_schedules
+              where space_id = 'space-multi-instance-delay') as "scheduleCount"
+      from knowledge_space_compile_runs
+      where space_id = 'space-multi-instance-delay'
+        and status in ('queued', 'compiling', 'aggregate_pending', 'aggregating')
+    `.execute(db);
+    expect(evidence.rows[0].runCount).toBe(1);
+    expect([...evidence.rows[0].targetSourcePageIds].sort()).toEqual([
+      'page-multi-instance-a',
+      'page-multi-instance-b',
+    ]);
+    expect(evidence.rows[0].scheduleCount).toBe(0);
+  });
 });
 
 async function createFixture(db: Kysely<unknown>): Promise<void> {
   await sql`
     create sequence run_id_seq;
     create sequence run_page_id_seq;
+    create sequence schedule_id_seq;
     create table spaces (
       id varchar primary key,
       workspace_id varchar not null,
@@ -555,7 +818,23 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       id varchar primary key,
       workspace_id varchar not null,
       space_id varchar not null,
+      title varchar,
+      slug_id varchar,
       deleted_at timestamptz
+    );
+    create table knowledge_page_compile_schedules (
+      id varchar primary key default ('schedule-' || nextval('schedule_id_seq')),
+      workspace_id varchar not null,
+      space_id varchar not null,
+      source_page_id varchar not null,
+      trigger varchar not null,
+      change_count integer not null default 1,
+      first_changed_at timestamptz not null,
+      last_changed_at timestamptz not null,
+      eligible_at timestamptz not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (workspace_id, source_page_id)
     );
     create table knowledge_sources (
       id varchar primary key,
