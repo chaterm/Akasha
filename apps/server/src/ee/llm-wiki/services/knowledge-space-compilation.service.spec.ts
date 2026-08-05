@@ -164,6 +164,31 @@ describe('KnowledgeSpaceCompilationService', () => {
     expect(fixture.repo.promoteDuePageCompileSchedules).not.toHaveBeenCalled();
   });
 
+  it('removes a confirmed page from the delayed queue without dispatching', async () => {
+    const fixture = createService();
+    fixture.repo.removeDelayedPageCompilation.mockResolvedValue({
+      scheduleId: 'schedule-1',
+      sourcePageId: 'page-1',
+      spaceId: 'space-1',
+      pageName: 'Page 1',
+    });
+
+    await expect(
+      fixture.service.removeDelayedPageCompilation({
+        workspaceId: 'workspace-1',
+        scheduleId: 'schedule-1',
+        confirmationPageName: 'Page 1',
+      }),
+    ).resolves.toEqual(expect.objectContaining({ scheduleId: 'schedule-1' }));
+
+    expect(fixture.repo.removeDelayedPageCompilation).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      scheduleId: 'schedule-1',
+      confirmationPageName: 'Page 1',
+    });
+    expect(fixture.repo.promoteDuePageCompileSchedules).not.toHaveBeenCalled();
+  });
+
   it('initializes against the prior completed Run instead of its own queued placeholder', async () => {
     const source = sourceSnapshot();
     const fixture = createService({
@@ -357,6 +382,7 @@ function createService(
     requestRuns: jest.fn().mockResolvedValue([]),
     requestIncrementalCompileForPages: jest.fn().mockResolvedValue([]),
     markDelayedPageForImmediateCompilation: jest.fn(),
+    removeDelayedPageCompilation: jest.fn(),
     promoteDuePageCompileSchedules: jest.fn().mockResolvedValue({
       selectedPageCount: 0,
       promotedPageCount: 0,

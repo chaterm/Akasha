@@ -22,6 +22,7 @@ import {
   getKnowledgeRunPageDiagnostics,
   getKnowledgeWorkerDiagnostics,
   immediatelyCompileDelayedPage,
+  removeDelayedPageFromQueue,
   retryKnowledgePages,
   runKnowledgeAdminAction,
   updateKnowledgeSpace,
@@ -63,6 +64,7 @@ vi.mock("../services/knowledge-service", () => ({
   getKnowledgeQuarantineDiagnostics: vi.fn(),
   getKnowledgeRetrievalDiagnostics: vi.fn(),
   immediatelyCompileDelayedPage: vi.fn(),
+  removeDelayedPageFromQueue: vi.fn(),
   retryKnowledgePages: vi.fn(),
   runKnowledgeAdminAction: vi.fn(),
   updateKnowledgeSpace: vi.fn(),
@@ -151,6 +153,12 @@ describe("KnowledgeAdminPage", () => {
     });
     vi.mocked(immediatelyCompileDelayedPage).mockResolvedValue({
       accepted: true,
+      scheduleId: "11111111-1111-4111-8111-111111111111",
+      sourcePageId: "page-1",
+      spaceId: "space-1",
+    });
+    vi.mocked(removeDelayedPageFromQueue).mockResolvedValue({
+      removed: true,
       scheduleId: "11111111-1111-4111-8111-111111111111",
       sourcePageId: "page-1",
       spaceId: "space-1",
@@ -334,6 +342,28 @@ describe("KnowledgeAdminPage", () => {
         expect.anything(),
       ),
     );
+  });
+
+  it("removes a delayed page from the queue without a confirmation dialog", async () => {
+    renderPage();
+    await screen.findByText("Space compilation runs");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Delayed queue" }));
+    expect(await screen.findByText("BeeGFS deployment")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remove from queue" }));
+
+    await waitFor(() =>
+      expect(removeDelayedPageFromQueue).toHaveBeenCalledWith(
+        {
+          scheduleId: "11111111-1111-4111-8111-111111111111",
+          confirmationPageName: "BeeGFS deployment",
+        },
+        expect.anything(),
+      ),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "Remove from queue" }),
+    ).toBeNull();
   });
 
   it("passes search, status, phase, and pagination through the bounded Run query", async () => {

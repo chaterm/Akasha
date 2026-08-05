@@ -117,6 +117,12 @@ export class AdminKnowledgeImmediateCompileDelayedPageDto {
   confirmationPageName: string;
 }
 
+export class AdminKnowledgeRemoveDelayedPageDto {
+  @IsString()
+  @MaxLength(255)
+  confirmationPageName: string;
+}
+
 export class AdminKnowledgeQuarantineListDto extends AdminKnowledgeRunSummaryDto {
   @IsOptional()
   @Type(() => Number)

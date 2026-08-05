@@ -92,7 +92,10 @@ export default function PageEditor({
   canComment,
 }: PageEditorProps) {
   const { t } = useTranslation();
-  const collaborationURL = useCollaborationUrl();
+  const { pageEditMode } = usePageEditMode();
+  const collaborationURL = useCollaborationUrl(
+    pageEditMode === PageEditMode.Read,
+  );
   const isComponentMounted = useRef(false);
   const editorRef = useRef<Editor | null>(null);
 
@@ -117,7 +120,6 @@ export default function PageEditor({
   const documentState = useDocumentVisibility();
   const { pageSlug } = useParams();
   const slugId = extractPageSlugId(pageSlug);
-  const { pageEditMode } = usePageEditMode();
   const canScroll = useCallback(
     () => Boolean(isComponentMounted.current && editorRef.current),
     [isComponentMounted],
@@ -201,12 +203,14 @@ export default function PageEditor({
     }
     // Only destroy on final unmount
     return () => {
+      // @ts-ignore
+      setEditor(null);
       providersRef.current?.socket.destroy();
       providersRef.current?.remote.destroy();
       providersRef.current?.local.destroy();
       providersRef.current = null;
     };
-  }, [pageId]);
+  }, [pageId, collaborationURL, setEditor]);
 
   // Only connect/disconnect on tab/idle, not destroy
   useEffect(() => {

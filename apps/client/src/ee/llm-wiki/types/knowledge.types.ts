@@ -266,6 +266,13 @@ export interface KnowledgeImmediateDelayedPageCompileResult {
   spaceId: string;
 }
 
+export interface KnowledgeRemoveDelayedPageResult {
+  removed: boolean;
+  scheduleId: string;
+  sourcePageId: string;
+  spaceId: string;
+}
+
 export interface KnowledgeRunPageDiagnostic {
   runPageId: string;
   sourcePageId: string;

@@ -181,6 +181,14 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     return result;
   }
 
+  async removeDelayedPageCompilation(input: {
+    workspaceId: string;
+    scheduleId: string;
+    confirmationPageName: string;
+  }) {
+    return this.runRepo.removeDelayedPageCompilation(input);
+  }
+
   async initializeLeasedRun(lease: SpaceExecutionLease) {
     if (!this.executionRepo) {
       throw new Error(

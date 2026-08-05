@@ -93,6 +93,7 @@ export function FullEditor({
         readOnly={!editable}
       />
       <MemoizedPageEditor
+        key={pageEditMode}
         pageId={pageId}
         editable={editable}
         content={content}

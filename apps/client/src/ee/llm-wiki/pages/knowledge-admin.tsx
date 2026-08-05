@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import {
+  ActionIcon,
   Alert,
   Badge,
   Button,
@@ -34,6 +35,7 @@ import {
   IconPlayerPlay,
   IconPlayerStop,
   IconRefresh,
+  IconTrash,
 } from "@tabler/icons-react";
 import { Helmet } from "react-helmet-async";
 import { Link } from "react-router-dom";
@@ -55,6 +57,7 @@ import {
   getKnowledgeRunPageDiagnostics,
   getKnowledgeWorkerDiagnostics,
   immediatelyCompileDelayedPage,
+  removeDelayedPageFromQueue,
   retryKnowledgePages,
   runKnowledgeAdminAction,
   updateKnowledgeSpace,
@@ -394,6 +397,16 @@ export default function KnowledgeAdminPage() {
     },
     onError: (error) => setDelayedPageConfirmationError(error.message),
   });
+  const removeDelayedPageMutation = useMutation({
+    mutationFn: removeDelayedPageFromQueue,
+    retry: false,
+    onSuccess: () => {
+      notifications.show({ message: t("Page removed from delayed queue") });
+      refreshRunViews();
+    },
+    onError: (error) =>
+      notifications.show({ color: "red", message: error.message }),
+  });
   const actionMutation = useMutation({
     mutationFn: runKnowledgeAdminAction,
     onSuccess: (data) => {
@@ -490,6 +503,12 @@ export default function KnowledgeAdminPage() {
     setDelayedPageConfirmationName("");
     setDelayedPageConfirmationError(null);
     immediateDelayedPageMutation.reset();
+  };
+  const openDelayedPageRemoval = (target: ConfirmedDelayedPageCompilation) => {
+    removeDelayedPageMutation.mutate({
+      scheduleId: target.scheduleId,
+      confirmationPageName: target.pageName,
+    });
   };
 
   return (
@@ -932,9 +951,15 @@ export default function KnowledgeAdminPage() {
               spaceSlugById={spaceSlugById}
               isAdmin={isAdmin}
               onImmediateCompile={openImmediateDelayedPageCompilation}
+              onRemoveFromQueue={openDelayedPageRemoval}
               compilingScheduleId={
                 immediateDelayedPageMutation.isPending
                   ? (immediateDelayedPageMutation.variables?.scheduleId ?? null)
+                  : null
+              }
+              removingScheduleId={
+                removeDelayedPageMutation.isPending
+                  ? (removeDelayedPageMutation.variables?.scheduleId ?? null)
                   : null
               }
             />
@@ -1302,7 +1327,9 @@ function DelayedCompilationQueue({
   spaceSlugById,
   isAdmin,
   onImmediateCompile,
+  onRemoveFromQueue,
   compilingScheduleId,
+  removingScheduleId,
 }: {
   query: UseQueryResult<KnowledgeDelayedPageDiagnosticsPage, Error>;
   status: KnowledgeDelayedPageStatus | null;
@@ -1314,7 +1341,9 @@ function DelayedCompilationQueue({
   spaceSlugById: Map<string, string>;
   isAdmin: boolean;
   onImmediateCompile: (target: ConfirmedDelayedPageCompilation) => void;
+  onRemoveFromQueue: (target: ConfirmedDelayedPageCompilation) => void;
   compilingScheduleId: string | null;
+  removingScheduleId: string | null;
 }) {
   const { t } = useTranslation();
   const data = query.data;
@@ -1393,7 +1422,7 @@ function DelayedCompilationQueue({
         </Text>
       ) : (
         <>
-          <Table.ScrollContainer minWidth={isAdmin ? 1180 : 1080}>
+          <Table.ScrollContainer minWidth={isAdmin ? 1280 : 1080}>
             <Table highlightOnHover verticalSpacing="sm">
               <Table.Thead>
                 <Table.Tr>
@@ -1459,24 +1488,47 @@ function DelayedCompilationQueue({
                       </Table.Td>
                       {isAdmin && (
                         <Table.Td>
-                          <Button
-                            size="xs"
-                            variant="light"
-                            color="orange"
-                            leftSection={<IconPlayerPlay size={14} />}
-                            loading={compilingScheduleId === item.scheduleId}
-                            onClick={() =>
-                              onImmediateCompile({
-                                scheduleId: item.scheduleId,
-                                pageName:
-                                  item.title ||
-                                  item.slugId ||
-                                  item.sourcePageId,
-                              })
-                            }
-                          >
-                            {t("Immediate compile")}
-                          </Button>
+                          <Group gap="xs" wrap="nowrap">
+                            <Button
+                              size="xs"
+                              variant="light"
+                              color="orange"
+                              leftSection={<IconPlayerPlay size={14} />}
+                              loading={compilingScheduleId === item.scheduleId}
+                              disabled={removingScheduleId === item.scheduleId}
+                              onClick={() =>
+                                onImmediateCompile({
+                                  scheduleId: item.scheduleId,
+                                  pageName:
+                                    item.title ||
+                                    item.slugId ||
+                                    item.sourcePageId,
+                                })
+                              }
+                            >
+                              {t("Immediate compile")}
+                            </Button>
+                            <ActionIcon
+                              size="lg"
+                              variant="light"
+                              color="red"
+                              aria-label={t("Remove from queue")}
+                              title={t("Remove from queue")}
+                              loading={removingScheduleId === item.scheduleId}
+                              disabled={compilingScheduleId === item.scheduleId}
+                              onClick={() =>
+                                onRemoveFromQueue({
+                                  scheduleId: item.scheduleId,
+                                  pageName:
+                                    item.title ||
+                                    item.slugId ||
+                                    item.sourcePageId,
+                                })
+                              }
+                            >
+                              <IconTrash size={16} />
+                            </ActionIcon>
+                          </Group>
                         </Table.Td>
                       )}
                     </Table.Tr>

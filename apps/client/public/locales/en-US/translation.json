@@ -1219,6 +1219,8 @@
   "Enter the exact space name to continue:": "Enter the exact space name to continue:",
   "Immediate compile": "Immediate compile",
   "Page compilation queued": "Page compilation queued",
+  "Remove from queue": "Remove from queue",
+  "Page removed from delayed queue": "Page removed from delayed queue",
   "Type the page name to confirm": "Type the page name to confirm",
   "Enter the exact page name to continue:": "Enter the exact page name to continue:",
   "This page will skip the remaining delay and enter the compilation queue immediately. Later edits will start a new one-hour delay.": "This page will skip the remaining delay and enter the compilation queue immediately. Later edits will start a new one-hour delay.",

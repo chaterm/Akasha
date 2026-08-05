@@ -816,6 +816,65 @@ describe('LlmWikiController', () => {
     ).not.toHaveBeenCalled();
   });
 
+  it('removes a confirmed delayed page and records an audit event', async () => {
+    const auditService = { log: jest.fn() };
+    const spaceCompilation = {
+      removeDelayedPageCompilation: jest.fn().mockResolvedValue({
+        scheduleId: '11111111-1111-4111-8111-111111111111',
+        sourcePageId: 'page-1',
+        spaceId: 'space-1',
+        pageName: 'BeeGFS deployment',
+      }),
+    };
+    const controller = createController({ auditService, spaceCompilation });
+
+    await expect(
+      controller.removeDelayedPageFromQueue(
+        '11111111-1111-4111-8111-111111111111',
+        { confirmationPageName: 'BeeGFS deployment' },
+        adminUser(),
+        workspace(),
+      ),
+    ).resolves.toEqual({
+      removed: true,
+      scheduleId: '11111111-1111-4111-8111-111111111111',
+      sourcePageId: 'page-1',
+      spaceId: 'space-1',
+    });
+    expect(spaceCompilation.removeDelayedPageCompilation).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      scheduleId: '11111111-1111-4111-8111-111111111111',
+      confirmationPageName: 'BeeGFS deployment',
+    });
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: AuditEvent.KNOWLEDGE_DELAYED_PAGE_REMOVED,
+        metadata: expect.objectContaining({
+          action: 'remove_delayed_page_from_queue',
+        }),
+      }),
+    );
+  });
+
+  it('rejects delayed-page removal for non-admin users', async () => {
+    const spaceCompilation = {
+      removeDelayedPageCompilation: jest.fn(),
+    };
+    const controller = createController({ spaceCompilation });
+
+    await expect(
+      controller.removeDelayedPageFromQueue(
+        '11111111-1111-4111-8111-111111111111',
+        { confirmationPageName: 'BeeGFS deployment' },
+        user(),
+        workspace(),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(
+      spaceCompilation.removeDelayedPageCompilation,
+    ).not.toHaveBeenCalled();
+  });
+
   it('does not reveal a RunPage detail outside the readable Space scope', async () => {
     const diagnosticsService = {
       findRunDiagnosticSpaceId: jest.fn().mockResolvedValue('space-private'),

@@ -627,6 +627,60 @@ describePostgres('KnowledgeSpaceCompilationRepo PostgreSQL round trip', () => {
     });
   });
 
+  it('requires the exact page name before removing one delayed page', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name)
+      values ('space-remove-delayed', 'workspace-1', 'Remove delayed');
+      insert into pages (id, workspace_id, space_id, title, slug_id)
+      values (
+        'page-remove-delayed',
+        'workspace-1',
+        'space-remove-delayed',
+        'Obsolete delayed page',
+        'obsolete-delayed-page'
+      )
+    `.execute(db);
+    await repo.scheduleIncrementalCompileForPages({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-remove-delayed'],
+      trigger: 'page_updated',
+      quietPeriodMs: 60 * 60 * 1_000,
+      changedAt: new Date('2099-08-05T10:00:00.000Z'),
+    });
+    const scheduled = await sql<{ id: string }>`
+      select id
+      from knowledge_page_compile_schedules
+      where source_page_id = 'page-remove-delayed'
+    `.execute(db);
+
+    await expect(
+      repo.removeDelayedPageCompilation({
+        workspaceId: 'workspace-1',
+        scheduleId: scheduled.rows[0].id,
+        confirmationPageName: 'wrong page',
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      repo.removeDelayedPageCompilation({
+        workspaceId: 'workspace-1',
+        scheduleId: scheduled.rows[0].id,
+        confirmationPageName: 'Obsolete delayed page',
+      }),
+    ).resolves.toEqual({
+      scheduleId: scheduled.rows[0].id,
+      sourcePageId: 'page-remove-delayed',
+      spaceId: 'space-remove-delayed',
+      pageName: 'Obsolete delayed page',
+    });
+
+    const remaining = await sql<{ count: number }>`
+      select count(*)::integer as count
+      from knowledge_page_compile_schedules
+      where source_page_id = 'page-remove-delayed'
+    `.execute(db);
+    expect(remaining.rows).toEqual([{ count: 0 }]);
+  });
+
   it('keeps manual Space compilation immediate and clears covered delays', async () => {
     await sql`
       insert into spaces (id, workspace_id, name)

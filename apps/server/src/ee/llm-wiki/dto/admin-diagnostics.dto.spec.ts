@@ -3,6 +3,7 @@ import { validate } from 'class-validator';
 import {
   AdminKnowledgeDelayedPageListDto,
   AdminKnowledgeImmediateCompileDelayedPageDto,
+  AdminKnowledgeRemoveDelayedPageDto,
   AdminKnowledgePageLogDto,
   AdminKnowledgeQuarantineListDto,
   AdminKnowledgeRunListDto,
@@ -81,6 +82,20 @@ describe('bounded knowledge diagnostics DTOs', () => {
       new AdminKnowledgeImmediateCompileDelayedPageDto(),
       { confirmationPageName: 'x'.repeat(256) },
     );
+
+    expect((await validate(missing)).map((error) => error.property)).toContain(
+      'confirmationPageName',
+    );
+    expect((await validate(tooLong)).map((error) => error.property)).toContain(
+      'confirmationPageName',
+    );
+  });
+
+  it('requires a bounded page name before removing a delayed page', async () => {
+    const missing = new AdminKnowledgeRemoveDelayedPageDto();
+    const tooLong = Object.assign(new AdminKnowledgeRemoveDelayedPageDto(), {
+      confirmationPageName: 'x'.repeat(256),
+    });
 
     expect((await validate(missing)).map((error) => error.property)).toContain(
       'confirmationPageName',
