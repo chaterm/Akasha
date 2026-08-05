@@ -27,11 +27,10 @@ import {
   collabExtensions,
   mainExtensions,
 } from "@/features/editor/extensions/extensions";
-import { useAtom, useAtomValue } from "jotai";
+import { useAtom } from "jotai";
 import useCollaborationUrl from "@/features/editor/hooks/use-collaboration-url";
 import { currentUserAtom } from "@/features/user/atoms/current-user-atom";
 import {
-  currentPageEditModeAtom,
   pageEditorAtom,
   yjsConnectionStatusAtom,
 } from "@/features/editor/atoms/editor-atoms";
@@ -66,7 +65,6 @@ import { IPage } from "@/features/page/types/page.types.ts";
 import { useParams } from "react-router-dom";
 import { extractPageSlugId, platformModifierKey } from "@/lib";
 import { FIVE_MINUTES } from "@/lib/constants.ts";
-import { PageEditMode } from "@/features/user/types/user.types.ts";
 import { jwtDecode } from "jwt-decode";
 import { searchSpotlight } from "@/features/search/constants.ts";
 import { useEditorScroll } from "./hooks/use-editor-scroll";
@@ -75,6 +73,10 @@ import { EditorLinkMenu } from "@/features/editor/components/link/link-menu";
 import ColumnsMenu from "@/features/editor/components/columns/columns-menu.tsx";
 import { TransclusionLookupProvider } from "@/features/editor/components/transclusion/transclusion-lookup-context";
 import { useTranslation } from "react-i18next";
+import {
+  PageEditMode,
+  usePageEditMode,
+} from "@/features/editor/page-edit-mode-context";
 
 interface PageEditorProps {
   pageId: string;
@@ -115,7 +117,7 @@ export default function PageEditor({
   const documentState = useDocumentVisibility();
   const { pageSlug } = useParams();
   const slugId = extractPageSlugId(pageSlug);
-  const currentPageEditMode = useAtomValue(currentPageEditModeAtom);
+  const { pageEditMode } = usePageEditMode();
   const canScroll = useCallback(
     () => Boolean(isComponentMounted.current && editorRef.current),
     [isComponentMounted],
@@ -247,7 +249,7 @@ export default function PageEditor({
   const editor = useEditor(
     {
       extensions,
-      editable,
+      editable: editable && pageEditMode === PageEditMode.Edit,
       immediatelyRender: true,
       shouldRerenderOnTransaction: false,
       editorProps: {
@@ -389,8 +391,8 @@ export default function PageEditor({
   }, [yjsConnectionStatus, isSynced]);
   useEffect(() => {
     if (!editor) return;
-    editor.setEditable(editable && currentPageEditMode === PageEditMode.Edit);
-  }, [currentPageEditMode, editor, editable]);
+    editor.setEditable(editable && pageEditMode === PageEditMode.Edit);
+  }, [pageEditMode, editor, editable]);
 
   const hasConnectedOnceRef = useRef(false);
   const [showStatic, setShowStatic] = useState(true);

@@ -7,7 +7,6 @@ import { Text } from "@tiptap/extension-text";
 import { Placeholder } from "@tiptap/extension-placeholder";
 import { useAtomValue } from "jotai";
 import {
-  currentPageEditModeAtom,
   pageEditorAtom,
   titleEditorAtom,
 } from "@/features/editor/atoms/editor-atoms";
@@ -25,9 +24,12 @@ import { useTranslation } from "react-i18next";
 import EmojiCommand from "@/features/editor/extensions/emoji-command.ts";
 import { UpdateEvent } from "@/features/websocket/types";
 import localEmitter from "@/lib/local-emitter.ts";
-import { PageEditMode } from "@/features/user/types/user.types.ts";
 import { searchSpotlight } from "@/features/search/constants.ts";
 import { platformModifierKey } from "@/lib";
+import {
+  PageEditMode,
+  usePageEditMode,
+} from "@/features/editor/page-edit-mode-context";
 
 export interface TitleEditorProps {
   pageId: string;
@@ -52,7 +54,7 @@ export function TitleEditor({
   const emit = useQueryEmit();
   const navigate = useNavigate();
   const [activePageId, setActivePageId] = useState(pageId);
-  const currentPageEditMode = useAtomValue(currentPageEditModeAtom);
+  const { pageEditMode } = usePageEditMode();
 
   const titleEditor = useEditor({
     extensions: [
@@ -82,7 +84,7 @@ export function TitleEditor({
     onUpdate({ editor }) {
       debounceUpdate();
     },
-    editable: editable,
+    editable: editable && pageEditMode === PageEditMode.Edit,
     content: title,
     immediatelyRender: true,
     shouldRerenderOnTransaction: false,
@@ -174,8 +176,8 @@ export function TitleEditor({
 
   useEffect(() => {
     if (!titleEditor) return;
-    titleEditor.setEditable(editable && currentPageEditMode === PageEditMode.Edit);
-  }, [currentPageEditMode, titleEditor, editable]);
+    titleEditor.setEditable(editable && pageEditMode === PageEditMode.Edit);
+  }, [pageEditMode, titleEditor, editable]);
 
   const openSearchDialog = () => {
     const event = new CustomEvent("openFindDialogFromEditor", {});

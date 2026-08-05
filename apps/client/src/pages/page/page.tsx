@@ -13,6 +13,7 @@ import { IconAlertTriangle, IconFileOff } from "@tabler/icons-react";
 import { Button } from "@mantine/core";
 import { Link } from "react-router-dom";
 import { ErrorBoundary } from "react-error-boundary";
+import { PageEditModeProvider } from "@/features/editor/page-edit-mode-context";
 const MemoizedFullEditor = React.memo(FullEditor);
 const MemoizedPageHeader = React.memo(PageHeader);
 const MemoizedHistoryModal = React.memo(HistoryModal);
@@ -97,20 +98,21 @@ function PageContent({ pageSlug }: { pageSlug: string | undefined }) {
           <title>{`${page?.icon || ""}  ${page?.title || t("untitled")}`}</title>
         </Helmet>
 
-        <MemoizedPageHeader readOnly={!canEdit} />
+        <PageEditModeProvider key={page.id}>
+          <MemoizedPageHeader readOnly={!canEdit} />
 
-        <MemoizedFullEditor
-          key={page.id}
-          pageId={page.id}
-          title={page.title}
-          content={page.content}
-          slugId={page.slugId}
-          spaceSlug={page?.space?.slug}
-          editable={canEdit}
-          creator={page.creator}
-          contributors={page.contributors}
-          canComment={canComment}
-        />
+          <MemoizedFullEditor
+            pageId={page.id}
+            title={page.title}
+            content={page.content}
+            slugId={page.slugId}
+            spaceSlug={page?.space?.slug}
+            editable={canEdit}
+            creator={page.creator}
+            contributors={page.contributors}
+            canComment={canComment}
+          />
+        </PageEditModeProvider>
         <MemoizedHistoryModal pageId={page.id} />
       </div>
     )
