@@ -14,6 +14,7 @@ import {
 import { markdownToHtml } from "@docmost/editor-ext";
 import type {
   AiChatMessage,
+  AiChatThinkingItem,
   AiChatToolCall,
   AiQaCitation,
   AiQaCitationEvidence,
@@ -21,6 +22,7 @@ import type {
   AiQaRetrievalDiagnostics,
 } from "../types/ai-chat.types";
 import ChatToolGroup from "./chat-tool-group";
+import ThinkingProcess from "./thinking-process";
 import classes from "../styles/chat-message.module.css";
 import CopyTextButton from "@/components/common/copy.tsx";
 
@@ -77,6 +79,7 @@ type Props = {
   streamingContent?: string;
   streamingToolCalls?: AiChatToolCall[];
   progressStage?: AiQaProgressStage | null;
+  thinkingSteps?: AiChatThinkingItem[];
   onEdit?: (messageId: string, content: string) => void;
   editDisabled?: boolean;
   onEditingChange?: (editing: boolean) => void;
@@ -88,6 +91,7 @@ export default function ChatMessage({
   streamingContent,
   streamingToolCalls,
   progressStage,
+  thinkingSteps = [],
   onEdit,
   editDisabled = false,
   onEditingChange,
@@ -141,6 +145,9 @@ export default function ChatMessage({
   const content = isStreaming ? streamingContent : message.content;
   const toolCalls = isStreaming ? streamingToolCalls : message.toolCalls;
   const qaMetadata = readQaMetadata(message.metadata);
+  const visibleThinkingSteps = isStreaming
+    ? thinkingSteps
+    : readThinkingTrace(message.metadata?.thinkingTrace);
 
   if (isUser) {
     const displayContent = (content || "").replace(
@@ -254,6 +261,13 @@ export default function ChatMessage({
         {toolCalls && toolCalls.length > 0 && (
           <ChatToolGroup toolCalls={toolCalls} isStreaming={isStreaming} />
         )}
+        {visibleThinkingSteps.length > 0 && (
+          <ThinkingProcess
+            steps={visibleThinkingSteps}
+            isStreaming={Boolean(isStreaming)}
+            hasAnswerContent={Boolean(content)}
+          />
+        )}
         {content && (
           <div className={classes.answerContent}>
             <div
@@ -277,7 +291,7 @@ export default function ChatMessage({
         )}
         {isStreaming && (
           <>
-            {!content && (
+            {!content && visibleThinkingSteps.length === 0 && (
               <span className={classes.processingIndicator}>
                 <IconLoader2 size={16} className={classes.processingSpinner} />
                 {t(progressLabel(progressStage))}
@@ -526,6 +540,31 @@ function readCitations(value: unknown): AiQaCitation[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readThinkingTrace(value: unknown): AiChatThinkingItem[] {
+  if (!Array.isArray(value)) return [];
+  const validSteps = new Set([
+    "understanding",
+    "searching",
+    "analyzing",
+    "preparing",
+    "fallback",
+  ]);
+  const validStatuses = new Set(["started", "completed", "skipped", "failed"]);
+
+  return value.flatMap((item) => {
+    if (
+      !isRecord(item) ||
+      typeof item.step !== "string" ||
+      !validSteps.has(item.step) ||
+      typeof item.status !== "string" ||
+      !validStatuses.has(item.status)
+    ) {
+      return [];
+    }
+    return [item as AiChatThinkingItem];
+  });
 }
 
 function progressLabel(stage?: AiQaProgressStage | null): string {

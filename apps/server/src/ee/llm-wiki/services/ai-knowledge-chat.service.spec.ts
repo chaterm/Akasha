@@ -116,6 +116,7 @@ describe('AiKnowledgeChatService', () => {
       answerProvider,
       citationResolver,
     });
+    const onThinking = jest.fn();
 
     await expect(
       service.chat({
@@ -125,6 +126,7 @@ describe('AiKnowledgeChatService', () => {
         query: 'Chaterm 登记批准日期',
         spaceIds: ['space-1'],
         chatContext: ['Previous turn'],
+        onThinking,
       }),
     ).resolves.toEqual({
       answer: 'Kafka is used for async events.',
@@ -237,6 +239,63 @@ describe('AiKnowledgeChatService', () => {
       chatContext: ['Previous turn'],
     });
     expect(answerProvider.answer).toHaveBeenCalledTimes(1);
+    expect(
+      onThinking.mock.calls.map(([event]) => ({
+        step: event.step,
+        status: event.status,
+        stats: event.stats,
+        outcome: event.outcome,
+      })),
+    ).toEqual([
+      {
+        step: 'understanding',
+        status: 'started',
+        stats: { historyMessageCount: 1 },
+        outcome: undefined,
+      },
+      {
+        step: 'understanding',
+        status: 'completed',
+        stats: { historyMessageCount: 1, queryRewritten: false },
+        outcome: undefined,
+      },
+      {
+        step: 'searching',
+        status: 'started',
+        stats: undefined,
+        outcome: undefined,
+      },
+      {
+        step: 'searching',
+        status: 'completed',
+        stats: { matchedChunkCount: 1, sourceCount: 1 },
+        outcome: undefined,
+      },
+      {
+        step: 'analyzing',
+        status: 'started',
+        stats: undefined,
+        outcome: undefined,
+      },
+      {
+        step: 'analyzing',
+        status: 'completed',
+        stats: { includedItemCount: 1, sourceCount: 1 },
+        outcome: 'knowledge',
+      },
+      {
+        step: 'preparing',
+        status: 'started',
+        stats: undefined,
+        outcome: undefined,
+      },
+      {
+        step: 'preparing',
+        status: 'completed',
+        stats: undefined,
+        outcome: 'knowledge',
+      },
+    ]);
   });
 
   it('threads the same request-scoped cache into capsule citation resolution', async () => {
@@ -307,6 +366,7 @@ describe('AiKnowledgeChatService', () => {
 
   it('regenerates a clean streaming general answer without knowledge context', async () => {
     const onToken = jest.fn();
+    const onThinking = jest.fn();
     const stream = jest
       .fn()
       .mockImplementationOnce(() =>
@@ -332,6 +392,7 @@ describe('AiKnowledgeChatService', () => {
       query: '孙悟空的公司是什么',
       spaceIds: ['space-1'],
       onToken,
+      onThinking,
     });
 
     expect(result).toMatchObject({
@@ -365,6 +426,25 @@ describe('AiKnowledgeChatService', () => {
       chatContext: undefined,
       mode: 'general',
     });
+    expect(
+      onThinking.mock.calls
+        .map(([event]) => event)
+        .filter((event) => ['preparing', 'fallback'].includes(event.step))
+        .map((event) => ({
+          step: event.step,
+          status: event.status,
+          outcome: event.outcome,
+        })),
+    ).toEqual([
+      { step: 'preparing', status: 'started', outcome: undefined },
+      {
+        step: 'preparing',
+        status: 'completed',
+        outcome: 'insufficient',
+      },
+      { step: 'fallback', status: 'started', outcome: undefined },
+      { step: 'fallback', status: 'completed', outcome: 'general' },
+    ]);
   });
 
   it('regenerates a clean non-streaming general answer without knowledge context', async () => {

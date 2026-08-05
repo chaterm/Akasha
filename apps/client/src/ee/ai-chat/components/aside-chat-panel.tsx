@@ -51,6 +51,7 @@ export default function AsideChatPanel() {
     streamingToolCalls,
     isStreaming,
     progressStage,
+    thinkingSteps,
     error,
     sendMessage,
     editMessage,
@@ -277,6 +278,7 @@ export default function AsideChatPanel() {
               streamingContent={streamingContent}
               streamingToolCalls={streamingToolCalls}
               progressStage={progressStage}
+              thinkingSteps={thinkingSteps}
               onEditMessage={editMessage}
               onEditingStateChange={setIsEditingHistory}
             />

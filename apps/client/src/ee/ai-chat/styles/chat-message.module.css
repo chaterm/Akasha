@@ -404,6 +404,119 @@
   animation: spin 1s linear infinite;
 }
 
+.thinkingProcess {
+  margin: 2px 0 var(--mantine-spacing-md);
+  padding-top: 12px;
+  border-top: 1px solid
+    light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+}
+
+.thinkingHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
+  cursor: pointer;
+  font-size: var(--mantine-font-size-sm);
+  font-weight: 600;
+  list-style: none;
+  user-select: none;
+}
+
+.thinkingHeader::-webkit-details-marker {
+  display: none;
+}
+
+.thinkingElapsed,
+.thinkingPrivacy {
+  color: light-dark(var(--mantine-color-gray-5), var(--mantine-color-dark-3));
+  font-weight: 400;
+}
+
+.thinkingPrivacy::before {
+  content: "·";
+  margin-right: 6px;
+}
+
+.thinkingChevron {
+  color: light-dark(var(--mantine-color-gray-5), var(--mantine-color-dark-3));
+  transition: transform 140ms ease;
+}
+
+.thinkingProcess[open] > .thinkingHeader .thinkingChevron {
+  transform: rotate(90deg);
+}
+
+.thinkingTimeline {
+  margin-top: 16px;
+}
+
+.thinkingStep {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  position: relative;
+  padding-bottom: 18px;
+}
+
+.thinkingStep:last-child {
+  padding-bottom: 2px;
+}
+
+.thinkingMarker {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  position: relative;
+  min-height: 18px;
+  padding-top: 5px;
+  color: light-dark(var(--mantine-color-gray-5), var(--mantine-color-dark-3));
+}
+
+.thinkingStep:not(:last-child) .thinkingMarker::after {
+  content: "";
+  position: absolute;
+  top: 20px;
+  bottom: -14px;
+  left: 50%;
+  width: 1px;
+  background: light-dark(
+    var(--mantine-color-gray-3),
+    var(--mantine-color-dark-4)
+  );
+}
+
+.thinkingDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: light-dark(
+    var(--mantine-color-gray-5),
+    var(--mantine-color-dark-3)
+  );
+}
+
+.thinkingStepBody {
+  min-width: 0;
+}
+
+.thinkingStepTitle {
+  color: light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0));
+  font-size: var(--mantine-font-size-sm);
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.thinkingStepDetail {
+  margin-top: 5px;
+  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
+  font-size: var(--mantine-font-size-sm);
+  line-height: 1.55;
+}
+
+.thinkingStep[data-status="started"] .thinkingStepTitle {
+  color: light-dark(var(--mantine-color-gray-9), var(--mantine-color-dark-0));
+}
+
 @keyframes spin {
   from {
     transform: rotate(0deg);

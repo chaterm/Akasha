@@ -16,7 +16,10 @@ import {
 } from '@akasha/db/types/entity.types';
 import { PaginationOptions } from '@akasha/db/pagination/pagination-options';
 import { UserRole } from '../../common/helpers/types/permission';
-import { AiKnowledgeChatService } from '../llm-wiki/services/ai-knowledge-chat.service';
+import {
+  AiKnowledgeChatService,
+  type AiChatThinkingEvent,
+} from '../llm-wiki/services/ai-knowledge-chat.service';
 import { AttachmentRepo } from '@akasha/db/repos/attachment/attachment.repo';
 import { KnowledgeQueryAuditRepo } from '@akasha/db/repos/llm-wiki/knowledge-query-audit.repo';
 import { createHash } from 'crypto';
@@ -37,6 +40,7 @@ export type AiChatStreamEvent =
       type: 'progress';
       stage: 'permissions' | 'understanding' | 'retrieval' | 'generation';
     }
+  | ({ type: 'thinking' } & AiChatThinkingEvent)
   | { type: 'content'; text: string }
   | { type: 'superseded'; chatId: string };
 
@@ -76,6 +80,7 @@ export type SendAiChatMessageResult = {
   answerMode?: 'knowledge' | 'no_match' | 'general';
   retrievalQuery?: string;
   canExpandScope?: boolean;
+  thinkingTrace?: AiChatThinkingEvent[];
 };
 
 @Injectable()
@@ -359,6 +364,7 @@ export class AiChatService {
       .filter((message) => message.content)
       .slice(-15)
       .map((message) => `${message.role}: ${message.content}`);
+    const thinkingTrace: AiChatThinkingEvent[] = [];
     const answer = await measureAiChatPhase(
       input.debugTiming,
       'knowledge.total',
@@ -385,6 +391,10 @@ export class AiChatService {
             input.debugTiming?.mark('knowledge.stage', { stage });
             input.onEvent?.({ type: 'progress', stage });
           },
+          onThinking: (event) => {
+            upsertThinkingTrace(thinkingTrace, event);
+            input.onEvent?.({ type: 'thinking', ...event });
+          },
           ...(input.debugTiming ? { debugTiming: input.debugTiming } : {}),
         }),
       {
@@ -406,6 +416,7 @@ export class AiChatService {
         ? { retrievalQuery: answer.retrievalQuery }
         : {}),
       ...(answer.answerMode === 'no_match' ? { canExpandScope } : {}),
+      ...(thinkingTrace.length ? { thinkingTrace } : {}),
       spaceIds: input.spaceIds,
     } as never;
     const assistantMessage = await measureAiChatPhase(
@@ -476,6 +487,7 @@ export class AiChatService {
         ? { retrievalQuery: answer.retrievalQuery }
         : {}),
       ...(answer.answerMode === 'no_match' ? { canExpandScope } : {}),
+      ...(thinkingTrace.length ? { thinkingTrace } : {}),
     };
   }
 
@@ -678,6 +690,26 @@ function readStoredUserContext(metadata: AiChatMessage['metadata']): {
       record.responseMode === 'knowledge' || record.responseMode === 'general'
         ? record.responseMode
         : undefined,
+  };
+}
+
+function upsertThinkingTrace(
+  trace: AiChatThinkingEvent[],
+  event: AiChatThinkingEvent,
+): void {
+  const existingIndex = trace.findIndex((item) => item.step === event.step);
+  if (existingIndex < 0) {
+    trace.push({ ...event });
+    return;
+  }
+
+  const existing = trace[existingIndex];
+  trace[existingIndex] = {
+    ...existing,
+    ...event,
+    ...((existing.stats || event.stats) && {
+      stats: { ...existing.stats, ...event.stats },
+    }),
   };
 }
 

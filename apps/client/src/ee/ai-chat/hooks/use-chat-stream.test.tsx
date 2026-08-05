@@ -31,11 +31,31 @@ describe("useChatStream message editing", () => {
           content: "edited second question",
         });
         onEvent({ type: "progress", stage: "retrieval" });
+        onEvent({
+          type: "thinking",
+          step: "searching",
+          status: "started",
+        });
+        onEvent({
+          type: "thinking",
+          step: "searching",
+          status: "completed",
+          durationMs: 850,
+          stats: { matchedChunkCount: 20, sourceCount: 4 },
+        });
         onEvent({ type: "content", text: "new second answer" });
         onEvent({
           type: "done",
           messageId: "assistant-new",
           answerMode: "knowledge",
+          thinkingTrace: [
+            {
+              step: "searching",
+              status: "completed",
+              durationMs: 850,
+              stats: { matchedChunkCount: 20, sourceCount: 4 },
+            },
+          ],
         });
         return new AbortController();
       },
@@ -79,6 +99,16 @@ describe("useChatStream message editing", () => {
     });
     expect(result.current.messages[2].content).toBe("edited second question");
     expect(result.current.messages[3].content).toBe("new second answer");
+    expect(result.current.messages[3].metadata).toMatchObject({
+      thinkingTrace: [
+        {
+          step: "searching",
+          status: "completed",
+          durationMs: 850,
+          stats: { matchedChunkCount: 20, sourceCount: 4 },
+        },
+      ],
+    });
     expect(serviceMocks.editChatMessage).toHaveBeenCalledWith(
       {
         chatId: "chat-1",

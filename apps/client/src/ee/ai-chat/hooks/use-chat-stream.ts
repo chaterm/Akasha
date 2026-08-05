@@ -9,6 +9,7 @@ import {
 import type {
   AiChatMessage,
   AiChatStreamEvent,
+  AiChatThinkingItem,
   AiChatToolCall,
   AiQaProgressStage,
   ChatAttachment,
@@ -32,6 +33,7 @@ export function useChatStream(
   const [progressStage, setProgressStage] = useState<AiQaProgressStage | null>(
     null,
   );
+  const [thinkingSteps, setThinkingSteps] = useState<AiChatThinkingItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [isRetryable, setIsRetryable] = useState(false);
@@ -55,6 +57,7 @@ export function useChatStream(
     if (chatId && chatId === hydratedChatIdRef.current) return;
     hydratedChatIdRef.current = undefined;
     setMessages([]);
+    setThinkingSteps([]);
     setError(null);
     setErrorCode(null);
     setIsRetryable(false);
@@ -120,6 +123,18 @@ export function useChatStream(
         case "progress":
           setProgressStage(event.stage);
           break;
+        case "thinking":
+          setThinkingSteps((previous) =>
+            upsertThinkingStep(previous, {
+              step: event.step,
+              status: event.status,
+              durationMs: event.durationMs,
+              stats: event.stats,
+              outcome: event.outcome,
+              ...(event.status === "started" ? { startedAt: Date.now() } : {}),
+            }),
+          );
+          break;
         case "tool_call":
           setStreamingToolCalls((previous) => [
             ...previous,
@@ -159,6 +174,7 @@ export function useChatStream(
           });
           setIsStreaming(false);
           setProgressStage(null);
+          setThinkingSteps([]);
           queryClient.invalidateQueries({
             queryKey: ["ai-chat", currentChatIdRef.current],
           });
@@ -169,6 +185,7 @@ export function useChatStream(
           setStreamingToolCalls([]);
           setIsStreaming(false);
           setProgressStage(null);
+          setThinkingSteps([]);
           void reconcileFromServer(event.chatId);
           break;
         case "error":
@@ -177,6 +194,7 @@ export function useChatStream(
           setIsRetryable(event.retryable || false);
           setIsStreaming(false);
           setProgressStage(null);
+          setThinkingSteps([]);
           break;
       }
     },
@@ -199,6 +217,13 @@ export function useChatStream(
       setIsRetryable(false);
       setIsStreaming(true);
       setProgressStage("permissions");
+      setThinkingSteps([
+        {
+          step: responseMode === "general" ? "preparing" : "understanding",
+          status: "started",
+          startedAt: Date.now(),
+        },
+      ]);
       setStreamingContent("");
       setStreamingToolCalls([]);
 
@@ -280,6 +305,13 @@ export function useChatStream(
       setIsRetryable(false);
       setIsStreaming(true);
       setProgressStage("permissions");
+      setThinkingSteps([
+        {
+          step: "understanding",
+          status: "started",
+          startedAt: Date.now(),
+        },
+      ]);
       setStreamingContent("");
       setStreamingToolCalls([]);
 
@@ -331,6 +363,7 @@ export function useChatStream(
 
     setIsStreaming(false);
     setProgressStage(null);
+    setThinkingSteps([]);
   }, []);
 
   return {
@@ -339,6 +372,7 @@ export function useChatStream(
     streamingToolCalls,
     isStreaming,
     progressStage,
+    thinkingSteps,
     error,
     errorCode,
     isRetryable,
@@ -372,5 +406,35 @@ function buildAssistantMetadata(
   if (typeof event.canExpandScope === "boolean") {
     metadata.canExpandScope = event.canExpandScope;
   }
+  if (event.thinkingTrace?.length) {
+    metadata.thinkingTrace = event.thinkingTrace;
+  }
   return Object.keys(metadata).length ? metadata : null;
+}
+
+function upsertThinkingStep(
+  steps: AiChatThinkingItem[],
+  event: AiChatThinkingItem,
+): AiChatThinkingItem[] {
+  const index = steps.findIndex((item) => item.step === event.step);
+  if (index < 0) return [...steps, event];
+
+  const next = [...steps];
+  const existing = next[index];
+  next[index] = {
+    ...existing,
+    ...event,
+    ...(event.status === "started"
+      ? {
+          startedAt:
+            existing.status === "started" && existing.startedAt
+              ? existing.startedAt
+              : (event.startedAt ?? Date.now()),
+        }
+      : {}),
+    ...((existing.stats || event.stats) && {
+      stats: { ...existing.stats, ...event.stats },
+    }),
+  };
+  return next;
 }

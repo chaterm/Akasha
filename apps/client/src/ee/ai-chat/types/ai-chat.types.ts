@@ -30,6 +30,39 @@ export type AiQaProgressStage =
   | "retrieval"
   | "generation";
 
+export type AiChatThinkingStep =
+  | "understanding"
+  | "searching"
+  | "analyzing"
+  | "preparing"
+  | "fallback";
+
+export type AiChatThinkingStatus =
+  | "started"
+  | "completed"
+  | "skipped"
+  | "failed";
+
+export type AiChatThinkingStats = {
+  historyMessageCount?: number;
+  queryRewritten?: boolean;
+  matchedChunkCount?: number;
+  sourceCount?: number;
+  includedItemCount?: number;
+};
+
+export type AiChatThinkingEvent = {
+  step: AiChatThinkingStep;
+  status: AiChatThinkingStatus;
+  durationMs?: number;
+  stats?: AiChatThinkingStats;
+  outcome?: "knowledge" | "insufficient" | "general";
+};
+
+export type AiChatThinkingItem = AiChatThinkingEvent & {
+  startedAt?: number;
+};
+
 export type AiQaCitation = {
   sourcePageId: string;
   title: string;
@@ -70,6 +103,7 @@ export type AiChatStreamEvent =
       content: string;
     }
   | { type: "progress"; stage: AiQaProgressStage }
+  | ({ type: "thinking" } & AiChatThinkingEvent)
   | { type: "content"; text: string }
   | { type: "superseded"; chatId: string }
   | {
@@ -92,6 +126,7 @@ export type AiChatStreamEvent =
       answerMode?: "knowledge" | "no_match" | "general";
       retrievalQuery?: string;
       canExpandScope?: boolean;
+      thinkingTrace?: AiChatThinkingEvent[];
     }
   | { type: "error"; message: string; code?: string; retryable?: boolean };
 

@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { VisuallyHidden } from "@mantine/core";
 import type {
   AiChatMessage,
+  AiChatThinkingItem,
   AiChatToolCall,
   AiQaProgressStage,
 } from "../types/ai-chat.types";
@@ -27,6 +28,7 @@ type Props = {
   streamingContent: string;
   streamingToolCalls: AiChatToolCall[];
   progressStage?: AiQaProgressStage | null;
+  thinkingSteps?: AiChatThinkingItem[];
   onEditMessage?: (messageId: string, content: string) => void;
   onEditingStateChange?: (editing: boolean) => void;
 };
@@ -41,6 +43,7 @@ export default function ChatMessageList({
   streamingContent,
   streamingToolCalls,
   progressStage,
+  thinkingSteps = [],
   onEditMessage,
   onEditingStateChange,
 }: Props) {
@@ -239,6 +242,7 @@ export default function ChatMessageList({
               streamingContent={streamingContent}
               streamingToolCalls={streamingToolCalls}
               progressStage={progressStage}
+              thinkingSteps={thinkingSteps}
             />
           </ErrorBoundary>
         )}
