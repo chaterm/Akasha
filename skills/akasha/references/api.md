@@ -5,7 +5,8 @@
 - 当前用户与 Skill 更新提示
 - 可见空间与已编译 Wiki 查询
 - 有权限的共享 Page 读取
-- 个人 Page 搜索、读取、创建和更新
+- 个人 Page 搜索、读取、创建、更新、删除和恢复
+- 个人 Page 最近列表与回收站
 - 错误处理
 
 所有请求均为 JSON POST，并携带：
@@ -64,7 +65,7 @@ POST /api/spaces
 
     {"limit": 100, "cursor": "<nextCursor>"}
 
-持续请求到 meta.hasNextPage 为 false。只能把返回的可见空间 ID 用作默认查询范围。
+持续请求到 meta.hasNextPage 为 false。每个 `items[]` 至少包含 `id`，通常还有 `name` 和 `slug`。只能把返回的可见空间 ID 用作默认查询范围，或作为知识问答 `--space-id` 的候选。CLI 的 `space list` 会把结果压缩为 `{spaceId, name, slug, isPersonal}`，其中 `isPersonal` 通过与 `apiAccess.personalSpaceId` 比对得出，供用户挑选要检索的空间。
 
 ## 已编译 Wiki 查询
 
@@ -165,6 +166,74 @@ POST /api/pages/update
     }
 
 operation 支持 replace、append 和 prepend。不要发送 spaceId。精准改写既有内容时，应先读取个人 Page 的完整原文、保留未要求修改的部分，再以 replace 提交完整修改稿。API 必须根据 pageId 校验其属于当前用户个人空间。
+
+## 删除个人空间 Page
+
+POST /api/pages/delete
+
+    {
+      "pageId": "page-1"
+    }
+
+只做软删除（移入回收站），可通过恢复接口找回。绝不发送 `permanentlyDelete`：永久删除需要空间管理员权限且不可逆，超出 Skill 范围。
+
+该接口本身只校验空间编辑权限，不校验是否个人空间，因此 Skill 必须先调用 `POST /api/pages/info` 确认目标 `spaceId` 等于 `personalSpaceId`，不一致时按 403 停止，不得删除；共享空间 Page 一律拒绝。成功后 CLI 返回：
+
+    {
+      "pageId": "page-1",
+      "deleted": true
+    }
+
+## 恢复个人空间 Page
+
+POST /api/pages/restore
+
+    {
+      "pageId": "page-1"
+    }
+
+从回收站恢复软删除的个人 Page。与删除相同，Skill 先用 `POST /api/pages/info` 确认目标属于个人空间，再恢复，并校验响应 `spaceId` 与 `personalSpaceId` 一致。成功后 CLI 返回：
+
+    {
+      "pageId": "page-1",
+      "restored": true
+    }
+
+## 个人空间最近 Page 列表
+
+POST /api/pages/recent
+
+    {
+      "spaceId": "<apiAccess.personalSpaceId>",
+      "limit": 20,
+      "cursor": "可选"
+    }
+
+Skill 强制把 `spaceId` 设为 `personalSpaceId`，只列个人空间中最近更新的未删除 Page，供用户在没有关键词时定位自己的 Page。CLI 只保留定位字段并校验每条 `spaceId` 属于个人空间：
+
+    {
+      "items": [
+        {
+          "pageId": "page-1",
+          "title": "雷雨",
+          "updatedAt": "2026-08-01T00:00:00.000Z",
+          "deletedAt": null
+        }
+      ],
+      "meta": {"count": 1, "limit": 20, "hasNextPage": false, "nextCursor": null}
+    }
+
+## 个人空间回收站
+
+POST /api/pages/trash
+
+    {
+      "spaceId": "<apiAccess.personalSpaceId>",
+      "limit": 20,
+      "cursor": "可选"
+    }
+
+同样强制 `spaceId = personalSpaceId`，列出个人空间已软删除的 Page，作为恢复候选；响应结构与最近列表一致，`deletedAt` 为删除时间。空响应体按空列表处理。
 
 ## 错误处理
 

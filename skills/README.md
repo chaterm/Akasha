@@ -1,6 +1,6 @@
 # Akasha Agent Skill
 
-Akasha Agent Skill 可让 Agent 查询带可信论据的 Wiki 知识、按站内地址读取有权限访问的共享 Page，以及在个人空间中创建、读取和更新 Page。
+Akasha Agent Skill 可让 Agent 查询带可信论据的 Wiki 知识（可列出并限定检索空间）、按站内地址读取有权限访问的共享 Page，以及在个人空间中创建、读取、更新、删除和恢复 Page。
 
 ## 安装
 

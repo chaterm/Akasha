@@ -137,6 +137,9 @@ class AkashaApiClient:
         except (URLError, TimeoutError, OSError):
             raise ApiRequestError("Unable to reach the Akasha API.") from None
 
+        if not payload.strip():
+            return None
+
         try:
             result = json.loads(payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -172,6 +175,16 @@ class AkashaApiClient:
             )
         return personal_space_id
 
+    def get_personal_space_id_or_none(self) -> str | None:
+        identity = self.get_current_user()
+        access = identity.get("apiAccess")
+        personal_space_id = (
+            access.get("personalSpaceId") if isinstance(access, dict) else None
+        )
+        if isinstance(personal_space_id, str) and personal_space_id:
+            return personal_space_id
+        return None
+
     def list_visible_spaces(self) -> list[dict[str, Any]]:
         spaces: list[dict[str, Any]] = []
         cursor: str | None = None
@@ -203,6 +216,26 @@ class AkashaApiClient:
                 raise ApiContractError("/api/spaces returned an invalid next cursor.")
             seen_cursors.add(next_cursor)
             cursor = next_cursor
+
+    def list_space_summaries(self) -> list[dict[str, Any]]:
+        """Return readable spaces as {spaceId, name, slug, isPersonal}."""
+        personal_space_id = self.get_personal_space_id_or_none()
+        summaries: list[dict[str, Any]] = []
+        for space in self.list_visible_spaces():
+            space_id = space.get("id")
+            if not isinstance(space_id, str) or not space_id:
+                raise ApiContractError("/api/spaces returned a space without an id.")
+            name = space.get("name")
+            slug = space.get("slug")
+            summaries.append(
+                {
+                    "spaceId": space_id,
+                    "name": name if isinstance(name, str) else None,
+                    "slug": slug if isinstance(slug, str) else None,
+                    "isPersonal": space_id == personal_space_id,
+                }
+            )
+        return summaries
 
     def query_compiled_wiki(
         self,
@@ -330,3 +363,105 @@ class AkashaApiClient:
         if not isinstance(result, dict):
             raise ApiContractError("/api/pages/update must return an object.")
         return result
+
+    def _assert_page_in_personal_space(self, page_id: str) -> str:
+        """Confirm the page lives in the personal space before mutating it.
+
+        The delete and restore endpoints only enforce space edit permission,
+        not personal-space ownership, so the Skill keeps that boundary here by
+        reading the page first and refusing anything outside the personal space.
+        """
+        if not page_id:
+            raise ApiConfigurationError("Page ID is required.")
+        personal_space_id = self.get_personal_space_id()
+        page = self.request_json(
+            "/api/pages/info",
+            {"pageId": page_id},
+        )
+        if not isinstance(page, dict) or not page.get("spaceId"):
+            raise ApiContractError("/api/pages/info must return an object.")
+        if page.get("spaceId") != personal_space_id:
+            raise PermissionDeniedError(
+                "Akasha Skill only manages Pages in the personal space."
+            )
+        return personal_space_id
+
+    def delete_personal_page(self, page_id: str) -> dict[str, Any]:
+        """Soft-delete (trash) a personal Page. Never permanently deletes."""
+        self._assert_page_in_personal_space(page_id)
+        # permanentlyDelete is intentionally omitted: it requires space admin
+        # rights and is irreversible, which is outside the Skill's scope.
+        self.request_json("/api/pages/delete", {"pageId": page_id})
+        return {"pageId": page_id, "deleted": True}
+
+    def restore_personal_page(self, page_id: str) -> dict[str, Any]:
+        """Restore a soft-deleted personal Page from the trash."""
+        personal_space_id = self._assert_page_in_personal_space(page_id)
+        result = self.request_json("/api/pages/restore", {"pageId": page_id})
+        if not isinstance(result, dict) or result.get("spaceId") != personal_space_id:
+            raise PermissionDeniedError(
+                "Akasha Skill only manages Pages in the personal space."
+            )
+        return {"pageId": page_id, "restored": True}
+
+    def list_recent_personal_pages(
+        self,
+        *,
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """List recently updated Pages in the personal space."""
+        return self._list_personal_pages("/api/pages/recent", limit, cursor)
+
+    def list_deleted_personal_pages(
+        self,
+        *,
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """List trashed Pages in the personal space, restore candidates."""
+        return self._list_personal_pages("/api/pages/trash", limit, cursor)
+
+    def _list_personal_pages(
+        self,
+        path: str,
+        limit: int,
+        cursor: str | None,
+    ) -> dict[str, Any]:
+        if limit < 1 or limit > 100:
+            raise ApiConfigurationError("Page list limit must be between 1 and 100.")
+        personal_space_id = self.get_personal_space_id()
+        body: dict[str, Any] = {"spaceId": personal_space_id, "limit": limit}
+        if cursor:
+            body["cursor"] = cursor
+        result = self.request_json(path, body)
+        if result is None:
+            return {"items": [], "meta": {"count": 0, "limit": limit}}
+        if not isinstance(result, dict) or not isinstance(result.get("items"), list):
+            raise ApiContractError(f"{path} returned invalid results.")
+        items: list[dict[str, Any]] = []
+        for page in result["items"]:
+            if not isinstance(page, dict) or not page.get("id"):
+                raise ApiContractError(f"{path} returned an invalid Page item.")
+            if page.get("spaceId") != personal_space_id:
+                raise PermissionDeniedError(
+                    "Akasha Skill only manages Pages in the personal space."
+                )
+            items.append(
+                {
+                    "pageId": page.get("id"),
+                    "title": page.get("title"),
+                    "updatedAt": page.get("updatedAt"),
+                    "deletedAt": page.get("deletedAt"),
+                }
+            )
+        meta = result.get("meta") if isinstance(result.get("meta"), dict) else {}
+        return {
+            "items": items,
+            "meta": {
+                "count": len(items),
+                "limit": limit,
+                "hasNextPage": bool(meta.get("hasNextPage")),
+                "nextCursor": meta.get("nextCursor"),
+            },
+        }

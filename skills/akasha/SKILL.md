@@ -1,6 +1,6 @@
 ---
 name: akasha
-description: Use when a user asks to query Akasha or 已编译 Wiki knowledge, read an ACL-authorized shared Page from an internal /p/slug URL, create a 个人空间 Page, or search, read, and update an existing personal Page.
+description: Use when a user asks to query Akasha or 已编译 Wiki knowledge (optionally limited to specific spaces), list readable spaces, read an ACL-authorized shared Page from an internal /p/slug URL, create a 个人空间 Page, or search, read, update, delete, restore, or list recent and trashed personal Pages.
 ---
 
 # Akasha
@@ -35,7 +35,7 @@ macOS 凭据保存在 `~/.akasha/credentials.env`，Linux 保存在 `~/.config/a
 
     python3 <AKASHA_SKILL_DIR>/scripts/akasha.py query "用户问题"
 
-默认查询 API Key 可见的全部空间。只有用户明确限定空间且已提供可信 space ID 时，才增加一个或多个 --space-id。
+默认查询 API Key 可见的全部空间。只有用户明确限定空间且已提供可信 space ID 时，才增加一个或多个 --space-id。若用户想限定空间但不知道有哪些，先用下面的 `space list` 列出可见空间，让用户挑选，再用 `--space-id` 检索，不要猜测 space ID。
 
 按以下语义使用结果：
 
@@ -47,6 +47,14 @@ macOS 凭据保存在 `~/.akasha/credentials.env`，Linux 保存在 `~/.config/a
 - 保留 `warnings` 和 `completenessNotice` 中的重要限制，不要自行声称结果完整。
 
 知识问答不调用 Page 搜索或个人 Page 原文接口，也不在本地拼接搜索结果。`page search` 和 `page get` 不能用于回答普通知识问题；需要查看可信论据的完整来源或读取指定共享 Page 时，使用下面的 `citation get`。
+
+## 列出可见空间
+
+当用户想按空间检索但不确定有哪些空间，或需要挑选 `query --space-id` 的目标时，执行：
+
+    python3 <AKASHA_SKILL_DIR>/scripts/akasha.py space list
+
+返回每个可见空间的 `spaceId`、`name`、`slug` 和 `isPersonal`（是否为当前用户个人空间）。据此和用户确认目标空间，再用可信 `spaceId` 作为 `query --space-id`。这是只读列表，不用于创建、修改或删除空间；不要据此向共享空间写入。
 
 ## 读取有权限的共享 Page
 
@@ -97,6 +105,32 @@ macOS 凭据保存在 `~/.akasha/credentials.env`，Linux 保存在 `~/.config/a
 
 不要发送 space ID，不要移动 Page，不要推断缺失的原文。
 
+## 删除和恢复个人空间 Page
+
+仅在用户明确要求删除个人 Page 时执行；删除只做软删除（移入回收站），可恢复：
+
+    python3 <AKASHA_SKILL_DIR>/scripts/akasha.py page delete <PAGE_ID>
+
+脚本会先读取该 Page 确认属于个人空间，再软删除；目标不在个人空间时按 403 停止，不删除共享空间 Page。绝不做永久删除，也不要尝试其他删除接口或参数绕过。
+
+从回收站恢复：
+
+    python3 <AKASHA_SKILL_DIR>/scripts/akasha.py page restore <PAGE_ID>
+
+需要先知道已删除 Page 的 ID 时，用下面的 `page trash` 列出回收站。恢复同样只针对个人空间 Page。
+
+## 查看个人空间最近 Page 与回收站
+
+用户想知道自己最近在个人空间写了什么、但没有明确关键词时，用最近列表代替关键词搜索：
+
+    python3 <AKASHA_SKILL_DIR>/scripts/akasha.py page recent --limit 20
+
+列出回收站中可恢复的个人 Page：
+
+    python3 <AKASHA_SKILL_DIR>/scripts/akasha.py page trash --limit 20
+
+两者都只返回个人空间的 `pageId`、`title`、`updatedAt` 和 `deletedAt`，用于定位；取得可信 page ID 后再用 `page get` 读原文、`page update` 修改、`page restore` 恢复。两者都不接受 space ID，脚本从 API 的 personalSpaceId 锁定个人空间。结果多时用 --limit 或返回的 nextCursor 翻页。
+
 ## 常见错误
 
 | 错误 | 正确处理 |
@@ -121,7 +155,7 @@ macOS 凭据保存在 `~/.akasha/credentials.env`，Linux 保存在 `~/.config/a
 
 遇到 403 时停止，不要改用其他接口、账号或路径绕过。普通用户 API Key 可通过 `citation get` 只读访问当前用户有 Page ACL 的共享 Page，不要求地址来自知识问答；任意 Page 原文搜索以及 Page 写入仍仅限个人空间。
 
-不提供 Page 删除或 ACL 修改，也不要建议用户用脚本直接调用这些接口。
+个人 Page 支持软删除和恢复，但不提供永久删除、跨空间移动或 ACL 修改，也不要建议用户用脚本直接调用这些接口。
 
 创建或更新成功后，告诉用户需要等待 Wiki 编译；在编译完成前，query 可能暂时查不到新内容。没有编译状态接口时不要盲目轮询。
 
