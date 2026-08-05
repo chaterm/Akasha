@@ -79,7 +79,7 @@ class AkashaApiClient:
         *,
         base_url: str,
         api_key: str,
-        timeout: float = 15.0,
+        timeout: float = 60.0,
         transport: Transport | None = None,
     ) -> None:
         if not api_key or any(character in api_key for character in ("\n", "\r")):
