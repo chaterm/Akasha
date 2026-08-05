@@ -85,6 +85,8 @@ describePostgres('force-reset PostgreSQL scope', () => {
         attachments: 2,
         attempts: 2,
         history: 3,
+        targetDelayed: 1,
+        controlDelayed: 1,
       }),
     );
     expect(after).toEqual(
@@ -112,6 +114,8 @@ describePostgres('force-reset PostgreSQL scope', () => {
         resetLastHash: null,
         newRunGeneration: 4,
         newRunPages: 1,
+        targetDelayed: 0,
+        controlDelayed: 1,
       }),
     );
     if (process.env.AKASHA_MIGRATION_TEST_EVIDENCE === '1') {
@@ -151,6 +155,16 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       deleted_at timestamptz, updated_at timestamptz not null default now()
     );
     create table pages (id varchar primary key, workspace_id varchar not null, space_id varchar not null);
+    create table knowledge_page_compile_schedules (
+      id varchar primary key, workspace_id varchar not null,
+      space_id varchar not null, source_page_id varchar not null,
+      trigger varchar not null, change_count integer not null default 1,
+      first_changed_at timestamptz not null,
+      last_changed_at timestamptz not null, eligible_at timestamptz not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (workspace_id, source_page_id)
+    );
     create table attachments (id varchar primary key, workspace_id varchar not null, space_id varchar, page_id varchar);
     create table knowledge_space_compile_runs (
       id varchar primary key default ('run-' || nextval('run_seq')),
@@ -221,6 +235,12 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       ('space-control','workspace-1','Control Space',7,null,now()),
       ('space-cross','workspace-2','Target Space',11,null,now());
     insert into pages values ('page-target','workspace-1','space-target'),('page-control','workspace-1','space-control');
+    insert into knowledge_page_compile_schedules (
+      id, workspace_id, space_id, source_page_id, trigger,
+      first_changed_at, last_changed_at, eligible_at
+    ) values
+      ('delay-target','workspace-1','space-target','page-target','page_updated',now(),now(),now() + interval '1 hour'),
+      ('delay-control','workspace-1','space-control','page-control','page_updated',now(),now(),now() + interval '1 hour');
     insert into attachments values ('attachment-target','workspace-1','space-target','page-target'),('attachment-control','workspace-1','space-control','page-control');
     insert into knowledge_space_compile_runs (id,workspace_id,space_id,trigger,mode,knowledge_generation,phase,status,expected_page_count,compiler_version,prompt_version,catalog_snapshot,catalog_hash,aggregate_job_id,queued_at,space_job_id,space_job_dispatched_at,execution_token,execution_lease_expires_at,worker_id,heartbeat_at,rerun_requested)
       values ('run-old','workspace-1','space-target','manual_compile','incremental',3,'text','compiling',1,'c','p','[]','h','aggregate-old',now(),'space-old',now(),'old-token',now() + interval '3 minutes','old-worker',now(),true);
@@ -259,6 +279,8 @@ async function evidence(db: Kysely<unknown>) {
       (select knowledge_generation from spaces where id='space-target')::integer as generation,
       (select count(*) from pages)::integer as "sourcePages",
       (select count(*) from attachments)::integer as attachments,
+      (select count(*) from knowledge_page_compile_schedules where space_id='space-target')::integer as "targetDelayed",
+      (select count(*) from knowledge_page_compile_schedules where space_id='space-control')::integer as "controlDelayed",
       (select count(*) from knowledge_compilation_attempts)::integer as attempts,
       ((select count(*) from knowledge_query_audit) + (select count(*) from knowledge_review_snapshots) + (select count(*) from knowledge_space_compile_runs where id='run-old'))::integer as history,
       ((select count(*) from knowledge_pages where space_id='space-target') +

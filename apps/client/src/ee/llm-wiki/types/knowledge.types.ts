@@ -224,6 +224,48 @@ export interface KnowledgeRunDiagnosticsPage {
   limit: number;
 }
 
+export type KnowledgeDelayedPageStatus = "waiting" | "due";
+
+export interface KnowledgeDelayedPageDiagnostic {
+  scheduleId: string;
+  sourcePageId: string;
+  spaceId: string;
+  spaceName: string;
+  title: string;
+  slugId: string;
+  trigger: "page_created" | "page_updated";
+  changeCount: number;
+  status: KnowledgeDelayedPageStatus;
+  firstChangedAt: string;
+  lastChangedAt: string;
+  eligibleAt: string;
+  remainingWaitMs: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface KnowledgeDelayedPageDiagnosticsPage {
+  summary: {
+    sampledAt: string;
+    waitingPageCount: number;
+    duePageCount: number;
+    affectedSpaceCount: number;
+    oldestFirstChangedAt: string | null;
+    nextEligibleAt: string | null;
+  };
+  items: KnowledgeDelayedPageDiagnostic[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface KnowledgeImmediateDelayedPageCompileResult {
+  accepted: boolean;
+  scheduleId: string;
+  sourcePageId: string;
+  spaceId: string;
+}
+
 export interface KnowledgeRunPageDiagnostic {
   runPageId: string;
   sourcePageId: string;

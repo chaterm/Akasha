@@ -2,7 +2,7 @@ import * as Y from 'yjs';
 import { TiptapTransformer } from '@hocuspocus/transformer';
 import { getQueueToken } from '@nestjs/bullmq';
 import { SELF_DECLARED_DEPS_METADATA } from '@nestjs/common/constants';
-import { QueueName } from '../../integrations/queue/constants';
+import { QueueJob, QueueName } from '../../integrations/queue/constants';
 import { PersistenceExtension } from './persistence.extension';
 
 describe('PersistenceExtension', () => {
@@ -52,7 +52,7 @@ describe('PersistenceExtension', () => {
       transclusionService as any,
     );
 
-    return { extension, pageRepo };
+    return { extension, pageRepo, knowledgeQueue: queue };
   };
 
   const payload = () => ({
@@ -80,7 +80,7 @@ describe('PersistenceExtension', () => {
       content: [{ type: 'paragraph', content: [] }],
     };
     jest.spyOn(TiptapTransformer, 'fromYdoc').mockReturnValue(newContent);
-    const { extension, pageRepo } = createSubject(oldContent);
+    const { extension, pageRepo, knowledgeQueue } = createSubject(oldContent);
 
     await extension.onStoreDocument(payload() as any);
 
@@ -90,6 +90,28 @@ describe('PersistenceExtension', () => {
         sourceLastUpdatedByName: null,
       }),
       'page-1',
+      expect.anything(),
+    );
+    expect(knowledgeQueue.add).toHaveBeenCalledWith(
+      QueueJob.PAGE_CONTENT_UPDATED,
+      { pageIds: ['page-1'], workspaceId: 'workspace-1' },
+    );
+  });
+
+  it('页面事务失败时不发布知识更新任务', async () => {
+    const oldContent = { type: 'doc', content: [] };
+    const newContent = {
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [] }],
+    };
+    jest.spyOn(TiptapTransformer, 'fromYdoc').mockReturnValue(newContent);
+    const { extension, pageRepo, knowledgeQueue } = createSubject(oldContent);
+    pageRepo.updatePage.mockRejectedValueOnce(new Error('write failed'));
+
+    await extension.onStoreDocument(payload() as any);
+
+    expect(knowledgeQueue.add).not.toHaveBeenCalledWith(
+      QueueJob.PAGE_CONTENT_UPDATED,
       expect.anything(),
     );
   });

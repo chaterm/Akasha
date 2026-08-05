@@ -705,6 +705,152 @@ export class KnowledgeDiagnosticsService {
     };
   }
 
+  async listDelayedPageDiagnostics(input: {
+    workspaceId: string;
+    spaceIds: string[];
+    enforceSpaceScope: boolean;
+    statuses?: Array<'waiting' | 'due'>;
+    search?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const page = Math.max(input.page ?? 1, 1);
+    const limit = Math.min(Math.max(input.limit ?? 50, 1), 100);
+    const sampledAtResult = await sql<{ sampledAt: Date }>`
+      SELECT clock_timestamp() AS "sampledAt"
+    `.execute(this.db);
+    const sampledAt = sampledAtResult.rows[0].sampledAt;
+    if (input.enforceSpaceScope && input.spaceIds.length === 0) {
+      return {
+        summary: {
+          sampledAt: sampledAt.toISOString(),
+          waitingPageCount: 0,
+          duePageCount: 0,
+          affectedSpaceCount: 0,
+          oldestFirstChangedAt: null,
+          nextEligibleAt: null,
+        },
+        items: [],
+        total: 0,
+        page,
+        limit,
+      };
+    }
+
+    let scope = this.db
+      .selectFrom('knowledgePageCompileSchedules as schedule')
+      .innerJoin('pages as sourcePage', (join) =>
+        join
+          .onRef('sourcePage.id', '=', 'schedule.sourcePageId')
+          .onRef('sourcePage.workspaceId', '=', 'schedule.workspaceId'),
+      )
+      .innerJoin('spaces as space', (join) =>
+        join
+          .onRef('space.id', '=', 'schedule.spaceId')
+          .onRef('space.workspaceId', '=', 'schedule.workspaceId'),
+      )
+      .where('schedule.workspaceId', '=', input.workspaceId)
+      .where('sourcePage.deletedAt', 'is', null)
+      .where('space.deletedAt', 'is', null);
+    if (input.spaceIds.length > 0) {
+      scope = scope.where('schedule.spaceId', 'in', input.spaceIds);
+    }
+
+    const summaryPromise = scope
+      .select([
+        sql<number>`count(*) filter (where schedule.eligible_at > ${sampledAt})`.as(
+          'waitingPageCount',
+        ),
+        sql<number>`count(*) filter (where schedule.eligible_at <= ${sampledAt})`.as(
+          'duePageCount',
+        ),
+        sql<number>`count(distinct schedule.space_id)`.as('affectedSpaceCount'),
+        sql<Date>`min(schedule.first_changed_at)`.as('oldestFirstChangedAt'),
+        sql<Date>`min(schedule.eligible_at)`.as('nextEligibleAt'),
+      ])
+      .executeTakeFirst();
+
+    let list = scope;
+    const statuses = [...new Set(input.statuses ?? [])];
+    if (statuses.length === 1) {
+      list =
+        statuses[0] === 'waiting'
+          ? list.where('schedule.eligibleAt', '>', sampledAt)
+          : list.where('schedule.eligibleAt', '<=', sampledAt);
+    }
+    const search = input.search?.trim();
+    if (search) {
+      list = list.where((eb) =>
+        eb.or([
+          eb('sourcePage.title', 'ilike', `%${search}%`),
+          eb('sourcePage.slugId', 'ilike', `%${search}%`),
+          eb('space.name', 'ilike', `%${search}%`),
+        ]),
+      );
+    }
+
+    const [summaryRow, countRow, rows] = await Promise.all([
+      summaryPromise,
+      list.select((eb) => eb.fn.countAll().as('count')).executeTakeFirst(),
+      list
+        .select([
+          'schedule.id',
+          'schedule.sourcePageId',
+          'schedule.spaceId',
+          'space.name as spaceName',
+          'sourcePage.title',
+          'sourcePage.slugId',
+          'schedule.trigger',
+          'schedule.changeCount',
+          'schedule.firstChangedAt',
+          'schedule.lastChangedAt',
+          'schedule.eligibleAt',
+          'schedule.createdAt',
+          'schedule.updatedAt',
+        ])
+        .orderBy('schedule.eligibleAt', 'asc')
+        .orderBy('schedule.id', 'asc')
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .execute(),
+    ]);
+
+    return {
+      summary: {
+        sampledAt: sampledAt.toISOString(),
+        waitingPageCount: numberValue(summaryRow?.waitingPageCount),
+        duePageCount: numberValue(summaryRow?.duePageCount),
+        affectedSpaceCount: numberValue(summaryRow?.affectedSpaceCount),
+        oldestFirstChangedAt: isoDate(summaryRow?.oldestFirstChangedAt),
+        nextEligibleAt: isoDate(summaryRow?.nextEligibleAt),
+      },
+      items: rows.map((row) => ({
+        scheduleId: row.id,
+        sourcePageId: row.sourcePageId,
+        spaceId: row.spaceId,
+        spaceName: row.spaceName,
+        title: row.title ?? '',
+        slugId: row.slugId,
+        trigger: row.trigger,
+        changeCount: row.changeCount,
+        status:
+          row.eligibleAt.getTime() <= sampledAt.getTime() ? 'due' : 'waiting',
+        firstChangedAt: row.firstChangedAt.toISOString(),
+        lastChangedAt: row.lastChangedAt.toISOString(),
+        eligibleAt: row.eligibleAt.toISOString(),
+        remainingWaitMs: Math.max(
+          0,
+          row.eligibleAt.getTime() - sampledAt.getTime(),
+        ),
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+      })),
+      total: numberValue(countRow?.count),
+      page,
+      limit,
+    };
+  }
+
   /**
    * Page-centric compilation log: for each source page, the most recent
    * per-page compilation record within an optional time window. Answers
@@ -743,9 +889,6 @@ export class KnowledgeDiagnosticsService {
       .where('runPage.workspaceId', '=', input.workspaceId);
     if (input.spaceIds.length > 0) {
       base = base.where('run.spaceId', 'in', input.spaceIds);
-    }
-    if (input.statuses?.length) {
-      base = base.where('runPage.status', 'in', input.statuses);
     }
     const fromDate = parseTimestamp(input.from);
     if (fromDate) {
@@ -790,16 +933,17 @@ export class KnowledgeDiagnosticsService {
       ])
       .distinctOn('runPage.sourcePageId')
       .orderBy('runPage.sourcePageId')
-      .orderBy('runPage.updatedAt', 'desc');
+      .orderBy('runPage.updatedAt', 'desc')
+      .orderBy('runPage.id', 'desc');
+
+    let current = this.db.selectFrom(latest.as('latest'));
+    if (input.statuses?.length) {
+      current = current.where('latest.status', 'in', input.statuses);
+    }
 
     const [countRow, rows] = await Promise.all([
-      base
-        .select((eb) =>
-          eb.fn.count('runPage.sourcePageId').distinct().as('count'),
-        )
-        .executeTakeFirst(),
-      this.db
-        .selectFrom(latest.as('latest'))
+      current.select((eb) => eb.fn.countAll().as('count')).executeTakeFirst(),
+      current
         .selectAll()
         .orderBy('latest.updatedAt', 'desc')
         .orderBy('latest.sourcePageId', 'asc')
@@ -893,12 +1037,20 @@ export class KnowledgeDiagnosticsService {
     if (input.sourcePageIds.length === 0) return [];
     const sourcePageIds = [...new Set(input.sourcePageIds)];
 
+    const latest = this.db
+      .selectFrom('knowledgeSpaceCompileRunPages as runPage')
+      .select(['runPage.sourcePageId', 'runPage.status'])
+      .where('runPage.workspaceId', '=', input.workspaceId)
+      .where('runPage.sourcePageId', 'in', sourcePageIds)
+      .distinctOn('runPage.sourcePageId')
+      .orderBy('runPage.sourcePageId')
+      .orderBy('runPage.updatedAt', 'desc')
+      .orderBy('runPage.id', 'desc');
+
     const rows = await this.db
-      .selectFrom('knowledgeCompilationAttempts')
-      .select('sourcePageId')
-      .where('workspaceId', '=', input.workspaceId)
-      .where('sourcePageId', 'in', sourcePageIds)
-      .where('status', '=', 'failed')
+      .selectFrom(latest.as('latest'))
+      .select('latest.sourcePageId')
+      .where('latest.status', '=', 'failed')
       .execute();
 
     return [...new Set(rows.map((row) => row.sourcePageId))];

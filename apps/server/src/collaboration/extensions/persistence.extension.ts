@@ -163,10 +163,18 @@ export class PersistenceExtension implements Extension {
         this.logger.debug(`Page updated: ${pageId} - SlugId: ${page.slugId}`);
       });
     } catch (err) {
+      page = null;
       this.logger.error(`Failed to update page ${pageId}`, err);
     }
 
     if (page) {
+      // Schedule knowledge maintenance immediately after the page transaction
+      // commits, before ancillary post-save work can fail.
+      await this.knowledgeQueue.add(QueueJob.PAGE_CONTENT_UPDATED, {
+        pageIds: [pageId],
+        workspaceId: page.workspaceId,
+      });
+
       document.broadcastStateless(
         JSON.stringify({
           type: 'page.updated',
@@ -209,11 +217,6 @@ export class PersistenceExtension implements Extension {
           workspaceId: page.workspaceId,
         } as IPageMentionNotificationJob);
       }
-
-      await this.knowledgeQueue.add(QueueJob.PAGE_CONTENT_UPDATED, {
-        pageIds: [pageId],
-        workspaceId: page.workspaceId,
-      });
 
       await this.enqueuePageHistory(page);
     }

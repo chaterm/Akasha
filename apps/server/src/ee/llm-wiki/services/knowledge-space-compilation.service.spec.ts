@@ -124,6 +124,46 @@ describe('KnowledgeSpaceCompilationService', () => {
     );
   });
 
+  it('makes a confirmed delayed page due and immediately runs the dispatcher', async () => {
+    const fixture = createService();
+    fixture.repo.markDelayedPageForImmediateCompilation.mockResolvedValue({
+      scheduleId: 'schedule-1',
+      sourcePageId: 'page-1',
+      spaceId: 'space-1',
+      pageName: 'Page 1',
+    });
+
+    await expect(
+      fixture.service.requestImmediateDelayedPageCompilation({
+        workspaceId: 'workspace-1',
+        scheduleId: 'schedule-1',
+        confirmationPageName: 'Page 1',
+      }),
+    ).resolves.toEqual(expect.objectContaining({ scheduleId: 'schedule-1' }));
+
+    expect(
+      fixture.repo.markDelayedPageForImmediateCompilation,
+    ).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      scheduleId: 'schedule-1',
+      confirmationPageName: 'Page 1',
+    });
+    expect(fixture.repo.promoteDuePageCompileSchedules).toHaveBeenCalled();
+  });
+
+  it('does not dispatch when delayed-page confirmation fails', async () => {
+    const fixture = createService();
+    fixture.repo.markDelayedPageForImmediateCompilation.mockResolvedValue(null);
+
+    await fixture.service.requestImmediateDelayedPageCompilation({
+      workspaceId: 'workspace-1',
+      scheduleId: 'schedule-1',
+      confirmationPageName: 'wrong',
+    });
+
+    expect(fixture.repo.promoteDuePageCompileSchedules).not.toHaveBeenCalled();
+  });
+
   it('initializes against the prior completed Run instead of its own queued placeholder', async () => {
     const source = sourceSnapshot();
     const fixture = createService({
@@ -221,6 +261,26 @@ describe('KnowledgeSpaceCompilationService', () => {
     );
   });
 
+  it('recompiles an explicitly retried page instead of reusing its prior publication', async () => {
+    const source = sourceSnapshot();
+    const fixture = createService({
+      exportedSources: [source],
+      reuseCandidates: [reuseCandidate(source)],
+      targetSourcePageIds: ['page-1'],
+      trigger: 'page_retry',
+    });
+
+    const result = await fixture.service.initializeLeasedRun(lease());
+
+    const plan = fixture.executionRepo.initializeRun.mock.calls[0][1];
+    expect(plan.pages).toEqual([
+      expect.objectContaining({ sourcePageId: 'page-1', status: 'pending' }),
+    ]);
+    expect(result).toEqual(
+      expect.objectContaining({ pageCompilationRequired: true }),
+    );
+  });
+
   it('never treats an image-overflow page as fully reusable and freezes only the first 50 images', async () => {
     const source = sourceSnapshotWithImages(60);
     const readyExtractions = source.images.slice(0, 50).map(readyExtraction);
@@ -290,11 +350,18 @@ function createService(
     hasActiveOverview?: boolean;
     targetSourcePageIds?: string[] | null;
     activeSourcePageIds?: string[];
+    trigger?: string;
   } = {},
 ) {
   const repo = {
     requestRuns: jest.fn().mockResolvedValue([]),
     requestIncrementalCompileForPages: jest.fn().mockResolvedValue([]),
+    markDelayedPageForImmediateCompilation: jest.fn(),
+    promoteDuePageCompileSchedules: jest.fn().mockResolvedValue({
+      selectedPageCount: 0,
+      promotedPageCount: 0,
+      runRequestCount: 0,
+    }),
     findLatestCompletedRunForAggregateReuse: jest
       .fn()
       .mockResolvedValue(overrides.latestAggregateRun),
@@ -362,6 +429,7 @@ function createService(
       compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
       promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
       targetSourcePageIds: overrides.targetSourcePageIds ?? null,
+      trigger: overrides.trigger ?? 'page_update',
     }),
     initializeRun: jest.fn().mockResolvedValue({
       initialized: true,

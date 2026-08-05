@@ -157,6 +157,56 @@ describePostgres(
       });
       expect(emptyScope).toMatchObject({ items: [], total: 0 });
     });
+
+    it('retries only pages whose latest durable RunPage is failed', async () => {
+      await expect(
+        service.findRetryableFailedPageIds({
+          workspaceId: 'workspace-1',
+          sourcePageIds: ['page-a-1', 'page-a-3', 'page-a-3'],
+        }),
+      ).resolves.toEqual(['page-a-3']);
+    });
+
+    it('lists the independent delayed page queue with scope and due state', async () => {
+      const result = await service.listDelayedPageDiagnostics({
+        workspaceId: 'workspace-1',
+        spaceIds: ['space-a'],
+        enforceSpaceScope: true,
+        page: 1,
+        limit: 50,
+      });
+
+      expect(result.summary).toMatchObject({
+        waitingPageCount: 1,
+        duePageCount: 1,
+        affectedSpaceCount: 1,
+      });
+      expect(result.total).toBe(2);
+      expect(result.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            sourcePageId: 'page-a-1',
+            status: 'waiting',
+            changeCount: 3,
+          }),
+          expect.objectContaining({
+            sourcePageId: 'page-a-2',
+            status: 'due',
+          }),
+        ]),
+      );
+
+      const dueSearch = await service.listDelayedPageDiagnostics({
+        workspaceId: 'workspace-1',
+        spaceIds: ['space-a', 'space-denied'],
+        enforceSpaceScope: true,
+        statuses: ['due'],
+        search: 'Page A2',
+      });
+      expect(dueSearch.items.map((item) => item.sourcePageId)).toEqual([
+        'page-a-2',
+      ]);
+    });
   },
 );
 
@@ -234,10 +284,31 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       failure_class varchar,
       error_code varchar
     );
+    create table knowledge_compilation_attempts (
+      workspace_id varchar not null,
+      source_page_id varchar not null,
+      status varchar not null
+    );
     create table pages (
       id varchar primary key,
+      workspace_id varchar not null,
+      space_id varchar not null,
       title varchar not null,
-      slug_id varchar not null
+      slug_id varchar not null,
+      deleted_at timestamptz
+    );
+    create table knowledge_page_compile_schedules (
+      id varchar primary key,
+      workspace_id varchar not null,
+      space_id varchar not null,
+      source_page_id varchar not null,
+      trigger varchar not null,
+      change_count integer not null default 1,
+      first_changed_at timestamptz not null,
+      last_changed_at timestamptz not null,
+      eligible_at timestamptz not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
     );
 
     insert into spaces (id, workspace_id, name) values
@@ -245,11 +316,22 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       ('space-b', 'workspace-1', 'Space B'),
       ('space-denied', 'workspace-1', 'Denied Space');
 
-    insert into pages (id, title, slug_id) values
-      ('page-a-1', 'Page A1', 'page-a-1'),
-      ('page-a-2', 'Page A2', 'page-a-2'),
-      ('page-a-3', 'Page A3', 'page-a-3'),
-      ('page-b-1', 'Page B1', 'page-b-1');
+    insert into pages (id, workspace_id, space_id, title, slug_id) values
+      ('page-a-1', 'workspace-1', 'space-a', 'Page A1', 'page-a-1'),
+      ('page-a-2', 'workspace-1', 'space-a', 'Page A2', 'page-a-2'),
+      ('page-a-3', 'workspace-1', 'space-a', 'Page A3', 'page-a-3'),
+      ('page-b-1', 'workspace-1', 'space-b', 'Page B1', 'page-b-1');
+
+    insert into knowledge_page_compile_schedules (
+      id, workspace_id, space_id, source_page_id, trigger, change_count,
+      first_changed_at, last_changed_at, eligible_at
+    ) values
+      ('delay-a-waiting', 'workspace-1', 'space-a', 'page-a-1',
+       'page_updated', 3, now() - interval '20 minutes',
+       now() - interval '5 minutes', now() + interval '55 minutes'),
+      ('delay-a-due', 'workspace-1', 'space-a', 'page-a-2',
+       'page_created', 1, now() - interval '2 hours',
+       now() - interval '70 minutes', now() - interval '10 minutes');
 
     insert into knowledge_space_compile_runs (
       id, workspace_id, space_id, status, mode, phase,
@@ -336,9 +418,21 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
        'page-a-3', 'failed', 0, 0, 0, 0, 'not_required', 'not_required',
        'provider_error', 'raw provider response and private page content',
        '2026-07-28 07:02:00+00'),
+      ('run-page-a-1-old-failed', 'run-space-a-old-1', 'workspace-1',
+       'space-a', 'page-a-1', 'failed', 0, 0, 0, 0, 'not_required',
+       'not_required', 'old_failure', 'An older attempt failed',
+       '2026-07-28 05:59:00+00'),
       ('run-page-b-1', 'run-space-b-latest', 'workspace-1', 'space-b',
        'page-b-1', 'succeeded', 1, 1, 0, 0, 'succeeded', 'succeeded',
        null, null, '2026-07-28 08:01:00+00');
+
+    -- Deliberately opposite to the current RunPage states. Retry eligibility
+    -- must follow the durable RunPage shown in diagnostics, not this cache.
+    insert into knowledge_compilation_attempts (
+      workspace_id, source_page_id, status
+    ) values
+      ('workspace-1', 'page-a-1', 'failed'),
+      ('workspace-1', 'page-a-3', 'succeeded');
 
     insert into knowledge_space_compile_run_images (
       id, run_id, run_page_id, status, failure_class, error_code

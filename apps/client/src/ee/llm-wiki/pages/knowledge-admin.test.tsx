@@ -13,6 +13,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cancelKnowledgeCompilationRun,
   forceRebuildKnowledgeSpace,
+  getKnowledgeDelayedPageDiagnostics,
   getKnowledgeQualityDiagnostics,
   getKnowledgeQuarantineDiagnostics,
   getKnowledgeRetrievalDiagnostics,
@@ -20,6 +21,7 @@ import {
   getKnowledgeRunDiagnosticsSummary,
   getKnowledgeRunPageDiagnostics,
   getKnowledgeWorkerDiagnostics,
+  immediatelyCompileDelayedPage,
   retryKnowledgePages,
   runKnowledgeAdminAction,
   updateKnowledgeSpace,
@@ -52,6 +54,7 @@ vi.mock("@/hooks/use-user-role", () => ({
 }));
 vi.mock("../services/knowledge-service", () => ({
   cancelKnowledgeCompilationRun: vi.fn(),
+  getKnowledgeDelayedPageDiagnostics: vi.fn(),
   getKnowledgeRunDiagnosticsSummary: vi.fn(),
   getKnowledgeRunDiagnostics: vi.fn(),
   getKnowledgeRunPageDiagnostics: vi.fn(),
@@ -59,6 +62,7 @@ vi.mock("../services/knowledge-service", () => ({
   getKnowledgeQualityDiagnostics: vi.fn(),
   getKnowledgeQuarantineDiagnostics: vi.fn(),
   getKnowledgeRetrievalDiagnostics: vi.fn(),
+  immediatelyCompileDelayedPage: vi.fn(),
   retryKnowledgePages: vi.fn(),
   runKnowledgeAdminAction: vi.fn(),
   updateKnowledgeSpace: vi.fn(),
@@ -112,6 +116,44 @@ describe("KnowledgeAdminPage", () => {
       schedulingAuthority: "postgresql",
       space: worker(10, 30),
       image: worker(5, 15),
+    });
+    vi.mocked(getKnowledgeDelayedPageDiagnostics).mockResolvedValue({
+      summary: {
+        sampledAt: "2026-08-05T10:00:00.000Z",
+        waitingPageCount: 1,
+        duePageCount: 0,
+        affectedSpaceCount: 1,
+        oldestFirstChangedAt: "2026-08-05T09:30:00.000Z",
+        nextEligibleAt: "2026-08-05T10:30:00.000Z",
+      },
+      items: [
+        {
+          scheduleId: "11111111-1111-4111-8111-111111111111",
+          sourcePageId: "page-1",
+          spaceId: "space-1",
+          spaceName: "AIM",
+          title: "BeeGFS deployment",
+          slugId: "beegfs-deployment",
+          trigger: "page_updated",
+          changeCount: 2,
+          status: "waiting",
+          firstChangedAt: "2026-08-05T09:30:00.000Z",
+          lastChangedAt: "2026-08-05T09:30:00.000Z",
+          eligibleAt: "2026-08-05T10:30:00.000Z",
+          remainingWaitMs: 30 * 60 * 1000,
+          createdAt: "2026-08-05T09:30:00.000Z",
+          updatedAt: "2026-08-05T09:30:00.000Z",
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 50,
+    });
+    vi.mocked(immediatelyCompileDelayedPage).mockResolvedValue({
+      accepted: true,
+      scheduleId: "11111111-1111-4111-8111-111111111111",
+      sourcePageId: "page-1",
+      spaceId: "space-1",
     });
     vi.mocked(getKnowledgeQualityDiagnostics).mockResolvedValue({
       summary: {
@@ -262,6 +304,36 @@ describe("KnowledgeAdminPage", () => {
       expect(getKnowledgeRunDiagnosticsSummary).toHaveBeenCalledTimes(2),
     );
     expect(getKnowledgeQualityDiagnostics).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires the exact page name before immediately compiling a delayed page", async () => {
+    renderPage();
+    await screen.findByText("Space compilation runs");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Delayed queue" }));
+    expect(await screen.findByText("BeeGFS deployment")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Immediate compile" }));
+
+    const dialog = await screen.findByRole("dialog");
+    const confirmButton = within(dialog).getByRole("button", {
+      name: "Immediate compile",
+    });
+    expect((confirmButton as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(
+      within(dialog).getByLabelText("Type the page name to confirm"),
+      { target: { value: "BeeGFS deployment" } },
+    );
+    fireEvent.click(confirmButton);
+
+    await waitFor(() =>
+      expect(immediatelyCompileDelayedPage).toHaveBeenCalledWith(
+        {
+          scheduleId: "11111111-1111-4111-8111-111111111111",
+          confirmationPageName: "BeeGFS deployment",
+        },
+        expect.anything(),
+      ),
+    );
   });
 
   it("passes search, status, phase, and pagination through the bounded Run query", async () => {

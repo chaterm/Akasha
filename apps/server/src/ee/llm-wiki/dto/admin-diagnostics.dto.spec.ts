@@ -1,6 +1,8 @@
 import 'reflect-metadata';
 import { validate } from 'class-validator';
 import {
+  AdminKnowledgeDelayedPageListDto,
+  AdminKnowledgeImmediateCompileDelayedPageDto,
   AdminKnowledgePageLogDto,
   AdminKnowledgeQuarantineListDto,
   AdminKnowledgeRunListDto,
@@ -57,6 +59,34 @@ describe('bounded knowledge diagnostics DTOs', () => {
     const errors = await validate(dto);
     expect(errors.map((error) => error.property)).toEqual(
       expect.arrayContaining(['statuses', 'from', 'page', 'limit']),
+    );
+  });
+
+  it('bounds delayed-page pagination and validates status filters', async () => {
+    const dto = Object.assign(new AdminKnowledgeDelayedPageListDto(), {
+      statuses: ['dispatching'],
+      page: 0,
+      limit: 101,
+    });
+
+    const errors = await validate(dto);
+    expect(errors.map((error) => error.property)).toEqual(
+      expect.arrayContaining(['statuses', 'page', 'limit']),
+    );
+  });
+
+  it('requires a bounded page name for immediate delayed compilation', async () => {
+    const missing = new AdminKnowledgeImmediateCompileDelayedPageDto();
+    const tooLong = Object.assign(
+      new AdminKnowledgeImmediateCompileDelayedPageDto(),
+      { confirmationPageName: 'x'.repeat(256) },
+    );
+
+    expect((await validate(missing)).map((error) => error.property)).toContain(
+      'confirmationPageName',
+    );
+    expect((await validate(tooLong)).map((error) => error.property)).toContain(
+      'confirmationPageName',
     );
   });
 

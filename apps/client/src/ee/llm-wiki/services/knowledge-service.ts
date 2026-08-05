@@ -3,6 +3,9 @@ import type {
   KnowledgeAdminSpaceAction,
   KnowledgeCancelRunResult,
   KnowledgeContextBudget,
+  KnowledgeDelayedPageDiagnosticsPage,
+  KnowledgeImmediateDelayedPageCompileResult,
+  KnowledgeDelayedPageStatus,
   KnowledgeCompileResult,
   KnowledgeCompileSpacesResult,
   KnowledgeCompileRunDisposition,
@@ -225,6 +228,41 @@ export async function getKnowledgeRunDiagnostics(params: {
     params,
   );
   return normalizeRunDiagnosticsPage(value);
+}
+
+export async function getKnowledgeDelayedPageDiagnostics(params: {
+  spaceIds?: string[];
+  statuses?: KnowledgeDelayedPageStatus[];
+  search?: string;
+  page?: number;
+  limit?: number;
+}): Promise<KnowledgeDelayedPageDiagnosticsPage> {
+  const value = await postKnowledgeDiagnostics(
+    "/api/llm-wiki/admin/diagnostics/delayed-pages",
+    params,
+  );
+  return normalizeDelayedPageDiagnostics(value);
+}
+
+export async function immediatelyCompileDelayedPage(params: {
+  scheduleId: string;
+  confirmationPageName: string;
+}): Promise<KnowledgeImmediateDelayedPageCompileResult> {
+  const response = await fetch(
+    `/api/llm-wiki/admin/diagnostics/delayed-pages/${encodeURIComponent(params.scheduleId)}/immediate-compile`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        confirmationPageName: params.confirmationPageName,
+      }),
+    },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response));
+  return unwrapApiData(
+    await response.json(),
+  ) as KnowledgeImmediateDelayedPageCompileResult;
 }
 
 export async function getKnowledgeRunPageDiagnostics(params: {
@@ -577,6 +615,46 @@ function normalizeRunDiagnosticsPage(
   return {
     items: Array.isArray(record.items)
       ? record.items.filter(isRecord).map(normalizeRunDiagnostic)
+      : [],
+    total: readNumber(record.total),
+    page: Math.max(readNumber(record.page), 1),
+    limit: Math.max(readNumber(record.limit), 1),
+  };
+}
+
+function normalizeDelayedPageDiagnostics(
+  value: unknown,
+): KnowledgeDelayedPageDiagnosticsPage {
+  const record = isRecord(value) ? value : {};
+  const summary = isRecord(record.summary) ? record.summary : {};
+  return {
+    summary: {
+      sampledAt: readString(summary.sampledAt),
+      waitingPageCount: readNumber(summary.waitingPageCount),
+      duePageCount: readNumber(summary.duePageCount),
+      affectedSpaceCount: readNumber(summary.affectedSpaceCount),
+      oldestFirstChangedAt: readNullableString(summary.oldestFirstChangedAt),
+      nextEligibleAt: readNullableString(summary.nextEligibleAt),
+    },
+    items: Array.isArray(record.items)
+      ? record.items.filter(isRecord).map((item) => ({
+          scheduleId: readString(item.scheduleId),
+          sourcePageId: readString(item.sourcePageId),
+          spaceId: readString(item.spaceId),
+          spaceName: readString(item.spaceName),
+          title: readString(item.title),
+          slugId: readString(item.slugId),
+          trigger:
+            item.trigger === "page_created" ? "page_created" : "page_updated",
+          changeCount: readNumber(item.changeCount),
+          status: item.status === "due" ? "due" : "waiting",
+          firstChangedAt: readString(item.firstChangedAt),
+          lastChangedAt: readString(item.lastChangedAt),
+          eligibleAt: readString(item.eligibleAt),
+          remainingWaitMs: readNumber(item.remainingWaitMs),
+          createdAt: readString(item.createdAt),
+          updatedAt: readString(item.updatedAt),
+        }))
       : [],
     total: readNumber(record.total),
     page: Math.max(readNumber(record.page), 1),

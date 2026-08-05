@@ -384,9 +384,10 @@ export class KnowledgeTextJobHandler {
       sourcePageIds: data.pageIds,
     });
 
-    await this.spaceCompilation.requestIncrementalCompileForPages({
+    await this.spaceCompilation.scheduleIncrementalCompileForPages({
       workspaceId: data.workspaceId,
       sourcePageIds: uniqueValues(data.pageIds),
+      trigger: 'page_updated',
     });
   }
 

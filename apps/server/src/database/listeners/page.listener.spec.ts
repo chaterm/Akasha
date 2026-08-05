@@ -1,12 +1,8 @@
 import { QueueJob } from '../../integrations/queue/constants';
-import {
-  DEFAULT_KNOWLEDGE_COMPILER_VERSION,
-  DEFAULT_KNOWLEDGE_PROMPT_VERSION,
-} from '../../ee/llm-wiki/llm-wiki.constants';
 import { PageListener } from './page.listener';
 
 describe('PageListener knowledge jobs', () => {
-  it('keeps access indexing and requests one space run for page creation', async () => {
+  it('keeps access indexing and schedules page creation after the quiet period', async () => {
     const { listener, knowledgeQueue, runRepo } = createListener();
 
     await listener.handlePageCreated({
@@ -18,14 +14,13 @@ describe('PageListener knowledge jobs', () => {
       QueueJob.KNOWLEDGE_REINDEX_ACCESS,
       { workspaceId: 'workspace-1', sourcePageIds: ['page-1'] },
     );
-    expect(runRepo.requestIncrementalCompileForPages).toHaveBeenCalledWith({
+    expect(runRepo.scheduleIncrementalCompileForPages).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       sourcePageIds: ['page-1'],
-      trigger: 'page_update',
-      removed: false,
-      compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
-      promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+      trigger: 'page_created',
+      quietPeriodMs: 60 * 60 * 1_000,
     });
+    expect(runRepo.requestIncrementalCompileForPages).not.toHaveBeenCalled();
     expect(knowledgeQueue.add).not.toHaveBeenCalledWith(
       'knowledge-compile-pages',
       expect.anything(),
@@ -47,9 +42,10 @@ describe('PageListener knowledge jobs', () => {
       { workspaceId: 'workspace-1', sourcePageIds: ['page-1'] },
     );
     expect(runRepo.requestIncrementalCompileForPages).not.toHaveBeenCalled();
+    expect(runRepo.scheduleIncrementalCompileForPages).not.toHaveBeenCalled();
   });
 
-  it('keeps last successful knowledge visible while requesting an update run', async () => {
+  it('keeps last successful knowledge visible while postponing an update run', async () => {
     const { listener, knowledgeQueue, runRepo } = createListener();
 
     await listener.handlePageUpdated({
@@ -61,9 +57,30 @@ describe('PageListener knowledge jobs', () => {
       QueueJob.KNOWLEDGE_MARK_SOURCES_STALE,
       expect.anything(),
     );
-    expect(runRepo.requestIncrementalCompileForPages).toHaveBeenCalledWith(
-      expect.objectContaining({ removed: false }),
+    expect(runRepo.scheduleIncrementalCompileForPages).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trigger: 'page_updated',
+        quietPeriodMs: 60 * 60 * 1_000,
+      }),
     );
+    expect(runRepo.requestIncrementalCompileForPages).not.toHaveBeenCalled();
+  });
+
+  it('leaves content compilation to the post-commit content queue', async () => {
+    const { listener, knowledgeQueue, runRepo } = createListener();
+
+    await listener.handlePageUpdated({
+      workspaceId: 'workspace-1',
+      pageIds: ['page-1'],
+      skipKnowledgeCompile: true,
+    });
+
+    expect(knowledgeQueue.add).toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_REINDEX_ACCESS,
+      { workspaceId: 'workspace-1', sourcePageIds: ['page-1'] },
+    );
+    expect(runRepo.scheduleIncrementalCompileForPages).not.toHaveBeenCalled();
+    expect(runRepo.requestIncrementalCompileForPages).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -118,18 +135,20 @@ describe('PageListener knowledge jobs', () => {
     );
   });
 
-  it('always delegates active-run arbitration to the locked repository', async () => {
+  it('coalesces repeated page updates in the durable delayed schedule', async () => {
     const { listener, runRepo } = createListener();
-    runRepo.requestIncrementalCompileForPages.mockResolvedValue([
-      { disposition: 'rerun_requested', run: { id: 'run-1' } },
-    ]);
 
     await listener.handlePageUpdated({
       workspaceId: 'workspace-1',
       pageIds: ['page-1'],
     });
+    await listener.handlePageUpdated({
+      workspaceId: 'workspace-1',
+      pageIds: ['page-1'],
+    });
 
-    expect(runRepo.requestIncrementalCompileForPages).toHaveBeenCalledTimes(1);
+    expect(runRepo.scheduleIncrementalCompileForPages).toHaveBeenCalledTimes(2);
+    expect(runRepo.requestIncrementalCompileForPages).not.toHaveBeenCalled();
   });
 });
 
@@ -145,6 +164,7 @@ function createListener() {
   };
   const runRepo = {
     requestIncrementalCompileForPages: jest.fn().mockResolvedValue([]),
+    scheduleIncrementalCompileForPages: jest.fn().mockResolvedValue(1),
   };
 
   return {
