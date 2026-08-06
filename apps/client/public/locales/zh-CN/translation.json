@@ -904,7 +904,7 @@
   "Security": "安全",
   "Enforce SSO": "强制使用 SSO",
   "Once enforced, members will not be able to login with email and password.": "启用后，成员将无法使用邮箱和密码登录。",
-  "AI-generated content may not be accurate.": "AI 生成的内容可能并不准确。",
+  "AI-generated content may not be accurate.": "AI 生成的内容可能并不准确，重要数据请核对原文内容。",
   "AI Chat": "AI 聊天",
   "Analyze for insights": "分析并获取洞察",
   "Ask anything...": "随便问点什么...",
