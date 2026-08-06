@@ -2,16 +2,12 @@ import { useCallback, useRef, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   IconArrowUp,
-  IconPaperclip,
   IconPlayerStopFilled,
   IconX,
   IconFile,
   IconPhoto,
-  IconPlus,
-  IconAt,
   IconFileText,
 } from "@tabler/icons-react";
-import { Popover } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { EditorContent, ReactNodeViewRenderer, useEditor } from "@tiptap/react";
 import { Placeholder } from "@tiptap/extension-placeholder";
@@ -129,7 +125,6 @@ export default function ChatInput({
   const [pendingAttachments, setPendingAttachments] = useState<
     PendingAttachment[]
   >([]);
-  const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const onSendRef = useRef(onSend);
   onSendRef.current = onSend;
@@ -376,76 +371,6 @@ export default function ChatInput({
 
         <EditorContent editor={editor} className={classes.editorContent} />
         <div className={classes.actions}>
-          <Popover
-            opened={plusMenuOpen}
-            onChange={setPlusMenuOpen}
-            position="top-start"
-            width={220}
-            shadow="md"
-            trapFocus
-            returnFocus
-          >
-            <Popover.Target>
-              <button
-                type="button"
-                className={classes.plusButton}
-                disabled={disabled}
-                onClick={() => setPlusMenuOpen((o) => !o)}
-                aria-label="Add content"
-              >
-                <IconPlus size={14} />
-              </button>
-            </Popover.Target>
-            <Popover.Dropdown p={4}>
-              <button
-                type="button"
-                className={classes.plusMenuItem}
-                onClick={() => {
-                  if (FILE_ATTACHMENTS_DISABLED) return;
-                  fileInputRef.current?.click();
-                  setPlusMenuOpen(false);
-                }}
-                disabled={
-                  disabled ||
-                  FILE_ATTACHMENTS_DISABLED ||
-                  pendingAttachments.length >= MAX_ATTACHMENTS_PER_MESSAGE
-                }
-                title={
-                  FILE_ATTACHMENTS_DISABLED
-                    ? t("正在快速开发中")
-                    : pendingAttachments.length >= MAX_ATTACHMENTS_PER_MESSAGE
-                      ? t("Max {{max}} files per message", {
-                          max: MAX_ATTACHMENTS_PER_MESSAGE,
-                        })
-                      : undefined
-                }
-              >
-                <IconPaperclip size={16} className={classes.plusMenuIcon} />
-                <span className={classes.plusMenuText}>{t("Add files")}</span>
-                {FILE_ATTACHMENTS_DISABLED && (
-                  <span className={classes.plusMenuHint}>
-                    {t("正在快速开发中")}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                className={classes.plusMenuItem}
-                disabled={disabled}
-                onClick={() => {
-                  editor?.commands.insertContent("@");
-                  editor?.commands.focus();
-                  setPlusMenuOpen(false);
-                }}
-              >
-                <IconAt size={16} className={classes.plusMenuIcon} />
-                Mention a page
-              </button>
-            </Popover.Dropdown>
-          </Popover>
-
-          <div style={{ flex: 1 }} />
-
           {isStreaming ? (
             <button
               type="button"
