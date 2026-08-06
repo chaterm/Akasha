@@ -21,6 +21,47 @@ describe("useChatStream message editing", () => {
     serviceMocks.getChatInfo.mockReset();
   });
 
+  it("replaces the optimistic user message id when sending finishes", async () => {
+    serviceMocks.sendChatMessage.mockImplementation(
+      (_params, onEvent: (event: Record<string, unknown>) => void) => {
+        onEvent({ type: "content", text: "answer" });
+        onEvent({
+          type: "done",
+          messageId: "assistant-1",
+          userMessageId: "user-persisted-1",
+          answerMode: "knowledge",
+        });
+        return new AbortController();
+      },
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>{children}</MemoryRouter>
+      </QueryClientProvider>
+    );
+    const { result } = renderHook(() => useChatStream("chat-1"), { wrapper });
+
+    act(() => {
+      result.current.sendMessage("question");
+    });
+
+    await waitFor(() => {
+      expect(result.current.messages.map((message) => message.id)).toEqual([
+        "user-persisted-1",
+        "assistant-1",
+      ]);
+    });
+    expect(result.current.messages[0]).toMatchObject({
+      chatId: "chat-1",
+      role: "user",
+      content: "question",
+    });
+    expect(result.current.messages[0].id).not.toMatch(/^temp-/);
+  });
+
   it("replaces the edited question, truncates its tail, and appends the regenerated answer", async () => {
     serviceMocks.editChatMessage.mockImplementation(
       (_params, onEvent: (event: Record<string, unknown>) => void) => {

@@ -448,14 +448,14 @@
 }
 
 .thinkingTimeline {
-  margin-top: 16px;
+  margin-top: 10px;
 }
 
 .thinkingStep {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
   position: relative;
-  padding-bottom: 18px;
+  padding-bottom: 12px;
 }
 
 .thinkingStep:last-child {
@@ -501,16 +501,16 @@
 
 .thinkingStepTitle {
   color: light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0));
-  font-size: var(--mantine-font-size-sm);
+  font-size: 12px;
   font-weight: 600;
-  line-height: 1.5;
+  line-height: 1.3;
 }
 
 .thinkingStepDetail {
-  margin-top: 5px;
+  margin-top: 3px;
   color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
-  font-size: var(--mantine-font-size-sm);
-  line-height: 1.55;
+  font-size: var(--mantine-font-size-xs);
+  line-height: 1.3;
 }
 
 .thinkingStep[data-status="started"] .thinkingStepTitle {

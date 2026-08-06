@@ -167,7 +167,14 @@ export function useChatStream(
                 createdAt: new Date().toISOString(),
               };
 
-              setMessages((previous) => [...previous, assistantMessage]);
+              setMessages((previous) => [
+                ...replaceOptimisticUserMessage(
+                  previous,
+                  event.userMessageId,
+                  currentChatIdRef.current || "",
+                ),
+                assistantMessage,
+              ]);
               return [];
             });
             return "";
@@ -410,6 +417,33 @@ function buildAssistantMetadata(
     metadata.thinkingTrace = event.thinkingTrace;
   }
   return Object.keys(metadata).length ? metadata : null;
+}
+
+function replaceOptimisticUserMessage(
+  messages: AiChatMessage[],
+  userMessageId: string | undefined,
+  chatId: string,
+): AiChatMessage[] {
+  if (!userMessageId) return messages;
+
+  let optimisticMessageIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "user" && message.id.startsWith("temp-")) {
+      optimisticMessageIndex = index;
+      break;
+    }
+  }
+
+  if (optimisticMessageIndex < 0) return messages;
+
+  const nextMessages = [...messages];
+  nextMessages[optimisticMessageIndex] = {
+    ...nextMessages[optimisticMessageIndex],
+    id: userMessageId,
+    chatId,
+  };
+  return nextMessages;
 }
 
 function upsertThinkingStep(

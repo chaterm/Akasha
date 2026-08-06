@@ -68,6 +68,7 @@ export type EditAiChatMessageInput = {
 
 export type SendAiChatMessageResult = {
   chatId: string;
+  userMessageId?: string;
   assistantMessageId?: string;
   answer?: string;
   superseded?: boolean;
@@ -474,6 +475,7 @@ export class AiChatService {
 
     return {
       chatId: input.chatId,
+      userMessageId: input.anchorMessage.id,
       assistantMessageId: assistantMessage.id,
       answer: answer.answer,
       citations: answer.citations,

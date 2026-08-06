@@ -6,6 +6,7 @@ describe('AiChatController', () => {
     const service = {
       sendMessage: jest.fn().mockResolvedValue({
         chatId: 'chat-1',
+        userMessageId: 'message-user-1',
         assistantMessageId: 'message-assistant-1',
         answer: 'Chaterm 企业版软件的登记批准日期是2026年06月05日。',
         citations: [{ sourcePageId: 'page-1', title: 'Chaterm', url: '/p/1' }],
@@ -67,7 +68,7 @@ describe('AiChatController', () => {
     expect(response.write.mock.calls.map(([payload]) => payload)).toEqual([
       'data: {"type":"chat_created","chatId":"chat-1"}\n\n',
       'data: {"type":"content","text":"Chaterm 企业版软件的登记批准日期是2026年06月05日。"}\n\n',
-      'data: {"type":"done","messageId":"message-assistant-1","citations":[{"sourcePageId":"page-1","title":"Chaterm","url":"/p/1"}],"citationEvidence":[{"sourcePageId":"page-1","title":"Chaterm","url":"/p/1","excerpts":[{"text":"登记批准日期是2026年06月05日。","sourceRange":{"startOffset":0,"endOffset":19},"quoteHash":"sha256:verified"}]}],"retrievedSources":[{"sourcePageId":"page-1","title":"Chaterm","url":"/p/1"}],"retrievalReasons":["lexical"],"completenessNotice":"notice","answerMode":"knowledge","retrievalQuery":"Chaterm 企业版软件登记批准日期"}\n\n',
+      'data: {"type":"done","messageId":"message-assistant-1","userMessageId":"message-user-1","citations":[{"sourcePageId":"page-1","title":"Chaterm","url":"/p/1"}],"citationEvidence":[{"sourcePageId":"page-1","title":"Chaterm","url":"/p/1","excerpts":[{"text":"登记批准日期是2026年06月05日。","sourceRange":{"startOffset":0,"endOffset":19},"quoteHash":"sha256:verified"}]}],"retrievedSources":[{"sourcePageId":"page-1","title":"Chaterm","url":"/p/1"}],"retrievalReasons":["lexical"],"completenessNotice":"notice","answerMode":"knowledge","retrievalQuery":"Chaterm 企业版软件登记批准日期"}\n\n',
       'data: [DONE]\n\n',
     ]);
     expect(response.end).toHaveBeenCalledTimes(1);
@@ -126,6 +127,7 @@ describe('AiChatController', () => {
         input.onEvent({ type: 'content', text: 'regenerated answer' });
         return {
           chatId: 'chat-1',
+          userMessageId: 'message-user-1',
           assistantMessageId: 'message-assistant-2',
           answer: 'regenerated answer',
           answerMode: 'knowledge',
@@ -168,7 +170,7 @@ describe('AiChatController', () => {
     expect(response.write.mock.calls.map(([payload]) => payload)).toEqual([
       'data: {"type":"message_edited","chatId":"chat-1","messageId":"message-user-1","content":"edited question"}\n\n',
       'data: {"type":"content","text":"regenerated answer"}\n\n',
-      'data: {"type":"done","messageId":"message-assistant-2","answerMode":"knowledge"}\n\n',
+      'data: {"type":"done","messageId":"message-assistant-2","userMessageId":"message-user-1","answerMode":"knowledge"}\n\n',
       'data: [DONE]\n\n',
     ]);
     expect(response.end).toHaveBeenCalledTimes(1);

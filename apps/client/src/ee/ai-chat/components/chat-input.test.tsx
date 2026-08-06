@@ -1,5 +1,5 @@
 import { MantineProvider } from "@mantine/core";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatInput from "./chat-input";
 
@@ -89,7 +89,7 @@ describe("ChatInput", () => {
     editorMocks.setEditable.mockClear();
   });
 
-  it("configures mention suggestions for pages only", () => {
+  it("hides the add-content menu and keeps page mention suggestions", () => {
     render(
       <MantineProvider>
         <ChatInput isStreaming={false} onSend={vi.fn()} onStop={vi.fn()} />
@@ -99,21 +99,8 @@ describe("ChatInput", () => {
     const mentionConfig = mentionMocks.configure.mock.calls[0][0];
     mentionConfig.suggestion.render();
 
+    expect(screen.queryByLabelText("Add content")).toBeNull();
     expect(mentionMocks.renderItems).toHaveBeenCalledWith({ pageOnly: true });
-  });
-
-  it("disables file attachments while they are under active development", async () => {
-    render(
-      <MantineProvider>
-        <ChatInput isStreaming={false} onSend={vi.fn()} onStop={vi.fn()} />
-      </MantineProvider>,
-    );
-
-    fireEvent.click(screen.getByLabelText("Add content"));
-
-    const addFiles = await screen.findByRole("button", { name: /Add files/i });
-    expect((addFiles as HTMLButtonElement).disabled).toBe(true);
-    expect(addFiles.getAttribute("title")).toBe("正在快速开发中");
   });
 
   it("disables the composer while a history message is being edited", () => {
@@ -130,9 +117,6 @@ describe("ChatInput", () => {
     );
 
     expect(editorMocks.setEditable).toHaveBeenLastCalledWith(false);
-    expect(
-      (screen.getByLabelText("Add content") as HTMLButtonElement).disabled,
-    ).toBe(true);
     expect(
       (screen.getByLabelText("Send message") as HTMLButtonElement).disabled,
     ).toBe(true);
