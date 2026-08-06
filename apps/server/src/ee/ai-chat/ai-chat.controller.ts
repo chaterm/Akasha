@@ -144,6 +144,7 @@ export class AiChatController {
       writeSse(res, {
         type: 'done',
         messageId: result.assistantMessageId,
+        userMessageId: result.userMessageId,
         citations: result.citations,
         citationEvidence: result.citationEvidence,
         retrievedSources: result.retrievedSources,
@@ -206,6 +207,7 @@ export class AiChatController {
         writeSse(res, {
           type: 'done',
           messageId: result.assistantMessageId,
+          userMessageId: result.userMessageId,
           citations: result.citations,
           citationEvidence: result.citationEvidence,
           retrievedSources: result.retrievedSources,

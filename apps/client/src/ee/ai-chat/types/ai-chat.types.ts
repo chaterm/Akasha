@@ -116,6 +116,7 @@ export type AiChatStreamEvent =
   | {
       type: "done";
       messageId: string;
+      userMessageId?: string;
       usage?: Record<string, number>;
       citations?: AiQaCitation[];
       citationEvidence?: AiQaCitationEvidence[];

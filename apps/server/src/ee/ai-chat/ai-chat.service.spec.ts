@@ -112,6 +112,7 @@ describe('AiChatService', () => {
       }),
     ).resolves.toEqual({
       chatId: 'chat-1',
+      userMessageId: 'message-user-1',
       assistantMessageId: 'message-assistant-1',
       answer: 'answer',
       citations: [{ sourcePageId: 'page-1', title: 'Page', url: '/p/page-1' }],
@@ -441,6 +442,7 @@ describe('AiChatService', () => {
     expect(result).toEqual(
       expect.objectContaining({
         chatId: 'chat-1',
+        userMessageId: 'message-user-2',
         assistantMessageId: 'message-assistant-2',
         answer: 'new answer',
         answerMode: 'general',
