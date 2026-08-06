@@ -20,6 +20,7 @@ import {
   KnowledgeOperationBudget,
   createBoundedAbortSignal,
 } from './knowledge-operation-budget';
+import { buildKnowledgeOverviewEmbeddingText } from './knowledge-overview-embedding';
 
 const MAX_AGGREGATE_PROMPT_ARTIFACTS = 100;
 const MAX_AGGREGATE_PROMPT_CHARS = 120_000;
@@ -296,7 +297,10 @@ function buildOverviewArtifact(input: {
         chunkRole: 'standalone',
         retrievalChannel: 'memory',
         headingPath: [input.title],
-        embeddingText: `${input.title}\n${contentMarkdown}`,
+        embeddingText: buildKnowledgeOverviewEmbeddingText({
+          title: input.title,
+          narrative: input.narrative,
+        }),
       },
     ],
     links: input.pages.flatMap((page) => {

@@ -121,6 +121,11 @@ export class KnowledgeTextJobHandler {
           spaceId: data.spaceId,
           ...(data.afterChunkId ? { afterChunkId: data.afterChunkId } : {}),
         });
+        if (result.failedChunkIds?.length) {
+          throw new Error(
+            `Knowledge embedding rebuild failed for ${result.failedChunkIds.length} chunk(s).`,
+          );
+        }
         if (result.nextCursor) {
           await this.textQueue.add(
             QueueJob.KNOWLEDGE_REBUILD_EMBEDDINGS,

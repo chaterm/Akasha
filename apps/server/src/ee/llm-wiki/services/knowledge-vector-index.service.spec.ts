@@ -196,6 +196,39 @@ describe('KnowledgeVectorIndexService', () => {
     });
   });
 
+  it('rebuilds a historical overview from its bounded narrative without embedding the catalog', async () => {
+    const embeddingProvider = {
+      embedQuery: jest.fn().mockResolvedValue({
+        vector: [0.1],
+        profile: 'b'.repeat(64),
+        model: 'embedding-v2',
+        dimensions: 1,
+      }),
+    };
+    const service = serviceWithRebuilder({
+      embeddingProvider,
+      findActiveChunks: jest.fn().mockResolvedValue([
+        {
+          id: 'overview-chunk',
+          text: `Narrative summary.\n\n## Knowledge catalog\n\n${'- entry\n'.repeat(20_000)}`,
+          headingPath: ['Space overview'],
+          pageType: 'overview',
+        },
+      ]),
+      persistEmbeddings: jest.fn().mockResolvedValue(undefined),
+      ensureProfileIndex: jest.fn().mockResolvedValue('created'),
+    });
+
+    await service.rebuildSpaceEmbeddings({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+    });
+
+    expect(embeddingProvider.embedQuery).toHaveBeenCalledWith(
+      'Space overview\n\nNarrative summary.',
+    );
+  });
+
   it('limits a maintenance batch to 50 chunks and embeds at concurrency 2', async () => {
     let active = 0;
     let maxActive = 0;

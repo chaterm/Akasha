@@ -82,6 +82,45 @@ describe('ConfiguredKnowledgeEmbeddingProvider', () => {
     await expect(service.embedQuery('Akasha wiki')).resolves.toBeNull();
   });
 
+  it('throws a typed retryable error when required embedding fails', async () => {
+    (embed as jest.Mock).mockRejectedValue(
+      Object.assign(new Error('rate limited'), { statusCode: 429 }),
+    );
+    const service = new ConfiguredKnowledgeEmbeddingProvider(
+      environment() as never,
+    );
+
+    await expect(service.embedRequired('Akasha wiki')).rejects.toMatchObject({
+      code: 'embedding_rate_limited',
+      retryable: true,
+      message: 'Knowledge embedding provider rate limit was reached.',
+    });
+  });
+
+  it('rejects invalid required vectors instead of returning success', async () => {
+    (embed as jest.Mock).mockResolvedValue({ embedding: [Number.NaN] });
+    const service = new ConfiguredKnowledgeEmbeddingProvider(
+      environment() as never,
+    );
+
+    await expect(service.embedRequired('Akasha wiki')).rejects.toMatchObject({
+      code: 'embedding_invalid_vector',
+      retryable: true,
+    });
+  });
+
+  it('reports missing required embedding configuration as non-retryable', async () => {
+    const service = new ConfiguredKnowledgeEmbeddingProvider(
+      environment({ driver: undefined }) as never,
+    );
+
+    await expect(service.embedRequired('Akasha wiki')).rejects.toMatchObject({
+      code: 'embedding_not_configured',
+      retryable: false,
+    });
+    expect(embed).not.toHaveBeenCalled();
+  });
+
   it('combines the parent signal with a 30 second request timeout', async () => {
     (embed as jest.Mock).mockResolvedValue({ embedding: [0.1] });
     const timeoutSpy = jest.spyOn(global, 'setTimeout');
@@ -100,9 +139,17 @@ describe('ConfiguredKnowledgeEmbeddingProvider', () => {
   });
 });
 
-function environment(input: { embeddingDimensions?: number } = {}) {
+function environment(
+  input: { embeddingDimensions?: number; driver?: string } = {
+    driver: 'openai-compatible',
+  },
+) {
   return {
-    getAiDriver: jest.fn(() => 'openai-compatible'),
+    getAiDriver: jest.fn(() =>
+      Object.prototype.hasOwnProperty.call(input, 'driver')
+        ? input.driver
+        : 'openai-compatible',
+    ),
     getAiEmbeddingModel: jest.fn(() => 'bge-m3'),
     getAiEmbeddingDimension: jest.fn(() => input.embeddingDimensions),
     getOpenAiApiKey: jest.fn(() => 'must-not-affect-profile'),

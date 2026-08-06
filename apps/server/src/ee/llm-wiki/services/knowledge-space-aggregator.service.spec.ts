@@ -45,6 +45,12 @@ describe('KnowledgeSpaceAggregatorService', () => {
           expect.objectContaining({
             artifactKind: 'overview',
             compilerRunId: 'run-1',
+            contentMarkdown: expect.stringContaining('## Knowledge catalog'),
+            chunks: [
+              expect.objectContaining({
+                embeddingText: 'Overview\n\nNarrative',
+              }),
+            ],
           }),
         ],
         publicationGuard: expect.any(Function),
@@ -56,6 +62,26 @@ describe('KnowledgeSpaceAggregatorService', () => {
         spaceId: 'space-1',
         abortSignal: expect.any(AbortSignal),
       }),
+    );
+  });
+
+  it('bounds overview embedding text independently from the complete catalog', async () => {
+    const fixture = createFixture();
+    fixture.provider.completeMerge.mockResolvedValue(
+      JSON.stringify({ title: 'Overview', markdown: '叙'.repeat(10_000) }),
+    );
+
+    await fixture.service.aggregateLeased(lease(), {
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+    });
+
+    const artifact =
+      fixture.importService.importCompileResult.mock.calls[0][0].artifacts[0];
+    expect(artifact.contentMarkdown.length).toBeGreaterThan(4_000);
+    expect(artifact.chunks[0].embeddingText.length).toBeLessThanOrEqual(4_000);
+    expect(artifact.chunks[0].embeddingText).not.toContain(
+      '## Knowledge catalog',
     );
   });
 

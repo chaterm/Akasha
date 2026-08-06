@@ -622,6 +622,73 @@ describePostgres('KnowledgeCompilationRepo PostgreSQL round trip', () => {
       }),
     ).resolves.toBeUndefined();
   });
+
+  it('keeps pending import output by effective hash and clears it on success', async () => {
+    await repo.startAttempt({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageId: 'page-pending',
+      sourceVersion: 'v1',
+      sourceContentHash: 'sha256:source-pending',
+      effectiveKnowledgeHash: 'sha256:pending-effective',
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+      compilerRunId: 'run-pending',
+      compileTaskId: 'task-pending',
+    });
+    await repo.savePendingImport({
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-pending',
+      compileTaskId: 'task-pending',
+      spaceId: 'space-1',
+      sourceVersion: 'v1',
+      effectiveKnowledgeHash: 'sha256:pending-effective',
+      preparedImport: { artifactsToPublish: ['artifact-1'] },
+    });
+
+    await expect(
+      repo.findPendingImport({
+        workspaceId: 'workspace-1',
+        sourcePageId: 'page-pending',
+        spaceId: 'space-1',
+        sourceVersion: 'v1',
+        effectiveKnowledgeHash: 'sha256:pending-effective',
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+      }),
+    ).resolves.toEqual({ artifactsToPublish: ['artifact-1'] });
+    await expect(
+      repo.findPendingImport({
+        workspaceId: 'workspace-1',
+        sourcePageId: 'page-pending',
+        spaceId: 'space-1',
+        sourceVersion: 'v1',
+        effectiveKnowledgeHash: 'sha256:different',
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+      }),
+    ).resolves.toBeUndefined();
+
+    await repo.succeedAttempt({
+      workspaceId: 'workspace-1',
+      sourcePageId: 'page-pending',
+      compileTaskId: 'task-pending',
+      sourceVersion: 'v1',
+      sourceContentHash: 'sha256:source-pending',
+      effectiveKnowledgeHash: 'sha256:pending-effective',
+    });
+    await expect(
+      repo.findPendingImport({
+        workspaceId: 'workspace-1',
+        sourcePageId: 'page-pending',
+        spaceId: 'space-1',
+        sourceVersion: 'v1',
+        effectiveKnowledgeHash: 'sha256:pending-effective',
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+      }),
+    ).resolves.toBeUndefined();
+  });
 });
 
 async function createEffectiveHashFixture(db: Kysely<unknown>): Promise<void> {
@@ -650,6 +717,11 @@ async function createEffectiveHashFixture(db: Kysely<unknown>): Promise<void> {
       last_successful_source_hash varchar,
       last_successful_effective_hash varchar,
       last_succeeded_at timestamptz,
+      pending_import jsonb,
+      pending_space_id varchar,
+      pending_source_version varchar,
+      pending_effective_knowledge_hash varchar,
+      pending_created_at timestamptz,
       unique (workspace_id, source_page_id)
     );
     create table knowledge_source_analyses (

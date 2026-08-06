@@ -24,6 +24,7 @@ export type KnowledgeCompilationStage =
   | 'generation'
   | 'merge'
   | 'validation'
+  | 'embedding'
   | 'import'
   | 'completed';
 
@@ -218,6 +219,55 @@ export class KnowledgeCompilationRepo {
       .execute();
   }
 
+  async savePendingImport(
+    input: FencedCompilationIdentity & {
+      spaceId: string;
+      sourceVersion: string;
+      effectiveKnowledgeHash: string;
+      preparedImport: JsonValue;
+    },
+    trx?: KyselyTransaction,
+  ): Promise<void> {
+    await dbOrTx(this.db, trx)
+      .updateTable('knowledgeCompilationAttempts')
+      .set({
+        pendingImport: input.preparedImport,
+        pendingSpaceId: input.spaceId,
+        pendingSourceVersion: input.sourceVersion,
+        pendingEffectiveKnowledgeHash: input.effectiveKnowledgeHash,
+        pendingCreatedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where('workspaceId', '=', input.workspaceId)
+      .where('sourcePageId', '=', input.sourcePageId)
+      .where('compileTaskId', '=', input.compileTaskId)
+      .execute();
+  }
+
+  async findPendingImport(input: {
+    workspaceId: string;
+    sourcePageId: string;
+    spaceId: string;
+    sourceVersion: string;
+    effectiveKnowledgeHash: string;
+    compilerVersion: string;
+    promptVersion: string;
+  }): Promise<JsonValue | undefined> {
+    const row = await this.db
+      .selectFrom('knowledgeCompilationAttempts')
+      .select('pendingImport')
+      .where('workspaceId', '=', input.workspaceId)
+      .where('sourcePageId', '=', input.sourcePageId)
+      .where('pendingSpaceId', '=', input.spaceId)
+      .where('pendingSourceVersion', '=', input.sourceVersion)
+      .where('pendingEffectiveKnowledgeHash', '=', input.effectiveKnowledgeHash)
+      .where('compilerVersion', '=', input.compilerVersion)
+      .where('promptVersion', '=', input.promptVersion)
+      .where('pendingImport', 'is not', null)
+      .executeTakeFirst();
+    return row?.pendingImport ?? undefined;
+  }
+
   async skipAttempt(
     input: FencedCompilationIdentity & {
       stage?: KnowledgeCompilationStage;
@@ -259,6 +309,11 @@ export class KnowledgeCompilationRepo {
         stage: 'completed',
         errorCode: null,
         errorMessage: null,
+        pendingImport: null,
+        pendingSpaceId: null,
+        pendingSourceVersion: null,
+        pendingEffectiveKnowledgeHash: null,
+        pendingCreatedAt: null,
         lastSuccessfulSourceVersion: input.sourceVersion,
         lastSuccessfulSourceHash: input.sourceContentHash,
         effectiveKnowledgeHash: input.effectiveKnowledgeHash ?? null,

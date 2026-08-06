@@ -1039,7 +1039,7 @@ export class KnowledgeDiagnosticsService {
 
     const latest = this.db
       .selectFrom('knowledgeSpaceCompileRunPages as runPage')
-      .select(['runPage.sourcePageId', 'runPage.status'])
+      .select(['runPage.sourcePageId', 'runPage.status', 'runPage.mergeStatus'])
       .where('runPage.workspaceId', '=', input.workspaceId)
       .where('runPage.sourcePageId', 'in', sourcePageIds)
       .distinctOn('runPage.sourcePageId')
@@ -1050,7 +1050,12 @@ export class KnowledgeDiagnosticsService {
     const rows = await this.db
       .selectFrom(latest.as('latest'))
       .select('latest.sourcePageId')
-      .where('latest.status', '=', 'failed')
+      .where((eb) =>
+        eb.or([
+          eb('latest.status', '=', 'failed'),
+          eb('latest.mergeStatus', '=', 'failed'),
+        ]),
+      )
       .execute();
 
     return [...new Set(rows.map((row) => row.sourcePageId))];
@@ -1220,6 +1225,20 @@ function safeCompilationErrorMessage(errorCode: string): string {
       return 'Knowledge compiler provider timed out.';
     case 'provider_error':
       return 'Knowledge compiler provider request failed.';
+    case 'embedding_not_configured':
+      return 'Knowledge embedding provider is not configured correctly.';
+    case 'embedding_rate_limited':
+      return 'Knowledge embedding provider rate limit was reached.';
+    case 'embedding_timeout':
+      return 'Knowledge embedding request timed out.';
+    case 'embedding_provider_error':
+      return 'Knowledge embedding provider request failed.';
+    case 'embedding_invalid_vector':
+      return 'Knowledge embedding provider returned an invalid vector.';
+    case 'embedding_invalid_input':
+      return 'Knowledge chunk is empty and cannot be embedded.';
+    case 'embedding_input_too_large':
+      return 'Knowledge chunk exceeds the embedding provider input limit.';
     case 'source_changed':
       return 'Knowledge source changed during compilation.';
     case 'empty_source':

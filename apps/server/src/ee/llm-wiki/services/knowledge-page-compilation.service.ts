@@ -10,6 +10,9 @@ import { KnowledgeCompilerAdapter } from '../adapters/knowledge-compiler.adapter
 import {
   KnowledgeCompilationValidationError,
   KnowledgeImportService,
+  parsePreparedKnowledgeImport,
+  PreparedKnowledgeImport,
+  serializePreparedKnowledgeImport,
 } from './knowledge-import.service';
 import { KnowledgeAccessIndexerService } from './knowledge-access-indexer.service';
 import { KnowledgeSourceExporterService } from './knowledge-source-exporter.service';
@@ -31,6 +34,7 @@ import {
   KnowledgeOperationBudget,
 } from './knowledge-operation-budget';
 import { uniqueValues } from './knowledge-queue.utils';
+import { KnowledgeEmbeddingError } from './knowledge-embedding-provider.service';
 
 export type PageCompilationOutcome =
   | { outcome: 'succeeded' | 'noop'; result: KnowledgePageCompilationResult }
@@ -291,7 +295,21 @@ export class KnowledgePageCompilationService {
         return { outcome: 'noop', result: noOpPageResult(data, startedAt) };
       }
 
-      const catalogEntries = await input.execution.catalog();
+      const pendingImportValue = await this.compilationRepo.findPendingImport({
+        workspaceId: data.workspaceId,
+        sourcePageId,
+        spaceId: data.spaceId,
+        sourceVersion: exportedSource.sourceVersion,
+        effectiveKnowledgeHash,
+        compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+        promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+      });
+      const pendingImport = pendingImportValue
+        ? parsePreparedKnowledgeImport(pendingImportValue)
+        : undefined;
+      const catalogEntries = pendingImport
+        ? undefined
+        : await input.execution.catalog();
       if (!(await input.execution.isActive())) {
         await this.skipCancelledAttempt({ data, sourcePageId, compileTaskId });
         return { outcome: 'noop', result: noOpPageResult(data, startedAt) };
@@ -303,18 +321,22 @@ export class KnowledgePageCompilationService {
         promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
         compileTaskId,
         compileMode: 'pages' as const,
-        catalog: catalogEntries,
+        ...(catalogEntries ? { catalog: catalogEntries } : {}),
         sources,
         publicationGuard: input.execution.publicationGuard,
         operationBudget,
       };
-      const compileResult = await this.compiler.compileSpace(compileInput);
-      await this.compilationRepo.updateStage({
-        workspaceId: data.workspaceId,
-        sourcePageId,
-        compileTaskId,
-        stage: 'validation',
-      });
+      const compileResult = pendingImport
+        ? undefined
+        : await this.compiler.compileSpace(compileInput);
+      if (compileResult) {
+        await this.compilationRepo.updateStage({
+          workspaceId: data.workspaceId,
+          sourcePageId,
+          compileTaskId,
+          stage: 'validation',
+        });
+      }
       const latestSources = await this.sourceExporter.exportPageSources({
         workspaceId: data.workspaceId,
         spaceId: data.spaceId,
@@ -330,8 +352,20 @@ export class KnowledgePageCompilationService {
       }
       const importResult = await this.importService.importCompileResult({
         input: compileInput,
-        artifacts: compileResult.artifacts,
+        artifacts: compileResult?.artifacts ?? pendingImport!.acceptedArtifacts,
+        ...(pendingImport ? { preparedImport: pendingImport } : {}),
         publicationGuard: input.execution.publicationGuard,
+        onPrepared: async (prepared: PreparedKnowledgeImport) => {
+          await this.compilationRepo.savePendingImport({
+            workspaceId: data.workspaceId,
+            sourcePageId,
+            compileTaskId,
+            spaceId: data.spaceId,
+            sourceVersion: exportedSource.sourceVersion,
+            effectiveKnowledgeHash,
+            preparedImport: serializePreparedKnowledgeImport(prepared),
+          });
+        },
         onStage: async (stage) => {
           await this.compilationRepo.updateStage({
             workspaceId: data.workspaceId,
@@ -364,7 +398,9 @@ export class KnowledgePageCompilationService {
           type: 'text',
           workspaceId: data.workspaceId,
           spaceId: data.spaceId,
-          compilerRunId: compileResult.compilerRunId,
+          compilerRunId:
+            compileResult?.compilerRunId ??
+            pendingCompilerRunId(pendingImport, compileTaskId),
           sourceCount: sources.length,
           importedArtifactCount: importResult.importedArtifactCount,
           quarantinedArtifactCount: importResult.quarantinedArtifactCount,
@@ -470,7 +506,21 @@ export class KnowledgePageCompilationService {
         return { outcome: 'noop', result: noOpMergeResult(data, startedAt) };
       }
       const source = { ...ready.source, effectiveKnowledgeHash };
-      const catalog = await input.execution.catalog();
+      const pendingImportValue = await this.compilationRepo.findPendingImport({
+        workspaceId: data.workspaceId,
+        sourcePageId: data.sourcePageId,
+        spaceId: data.spaceId,
+        sourceVersion: exportedSource.sourceVersion,
+        effectiveKnowledgeHash,
+        compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+        promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+      });
+      const pendingImport = pendingImportValue
+        ? parsePreparedKnowledgeImport(pendingImportValue)
+        : undefined;
+      const catalog = pendingImport
+        ? undefined
+        : await input.execution.catalog();
       const compileInput = {
         workspaceId: data.workspaceId,
         spaceId: data.spaceId,
@@ -478,11 +528,13 @@ export class KnowledgePageCompilationService {
         promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
         compileTaskId,
         compileMode: 'pages' as const,
-        catalog,
+        ...(catalog ? { catalog } : {}),
         sources: [source],
         operationBudget,
       };
-      const compileResult = await this.compiler.compileSpace(compileInput);
+      const compileResult = pendingImport
+        ? undefined
+        : await this.compiler.compileSpace(compileInput);
       const latest = await this.sourceExporter.exportPageSources({
         workspaceId: data.workspaceId,
         spaceId: data.spaceId,
@@ -494,8 +546,28 @@ export class KnowledgePageCompilationService {
       }
       const importResult = await this.importService.importCompileResult({
         input: compileInput,
-        artifacts: compileResult.artifacts,
+        artifacts: compileResult?.artifacts ?? pendingImport!.acceptedArtifacts,
+        ...(pendingImport ? { preparedImport: pendingImport } : {}),
         publicationGuard: input.execution.publicationGuard,
+        onPrepared: async (prepared: PreparedKnowledgeImport) => {
+          await this.compilationRepo.savePendingImport({
+            workspaceId: data.workspaceId,
+            sourcePageId: data.sourcePageId,
+            compileTaskId,
+            spaceId: data.spaceId,
+            sourceVersion: exportedSource.sourceVersion,
+            effectiveKnowledgeHash,
+            preparedImport: serializePreparedKnowledgeImport(prepared),
+          });
+        },
+        onStage: async (stage) => {
+          await this.compilationRepo.updateStage({
+            workspaceId: data.workspaceId,
+            sourcePageId: data.sourcePageId,
+            compileTaskId,
+            stage,
+          });
+        },
         publicationComplete: async (trx: KyselyTransaction) => {
           await this.compilationRepo.succeedAttempt(
             {
@@ -535,7 +607,9 @@ export class KnowledgePageCompilationService {
           type: 'image_merge',
           workspaceId: data.workspaceId,
           spaceId: data.spaceId,
-          compilerRunId: compileResult.compilerRunId,
+          compilerRunId:
+            compileResult?.compilerRunId ??
+            pendingCompilerRunId(pendingImport, compileTaskId),
           sourceCount: 1,
           importedArtifactCount: importResult.importedArtifactCount,
           quarantinedArtifactCount: importResult.quarantinedArtifactCount,
@@ -688,6 +762,7 @@ function classifyCompilationFailure(error: unknown): {
   if (
     error instanceof KnowledgeCompilerLlmError ||
     error instanceof KnowledgeCompilationValidationError ||
+    error instanceof KnowledgeEmbeddingError ||
     error instanceof KnowledgeComplexityLimitError
   ) {
     return {
@@ -704,6 +779,16 @@ function classifyCompilationFailure(error: unknown): {
     message: 'Knowledge compilation failed.',
     retryable: true,
   };
+}
+
+function pendingCompilerRunId(
+  pending: PreparedKnowledgeImport | undefined,
+  fallback: string,
+): string {
+  return (
+    pending?.acceptedArtifacts.find((artifact) => artifact.compilerRunId)
+      ?.compilerRunId ?? fallback
+  );
 }
 
 function pageTimeoutFailure(): {

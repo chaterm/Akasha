@@ -193,11 +193,7 @@ describe('scalable Knowledge Run diagnostics', () => {
       ['page-failed', 'page-succeeded'],
     );
     expect(latestQuery.distinctOn).toHaveBeenCalledWith('runPage.sourcePageId');
-    expect(currentQuery.where).toHaveBeenCalledWith(
-      'latest.status',
-      '=',
-      'failed',
-    );
+    expect(currentQuery.where).toHaveBeenCalledWith(expect.any(Function));
   });
 
   it('loads quality, quarantine, and retrieval only through independent diagnostics calls', async () => {

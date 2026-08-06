@@ -8,6 +8,10 @@ import {
   KnowledgeEmbedding,
 } from './knowledge-embedding-provider.service';
 import { mapKnowledgeOperations } from './knowledge-operation-budget';
+import {
+  buildKnowledgeOverviewEmbeddingText,
+  extractKnowledgeOverviewNarrative,
+} from './knowledge-overview-embedding';
 
 export type KnowledgeVectorIndexResult = 'created' | 'exists' | 'exact-only';
 
@@ -96,17 +100,29 @@ export class KnowledgeVectorIndexService {
     spaceId: string;
     afterChunkId?: string;
     limit: number;
-  }): Promise<Array<{ id: string; text: string; headingPath: unknown }>> {
+  }): Promise<
+    Array<{
+      id: string;
+      text: string;
+      headingPath: unknown;
+      pageType?: string | null;
+    }>
+  > {
     return this.db
-      .selectFrom('knowledgeChunks')
-      .select(['id', 'text', 'headingPath'])
-      .where('workspaceId', '=', input.workspaceId)
-      .where('spaceId', '=', input.spaceId)
-      .where('staleAt', 'is', null)
-      .$if(Boolean(input.afterChunkId), (query) =>
-        query.where('id', '>', input.afterChunkId!),
+      .selectFrom('knowledgeChunks as chunk')
+      .innerJoin('knowledgePages as page', (join) =>
+        join
+          .onRef('page.id', '=', 'chunk.knowledgePageId')
+          .onRef('page.workspaceId', '=', 'chunk.workspaceId'),
       )
-      .orderBy('id', 'asc')
+      .select(['chunk.id', 'chunk.text', 'chunk.headingPath', 'page.pageType'])
+      .where('chunk.workspaceId', '=', input.workspaceId)
+      .where('chunk.spaceId', '=', input.spaceId)
+      .where('chunk.staleAt', 'is', null)
+      .$if(Boolean(input.afterChunkId), (query) =>
+        query.where('chunk.id', '>', input.afterChunkId!),
+      )
+      .orderBy('chunk.id', 'asc')
       .limit(input.limit)
       .execute();
   }
@@ -219,12 +235,22 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function embeddingInput(chunk: { text: string; headingPath: unknown }): string {
+function embeddingInput(chunk: {
+  text: string;
+  headingPath: unknown;
+  pageType?: string | null;
+}): string {
   const headingPath = Array.isArray(chunk.headingPath)
     ? chunk.headingPath.filter(
         (value): value is string => typeof value === 'string' && Boolean(value),
       )
     : [];
+  if (chunk.pageType === 'overview') {
+    return buildKnowledgeOverviewEmbeddingText({
+      title: headingPath.join(' > '),
+      narrative: extractKnowledgeOverviewNarrative(chunk.text),
+    });
+  }
   return headingPath.length > 0
     ? `${headingPath.join(' > ')}\n\n${chunk.text}`
     : chunk.text;

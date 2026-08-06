@@ -352,6 +352,11 @@ export interface KnowledgeCompilationAttempts {
   lastSuccessfulEffectiveHash: string | null;
   lastSuccessfulSourceHash: string | null;
   lastSuccessfulSourceVersion: string | null;
+  pendingCreatedAt: Timestamp | null;
+  pendingEffectiveKnowledgeHash: string | null;
+  pendingImport: Json | null;
+  pendingSourceVersion: string | null;
+  pendingSpaceId: string | null;
   promptVersion: string;
   queuedAt: Generated<Timestamp>;
   sourceContentHash: string | null;

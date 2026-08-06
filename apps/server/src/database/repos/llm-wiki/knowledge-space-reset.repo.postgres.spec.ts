@@ -225,6 +225,9 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       status varchar not null, stage varchar not null, compile_task_id varchar,
       effective_knowledge_hash varchar, last_successful_effective_hash varchar,
       last_successful_source_version varchar, last_successful_source_hash varchar,
+      pending_import jsonb, pending_space_id varchar,
+      pending_source_version varchar, pending_effective_knowledge_hash varchar,
+      pending_created_at timestamptz,
       error_code varchar, error_message varchar, updated_at timestamptz not null default now()
     );
     create table knowledge_query_audit (id varchar primary key);

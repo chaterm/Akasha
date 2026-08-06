@@ -148,6 +148,11 @@ function createService(runRepo: ReturnType<typeof createRunRepo>) {
 function createRunRepo() {
   return {
     requestRuns: jest.fn().mockResolvedValue([]),
+    promoteDuePageCompileSchedules: jest.fn().mockResolvedValue({
+      selectedPageCount: 0,
+      promotedPageCount: 0,
+      runRequestCount: 0,
+    }),
     findSpaceSliceReservationCandidates: jest.fn().mockResolvedValue([]),
     reserveNextSpaceSlice: jest.fn().mockResolvedValue(true),
     findUndispatchedSpaceSlices: jest.fn().mockResolvedValue([]),

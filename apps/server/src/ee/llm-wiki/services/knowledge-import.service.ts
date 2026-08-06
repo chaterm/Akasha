@@ -22,6 +22,7 @@ import {
   buildKnowledgeEmbeddingProfile,
   ConfiguredKnowledgeEmbeddingProvider,
   KnowledgeEmbedding,
+  KnowledgeEmbeddingError,
 } from './knowledge-embedding-provider.service';
 import { KnowledgeVectorIndexService } from './knowledge-vector-index.service';
 import { KnowledgeArtifactMaterializerService } from './knowledge-artifact-materializer.service';
@@ -38,7 +39,23 @@ export interface KnowledgeImportResult {
   skippedReason?: 'run_superseded';
 }
 
-export type KnowledgeImportStage = 'validation' | 'merge' | 'import';
+export type KnowledgeImportStage =
+  | 'validation'
+  | 'merge'
+  | 'embedding'
+  | 'import';
+
+export interface PreparedKnowledgeImport {
+  acceptedArtifacts: CompiledKnowledgeArtifact[];
+  quarantineInputs: Array<{
+    artifactId: string;
+    artifactKind: string | null;
+    compilerRunId: string | null;
+    compileTaskId: string | null;
+    reasonCodes: string[];
+  }>;
+  quarantinedArtifactCount: number;
+}
 
 export class KnowledgeCompilationValidationError extends Error {
   readonly code = 'validation_failed';
@@ -73,13 +90,20 @@ export class KnowledgeImportService {
     retireCompileScope?: boolean;
     publicationGuard?: (trx: KyselyTransaction) => Promise<boolean>;
     publicationComplete?: (trx: KyselyTransaction) => Promise<void>;
+    preparedImport?: PreparedKnowledgeImport;
+    onPrepared?: (prepared: PreparedKnowledgeImport) => void | Promise<void>;
   }): Promise<KnowledgeImportResult> {
     const operationBudget =
       input.input.operationBudget ?? new KnowledgeOperationBudget();
     input.input.operationBudget = operationBudget;
     operationBudget.throwIfAborted();
-    await input.onStage?.('validation');
-    const validation = this.validator.validateCompileResult(input);
+    if (!input.preparedImport) await input.onStage?.('validation');
+    const validation = input.preparedImport
+      ? {
+          accepted: input.preparedImport.acceptedArtifacts,
+          quarantined: [],
+        }
+      : this.validator.validateCompileResult(input);
     operationBudget.assertArtifactCount(validation.accepted.length);
     operationBudget.assertChunkCount(
       validation.accepted.reduce(
@@ -88,13 +112,15 @@ export class KnowledgeImportService {
       ),
     );
 
-    const quarantineInputs = validation.quarantined.map((quarantined) => ({
-      artifactId: quarantined.artifact.artifactId,
-      artifactKind: quarantined.artifact.artifactKind ?? null,
-      compilerRunId: quarantined.artifact.compilerRunId ?? null,
-      compileTaskId: quarantined.artifact.compileTaskId ?? null,
-      reasonCodes: toQuarantineReasonCodes(quarantined.reasons),
-    }));
+    const quarantineInputs =
+      input.preparedImport?.quarantineInputs ??
+      validation.quarantined.map((quarantined) => ({
+        artifactId: quarantined.artifact.artifactId,
+        artifactKind: quarantined.artifact.artifactKind ?? null,
+        compilerRunId: quarantined.artifact.compilerRunId ?? null,
+        compileTaskId: quarantined.artifact.compileTaskId ?? null,
+        reasonCodes: toQuarantineReasonCodes(quarantined.reasons),
+      }));
     const isSemanticPagePublication =
       input.input.compileMode === 'pages' && input.input.sources.length === 1;
     if (isSemanticPagePublication && quarantineInputs.length > 0) {
@@ -197,7 +223,15 @@ export class KnowledgeImportService {
       };
     }
 
-    await input.onStage?.('import');
+    if (!input.preparedImport) {
+      await input.onPrepared?.({
+        acceptedArtifacts: validation.accepted,
+        quarantineInputs,
+        quarantinedArtifactCount: validation.quarantined.length,
+      });
+    }
+
+    await input.onStage?.('embedding');
 
     const artifactInputs: UpsertCompiledArtifactInput[] = [];
 
@@ -212,14 +246,10 @@ export class KnowledgeImportService {
 
           const embedding = suppliedEmbedding
             ? suppliedEmbedding
-            : operationBudget.signal
-              ? await this.embeddingProvider.embedQuery(
-                  chunk.embeddingText ?? chunk.text,
-                  { abortSignal: operationBudget.signal },
-                )
-              : await this.embeddingProvider.embedQuery(
-                  chunk.embeddingText ?? chunk.text,
-                );
+            : await this.embedRequired(
+                chunk.embeddingText ?? chunk.text,
+                operationBudget.signal,
+              );
           return {
             ...chunk,
             embedding,
@@ -450,6 +480,8 @@ export class KnowledgeImportService {
       });
     }
 
+    await input.onStage?.('import');
+
     const embeddingProfiles = new Map<string, number>();
     for (const chunk of artifactInputs.flatMap(
       (artifact) => artifact.chunks ?? [],
@@ -648,7 +680,9 @@ export class KnowledgeImportService {
 
     return {
       importedArtifactCount: validation.accepted.length,
-      quarantinedArtifactCount: validation.quarantined.length,
+      quarantinedArtifactCount:
+        input.preparedImport?.quarantinedArtifactCount ??
+        validation.quarantined.length,
       ...(degradedRetrievalProfiles.length > 0
         ? {
             degradedRetrievalProfiles: [
@@ -658,6 +692,54 @@ export class KnowledgeImportService {
         : {}),
     };
   }
+
+  private async embedRequired(
+    text: string,
+    abortSignal?: AbortSignal,
+  ): Promise<KnowledgeEmbedding> {
+    if (typeof this.embeddingProvider.embedRequired === 'function') {
+      return abortSignal
+        ? this.embeddingProvider.embedRequired(text, { abortSignal })
+        : this.embeddingProvider.embedRequired(text);
+    }
+
+    // Compatibility for injected test/dummy providers that implement the
+    // original best-effort interface. Production always uses embedRequired.
+    const result = abortSignal
+      ? await this.embeddingProvider.embedQuery(text, { abortSignal })
+      : await this.embeddingProvider.embedQuery(text);
+    if (!result) {
+      throw new KnowledgeEmbeddingError(
+        'embedding_provider_error',
+        'Knowledge embedding provider request failed.',
+        true,
+      );
+    }
+    return result;
+  }
+}
+
+export function parsePreparedKnowledgeImport(
+  value: JsonValue,
+): PreparedKnowledgeImport {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Pending knowledge import is invalid.');
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    !Array.isArray(record.acceptedArtifacts) ||
+    !Array.isArray(record.quarantineInputs) ||
+    typeof record.quarantinedArtifactCount !== 'number'
+  ) {
+    throw new Error('Pending knowledge import is invalid.');
+  }
+  return value as unknown as PreparedKnowledgeImport;
+}
+
+export function serializePreparedKnowledgeImport(
+  value: PreparedKnowledgeImport,
+): JsonValue {
+  return toJsonValue(value);
 }
 
 function uniqueSourcePageIds(input: CompileSpaceInput): string[] {

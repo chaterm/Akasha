@@ -813,7 +813,10 @@ export default function KnowledgeAdminPage() {
                         <Table.Tr key={page.runPageId}>
                           <Table.Td>
                             <Checkbox
-                              disabled={page.status !== "failed"}
+                              disabled={
+                                page.status !== "failed" &&
+                                page.mergeStatus !== "failed"
+                              }
                               checked={selectedPageIds.includes(
                                 page.sourcePageId,
                               )}

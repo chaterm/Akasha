@@ -132,8 +132,7 @@ describe('KnowledgeTextJobHandler maintenance boundary', () => {
   it('checkpoints embedding rebuilds with a deterministic continuation job', async () => {
     const fixture = createFixture();
     fixture.vectorIndex.rebuildSpaceEmbeddings.mockResolvedValue({
-      rebuiltChunkCount: 49,
-      failedChunkIds: ['chunk-010'],
+      rebuiltChunkCount: 50,
       nextCursor: 'chunk-049',
     });
 
@@ -145,7 +144,7 @@ describe('KnowledgeTextJobHandler maintenance boundary', () => {
           afterChunkId: 'chunk-before',
         }),
       ),
-    ).resolves.toMatchObject({ rebuiltChunkCount: 49 });
+    ).resolves.toMatchObject({ rebuiltChunkCount: 50 });
 
     expect(fixture.vectorIndex.rebuildSpaceEmbeddings).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
@@ -167,6 +166,25 @@ describe('KnowledgeTextJobHandler maintenance boundary', () => {
         ),
       },
     );
+  });
+
+  it('fails an embedding rebuild batch instead of skipping failed chunks', async () => {
+    const fixture = createFixture();
+    fixture.vectorIndex.rebuildSpaceEmbeddings.mockResolvedValue({
+      rebuiltChunkCount: 49,
+      failedChunkIds: ['chunk-010'],
+      nextCursor: 'chunk-049',
+    });
+
+    await expect(
+      fixture.handler.handle(
+        job(QueueJob.KNOWLEDGE_REBUILD_EMBEDDINGS, {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+        }),
+      ),
+    ).rejects.toThrow('Knowledge embedding rebuild failed for 1 chunk(s).');
+    expect(fixture.textQueue.add).not.toHaveBeenCalled();
   });
 
   it('runs review discovery and persists its durable snapshot', async () => {
