@@ -16,7 +16,10 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import KnowledgeGraphPage from "./knowledge-graph";
 import type { KnowledgeGraphNode } from "../types/knowledge.types";
 import { getKnowledgeGraph } from "../services/knowledge-service";
-import { useGetSpaceBySlugQuery } from "@/features/space/queries/space-query";
+import {
+  useGetSpaceBySlugQuery,
+  useGetSpacesQuery,
+} from "@/features/space/queries/space-query";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const graphCss = readFileSync(
@@ -66,7 +69,7 @@ vi.mock("@/lib/config", () => ({
 }));
 
 vi.mock("@/features/space/queries/space-query", () => ({
-  useGetSpacesQuery: () => ({
+  useGetSpacesQuery: vi.fn(() => ({
     data: {
       items: [
         {
@@ -77,7 +80,7 @@ vi.mock("@/features/space/queries/space-query", () => ({
       ],
     },
     isLoading: false,
-  }),
+  })),
   useGetSpaceBySlugQuery: vi.fn(() => ({
     data: undefined,
     isLoading: false,
@@ -190,6 +193,7 @@ describe("KnowledgeGraphPage", () => {
     );
 
     expect(await screen.findByText("Kafka")).toBeTruthy();
+    expect(useGetSpacesQuery).toHaveBeenCalledWith({ limit: 2036 });
     expect(screen.getByText("Chaterm")).toBeTruthy();
     expect(screen.getByText("references")).toBeTruthy();
     expect(

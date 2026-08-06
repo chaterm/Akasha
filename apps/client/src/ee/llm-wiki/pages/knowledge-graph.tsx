@@ -59,6 +59,7 @@ import classes from "../styles/knowledge-graph.module.css";
 
 const GRAPH_NODE_LIMIT = 10_000;
 const OVERVIEW_NODE_LIMIT = 10_000;
+const SPACE_LIST_LIMIT = 2_036;
 const HIGH_DENSITY_NODE_THRESHOLD = 500;
 const GRAPH_WIDTH = 1600;
 const COMPACT_SVG_NODE_THRESHOLD = 24;
@@ -125,7 +126,7 @@ export default function KnowledgeGraphPage() {
   const { data: routeSpace, isLoading: routeSpaceLoading } =
     useGetSpaceBySlugQuery(spaceSlug ?? "");
   const { data: spacesData, isLoading: spacesLoading } = useGetSpacesQuery({
-    limit: 100,
+    limit: SPACE_LIST_LIMIT,
   });
   const spaces = spacesData?.items ?? [];
   const isSpaceRoute = Boolean(spaceSlug);
