@@ -143,7 +143,7 @@ export class EnvironmentVariables {
   @ValidateIf((obj) => obj.AI_DRIVER)
   @IsString()
   @IsNotEmpty()
-  AI_COMPLETION_MODEL: string;
+  AI_CHAT_MODEL: string;
 
   @IsOptional()
   @IsString()
