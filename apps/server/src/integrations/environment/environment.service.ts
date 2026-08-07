@@ -300,10 +300,6 @@ export class EnvironmentService {
     return this.configService.get<string>('AI_EMBEDDING_MODEL');
   }
 
-  getAiCompletionModel(): string {
-    return this.configService.get<string>('AI_COMPLETION_MODEL');
-  }
-
   getKnowledgeCompilerModel(): string {
     return this.configService.get<string>(
       'KNOWLEDGE_COMPILER_MODEL',
@@ -338,10 +334,7 @@ export class EnvironmentService {
   }
 
   getAiChatModel(): string {
-    return (
-      this.configService.get<string>('AI_CHAT_MODEL') ||
-      this.configService.get<string>('AI_COMPLETION_MODEL')
-    );
+    return this.configService.get<string>('AI_CHAT_MODEL');
   }
 
   getAiChatMaxInputChars(): number {

@@ -699,7 +699,6 @@ function createProvider(input: {
 }): ConfiguredKnowledgeCompilerLlmProvider {
   return new ConfiguredKnowledgeCompilerLlmProvider({
     getAiDriver: jest.fn(() => input.aiDriver),
-    getAiCompletionModel: jest.fn(() => 'global-completion-model'),
     getKnowledgeCompilerModel: jest.fn(
       () => input.compilerModel ?? 'knowledge-compiler-model',
     ),
