@@ -86,22 +86,25 @@ describe('KnowledgeArtifactValidatorService', () => {
     ]);
   });
 
-  it('quarantines artifacts whose artifact kind is unsupported', () => {
-    const artifact = {
-      ...validArtifact(),
-      artifactKind: 'unsupported_kind',
-    } as unknown as CompiledKnowledgeArtifact;
+  it.each(['unsupported_kind', 'overview'])(
+    'quarantines the non-page artifact kind %s',
+    (artifactKind) => {
+      const artifact = {
+        ...validArtifact(),
+        artifactKind,
+      } as unknown as CompiledKnowledgeArtifact;
 
-    const result = service.validateCompileResult({
-      input,
-      artifacts: [artifact],
-    });
+      const result = service.validateCompileResult({
+        input,
+        artifacts: [artifact],
+      });
 
-    expect(result.accepted).toEqual([]);
-    expect(result.quarantined[0].reasons).toEqual([
-      'artifact kind is not supported',
-    ]);
-  });
+      expect(result.accepted).toEqual([]);
+      expect(result.quarantined[0].reasons).toEqual([
+        'artifact kind is not supported',
+      ]);
+    },
+  );
 
   it('quarantines artifacts that depend on sources outside the compile input', () => {
     const artifact = {

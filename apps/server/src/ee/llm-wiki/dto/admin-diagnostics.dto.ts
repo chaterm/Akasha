@@ -43,6 +43,7 @@ const RUN_PHASES = [
   'initial_aggregate',
   'images',
   'image_merge',
+  'finalizing',
   'final_aggregate',
   'complete',
 ] as const;

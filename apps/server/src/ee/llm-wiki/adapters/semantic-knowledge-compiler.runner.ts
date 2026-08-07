@@ -1,9 +1,12 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { KnowledgeCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-compilation.repo';
 import { JsonValue } from '@akasha/db/types/db';
 import { KNOWLEDGE_COMPILER_LLM_PROVIDER } from '../llm-wiki.constants';
-import { KnowledgeCompilerLlmProvider } from '../compiler/knowledge-compiler-llm.provider';
+import {
+  KnowledgeCompilerLlmError,
+  KnowledgeCompilerLlmProvider,
+} from '../compiler/knowledge-compiler-llm.provider';
 import {
   buildSemanticAnalysisMessages,
   buildSemanticGenerationMessages,
@@ -25,6 +28,11 @@ import { LlmWikiCompilerRunner } from './llm-wiki-file-compiler.runner';
 import { chunkKnowledgeSource } from '../chunking/knowledge-structural-chunker';
 import { buildEffectiveKnowledgeHash } from '../services/knowledge-effective-hash';
 import { KnowledgeOperationBudget } from '../services/knowledge-operation-budget';
+import { SEMANTIC_COMPILER_LIMITS } from '../compiler/semantic-compiler.limits';
+import {
+  CompilerCatalogSelection,
+  KnowledgeArtifactCatalogService,
+} from '../services/knowledge-artifact-catalog.service';
 
 @Injectable()
 export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
@@ -32,6 +40,8 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
     @Inject(KNOWLEDGE_COMPILER_LLM_PROVIDER)
     private readonly provider: KnowledgeCompilerLlmProvider,
     private readonly compilationRepo: KnowledgeCompilationRepo,
+    @Optional()
+    private readonly catalogService?: KnowledgeArtifactCatalogService,
   ) {}
 
   async compileSpace(input: CompileSpaceInput): Promise<CompileSpaceResult> {
@@ -60,7 +70,20 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
       compileTaskId,
       stage: 'analysis',
     });
-    const analysis = await this.loadOrAnalyze(input, source);
+    const analysisStage = await this.loadOrAnalyze(
+      input,
+      source,
+      compileTaskId,
+    );
+    const analysis = analysisStage.analysis;
+
+    const generationCatalog = this.catalogService
+      ? await this.catalogService.findGenerationCandidates({
+          source,
+          analysis,
+          analysisCandidates: analysisStage.catalog.entries,
+        })
+      : legacyCatalogSelection(input.catalog ?? []);
 
     await this.compilationRepo.updateStage({
       workspaceId: input.workspaceId,
@@ -75,18 +98,60 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
       analysis,
       purpose: input.purpose,
       schema: input.schema,
-      catalog: input.catalog,
+      catalog: generationCatalog.entries,
     });
-    const generationFallback = {
-      canonicalKey: source.sourcePageId,
-      title: source.title,
-      markdown: source.text,
-    };
-    const generation = operationBudget.signal
-      ? await this.provider.generate(generationMessages, generationFallback, {
-          abortSignal: operationBudget.signal,
-        })
-      : await this.provider.generate(generationMessages, generationFallback);
+    await this.recordCandidates({
+      input,
+      source,
+      compileTaskId,
+      stage: 'generation',
+      selection: {
+        ...generationCatalog,
+        candidateHash:
+          generationMessages.catalogCandidateHash ??
+          generationCatalog.candidateHash,
+      },
+    });
+    const generationBudget = await this.checkGenerationAttemptBudget({
+      input,
+      source,
+      compileTaskId,
+    });
+    assertGenerationAttemptAllowed(generationBudget);
+    const generationFallback = input.hasLastSuccess
+      ? undefined
+      : {
+          canonicalKey: source.sourcePageId,
+          title: source.title.slice(0, 300),
+          markdown: buildBoundedFallbackMarkdown(analysis),
+        };
+    let generation: Awaited<
+      ReturnType<KnowledgeCompilerLlmProvider['generate']>
+    >;
+    let reservedGeneration = generationBudget;
+    try {
+      generation = operationBudget.signal
+        ? await this.provider.generate(generationMessages, generationFallback, {
+            abortSignal: operationBudget.signal,
+          })
+        : await this.provider.generate(generationMessages, generationFallback);
+    } catch (error) {
+      if (shouldCountGenerationFailure(error)) {
+        reservedGeneration = await this.reserveGenerationAttempt({
+          input,
+          source,
+          compileTaskId,
+        });
+        assertGenerationAttemptAllowed(reservedGeneration);
+      }
+      throw error;
+    }
+    reservedGeneration = await this.reserveGenerationAttempt({
+      input,
+      source,
+      compileTaskId,
+    });
+    assertGenerationAttemptAllowed(reservedGeneration);
     operationBudget.assertArtifactCount(generation.artifacts.length);
     if (generation.compilerRecovery) {
       warnings.push({
@@ -121,7 +186,7 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
     );
     assertUniqueArtifacts(normalizedDrafts);
     const idByKey = new Map<string, string>();
-    for (const entry of input.catalog ?? []) {
+    for (const entry of generationCatalog.entries) {
       if (!entry.artifactId) continue;
       idByKey.set(
         artifactLookupKey(
@@ -153,7 +218,7 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
     const artifacts = enrichArtifactRelationships({
       artifacts: compiledArtifacts,
       analysis,
-      input,
+      input: { ...input, catalog: generationCatalog.entries },
       source,
       warnings,
     });
@@ -166,6 +231,11 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
       compilerRunId,
       artifacts,
       diagnostics: { warnings, errors: [] },
+      resultQuality:
+        generation.compilerRecovery === 'source_summary_fallback'
+          ? 'degraded'
+          : 'normal',
+      generationAttemptCount: reservedGeneration.attemptCount,
     };
   }
 
@@ -176,8 +246,15 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
   private async loadOrAnalyze(
     input: CompileSpaceInput,
     source: KnowledgeSourceSnapshot,
-  ): Promise<SemanticAnalysis> {
-    const effectiveKnowledgeHash =
+    compileTaskId: string,
+  ): Promise<{
+    analysis: SemanticAnalysis;
+    catalog: CompilerCatalogSelection;
+  }> {
+    const catalog = this.catalogService
+      ? await this.catalogService.findAnalysisCandidates({ source })
+      : legacyCatalogSelection(input.catalog ?? []);
+    const sourceEffectiveKnowledgeHash =
       source.effectiveKnowledgeHash ??
       buildEffectiveKnowledgeHash({
         sourceContentHash: source.contentHash,
@@ -186,6 +263,29 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
         promptVersion: input.promptVersion,
         readyImages: [],
       });
+    const messages = buildSemanticAnalysisMessages({
+      sourceTitle: source.title,
+      sourceText: source.text,
+      purpose: input.purpose,
+      schema: input.schema,
+      catalog: catalog.entries,
+    });
+    const candidateHash =
+      messages.catalogCandidateHash ?? catalog.candidateHash;
+    await this.recordCandidates({
+      input,
+      source,
+      compileTaskId,
+      stage: 'analysis',
+      selection: { ...catalog, candidateHash },
+    });
+    const effectiveKnowledgeHash = analysisCacheHash({
+      sourceEffectiveKnowledgeHash,
+      providerIdentity:
+        this.provider.getCacheIdentity?.() ?? 'provider:unspecified',
+      promptVersion: input.promptVersion,
+      catalogCandidateHash: candidateHash,
+    });
     const cacheKey = {
       workspaceId: input.workspaceId,
       sourcePageId: source.sourcePageId,
@@ -193,17 +293,12 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
       compilerVersion: input.compilerVersion,
       promptVersion: input.promptVersion,
     };
-    const cached = await this.compilationRepo.findAnalysis(cacheKey);
+    const cached = input.bypassCache
+      ? undefined
+      : await this.compilationRepo.findAnalysis(cacheKey);
     const parsedCache = semanticAnalysisSchema.safeParse(cached);
-    if (parsedCache.success) return parsedCache.data;
+    if (parsedCache.success) return { analysis: parsedCache.data, catalog };
 
-    const messages = buildSemanticAnalysisMessages({
-      sourceTitle: source.title,
-      sourceText: source.text,
-      purpose: input.purpose,
-      schema: input.schema,
-      catalog: input.catalog,
-    });
     const analysis = input.operationBudget?.signal
       ? await this.provider.analyze(messages, {
           abortSignal: input.operationBudget.signal,
@@ -216,8 +311,152 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
       analysis: analysis as unknown as JsonValue,
       publicationGuard: input.publicationGuard,
     });
-    return analysis;
+    return { analysis, catalog };
   }
+
+  private async recordCandidates(input: {
+    input: CompileSpaceInput;
+    source: KnowledgeSourceSnapshot;
+    compileTaskId: string;
+    stage: 'analysis' | 'generation';
+    selection: CompilerCatalogSelection;
+  }): Promise<void> {
+    const repo = this.compilationRepo as KnowledgeCompilationRepo & {
+      recordCompilerCandidates?: KnowledgeCompilationRepo['recordCompilerCandidates'];
+    };
+    await repo.recordCompilerCandidates?.({
+      workspaceId: input.input.workspaceId,
+      sourcePageId: input.source.sourcePageId,
+      compileTaskId: input.compileTaskId,
+      stage: input.stage,
+      compilerModel:
+        this.provider.getCompilerModel?.() ?? input.input.compilerVersion,
+      compilerProfile:
+        this.provider.getCacheIdentity?.() ?? 'provider:unspecified',
+      candidateIds: input.selection.candidateIds,
+      candidateHash: input.selection.candidateHash,
+    });
+  }
+
+  private async reserveGenerationAttempt(input: {
+    input: CompileSpaceInput;
+    source: KnowledgeSourceSnapshot;
+    compileTaskId: string;
+  }): Promise<{ allowed: boolean; attemptCount: number }> {
+    const repo = this.compilationRepo as KnowledgeCompilationRepo & {
+      reserveGenerationAttempt?: KnowledgeCompilationRepo['reserveGenerationAttempt'];
+    };
+    return (
+      (await repo.reserveGenerationAttempt?.({
+        workspaceId: input.input.workspaceId,
+        sourcePageId: input.source.sourcePageId,
+        compileTaskId: input.compileTaskId,
+        sourceContentHash: input.source.contentHash,
+        reset: input.input.bypassCache === true,
+      })) ?? { allowed: true, attemptCount: 1 }
+    );
+  }
+
+  private async checkGenerationAttemptBudget(input: {
+    input: CompileSpaceInput;
+    source: KnowledgeSourceSnapshot;
+    compileTaskId: string;
+  }): Promise<{ allowed: boolean; attemptCount: number }> {
+    const repo = this.compilationRepo as KnowledgeCompilationRepo & {
+      checkGenerationAttemptBudget?: KnowledgeCompilationRepo['checkGenerationAttemptBudget'];
+    };
+    return (
+      (await repo.checkGenerationAttemptBudget?.({
+        workspaceId: input.input.workspaceId,
+        sourcePageId: input.source.sourcePageId,
+        compileTaskId: input.compileTaskId,
+        sourceContentHash: input.source.contentHash,
+        reset: input.input.bypassCache === true,
+      })) ?? { allowed: true, attemptCount: 0 }
+    );
+  }
+}
+
+function assertGenerationAttemptAllowed(input: {
+  allowed: boolean;
+  attemptCount: number;
+}): void {
+  if (input.allowed) return;
+  throw new KnowledgeCompilerLlmError(
+    'invalid_output',
+    'Knowledge generation retry budget is exhausted for this source content.',
+    false,
+  );
+}
+
+function shouldCountGenerationFailure(error: unknown): boolean {
+  return (
+    error instanceof KnowledgeCompilerLlmError &&
+    error.code === 'invalid_output'
+  );
+}
+
+function legacyCatalogSelection(
+  entries: CompileSpaceInput['catalog'] extends infer T
+    ? NonNullable<T>
+    : never,
+): CompilerCatalogSelection {
+  const bounded = entries.slice(0, 64);
+  return {
+    entries: bounded,
+    candidateIds: bounded.flatMap((entry) =>
+      entry.artifactId ? [entry.artifactId] : [],
+    ),
+    candidateHash: `sha256:${sha256(
+      JSON.stringify(
+        bounded.map(({ artifactKind, canonicalKey, title }) => ({
+          artifactKind,
+          canonicalKey,
+          title,
+        })),
+      ),
+    )}`,
+  };
+}
+
+function analysisCacheHash(input: {
+  sourceEffectiveKnowledgeHash: string;
+  providerIdentity: string;
+  promptVersion: string;
+  catalogCandidateHash: string;
+}): string {
+  return `sha256:${sha256(
+    JSON.stringify({
+      sourceEffectiveKnowledgeHash: input.sourceEffectiveKnowledgeHash,
+      providerIdentity: input.providerIdentity,
+      promptVersion: input.promptVersion,
+      catalogCandidateHash: input.catalogCandidateHash,
+    }),
+  )}`;
+}
+
+function buildBoundedFallbackMarkdown(analysis: SemanticAnalysis): string {
+  // Reserve half of the fallback budget for structured claims/evidence so an
+  // unexpectedly verbose (but valid) synopsis cannot crowd them out.
+  const sections = [
+    analysis.synopsis
+      .trim()
+      .slice(0, Math.floor(SEMANTIC_COMPILER_LIMITS.fallbackMarkdownChars / 2)),
+  ];
+  if (analysis.claims.length > 0) {
+    sections.push(
+      [
+        '## Key claims',
+        ...analysis.claims.map(
+          (claim) => `- ${claim.text}\n  - Evidence: “${claim.evidenceQuote}”`,
+        ),
+      ].join('\n'),
+    );
+  }
+  return sections
+    .join('\n\n')
+    .trim()
+    .slice(0, SEMANTIC_COMPILER_LIMITS.fallbackMarkdownChars);
 }
 
 function carryAnalysisClaimsIntoSummary(

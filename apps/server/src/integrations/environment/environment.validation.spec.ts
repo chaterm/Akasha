@@ -11,6 +11,7 @@ describe('environment validation', () => {
   it.each([
     ['10000', '300000'],
     ['120000', '300000'],
+    ['300000', '300000'],
     ['270000', '600000'],
   ])('accepts knowledge compiler timeout %s', (timeout, aggregateDeadline) => {
     expect(
@@ -87,6 +88,21 @@ describe('environment validation', () => {
     ).toBe('custom-vision-model');
   });
 
+  it('accepts the dedicated knowledge compiler profile', () => {
+    const config = validate({
+      ...baseEnvironment,
+      KNOWLEDGE_COMPILER_MODEL: 'qwen3.8-max',
+      KNOWLEDGE_COMPILER_THINKING: 'false',
+      KNOWLEDGE_COMPILER_MAX_OUTPUT_TOKENS: '16384',
+      KNOWLEDGE_IMAGE_MERGE_MAX_OUTPUT_TOKENS: '8192',
+    });
+
+    expect(config.KNOWLEDGE_COMPILER_MODEL).toBe('qwen3.8-max');
+    expect(config.KNOWLEDGE_COMPILER_THINKING).toBe('false');
+    expect(config.KNOWLEDGE_COMPILER_MAX_OUTPUT_TOKENS).toBe(16_384);
+    expect(config.KNOWLEDGE_IMAGE_MERGE_MAX_OUTPUT_TOKENS).toBe(8_192);
+  });
+
   it('accepts bounded database and compilation runtime settings', () => {
     const config = validate({
       ...baseEnvironment,
@@ -141,15 +157,13 @@ describe('environment validation', () => {
     ['KNOWLEDGE_SPACE_HEARTBEAT_MS', '60001'],
     ['KNOWLEDGE_SPACE_LEASE_TTL_MS', '119999'],
     ['KNOWLEDGE_SPACE_LEASE_TTL_MS', '600001'],
+    ['KNOWLEDGE_COMPILER_THINKING', 'true'],
+    ['KNOWLEDGE_COMPILER_MAX_OUTPUT_TOKENS', '0'],
+    ['KNOWLEDGE_COMPILER_MAX_OUTPUT_TOKENS', '131073'],
+    ['KNOWLEDGE_IMAGE_MERGE_MAX_OUTPUT_TOKENS', '0'],
+    ['KNOWLEDGE_IMAGE_MERGE_MAX_OUTPUT_TOKENS', '131073'],
   ])('rejects invalid bounded setting %s=%s', (key, value) => {
     expectInvalidEnvironment({ [key]: value });
-  });
-
-  it('rejects a compiler timeout pair that leaves no aggregate headroom', () => {
-    expectInvalidEnvironment({
-      KNOWLEDGE_COMPILER_TIMEOUT_MS: '150000',
-      KNOWLEDGE_AGGREGATE_DEADLINE_MS: '300000',
-    });
   });
 
   it('rejects heartbeat greater than or equal to the execution lease TTL', () => {

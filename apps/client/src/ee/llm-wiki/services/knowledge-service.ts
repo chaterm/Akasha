@@ -1026,6 +1026,7 @@ function normalizeRunPhase(value: unknown): KnowledgeRunPhase {
     "initial_aggregate",
     "images",
     "image_merge",
+    "finalizing",
     "final_aggregate",
     "complete",
   ].includes(value as string)

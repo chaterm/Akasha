@@ -196,6 +196,30 @@ describe('KnowledgeVectorIndexService', () => {
     });
   });
 
+  it('never receives historical overview chunks from the active rebuild query', async () => {
+    const embeddingProvider = {
+      embedQuery: jest.fn().mockResolvedValue({
+        vector: [0.1],
+        profile: 'b'.repeat(64),
+        model: 'embedding-v2',
+        dimensions: 1,
+      }),
+    };
+    const service = serviceWithRebuilder({
+      embeddingProvider,
+      findActiveChunks: jest.fn().mockResolvedValue([]),
+      persistEmbeddings: jest.fn().mockResolvedValue(undefined),
+      ensureProfileIndex: jest.fn().mockResolvedValue('created'),
+    });
+
+    await service.rebuildSpaceEmbeddings({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+    });
+
+    expect(embeddingProvider.embedQuery).not.toHaveBeenCalled();
+  });
+
   it('limits a maintenance batch to 50 chunks and embeds at concurrency 2', async () => {
     let active = 0;
     let maxActive = 0;

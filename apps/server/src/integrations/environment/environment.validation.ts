@@ -148,6 +148,30 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   @IsNotEmpty()
+  KNOWLEDGE_COMPILER_MODEL: string;
+
+  @IsOptional()
+  @IsIn(['false'])
+  @IsString()
+  KNOWLEDGE_COMPILER_THINKING: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(131_072)
+  KNOWLEDGE_COMPILER_MAX_OUTPUT_TOKENS: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(131_072)
+  KNOWLEDGE_IMAGE_MERGE_MAX_OUTPUT_TOKENS: number;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
   AI_VISION_MODEL: string;
 
   @IsOptional()
@@ -287,17 +311,6 @@ export function validate(config: Record<string, any>) {
 
     console.error(
       'Please fix the environment variables and try again. Exiting program...',
-    );
-    process.exit(1);
-  }
-
-  const compilerTimeout =
-    validatedConfig.KNOWLEDGE_COMPILER_TIMEOUT_MS ?? 120_000;
-  const aggregateDeadline =
-    validatedConfig.KNOWLEDGE_AGGREGATE_DEADLINE_MS ?? 300_000;
-  if (2 * compilerTimeout + 60_000 > aggregateDeadline) {
-    console.error(
-      'KNOWLEDGE_AGGREGATE_DEADLINE_MS must leave 60000ms after two compiler attempts.',
     );
     process.exit(1);
   }

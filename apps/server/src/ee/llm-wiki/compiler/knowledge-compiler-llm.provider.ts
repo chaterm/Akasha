@@ -22,8 +22,9 @@ import {
 } from './semantic-compiler.schema';
 import { SemanticCompilerMessages } from './semantic-compiler.prompts';
 import { createBoundedAbortSignal } from '../services/knowledge-operation-budget';
+import { SEMANTIC_COMPILER_LIMITS } from './semantic-compiler.limits';
 
-const mergeCompletionSchema = z
+export const mergeCompletionSchema = z
   .object({
     title: z.string().trim().min(1).max(300),
     markdown: z.string().trim().min(1),
@@ -35,6 +36,7 @@ export type KnowledgeCompilerLlmErrorCode =
   | 'invalid_output'
   | 'rate_limited'
   | 'timeout'
+  | 'input_too_large'
   | 'provider_error';
 
 export type KnowledgeCompilerProviderDiagnostic = {
@@ -52,6 +54,8 @@ export type KnowledgeCompilerProviderDiagnostic = {
 };
 
 export class KnowledgeCompilerLlmError extends Error {
+  readonly diagnosticClass?: 'oversized';
+
   constructor(
     readonly code: KnowledgeCompilerLlmErrorCode,
     message: string,
@@ -61,10 +65,13 @@ export class KnowledgeCompilerLlmError extends Error {
   ) {
     super(message);
     this.name = 'KnowledgeCompilerLlmError';
+    this.diagnosticClass = code === 'input_too_large' ? 'oversized' : undefined;
   }
 }
 
 export interface KnowledgeCompilerLlmProvider {
+  getCacheIdentity?(): string;
+  getCompilerModel?(): string;
   analyze(
     messages: SemanticCompilerMessages,
     options?: KnowledgeCompilerRequestOptions,
@@ -97,9 +104,32 @@ export type KnowledgeCompilerGenerationFallback = {
   markdown: string;
 };
 
+type ProviderJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ProviderJsonValue[]
+  | { [key: string]: ProviderJsonValue };
+
+type KnowledgeCompilerProviderOptions = Record<
+  string,
+  Record<string, ProviderJsonValue>
+>;
+
 @Injectable()
 export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompilerLlmProvider {
   constructor(private readonly environmentService: EnvironmentService) {}
+
+  getCacheIdentity(): string {
+    const driver = this.environmentService.getAiDriver()?.trim().toLowerCase();
+    const model = this.environmentService.getKnowledgeCompilerModel()?.trim();
+    return `${driver || 'unconfigured'}:${model || 'unconfigured'}:thinking=${this.environmentService.getKnowledgeCompilerThinking()}`;
+  }
+
+  getCompilerModel(): string {
+    return this.environmentService.getKnowledgeCompilerModel().trim();
+  }
 
   async analyze(
     messages: SemanticCompilerMessages,
@@ -230,7 +260,9 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
         system: input.messages.system,
         prompt: input.messages.prompt,
         temperature: 0.1,
+        maxOutputTokens: this.maxOutputTokens(input.stage),
         abortSignal: boundedSignal.signal,
+        providerOptions: this.providerOptions(),
         output: Output.json({
           name: input.name,
           description: `Akasha knowledge compiler ${input.stage} output`,
@@ -253,7 +285,7 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
 
   private createModel(): LanguageModel {
     const driver = this.environmentService.getAiDriver();
-    const modelName = this.environmentService.getAiCompletionModel();
+    const modelName = this.environmentService.getKnowledgeCompilerModel();
     if (!driver || !modelName) {
       throw new KnowledgeCompilerLlmError(
         'configuration_error',
@@ -270,7 +302,7 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
         })(modelName);
       case 'openai-compatible':
         return createOpenAICompatible({
-          name: 'openai-compatible',
+          name: 'knowledgeCompiler',
           apiKey: this.environmentService.getOpenAiApiKey(),
           baseURL: this.environmentService.getOpenAiApiUrl(),
         })(modelName);
@@ -281,13 +313,39 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
       case 'ollama':
         return createOllama({
           baseURL: this.environmentService.getOllamaApiUrl(),
-        })(modelName);
+        })(modelName, {
+          think: this.environmentService.getKnowledgeCompilerThinking(),
+        });
       default:
         throw new KnowledgeCompilerLlmError(
           'configuration_error',
           'Knowledge compiler LLM is not configured.',
           false,
         );
+    }
+  }
+
+  private maxOutputTokens(stage: 'analysis' | 'generation' | 'merge'): number {
+    return stage === 'merge'
+      ? this.environmentService.getKnowledgeImageMergeMaxOutputTokens()
+      : this.environmentService.getKnowledgeCompilerMaxOutputTokens();
+  }
+
+  private providerOptions(): KnowledgeCompilerProviderOptions {
+    const thinking = this.environmentService.getKnowledgeCompilerThinking();
+    switch (this.environmentService.getAiDriver()) {
+      case 'openai-compatible':
+        return { knowledgeCompiler: { enable_thinking: thinking } };
+      case 'openai':
+        return { openai: { reasoningEffort: thinking ? 'medium' : 'none' } };
+      case 'gemini':
+        return {
+          google: {
+            thinkingConfig: { thinkingBudget: thinking ? -1 : 0 },
+          },
+        };
+      default:
+        return {};
     }
   }
 }
@@ -350,6 +408,7 @@ function buildNoOutputRetryMessages(
       'The previous request produced no usable JSON. Return the required JSON object now and follow the output contract exactly.',
       '</retry_feedback>',
     ].join('\n'),
+    catalogCandidateHash: messages.catalogCandidateHash,
   };
 }
 
@@ -377,6 +436,7 @@ function buildRepairMessages(input: {
       serializeRepairValue(input.value),
       '</invalid_output>',
     ].join('\n'),
+    catalogCandidateHash: input.messages.catalogCandidateHash,
   };
 }
 
@@ -412,19 +472,33 @@ function withRecovery<T>(value: T, recovery: false | 'local' | 'model'): T {
 function sourceSummaryFallback(
   fallback: KnowledgeCompilerGenerationFallback,
 ): SemanticGenerationResult {
-  return {
+  const candidate = {
     version: '1',
     artifacts: [
       {
         kind: 'source_summary',
         canonicalKey: fallback.canonicalKey,
-        title: fallback.title,
-        markdown: fallback.markdown,
+        title: fallback.title.trim().slice(0, 300),
+        markdown: fallback.markdown
+          .trim()
+          .slice(0, SEMANTIC_COMPILER_LIMITS.fallbackMarkdownChars),
         claims: [],
         links: [],
         tags: [],
       },
     ],
+  };
+  const parsed = semanticGenerationSchema.safeParse(candidate);
+  if (!parsed.success) {
+    throw invalidOutputError(
+      'generation',
+      new SemanticCompilerOutputError(
+        `bounded generation fallback is invalid: ${formatSchemaIssues(parsed.error)}`,
+      ),
+    );
+  }
+  return {
+    ...parsed.data,
     compilerRecovery: 'source_summary_fallback',
   };
 }
@@ -441,6 +515,15 @@ function classifyProviderError(
     ]),
   );
   const diagnostic = providerDiagnostic(error, chain, stage, status);
+  if (isInputTooLargeError(chain, status)) {
+    return new KnowledgeCompilerLlmError(
+      'input_too_large',
+      'Knowledge compiler input exceeds the provider context limit.',
+      false,
+      error,
+      diagnostic,
+    );
+  }
   if (status === 429) {
     return new KnowledgeCompilerLlmError(
       'rate_limited',
@@ -486,6 +569,58 @@ function classifyProviderError(
     error,
     diagnostic,
   );
+}
+
+function isInputTooLargeError(
+  chain: unknown[],
+  status: number | undefined,
+): boolean {
+  if (status === 413) return true;
+  const inputTooLargeMarkers = [
+    'context_length_exceeded',
+    'input_too_long',
+    'maximum_context',
+    'token_limit',
+    'request_too_large',
+  ];
+
+  const providerErrors = chain
+    .map((candidate) =>
+      readObjectProperty(readObjectProperty(candidate, 'data'), 'error'),
+    )
+    .filter((candidate): candidate is Record<string, unknown> =>
+      Boolean(candidate),
+    );
+  const codes = [...chain, ...providerErrors]
+    .flatMap((candidate) => [
+      readScalarStringProperty(candidate, 'code'),
+      readScalarStringProperty(candidate, 'type'),
+    ])
+    .filter((value): value is string => Boolean(value))
+    .map(normalizeProviderSignal);
+  if (codes.some((code) => inputTooLargeMarkers.includes(code))) {
+    return true;
+  }
+  if (status !== 400) return false;
+
+  const messages = [...chain, ...providerErrors]
+    .flatMap((candidate) => [
+      readStringProperty(candidate, 'message'),
+      readStringProperty(candidate, 'responseBody'),
+      readStringProperty(candidate, 'body'),
+    ])
+    .filter((value): value is string => Boolean(value))
+    .map(normalizeProviderSignal);
+  return messages.some((message) =>
+    inputTooLargeMarkers.some((marker) => message.includes(marker)),
+  );
+}
+
+function normalizeProviderSignal(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/gu, '_');
 }
 
 function providerDiagnostic(
@@ -626,5 +761,9 @@ function readNumberProperty(value: unknown, key: string): number | undefined {
     return undefined;
   }
   const property = (value as Record<string, unknown>)[key];
-  return typeof property === 'number' ? property : undefined;
+  if (typeof property === 'number') return property;
+  if (typeof property === 'string' && /^\d{3}$/u.test(property.trim())) {
+    return Number(property);
+  }
+  return undefined;
 }

@@ -1,9 +1,6 @@
 import { Queue } from 'bullmq';
 import { KnowledgeCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-compilation.repo';
-import { KnowledgeArtifactContributionRepo } from '@akasha/db/repos/llm-wiki/knowledge-artifact-contribution.repo';
-import { KnowledgeCapsuleRepo } from '@akasha/db/repos/llm-wiki/knowledge-capsule.repo';
 import { KnowledgeImageExtractionRepo } from '@akasha/db/repos/llm-wiki/knowledge-image-extraction.repo';
-import { KnowledgeSourceRepo } from '@akasha/db/repos/llm-wiki/knowledge-source.repo';
 import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
 import {
   KnowledgeSpaceExecutionRepo,
@@ -16,7 +13,6 @@ import {
   DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
   DEFAULT_KNOWLEDGE_PROMPT_VERSION,
 } from '../llm-wiki.constants';
-import { KnowledgeArtifactCatalogService } from './knowledge-artifact-catalog.service';
 import { buildEffectiveKnowledgeHash } from './knowledge-effective-hash';
 import { KnowledgeSourceExporterService } from './knowledge-source-exporter.service';
 import { KnowledgeSpaceCompilationService } from './knowledge-space-compilation.service';
@@ -98,8 +94,6 @@ describe('KnowledgeSpaceCompilationService', () => {
         requests: [expect.objectContaining({ spaceId: 'space-1' })],
       }),
     );
-    expect(fixture.catalog.snapshot).not.toHaveBeenCalled();
-    expect(fixture.sourceExporter.exportSpaceSources).not.toHaveBeenCalled();
     expect(fixture.imageQueue.add).not.toHaveBeenCalled();
   });
 
@@ -189,86 +183,23 @@ describe('KnowledgeSpaceCompilationService', () => {
     expect(fixture.repo.promoteDuePageCompileSchedules).not.toHaveBeenCalled();
   });
 
-  it('initializes against the prior completed Run instead of its own queued placeholder', async () => {
-    const source = sourceSnapshot();
-    const fixture = createService({
-      exportedSources: [source],
-      reuseCandidates: [reuseCandidate(source)],
-      latestAggregateRun: {
-        id: 'prior-complete-run',
-        compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
-        promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
-        knowledgeGeneration: 4,
-        currentKnowledgeGeneration: 4,
-        catalogHash: 'sha256:catalog',
-      },
-      hasActiveOverview: true,
+  it('initializes a full Space through metadata-only INSERT SELECT planning', async () => {
+    const fixture = createService();
+
+    await expect(fixture.service.initializeLeasedRun(lease())).resolves.toEqual(
+      expect.objectContaining({ pageCompilationRequired: true }),
+    );
+
+    expect(fixture.executionRepo.initializeRun).toHaveBeenCalledWith(lease(), {
+      targetSourcePageIds: null,
     });
-
-    const result = await fixture.service.initializeLeasedRun(lease());
-
+    expect(fixture.sourceExporter.exportPageSources).not.toHaveBeenCalled();
     expect(
-      fixture.repo.findLatestCompletedRunForAggregateReuse,
-    ).toHaveBeenCalledWith({
-      workspaceId: 'workspace-1',
-      spaceId: 'space-1',
-      currentRunId: 'current-run',
-    });
-    expect(fixture.executionRepo.initializeRun).toHaveBeenCalledWith(
-      lease(),
-      expect.objectContaining({
-        pages: [expect.objectContaining({ status: 'skipped' })],
-      }),
-    );
-    expect(result).toEqual(
-      expect.objectContaining({
-        aggregateRequired: false,
-        pageCompilationRequired: false,
-      }),
-    );
-  });
-
-  it('reuses compiled knowledge when only sourceVersion changed and content hashes are identical', async () => {
-    const previouslyCompiledSource = sourceSnapshot();
-    const currentSource = {
-      ...previouslyCompiledSource,
-      sourceVersion: 'v2',
-    };
-    const fixture = createService({
-      exportedSources: [currentSource],
-      reuseCandidates: [reuseCandidate(previouslyCompiledSource)],
-      latestAggregateRun: {
-        id: 'prior-complete-run',
-        compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
-        promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
-        knowledgeGeneration: 4,
-        currentKnowledgeGeneration: 4,
-        catalogHash: 'sha256:catalog',
-      },
-      hasActiveOverview: true,
-    });
-
-    const result = await fixture.service.initializeLeasedRun(lease());
-
-    expect(fixture.executionRepo.initializeRun).toHaveBeenCalledWith(
-      lease(),
-      expect.objectContaining({
-        pages: [
-          expect.objectContaining({
-            expectedSourceVersion: 'v2',
-            expectedSourceContentHash: currentSource.contentHash,
-            status: 'skipped',
-            errorCode: 'unchanged',
-          }),
-        ],
-      }),
-    );
-    expect(result).toEqual(
-      expect.objectContaining({
-        aggregateRequired: false,
-        pageCompilationRequired: false,
-      }),
-    );
+      fixture.imageExtractionRepo.findCurrentReadyForSnapshotImages,
+    ).not.toHaveBeenCalled();
+    expect(
+      fixture.compilationRepo.findSpaceReuseCandidates,
+    ).not.toHaveBeenCalled();
   });
 
   it('resumes an initialized Run without repeating whole-Space planning', async () => {
@@ -281,6 +212,10 @@ describe('KnowledgeSpaceCompilationService', () => {
       promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
       initializedAt: new Date('2026-08-03T00:00:00.000Z'),
       aggregateRequired: false,
+      expectedPageCount: 1,
+      succeededPageCount: 1,
+      failedPageCount: 0,
+      skippedPageCount: 0,
     });
 
     await expect(fixture.service.initializeLeasedRun(lease())).resolves.toEqual(
@@ -291,118 +226,169 @@ describe('KnowledgeSpaceCompilationService', () => {
       }),
     );
 
-    expect(fixture.sourceExporter.exportSpaceSources).not.toHaveBeenCalled();
-    expect(fixture.catalog.snapshot).not.toHaveBeenCalled();
-    expect(fixture.catalog.aggregateFingerprint).not.toHaveBeenCalled();
     expect(fixture.executionRepo.initializeRun).not.toHaveBeenCalled();
   });
 
-  it('compiles only target pages and never retires other sources for a page-scoped Run', async () => {
-    const source = sourceSnapshot();
+  it('initializes a page-scoped Run without exporting target bodies', async () => {
     const fixture = createService({
-      exportedSources: [source],
       targetSourcePageIds: ['page-1'],
-      // The Space still has other active pages; a page-scoped Run must not
-      // treat them as removed just because it did not export them.
-      activeSourcePageIds: ['page-1', 'other-page-a', 'other-page-b'],
     });
 
-    const result = await fixture.service.initializeLeasedRun(lease());
+    await fixture.service.initializeLeasedRun(lease());
 
-    // Uses the page-scoped exporter, never the whole-Space exporter.
-    expect(fixture.sourceExporter.exportPageSources).toHaveBeenCalledWith(
+    expect(fixture.executionRepo.initializeRun).toHaveBeenCalledWith(lease(), {
+      targetSourcePageIds: ['page-1'],
+    });
+    expect(fixture.sourceExporter.exportPageSources).not.toHaveBeenCalled();
+  });
+
+  it('binds the latest single-page snapshot and moves image planning to the worker', async () => {
+    const source = sourceSnapshotWithImages(2);
+    const fixture = createService({
+      exportedSources: [source],
+      readyExtractions: [readyExtraction(source.images[0])],
+    });
+
+    await expect(
+      fixture.service.bindLeasedRunPage(lease(), { sourcePageId: 'page-1' }),
+    ).resolves.toEqual(expect.objectContaining({ outcome: 'bound' }));
+
+    expect(fixture.sourceExporter.exportPageSources).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageIds: ['page-1'],
+    });
+    expect(fixture.executionRepo.bindTextPage).toHaveBeenCalledWith(
+      lease(),
       expect.objectContaining({
-        workspaceId: 'workspace-1',
-        spaceId: 'space-1',
-        sourcePageIds: ['page-1'],
+        expectedSourceVersion: source.sourceVersion,
+        expectedSourceContentHash: source.contentHash,
+        expectedImageCount: 2,
+        succeededImageCount: 1,
+        imageStatus: 'pending',
+        mergeStatus: 'waiting_images',
+        images: [
+          expect.objectContaining({ attachmentId: 'attachment-1' }),
+          expect.objectContaining({ attachmentId: 'attachment-2' }),
+        ],
       }),
-    );
-    expect(fixture.sourceExporter.exportSpaceSources).not.toHaveBeenCalled();
-    // The other active pages are NOT retired as removed sources.
-    const plan = fixture.executionRepo.initializeRun.mock.calls[0][1];
-    expect(plan.removedSourcePageIds).toEqual([]);
-    expect(plan.pages).toEqual([
-      expect.objectContaining({ sourcePageId: 'page-1', status: 'pending' }),
-    ]);
-    expect(result).toEqual(
-      expect.objectContaining({ pageCompilationRequired: true }),
     );
   });
 
-  it('recompiles an explicitly retried page instead of reusing its prior publication', async () => {
+  it('reuses an unchanged bound snapshot without image planning or model identity checks', async () => {
+    const previous = sourceSnapshot();
+    const current = { ...previous, sourceVersion: 'v2' };
+    const fixture = createService({
+      exportedSources: [current],
+      reuseCandidates: [
+        {
+          ...reuseCandidate(previous),
+          contributionCompilerVersion: 'old-compiler',
+          contributionPromptVersion: 'old-prompt',
+        },
+      ],
+    });
+
+    await expect(
+      fixture.service.bindLeasedRunPage(lease(), { sourcePageId: 'page-1' }),
+    ).resolves.toEqual(expect.objectContaining({ outcome: 'reused' }));
+
+    expect(fixture.sourceExporter.exportPageSources).toHaveBeenCalledTimes(1);
+    expect(fixture.executionRepo.bindTextPage).toHaveBeenCalledWith(
+      lease(),
+      expect.objectContaining({
+        expectedSourceVersion: 'v2',
+        reused: true,
+        images: [],
+      }),
+    );
+    expect(
+      fixture.imageExtractionRepo.findCurrentReadyForSnapshotImages,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('bypasses reuse for a force rebuild', async () => {
     const source = sourceSnapshot();
     const fixture = createService({
       exportedSources: [source],
       reuseCandidates: [reuseCandidate(source)],
-      targetSourcePageIds: ['page-1'],
-      trigger: 'page_retry',
+      mode: 'force_rebuild',
     });
 
-    const result = await fixture.service.initializeLeasedRun(lease());
-
-    const plan = fixture.executionRepo.initializeRun.mock.calls[0][1];
-    expect(plan.pages).toEqual([
-      expect.objectContaining({ sourcePageId: 'page-1', status: 'pending' }),
-    ]);
-    expect(result).toEqual(
-      expect.objectContaining({ pageCompilationRequired: true }),
+    await expect(
+      fixture.service.bindLeasedRunPage(lease(), { sourcePageId: 'page-1' }),
+    ).resolves.toEqual(expect.objectContaining({ outcome: 'bound' }));
+    expect(fixture.executionRepo.bindTextPage).toHaveBeenCalledWith(
+      lease(),
+      expect.not.objectContaining({ reused: true }),
     );
   });
 
-  it('never treats an image-overflow page as fully reusable and freezes only the first 50 images', async () => {
+  it.each(['page_retry', 'follow_up'])(
+    'bypasses reuse for a %s run so degraded output can self-heal',
+    async (trigger) => {
+      const source = sourceSnapshot();
+      const fixture = createService({
+        exportedSources: [source],
+        reuseCandidates: [reuseCandidate(source)],
+        trigger,
+      });
+
+      await expect(
+        fixture.service.bindLeasedRunPage(lease(), {
+          sourcePageId: 'page-1',
+        }),
+      ).resolves.toEqual(expect.objectContaining({ outcome: 'bound' }));
+      expect(fixture.executionRepo.bindTextPage).toHaveBeenCalledWith(
+        lease(),
+        expect.not.objectContaining({ reused: true }),
+      );
+    },
+  );
+
+  it('binds only the first 50 images and records overflow as partial quality', async () => {
     const source = sourceSnapshotWithImages(60);
-    const readyExtractions = source.images.slice(0, 50).map(readyExtraction);
-    const readyImages = readyExtractions.map((row) => ({
-      attachmentId: row.attachmentId,
-      attachmentVersion: row.attachmentVersion!.toISOString(),
-      cacheFingerprint: row.cacheFingerprint,
-      contentHash: row.contentHash,
-      ocrText: row.ocrText ?? '',
-      caption: row.caption ?? '',
-    }));
-    const candidate = {
-      ...reuseCandidate(source),
-      lastSuccessfulEffectiveHash: buildEffectiveKnowledgeHash({
-        sourceContentHash: source.contentHash,
-        compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
-        promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
-        readyImages,
-      }),
-    };
     const fixture = createService({
       exportedSources: [source],
-      reuseCandidates: [candidate],
-      readyExtractions,
+      reuseCandidates: [reuseCandidate(source)],
+      readyExtractions: source.images.slice(0, 50).map(readyExtraction),
     });
 
-    const result = await fixture.service.initializeLeasedRun(lease());
+    await fixture.service.bindLeasedRunPage(lease(), {
+      sourcePageId: 'page-1',
+    });
 
-    expect(fixture.executionRepo.initializeRun).toHaveBeenCalledWith(
-      lease(),
+    const plan = fixture.executionRepo.bindTextPage.mock.calls[0][1];
+    expect(plan).toEqual(
       expect.objectContaining({
-        pages: [
-          expect.objectContaining({
-            status: 'pending',
-            expectedImageCount: 60,
-            succeededImageCount: 50,
-            skippedImageCount: 10,
-            imageStatus: 'partial',
-            mergeStatus: 'pending',
-          }),
-        ],
-        images: expect.arrayContaining([
-          expect.objectContaining({ imageOrdinal: 0, status: 'succeeded' }),
-          expect.objectContaining({ imageOrdinal: 49, status: 'succeeded' }),
-        ]),
+        expectedImageCount: 60,
+        succeededImageCount: 50,
+        skippedImageCount: 10,
+        imageStatus: 'partial',
+        mergeStatus: 'pending',
+        qualityStatus: 'partial_image',
       }),
     );
-    const plan = fixture.executionRepo.initializeRun.mock.calls[0][1];
     expect(plan.images).toHaveLength(50);
     expect(plan.images.map((image) => image.imageOrdinal)).toEqual(
       Array.from({ length: 50 }, (_, index) => index),
     );
-    expect(result).toEqual(
-      expect.objectContaining({ pageCompilationRequired: true }),
+  });
+
+  it('terminalizes a page deleted before binding without retrying compilation', async () => {
+    const fixture = createService({ exportedSources: [] });
+
+    await expect(
+      fixture.service.bindLeasedRunPage(lease(), { sourcePageId: 'page-1' }),
+    ).resolves.toEqual({ outcome: 'terminalized' });
+    expect(
+      fixture.executionRepo.terminalizeUnboundTextPage,
+    ).toHaveBeenCalledWith(
+      lease(),
+      expect.objectContaining({
+        sourcePageId: 'page-1',
+        errorCode: 'source_unavailable',
+      }),
     );
   });
 });
@@ -414,11 +400,9 @@ function createService(
     exportedSources?: ReturnType<typeof sourceSnapshot>[];
     reuseCandidates?: unknown[];
     readyExtractions?: unknown[];
-    latestAggregateRun?: unknown;
-    hasActiveOverview?: boolean;
     targetSourcePageIds?: string[] | null;
-    activeSourcePageIds?: string[];
     trigger?: string;
+    mode?: string;
   } = {},
 ) {
   const repo = {
@@ -431,9 +415,6 @@ function createService(
       promotedPageCount: 0,
       runRequestCount: 0,
     }),
-    findLatestCompletedRunForAggregateReuse: jest
-      .fn()
-      .mockResolvedValue(overrides.latestAggregateRun),
     findSpaceSliceReservationCandidates: jest
       .fn()
       .mockResolvedValue(overrides.reservationCandidates ?? []),
@@ -453,39 +434,12 @@ function createService(
       .fn()
       .mockResolvedValue(overrides.reuseCandidates ?? []),
   };
-  const catalog = {
-    snapshot: jest.fn().mockResolvedValue({ entries: [] }),
-    aggregateFingerprint: jest.fn().mockResolvedValue({
-      hash: 'sha256:catalog',
-      artifactCount: 1,
-      truncated: false,
-    }),
-  };
-  const sourceRepo = {
-    findActiveSourcePageIdsBySpace: jest
-      .fn()
-      .mockResolvedValue(overrides.activeSourcePageIds ?? []),
-  };
   const imageExtractionRepo = {
     findCurrentReadyForSnapshotImages: jest
       .fn()
       .mockResolvedValue(overrides.readyExtractions ?? []),
   };
-  const capsuleRepo = {
-    hasActiveSpaceOverview: jest
-      .fn()
-      .mockResolvedValue(overrides.hasActiveOverview ?? false),
-  };
-  const contributionRepo = {
-    findSpaceSourcePageIds: jest.fn().mockResolvedValue([]),
-    findRemainingSourcePageIdsForRemovedSources: jest
-      .fn()
-      .mockResolvedValue([]),
-  };
   const sourceExporter = {
-    exportSpaceSources: jest
-      .fn()
-      .mockResolvedValue(overrides.exportedSources ?? []),
     exportPageSources: jest
       .fn()
       .mockResolvedValue(overrides.exportedSources ?? []),
@@ -499,11 +453,34 @@ function createService(
       promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
       targetSourcePageIds: overrides.targetSourcePageIds ?? null,
       trigger: overrides.trigger ?? 'page_update',
+      mode: overrides.mode ?? 'incremental',
+      expectedPageCount: 1,
+      succeededPageCount: 0,
+      failedPageCount: 0,
+      skippedPageCount: 0,
+      aggregateRequired: true,
     }),
     initializeRun: jest.fn().mockResolvedValue({
       initialized: true,
-      run: { id: 'current-run' },
+      run: {
+        id: 'current-run',
+        expectedPageCount: 1,
+        succeededPageCount: 0,
+        failedPageCount: 0,
+        skippedPageCount: 0,
+        aggregateRequired: true,
+      },
     }),
+    bindTextPage: jest.fn().mockImplementation((_lease, input) =>
+      Promise.resolve({
+        id: 'run-page-1',
+        bindingStatus: 'bound',
+        ...input,
+      }),
+    ),
+    terminalizeUnboundTextPage: jest
+      .fn()
+      .mockResolvedValue({ terminalized: true }),
   };
   const environmentService = {
     getAiVisionModel: jest.fn().mockReturnValue('vision-model'),
@@ -513,11 +490,7 @@ function createService(
     imageQueue as unknown as Queue,
     repo as unknown as KnowledgeSpaceCompilationRepo,
     compilationRepo as unknown as KnowledgeCompilationRepo,
-    catalog as unknown as KnowledgeArtifactCatalogService,
-    sourceRepo as unknown as KnowledgeSourceRepo,
     imageExtractionRepo as unknown as KnowledgeImageExtractionRepo,
-    capsuleRepo as unknown as KnowledgeCapsuleRepo,
-    contributionRepo as unknown as KnowledgeArtifactContributionRepo,
     environmentService as unknown as EnvironmentService,
     sourceExporter as unknown as KnowledgeSourceExporterService,
     executionRepo as unknown as KnowledgeSpaceExecutionRepo,
@@ -527,11 +500,10 @@ function createService(
     repo,
     spaceQueue,
     imageQueue,
-    catalog,
     sourceExporter,
     executionRepo,
-    sourceRepo,
-    contributionRepo,
+    compilationRepo,
+    imageExtractionRepo,
   };
 }
 

@@ -24,6 +24,7 @@ export type KnowledgeCompilationStage =
   | 'generation'
   | 'merge'
   | 'validation'
+  | 'embedding'
   | 'import'
   | 'completed';
 
@@ -52,6 +53,8 @@ type AnalysisCacheKey = CompilationIdentity & {
   compilerVersion: string;
   promptVersion: string;
 };
+
+export type KnowledgeCompilerCandidateStage = 'analysis' | 'generation';
 
 @Injectable()
 export class KnowledgeCompilationRepo {
@@ -147,10 +150,20 @@ export class KnowledgeCompilationRepo {
             finishedAt: null,
             updatedAt: now,
           })
-          .where(
-            'knowledgeCompilationAttempts.compileTaskId',
-            '=',
-            input.compileTaskId,
+          .where((eb) =>
+            eb.or([
+              eb(
+                'knowledgeCompilationAttempts.compileTaskId',
+                '=',
+                input.compileTaskId,
+              ),
+              eb('knowledgeCompilationAttempts.status', 'in', [
+                'queued',
+                'skipped',
+                'failed',
+                'succeeded',
+              ]),
+            ]),
           ),
       )
       .execute();
@@ -193,6 +206,174 @@ export class KnowledgeCompilationRepo {
       .execute();
   }
 
+  async recordCompilerCandidates(
+    input: FencedCompilationIdentity & {
+      stage: KnowledgeCompilerCandidateStage;
+      compilerModel: string;
+      compilerProfile: string;
+      candidateIds: string[];
+      candidateHash: string;
+    },
+    trx?: KyselyTransaction,
+  ): Promise<void> {
+    const stageValues =
+      input.stage === 'analysis'
+        ? {
+            analysisCandidateIds: input.candidateIds as JsonValue,
+            analysisCandidateHash: input.candidateHash,
+          }
+        : {
+            generationCandidateIds: input.candidateIds as JsonValue,
+            generationCandidateHash: input.candidateHash,
+          };
+    await dbOrTx(this.db, trx)
+      .updateTable('knowledgeCompilationAttempts')
+      .set({
+        compilerModel: input.compilerModel,
+        compilerProfile: input.compilerProfile,
+        ...stageValues,
+        updatedAt: new Date(),
+      })
+      .where('workspaceId', '=', input.workspaceId)
+      .where('sourcePageId', '=', input.sourcePageId)
+      .where('compileTaskId', '=', input.compileTaskId)
+      .execute();
+  }
+
+  async reserveGenerationAttempt(
+    input: FencedCompilationIdentity & {
+      sourceContentHash: string;
+      reset: boolean;
+    },
+    trx?: KyselyTransaction,
+  ): Promise<{ allowed: boolean; attemptCount: number }> {
+    return this.resolveGenerationAttemptBudget(input, true, trx);
+  }
+
+  async checkGenerationAttemptBudget(
+    input: FencedCompilationIdentity & {
+      sourceContentHash: string;
+      reset: boolean;
+    },
+    trx?: KyselyTransaction,
+  ): Promise<{ allowed: boolean; attemptCount: number }> {
+    return this.resolveGenerationAttemptBudget(input, false, trx);
+  }
+
+  private async resolveGenerationAttemptBudget(
+    input: FencedCompilationIdentity & {
+      sourceContentHash: string;
+      reset: boolean;
+    },
+    consume: boolean,
+    trx?: KyselyTransaction,
+  ): Promise<{ allowed: boolean; attemptCount: number }> {
+    const resolve = async (db: KyselyTransaction) => {
+      // Different page-scoped Runs create different compileTaskIds. Serialize
+      // by page and carry the newest count forward so retries cannot reset the
+      // three-attempt budget merely by creating another attempt row.
+      await sql`
+        SELECT pg_advisory_xact_lock(
+          hashtext(${`${input.workspaceId}:${input.sourcePageId}`})
+        )
+      `.execute(db);
+      const currentAttempt = await db
+        .selectFrom('knowledgeCompilationAttempts')
+        .select(['generationAttemptSourceHash', 'generationAttemptCount'])
+        .where('workspaceId', '=', input.workspaceId)
+        .where('sourcePageId', '=', input.sourcePageId)
+        .where('compileTaskId', '=', input.compileTaskId)
+        .executeTakeFirst();
+      const startsForcedRound =
+        input.reset &&
+        (currentAttempt?.generationAttemptSourceHash !==
+          input.sourceContentHash ||
+          currentAttempt.generationAttemptCount === 0);
+      const previous = startsForcedRound
+        ? undefined
+        : await db
+            .selectFrom('knowledgeCompilationAttempts')
+            .select('generationAttemptCount')
+            .where('workspaceId', '=', input.workspaceId)
+            .where('sourcePageId', '=', input.sourcePageId)
+            .where('generationAttemptSourceHash', '=', input.sourceContentHash)
+            .orderBy('updatedAt', 'desc')
+            .orderBy('id', 'desc')
+            .limit(1)
+            .executeTakeFirst();
+      const previousCount = previous?.generationAttemptCount ?? 0;
+      if (!startsForcedRound && previousCount >= 3) {
+        return { allowed: false, attemptCount: previousCount };
+      }
+      if (!consume) {
+        return { allowed: true, attemptCount: previousCount };
+      }
+      const attemptCount = startsForcedRound ? 1 : previousCount + 1;
+      const row = await db
+        .updateTable('knowledgeCompilationAttempts')
+        .set({
+          generationAttemptSourceHash: input.sourceContentHash,
+          generationAttemptCount: attemptCount,
+          updatedAt: new Date(),
+        })
+        .where('workspaceId', '=', input.workspaceId)
+        .where('sourcePageId', '=', input.sourcePageId)
+        .where('compileTaskId', '=', input.compileTaskId)
+        .returning('id')
+        .executeTakeFirst();
+      return row
+        ? { allowed: true, attemptCount }
+        : { allowed: false, attemptCount };
+    };
+    return trx ? resolve(trx) : executeTx(this.db, resolve);
+  }
+
+  async markResultQuality(
+    input: FencedCompilationIdentity & {
+      quality: 'normal' | 'degraded' | 'partial_image';
+    },
+    trx?: KyselyTransaction,
+  ): Promise<void> {
+    await dbOrTx(this.db, trx)
+      .updateTable('knowledgeCompilationAttempts')
+      .set({ resultQuality: input.quality, updatedAt: new Date() })
+      .where('workspaceId', '=', input.workspaceId)
+      .where('sourcePageId', '=', input.sourcePageId)
+      .where('compileTaskId', '=', input.compileTaskId)
+      .execute();
+  }
+
+  async hasLastSuccessfulPublication(input: {
+    workspaceId: string;
+    spaceId: string;
+    sourcePageId: string;
+  }): Promise<boolean> {
+    const row = await this.db
+      .selectFrom('knowledgeCompilationAttempts as attempt')
+      .innerJoin('knowledgeArtifactContributions as contribution', (join) =>
+        join
+          .onRef('contribution.workspaceId', '=', 'attempt.workspaceId')
+          .onRef('contribution.sourcePageId', '=', 'attempt.sourcePageId')
+          .on('contribution.spaceId', '=', input.spaceId)
+          .on('contribution.artifactKind', '=', 'source_summary'),
+      )
+      .innerJoin('knowledgePages as page', (join) =>
+        join
+          .onRef('page.id', '=', 'contribution.artifactId')
+          .onRef('page.workspaceId', '=', 'attempt.workspaceId')
+          .on('page.spaceId', '=', input.spaceId)
+          .on('page.staleAt', 'is', null),
+      )
+      .select('attempt.id')
+      .where('attempt.workspaceId', '=', input.workspaceId)
+      .where('attempt.spaceId', '=', input.spaceId)
+      .where('attempt.sourcePageId', '=', input.sourcePageId)
+      .where('attempt.lastSucceededAt', 'is not', null)
+      .limit(1)
+      .executeTakeFirst();
+    return Boolean(row);
+  }
+
   async failAttempt(
     input: FencedCompilationIdentity & {
       stage?: KnowledgeCompilationStage;
@@ -216,6 +397,55 @@ export class KnowledgeCompilationRepo {
       .where('sourcePageId', '=', input.sourcePageId)
       .where('compileTaskId', '=', input.compileTaskId)
       .execute();
+  }
+
+  async savePendingImport(
+    input: FencedCompilationIdentity & {
+      spaceId: string;
+      sourceVersion: string;
+      effectiveKnowledgeHash: string;
+      preparedImport: JsonValue;
+    },
+    trx?: KyselyTransaction,
+  ): Promise<void> {
+    await dbOrTx(this.db, trx)
+      .updateTable('knowledgeCompilationAttempts')
+      .set({
+        pendingImport: input.preparedImport,
+        pendingSpaceId: input.spaceId,
+        pendingSourceVersion: input.sourceVersion,
+        pendingEffectiveKnowledgeHash: input.effectiveKnowledgeHash,
+        pendingCreatedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where('workspaceId', '=', input.workspaceId)
+      .where('sourcePageId', '=', input.sourcePageId)
+      .where('compileTaskId', '=', input.compileTaskId)
+      .execute();
+  }
+
+  async findPendingImport(input: {
+    workspaceId: string;
+    sourcePageId: string;
+    spaceId: string;
+    sourceVersion: string;
+    effectiveKnowledgeHash: string;
+    compilerVersion: string;
+    promptVersion: string;
+  }): Promise<JsonValue | undefined> {
+    const row = await this.db
+      .selectFrom('knowledgeCompilationAttempts')
+      .select('pendingImport')
+      .where('workspaceId', '=', input.workspaceId)
+      .where('sourcePageId', '=', input.sourcePageId)
+      .where('pendingSpaceId', '=', input.spaceId)
+      .where('pendingSourceVersion', '=', input.sourceVersion)
+      .where('pendingEffectiveKnowledgeHash', '=', input.effectiveKnowledgeHash)
+      .where('compilerVersion', '=', input.compilerVersion)
+      .where('promptVersion', '=', input.promptVersion)
+      .where('pendingImport', 'is not', null)
+      .executeTakeFirst();
+    return row?.pendingImport ?? undefined;
   }
 
   async skipAttempt(
@@ -259,6 +489,11 @@ export class KnowledgeCompilationRepo {
         stage: 'completed',
         errorCode: null,
         errorMessage: null,
+        pendingImport: null,
+        pendingSpaceId: null,
+        pendingSourceVersion: null,
+        pendingEffectiveKnowledgeHash: null,
+        pendingCreatedAt: null,
         lastSuccessfulSourceVersion: input.sourceVersion,
         lastSuccessfulSourceHash: input.sourceContentHash,
         effectiveKnowledgeHash: input.effectiveKnowledgeHash ?? null,
@@ -425,7 +660,7 @@ export class KnowledgeCompilationRepo {
           .onRef('summaryChunk.knowledgePageId', '=', 'summary.id')
           .onRef('summaryChunk.workspaceId', '=', 'attempt.workspaceId')
           .on('summaryChunk.staleAt', 'is', null)
-          .on('summaryChunk.retrievalChannel', '=', 'memory'),
+          .on('summaryChunk.retrievalChannel', '=', 'evidence'),
       )
       .select([
         'attempt.sourcePageId',

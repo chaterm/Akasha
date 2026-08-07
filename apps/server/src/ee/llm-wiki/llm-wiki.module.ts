@@ -34,8 +34,9 @@ import { ConfiguredKnowledgeCompilerLlmProvider } from './compiler/knowledge-com
 import { KnowledgeArtifactMaterializerService } from './services/knowledge-artifact-materializer.service';
 import { KnowledgeArtifactCatalogService } from './services/knowledge-artifact-catalog.service';
 import { KnowledgeSpaceCompilationService } from './services/knowledge-space-compilation.service';
-import { KnowledgeSpaceAggregatorService } from './services/knowledge-space-aggregator.service';
 import { KnowledgeLinkResolverService } from './services/knowledge-link-resolver.service';
+import { KnowledgeSpaceFinalizerService } from './services/knowledge-space-finalizer.service';
+import { KnowledgeSourceRetirementService } from './services/knowledge-source-retirement.service';
 import { ConfiguredKnowledgeImageUnderstandingProvider } from './services/knowledge-image-understanding-provider.service';
 import { KnowledgeImageEnrichmentService } from './services/knowledge-image-enrichment.service';
 import { KnowledgeSpaceResetService } from './services/knowledge-space-reset.service';
@@ -76,13 +77,14 @@ import { KnowledgeQualityService } from './services/knowledge-quality.service';
     KnowledgeArtifactCatalogService,
     KnowledgeSpaceCompilationService,
     KnowledgeSpaceResetService,
-    KnowledgeSpaceAggregatorService,
     KnowledgePageCompilationService,
     KnowledgeSpaceRunnerService,
     KnowledgeRunReaperService,
     KnowledgeImageReaperService,
     KnowledgeTextJobHandler,
     KnowledgeLinkResolverService,
+    KnowledgeSpaceFinalizerService,
+    KnowledgeSourceRetirementService,
     {
       provide: KNOWLEDGE_ANSWER_PROVIDER,
       useExisting: ConfiguredKnowledgeAnswerProvider,

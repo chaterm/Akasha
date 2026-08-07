@@ -174,46 +174,6 @@ describePostgres('KnowledgeSpaceCompilationRepo PostgreSQL round trip', () => {
     ]);
   });
 
-  it('finds the prior completed aggregate candidate instead of the current placeholder', async () => {
-    await sql`
-      insert into knowledge_space_compile_runs (
-        workspace_id, space_id, trigger, mode, knowledge_generation, phase,
-        status, expected_page_count, compiler_version, prompt_version,
-        catalog_snapshot, catalog_hash, queued_at, initialized_at
-      ) values (
-        'workspace-1', 'space-reuse-query', 'manual_compile', 'incremental', 0,
-        'complete', 'succeeded', 0, 'compiler-v1', 'prompt-v1', '[]',
-        'sha256:completed', now() - interval '1 minute', now() - interval '1 minute'
-      )
-    `.execute(db);
-    const [current] = await repo.requestRuns({
-      requests: [
-        {
-          workspaceId: 'workspace-1',
-          spaceId: 'space-reuse-query',
-          trigger: 'manual_compile',
-        },
-      ],
-      compilerVersion: 'compiler-v1',
-      promptVersion: 'prompt-v1',
-    });
-
-    const candidate = await repo.findLatestCompletedRunForAggregateReuse({
-      workspaceId: 'workspace-1',
-      spaceId: 'space-reuse-query',
-      currentRunId: current.run!.id,
-    });
-
-    expect(candidate).toEqual(
-      expect.objectContaining({
-        status: 'succeeded',
-        phase: 'complete',
-        catalogHash: 'sha256:completed',
-      }),
-    );
-    expect(candidate?.id).not.toBe(current.run?.id);
-  });
-
   it('fail-closes removed-source artifacts and replans the same initialized run', async () => {
     const [created] = await repo.requestRuns({
       requests: [

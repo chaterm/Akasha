@@ -118,10 +118,6 @@ function createFixture(cancelResult: object) {
     undefined as never,
     undefined as never,
     undefined as never,
-    undefined as never,
-    undefined as never,
-    undefined as never,
-    undefined as never,
   );
   return { service, repo, spaceQueue, imageQueue };
 }

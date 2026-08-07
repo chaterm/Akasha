@@ -52,14 +52,6 @@ export class DocmostKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
         }),
       );
     }
-    const overview =
-      input.compileMode === 'pages'
-        ? undefined
-        : buildOverviewArtifact({ input, compilerRunId, sourceTargets });
-    if (overview) {
-      artifacts.push(overview);
-    }
-
     return {
       workspaceId: input.workspaceId,
       spaceId: input.spaceId,
@@ -173,61 +165,6 @@ export class DocmostKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
       graphEdges: graphEdges.length > 0 ? graphEdges : undefined,
     };
   }
-}
-
-function buildOverviewArtifact(input: {
-  input: CompileSpaceInput;
-  compilerRunId: string;
-  sourceTargets: SourceTarget[];
-}): CompiledKnowledgeArtifact | undefined {
-  if (input.sourceTargets.length < 2) return undefined;
-
-  const inputSourceRefs = input.sourceTargets.map((target) => target.sourceRef);
-  const overviewText = input.sourceTargets
-    .map(
-      (target) =>
-        `${target.source.title || 'Untitled'}: ${firstLine(target.source.text)}`,
-    )
-    .join('\n\n');
-
-  return {
-    artifactId: stableUuid(
-      [
-        input.input.workspaceId,
-        input.input.spaceId,
-        'overview',
-        ...inputSourceRefs.map(
-          (source) =>
-            `${source.sourcePageId}:${source.sourceVersion}:${source.contentHash}`,
-        ),
-      ].join(':'),
-    ),
-    workspaceId: input.input.workspaceId,
-    spaceId: input.input.spaceId,
-    title: 'Space knowledge overview',
-    artifactKind: 'overview',
-    contentMarkdown: `# Space knowledge overview\n\n${overviewText}`,
-    sourcePageIds: inputSourceRefs.map((source) => source.sourcePageId),
-    compilerVersion: input.input.compilerVersion,
-    promptVersion: input.input.promptVersion,
-    compilerRunId: input.compilerRunId,
-    compileTaskId: `akasha-overview:${input.input.spaceId}`,
-    inputSourceRefs,
-    claims: [
-      {
-        text: `This overview summarizes ${input.sourceTargets.length} source pages in the selected space.`,
-        confidence: null,
-        inputSourceRefs,
-      },
-    ],
-    chunks: [
-      {
-        text: overviewText,
-        claimIndex: 0,
-        inputSourceRefs,
-      },
-    ],
-  };
 }
 
 type SourceTarget = {

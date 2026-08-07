@@ -491,6 +491,41 @@ describe("KnowledgeAdminPage", () => {
     );
   });
 
+  it("allows retry when text succeeded but the page merge failed", async () => {
+    vi.mocked(getKnowledgeRunPageDiagnostics).mockResolvedValue({
+      run: { runId: "run-1", spaceId: "space-1", spaceName: "AIM" },
+      items: [
+        {
+          ...failedPage(),
+          status: "succeeded",
+          mergeStatus: "failed",
+          errorCode: "embedding_provider_error",
+          errorCategory: "provider",
+          errorSummary: "Knowledge embedding provider request failed.",
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 50,
+    });
+
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "View pages" }));
+    await screen.findByText("Large page");
+
+    const retry = screen.getByRole("checkbox");
+    expect((retry as HTMLInputElement).disabled).toBe(false);
+    fireEvent.click(retry);
+    fireEvent.click(screen.getByRole("button", { name: "Retry selected" }));
+
+    await waitFor(() =>
+      expect(retryKnowledgePages).toHaveBeenCalledWith(
+        { pageIds: ["page-1"] },
+        expect.anything(),
+      ),
+    );
+  });
+
   it("requires the exact Space name before requesting an update", async () => {
     renderPage();
     await screen.findByText("Space compilation runs");

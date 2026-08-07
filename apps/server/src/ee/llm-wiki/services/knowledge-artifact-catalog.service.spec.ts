@@ -2,230 +2,140 @@ import { KnowledgeCapsuleRepo } from '@akasha/db/repos/llm-wiki/knowledge-capsul
 import { KnowledgeArtifactCatalogService } from './knowledge-artifact-catalog.service';
 
 describe('KnowledgeArtifactCatalogService', () => {
-  it('normalizes, bounds, and stable-sorts the active catalog', async () => {
+  it('retrieves a bounded identity-only analysis Catalog from source signals', async () => {
+    const rows = Array.from({ length: 40 }, (_, index) =>
+      candidate(index < 20 ? 'concept' : 'entity', index),
+    );
     const capsuleRepo = {
-      findActiveArtifactCatalog: jest.fn().mockResolvedValue([
-        {
-          artifactId: 'artifact-2',
-          artifactKind: 'entity',
-          canonicalKey: 'zeta',
-          title: 'Zeta',
-          body: 'x'.repeat(3_000),
-        },
-        {
-          artifactId: 'artifact-1',
-          artifactKind: 'concept',
-          canonicalKey: 'alpha',
-          title: 'Alpha',
-          body: 'Alpha body',
-        },
-        {
-          artifactId: 'artifact-ignored',
-          artifactKind: 'overview',
-          canonicalKey: 'overview',
-          title: 'Overview',
-          body: 'Old aggregate',
-        },
-      ]),
+      findCompilerCatalogCandidates: jest.fn().mockResolvedValue(rows),
     };
     const service = new KnowledgeArtifactCatalogService(
       capsuleRepo as unknown as KnowledgeCapsuleRepo,
     );
 
-    const snapshot = await service.snapshot({
-      workspaceId: 'workspace-1',
-      spaceId: 'space-1',
+    const result = await service.findAnalysisCandidates({
+      source: sourceSnapshot(),
     });
 
-    expect(snapshot.entries.map((entry) => entry.artifactId)).toEqual([
-      'artifact-1',
-      'artifact-2',
-    ]);
-    expect(snapshot.entries[1].summary).toHaveLength(2_000);
-    expect(snapshot.hash).toMatch(/^sha256:[a-f0-9]{64}$/);
-    await expect(
-      service.snapshot({ workspaceId: 'workspace-1', spaceId: 'space-1' }),
-    ).resolves.toEqual(snapshot);
+    expect(result.entries).toHaveLength(24);
+    expect(result.entries[0]).toEqual({
+      artifactId: 'concept-0',
+      artifactKind: 'concept',
+      canonicalKey: 'concept-key-0',
+      title: 'concept title 0',
+    });
+    expect(result.entries[0]).not.toHaveProperty('summary');
+    expect(result.candidateHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(capsuleRepo.findCompilerCatalogCandidates).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      signals: ['Architecture notes', 'Event sourcing', 'Storage'],
+      explicitSourcePageIds: ['page-2'],
+      limit: 96,
+    });
   });
 
-  it('fingerprints the exact deterministic aggregate input, including bodies and source refs', async () => {
-    const candidates = {
-      pages: [
-        aggregatePage({
-          id: 'artifact-b',
-          pageType: 'entity',
-          canonicalKey: 'beta',
-          body: 'Beta body',
-        }),
-        aggregatePage({
-          id: 'artifact-a',
-          pageType: 'concept',
-          canonicalKey: 'alpha',
-          body: 'Alpha body',
-        }),
-        aggregatePage({
-          id: 'overview',
-          pageType: 'overview',
-          canonicalKey: 'overview',
-          body: 'Volatile overview',
-        }),
-      ],
-      pageSources: [
-        aggregateSource('artifact-b', 'page-2', 'v2', 'hash-2'),
-        aggregateSource('artifact-a', 'page-1', 'v1', 'hash-1'),
-      ],
-    };
-    const capsuleRepo = {
-      findAggregateCandidatesForSpace: jest.fn().mockResolvedValue(candidates),
-      countActiveAggregateArtifacts: jest.fn().mockResolvedValue(2),
-    };
-    const service = new KnowledgeArtifactCatalogService(
-      capsuleRepo as unknown as KnowledgeCapsuleRepo,
-    );
+  it('caps source summaries so semantic identities keep generation capacity', async () => {
+    const rows = [
+      ...Array.from({ length: 50 }, (_, index) =>
+        candidate('source_summary', index),
+      ),
+      ...Array.from({ length: 60 }, (_, index) => candidate('concept', index)),
+    ];
+    const service = new KnowledgeArtifactCatalogService({
+      findCompilerCatalogCandidates: jest.fn().mockResolvedValue(rows),
+    } as unknown as KnowledgeCapsuleRepo);
 
-    const first = await service.aggregateInput({
-      workspaceId: 'workspace-1',
-      spaceId: 'space-1',
+    const result = await service.findGenerationCandidates({
+      source: sourceSnapshot(),
+      analysis: analysis(),
+      analysisCandidates: [],
     });
 
-    expect(first.pages.map((page) => page.id)).toEqual([
-      'artifact-a',
-      'artifact-b',
-    ]);
-    expect(first.allSourceRefs.map((source) => source.sourcePageId)).toEqual([
-      'page-1',
-      'page-2',
-    ]);
-    expect(first.fingerprint).toEqual({
-      hash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
-      artifactCount: 2,
-      truncated: false,
-    });
-
-    candidates.pages[1] = {
-      ...candidates.pages[1],
-      updatedAt: new Date('2099-01-01T00:00:00.000Z'),
-    };
-    const timestampOnly = await service.aggregateFingerprint({
-      workspaceId: 'workspace-1',
-      spaceId: 'space-1',
-    });
-    expect(timestampOnly.hash).toBe(first.fingerprint.hash);
-
-    candidates.pages[1] = {
-      ...candidates.pages[1],
-      body: 'Changed Alpha body',
-    };
-    const bodyChanged = await service.aggregateFingerprint({
-      workspaceId: 'workspace-1',
-      spaceId: 'space-1',
-    });
-    expect(bodyChanged.hash).not.toBe(first.fingerprint.hash);
-
-    candidates.pages[1] = {
-      ...candidates.pages[1],
-      body: 'Alpha body',
-    };
-    candidates.pageSources[1] = aggregateSource(
-      'artifact-a',
-      'page-1',
-      'v2',
-      'hash-new',
-    );
-    const sourceChanged = await service.aggregateFingerprint({
-      workspaceId: 'workspace-1',
-      spaceId: 'space-1',
-    });
-    expect(sourceChanged.hash).not.toBe(first.fingerprint.hash);
+    expect(result.entries).toHaveLength(64);
+    expect(
+      result.entries.filter((entry) => entry.artifactKind === 'source_summary'),
+    ).toHaveLength(16);
   });
 
-  it('keeps 5,000 allowed artifacts when an overview exists outside the aggregate input', async () => {
-    const allowedPages = Array.from({ length: 5_000 }, (_, index) =>
-      aggregatePage({
-        id: `artifact-${String(index).padStart(4, '0')}`,
-        pageType: 'concept',
-        canonicalKey: `concept-${String(index).padStart(4, '0')}`,
-      }),
-    );
+  it('produces a stable hash for the same ranked candidate identities', async () => {
     const capsuleRepo = {
-      findAggregateCandidatesForSpace: jest.fn().mockResolvedValue({
-        pages: [
-          ...allowedPages,
-          aggregatePage({
-            id: 'overview',
-            pageType: 'overview',
-            canonicalKey: 'overview',
-          }),
-        ],
-        pageSources: allowedPages.map((page, index) =>
-          aggregateSource(page.id, `page-${index}`, 'v1', `hash-${index}`),
-        ),
-      }),
-      countActiveAggregateArtifacts: jest.fn().mockResolvedValue(5_000),
-      findGraphCandidatesForSpace: jest.fn(),
+      findCompilerCatalogCandidates: jest
+        .fn()
+        .mockResolvedValue([candidate('concept', 1)]),
     };
     const service = new KnowledgeArtifactCatalogService(
       capsuleRepo as unknown as KnowledgeCapsuleRepo,
     );
 
-    const result = await service.aggregateInput({
-      workspaceId: 'workspace-1',
-      spaceId: 'space-1',
+    const first = await service.findAnalysisCandidates({
+      source: sourceSnapshot(),
+    });
+    const second = await service.findAnalysisCandidates({
+      source: sourceSnapshot(),
     });
 
-    expect(result.pages).toHaveLength(5_000);
-    expect(result.pages.some((page) => page.pageType === 'overview')).toBe(
-      false,
-    );
-    expect(result.fingerprint.truncated).toBe(false);
-    expect(capsuleRepo.findAggregateCandidatesForSpace).toHaveBeenCalledWith({
-      workspaceId: 'workspace-1',
-      spaceId: 'space-1',
-      limit: 5_000,
-    });
-    expect(capsuleRepo.findGraphCandidatesForSpace).not.toHaveBeenCalled();
+    expect(second).toEqual(first);
   });
 });
 
-function aggregatePage(overrides: Record<string, unknown>) {
+function candidate(
+  artifactKind: 'source_summary' | 'concept' | 'entity' | 'comparison',
+  index: number,
+) {
   return {
-    id: 'artifact',
-    workspaceId: 'workspace-1',
-    spaceId: 'space-1',
-    compileScope: 'page',
-    title: 'Artifact',
-    slug: 'artifact',
-    pageType: 'concept',
-    body: 'Body',
-    summary: null,
-    compiledAt: new Date('2026-01-01T00:00:00.000Z'),
-    compilerVersion: 'compiler-v1',
-    compilerRunId: 'run-1',
-    compileTaskId: 'task-1',
-    staleAt: null,
-    createdAt: new Date('2026-01-01T00:00:00.000Z'),
-    updatedAt: new Date('2026-01-01T00:00:00.000Z'),
-    generationMode: 'semantic',
-    canonicalKey: 'artifact',
-    ...overrides,
+    artifactId: `${artifactKind}-${index}`,
+    artifactKind,
+    canonicalKey: `${artifactKind}-key-${index}`,
+    title: `${artifactKind} title ${index}`,
+    explicitMatch: false,
+    canonicalExactMatch: false,
+    titleExactMatch: false,
+    exactMatch: false,
+    trigramScore: 1 - index / 1_000,
+    ftsMatch: true,
   };
 }
 
-function aggregateSource(
-  knowledgePageId: string,
-  sourcePageId: string,
-  sourceVersion: string,
-  contentHash: string,
-) {
+function sourceSnapshot() {
   return {
     workspaceId: 'workspace-1',
-    knowledgePageId,
-    sourcePageId,
-    attachmentId: null,
-    sourceVersion,
-    sourceRange: null,
-    quoteHash: null,
-    contentHash,
-    provenanceKind: 'synthesis_lineage',
+    spaceId: 'space-1',
+    sourcePageId: 'page-1',
+    sourceVersion: 'v1',
+    contentHash: 'sha256:page-1',
+    title: 'Architecture notes',
+    text: '# Event sourcing\n## Storage\nBody',
+    images: [],
+    references: [
+      {
+        sourcePageId: 'page-1',
+        targetPageId: 'page-2',
+        targetSpaceId: 'space-1',
+        kind: 'same_space_reference' as const,
+        mode: 'opaque' as const,
+      },
+    ],
+  };
+}
+
+function analysis() {
+  return {
+    version: '1' as const,
+    synopsis: 'Architecture',
+    language: 'en',
+    entities: [],
+    concepts: [
+      {
+        canonicalKey: 'event-sourcing',
+        name: 'Event sourcing',
+        description: 'Append-only storage',
+        evidenceQuotes: ['append-only'],
+      },
+    ],
+    claims: [],
+    relations: [],
+    comparisons: [],
+    contradictions: [],
   };
 }

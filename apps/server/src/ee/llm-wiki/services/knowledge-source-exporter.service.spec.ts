@@ -4,7 +4,7 @@ import { AttachmentRepo } from '@akasha/db/repos/attachment/attachment.repo';
 import { KnowledgeSourceExporterService } from './knowledge-source-exporter.service';
 
 describe('KnowledgeSourceExporterService', () => {
-  it('keyset-paginates a space inside one repeatable-read read-only snapshot', async () => {
+  it('batches requested pages inside one repeatable-read read-only snapshot', async () => {
     const pages = Array.from({ length: 201 }, (_, index) => ({
       id: `page-${String(index).padStart(3, '0')}`,
       workspaceId: 'workspace-1',
@@ -17,7 +17,7 @@ describe('KnowledgeSourceExporterService', () => {
       ),
     }));
     const pageRepo = {
-      findPagesForKnowledgeExport: jest
+      findPagesByIdsForKnowledgeExport: jest
         .fn()
         .mockResolvedValueOnce(pages.slice(0, 200))
         .mockResolvedValueOnce(pages.slice(200)),
@@ -40,30 +40,30 @@ describe('KnowledgeSourceExporterService', () => {
     );
 
     await expect(
-      service.exportSpaceSources({
+      service.exportPageSources({
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
+        sourcePageIds: pages.map((page) => page.id),
       }),
     ).resolves.toHaveLength(201);
 
     expect(setIsolationLevel).toHaveBeenCalledWith('repeatable read');
     expect(setAccessMode).toHaveBeenCalledWith('read only');
-    expect(pageRepo.findPagesForKnowledgeExport).toHaveBeenNthCalledWith(
+    expect(pageRepo.findPagesByIdsForKnowledgeExport).toHaveBeenNthCalledWith(
       1,
       {
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
-        limit: 200,
+        pageIds: pages.slice(0, 200).map((page) => page.id),
       },
       trx,
     );
-    expect(pageRepo.findPagesForKnowledgeExport).toHaveBeenNthCalledWith(
+    expect(pageRepo.findPagesByIdsForKnowledgeExport).toHaveBeenNthCalledWith(
       2,
       {
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
-        limit: 200,
-        afterId: pages[199].id,
+        pageIds: [pages[200].id],
       },
       trx,
     );
@@ -75,7 +75,7 @@ describe('KnowledgeSourceExporterService', () => {
 
   it('exports page snapshots for one workspace and space', async () => {
     const pageRepo = {
-      findPagesForKnowledgeExport: jest.fn().mockResolvedValue([
+      findPagesByIdsForKnowledgeExport: jest.fn().mockResolvedValue([
         {
           id: 'page-1',
           workspaceId: 'workspace-1',
@@ -102,15 +102,16 @@ describe('KnowledgeSourceExporterService', () => {
       createEmptyAttachmentRepo(),
     );
 
-    const snapshots = await service.exportSpaceSources({
+    const snapshots = await service.exportPageSources({
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
+      sourcePageIds: ['page-1'],
     });
 
-    expect(pageRepo.findPagesForKnowledgeExport).toHaveBeenCalledWith({
+    expect(pageRepo.findPagesByIdsForKnowledgeExport).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
-      limit: 200,
+      pageIds: ['page-1'],
     });
     expect(snapshots).toEqual([
       {
@@ -137,7 +138,7 @@ describe('KnowledgeSourceExporterService', () => {
 
   it('uses empty text when a page has no text content', async () => {
     const pageRepo = {
-      findPagesForKnowledgeExport: jest.fn().mockResolvedValue([
+      findPagesByIdsForKnowledgeExport: jest.fn().mockResolvedValue([
         {
           id: 'page-1',
           workspaceId: 'workspace-1',
@@ -158,9 +159,10 @@ describe('KnowledgeSourceExporterService', () => {
     );
 
     await expect(
-      service.exportSpaceSources({
+      service.exportPageSources({
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
+        sourcePageIds: ['page-1'],
       }),
     ).resolves.toMatchObject([{ text: '' }]);
   });
@@ -215,7 +217,7 @@ describe('KnowledgeSourceExporterService', () => {
       ],
     };
     const pageRepo = {
-      findPagesForKnowledgeExport: jest.fn().mockResolvedValue([
+      findPagesByIdsForKnowledgeExport: jest.fn().mockResolvedValue([
         {
           id: 'page-1',
           workspaceId: 'workspace-1',
@@ -266,9 +268,10 @@ describe('KnowledgeSourceExporterService', () => {
       attachmentRepo as unknown as AttachmentRepo,
     );
 
-    const [snapshot] = await service.exportSpaceSources({
+    const [snapshot] = await service.exportPageSources({
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
+      sourcePageIds: ['page-1'],
     });
 
     expect(attachmentRepo.findByIds).toHaveBeenCalledWith([
@@ -304,7 +307,7 @@ describe('KnowledgeSourceExporterService', () => {
       updatedAt: new Date('2026-07-27T00:00:00.000Z'),
     };
     const pageRepo = {
-      findPagesForKnowledgeExport: jest.fn().mockResolvedValue([page]),
+      findPagesByIdsForKnowledgeExport: jest.fn().mockResolvedValue([page]),
     };
     const backlinkRepo = {
       findOutgoingPageReferences: jest.fn().mockResolvedValue([]),
@@ -334,19 +337,76 @@ describe('KnowledgeSourceExporterService', () => {
       attachmentRepo as unknown as AttachmentRepo,
     );
 
-    const [before] = await service.exportSpaceSources({
+    const [before] = await service.exportPageSources({
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
+      sourcePageIds: ['page-1'],
     });
-    const [after] = await service.exportSpaceSources({
+    const [after] = await service.exportPageSources({
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
+      sourcePageIds: ['page-1'],
     });
 
     expect(after.images?.[0]?.attachmentVersion).not.toBe(
       before.images?.[0]?.attachmentVersion,
     );
     expect(after.contentHash).not.toBe(before.contentHash);
+  });
+
+  it('ignores non-image attachment nodes when fingerprinting page content', async () => {
+    const page = (fileName: string, fileSize: number) => ({
+      id: 'page-1',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      title: 'Attachment metadata',
+      textContent: 'Stable body',
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: [{ type: 'text', text: 'Stable body' }],
+          },
+          {
+            type: 'attachment',
+            attrs: {
+              attachmentId: 'file-1',
+              name: fileName,
+              size: fileSize,
+              mime: 'application/pdf',
+            },
+          },
+        ],
+      },
+      updatedAt: new Date('2026-07-27T00:00:00.000Z'),
+    });
+    const pageRepo = {
+      findPagesByIdsForKnowledgeExport: jest
+        .fn()
+        .mockResolvedValueOnce([page('before.pdf', 100)])
+        .mockResolvedValueOnce([page('after.pdf', 200)]),
+    };
+    const service = new KnowledgeSourceExporterService(
+      pageRepo as unknown as PageRepo,
+      {
+        findOutgoingPageReferences: jest.fn().mockResolvedValue([]),
+      } as unknown as BacklinkRepo,
+      createEmptyAttachmentRepo(),
+    );
+
+    const [before] = await service.exportPageSources({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageIds: ['page-1'],
+    });
+    const [after] = await service.exportPageSources({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageIds: ['page-1'],
+    });
+
+    expect(after.contentHash).toBe(before.contentHash);
   });
 
   it('accepts convertible raster formats and excludes SVG attachments', async () => {
@@ -361,7 +421,7 @@ describe('KnowledgeSourceExporterService', () => {
     ] as const;
     const attachmentIds = [...formats.map(([id]) => id), 'svg-as-png'];
     const pageRepo = {
-      findPagesForKnowledgeExport: jest.fn().mockResolvedValue([
+      findPagesByIdsForKnowledgeExport: jest.fn().mockResolvedValue([
         {
           id: 'page-1',
           workspaceId: 'workspace-1',
@@ -411,9 +471,10 @@ describe('KnowledgeSourceExporterService', () => {
       attachmentRepo as unknown as AttachmentRepo,
     );
 
-    const [snapshot] = await service.exportSpaceSources({
+    const [snapshot] = await service.exportPageSources({
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
+      sourcePageIds: ['page-1'],
     });
 
     expect(

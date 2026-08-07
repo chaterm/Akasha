@@ -166,7 +166,6 @@ const SUPPORTED_ARTIFACT_KINDS = new Set<CompiledKnowledgeArtifactKind>([
   'concept',
   'entity',
   'comparison',
-  'overview',
 ]);
 
 function isSupportedArtifactKind(

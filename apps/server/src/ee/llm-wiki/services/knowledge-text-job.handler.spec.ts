@@ -102,6 +102,24 @@ describe('KnowledgeTextJobHandler maintenance boundary', () => {
     ).not.toHaveBeenCalled();
   });
 
+  it('routes deleted and moved sources through precise retirement', async () => {
+    const fixture = createFixture();
+
+    await fixture.handler.handle(
+      job(QueueJob.KNOWLEDGE_RETIRE_SOURCES, {
+        workspaceId: 'workspace-1',
+        sourcePageIds: ['page-1', 'page-1', 'page-2'],
+      }),
+    );
+
+    expect(
+      fixture.sourceRetirement.retireOutOfScopeSources,
+    ).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-1', 'page-2'],
+    });
+  });
+
   it('keeps content-updated pages available and schedules delayed compilation', async () => {
     const fixture = createFixture();
 
@@ -132,8 +150,7 @@ describe('KnowledgeTextJobHandler maintenance boundary', () => {
   it('checkpoints embedding rebuilds with a deterministic continuation job', async () => {
     const fixture = createFixture();
     fixture.vectorIndex.rebuildSpaceEmbeddings.mockResolvedValue({
-      rebuiltChunkCount: 49,
-      failedChunkIds: ['chunk-010'],
+      rebuiltChunkCount: 50,
       nextCursor: 'chunk-049',
     });
 
@@ -145,7 +162,7 @@ describe('KnowledgeTextJobHandler maintenance boundary', () => {
           afterChunkId: 'chunk-before',
         }),
       ),
-    ).resolves.toMatchObject({ rebuiltChunkCount: 49 });
+    ).resolves.toMatchObject({ rebuiltChunkCount: 50 });
 
     expect(fixture.vectorIndex.rebuildSpaceEmbeddings).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
@@ -167,6 +184,25 @@ describe('KnowledgeTextJobHandler maintenance boundary', () => {
         ),
       },
     );
+  });
+
+  it('fails an embedding rebuild batch instead of skipping failed chunks', async () => {
+    const fixture = createFixture();
+    fixture.vectorIndex.rebuildSpaceEmbeddings.mockResolvedValue({
+      rebuiltChunkCount: 49,
+      failedChunkIds: ['chunk-010'],
+      nextCursor: 'chunk-049',
+    });
+
+    await expect(
+      fixture.handler.handle(
+        job(QueueJob.KNOWLEDGE_REBUILD_EMBEDDINGS, {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+        }),
+      ),
+    ).rejects.toThrow('Knowledge embedding rebuild failed for 1 chunk(s).');
+    expect(fixture.textQueue.add).not.toHaveBeenCalled();
   });
 
   it('runs review discovery and persists its durable snapshot', async () => {
@@ -261,6 +297,9 @@ function createFixture() {
       .fn()
       .mockResolvedValue({ rebuiltChunkCount: 0 }),
   };
+  const sourceRetirement = {
+    retireOutOfScopeSources: jest.fn(),
+  };
   const handler = new KnowledgeTextJobHandler(
     accessIndexer as never,
     sourceRepo as never,
@@ -272,6 +311,7 @@ function createFixture() {
     reviewApplicationRepo as never,
     spaceCompilation as never,
     vectorIndex as never,
+    sourceRetirement as never,
   );
   return {
     handler,
@@ -284,6 +324,7 @@ function createFixture() {
     auditService,
     spaceCompilation,
     vectorIndex,
+    sourceRetirement,
   };
 }
 

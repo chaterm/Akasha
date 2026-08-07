@@ -91,6 +91,50 @@ describe('KnowledgeArtifactMaterializerService', () => {
     ).rejects.toThrow('provider failed');
   });
 
+  it('remerges a survivor without any fact or lineage from the retired source', async () => {
+    const provider = createProvider();
+    provider.completeMerge.mockResolvedValue(
+      JSON.stringify({
+        title: 'Shared survivor',
+        markdown: 'Facts supported by pages 2 and 3 only.',
+      }),
+    );
+    const service = new KnowledgeArtifactMaterializerService(provider);
+    const retired = artifact(
+      'page-1',
+      'Retired-only fact',
+      'SECRET_FACT_FROM_RETIRED_SOURCE',
+    );
+    const survivor2 = artifact('page-2', 'Survivor two', 'Fact from page 2');
+    const survivor3 = artifact('page-3', 'Survivor three', 'Fact from page 3');
+
+    const result = await service.materializeSourceUpdate({
+      sourcePageId: 'page-1',
+      previousSourceContributions: [contribution('page-1', retired)],
+      affectedContributions: [
+        contribution('page-1', retired),
+        contribution('page-2', survivor2),
+        contribution('page-3', survivor3),
+      ],
+      incomingArtifacts: [],
+    });
+
+    const mergePrompt = provider.completeMerge.mock.calls[0][0].prompt;
+    expect(mergePrompt).toContain('Fact from page 2');
+    expect(mergePrompt).toContain('Fact from page 3');
+    expect(mergePrompt).not.toContain('SECRET_FACT_FROM_RETIRED_SOURCE');
+    expect(result.artifacts[0]).toMatchObject({
+      contentMarkdown: 'Facts supported by pages 2 and 3 only.',
+      sourcePageIds: ['page-2', 'page-3'],
+    });
+    expect(
+      result.artifacts[0].inputSourceRefs?.map((ref) => ref.sourcePageId),
+    ).toEqual(['page-2', 'page-3']);
+    expect(
+      result.artifacts[0].claims?.map((claim) => claim.text),
+    ).not.toContain('Retired-only fact claim');
+  });
+
   it('keeps the current source run metadata on a shared materialization', async () => {
     const provider = createProvider();
     provider.completeMerge.mockResolvedValue(

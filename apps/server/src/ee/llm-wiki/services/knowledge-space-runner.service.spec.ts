@@ -7,6 +7,7 @@ describe('KnowledgeSpaceRunnerService', () => {
     const completed: string[] = [];
     const pages = Array.from({ length: 6 }, (_, index) => ({
       sourcePageId: `page-${index + 1}`,
+      bindingStatus: 'bound',
       expectedSourceVersion: 'v1',
       expectedSourceContentHash: `sha256:page-${index + 1}`,
       createdAt: new Date(index),
@@ -21,8 +22,8 @@ describe('KnowledgeSpaceRunnerService', () => {
         completed.push(input.data.sourcePageIds[0]);
         await input.execution.completePage({ status: 'succeeded' });
         activeCompiles -= 1;
-        executionRepo.findPendingTextPages.mockResolvedValue(
-          pages.slice(completed.length),
+        executionRepo.claimNextTextPage.mockResolvedValue(
+          pages[completed.length],
         );
         return { outcome: 'succeeded', result: pageResult() };
       }),
@@ -37,7 +38,7 @@ describe('KnowledgeSpaceRunnerService', () => {
         }),
       } as never,
       pageCompilation as never,
-      { aggregateLeased: jest.fn() } as never,
+      finalizer() as never,
       { getKnowledgePageDeadlineMs: () => 900_000 } as never,
     );
 
@@ -65,6 +66,7 @@ describe('KnowledgeSpaceRunnerService', () => {
   it('continues text pages after a retryable page is checkpointed on the final attempt', async () => {
     const pages = Array.from({ length: 6 }, (_, index) => ({
       sourcePageId: `retry-page-${index + 1}`,
+      bindingStatus: 'bound',
       expectedSourceVersion: 'v1',
       expectedSourceContentHash: `sha256:retry-page-${index + 1}`,
       createdAt: new Date(index),
@@ -79,8 +81,8 @@ describe('KnowledgeSpaceRunnerService', () => {
           status: firstPage ? 'failed' : 'succeeded',
         });
         completedPages += 1;
-        executionRepo.findPendingTextPages.mockResolvedValue(
-          pages.slice(completedPages),
+        executionRepo.claimNextTextPage.mockResolvedValue(
+          pages[completedPages],
         );
         return firstPage
           ? {
@@ -101,7 +103,7 @@ describe('KnowledgeSpaceRunnerService', () => {
         }),
       } as never,
       pageCompilation as never,
-      { aggregateLeased: jest.fn() } as never,
+      finalizer() as never,
       { getKnowledgePageDeadlineMs: () => 900_000 } as never,
     );
 
@@ -116,11 +118,11 @@ describe('KnowledgeSpaceRunnerService', () => {
     expect(pageCompilation.compileTextPage).toHaveBeenCalledTimes(5);
   });
 
-  it('finishes an all-reused run without compiling or aggregating', async () => {
+  it('finalizes an all-reused run without compiling pages', async () => {
     const lease = leaseFixture();
     const executionRepo = createExecutionRepo(lease, []);
     const pageCompilation = { compileTextPage: jest.fn() };
-    const aggregator = { aggregateLeased: jest.fn() };
+    const spaceFinalizer = finalizer();
     const runner = new KnowledgeSpaceRunnerService(
       executionRepo as never,
       {
@@ -131,7 +133,7 @@ describe('KnowledgeSpaceRunnerService', () => {
         }),
       } as never,
       pageCompilation as never,
-      aggregator as never,
+      spaceFinalizer as never,
       { getKnowledgePageDeadlineMs: () => 900_000 } as never,
     );
 
@@ -144,8 +146,62 @@ describe('KnowledgeSpaceRunnerService', () => {
       }),
     ).resolves.toEqual({ outcome: 'completed', completedPages: 0 });
     expect(pageCompilation.compileTextPage).not.toHaveBeenCalled();
-    expect(aggregator.aggregateLeased).not.toHaveBeenCalled();
+    expect(spaceFinalizer.finalizeLeased).toHaveBeenCalledWith(lease, {
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+    });
     expect(executionRepo.finishRun).toHaveBeenCalledWith(lease, 'succeeded');
+  });
+
+  it('binds an unbound page and skips compilation when the snapshot is reused', async () => {
+    const lease = leaseFixture();
+    const executionRepo = createExecutionRepo(lease, [
+      {
+        sourcePageId: 'page-1',
+        bindingStatus: 'binding',
+        expectedSourceVersion: null,
+        expectedSourceContentHash: null,
+        createdAt: new Date(0),
+      },
+    ]);
+    const pageCompilation = { compileTextPage: jest.fn() };
+    const spaceCompilation = {
+      initializeLeasedRun: jest.fn().mockResolvedValue({
+        initialized: true,
+        aggregateRequired: true,
+        pageCompilationRequired: true,
+      }),
+      bindLeasedRunPage: jest.fn().mockResolvedValue({ outcome: 'reused' }),
+    };
+    const runner = new KnowledgeSpaceRunnerService(
+      executionRepo as never,
+      spaceCompilation as never,
+      pageCompilation as never,
+      finalizer() as never,
+      { getKnowledgePageDeadlineMs: () => 900_000 } as never,
+    );
+    executionRepo.claimNextTextPage
+      .mockResolvedValueOnce({
+        sourcePageId: 'page-1',
+        bindingStatus: 'binding',
+        expectedSourceVersion: null,
+        expectedSourceContentHash: null,
+        createdAt: new Date(0),
+      })
+      .mockResolvedValue(undefined);
+
+    await expect(
+      runner.runTextSlice(sliceInput(), {
+        workerId: 'worker-1',
+        finalAttempt: false,
+        settings: settings(),
+        monotonicNow: () => 0,
+      }),
+    ).resolves.toEqual({ outcome: 'completed', completedPages: 1 });
+    expect(spaceCompilation.bindLeasedRunPage).toHaveBeenCalledWith(lease, {
+      sourcePageId: 'page-1',
+    });
+    expect(pageCompilation.compileTextPage).not.toHaveBeenCalled();
   });
 
   it('renews the database lease during a long activation', async () => {
@@ -160,7 +216,7 @@ describe('KnowledgeSpaceRunnerService', () => {
       executionRepo as never,
       { initializeLeasedRun: jest.fn(() => initialization) } as never,
       { compileTextPage: jest.fn() } as never,
-      { aggregateLeased: jest.fn() } as never,
+      finalizer() as never,
       { getKnowledgePageDeadlineMs: () => 900_000 } as never,
     );
     const running = runner.runTextSlice(sliceInput(), {
@@ -196,7 +252,7 @@ describe('KnowledgeSpaceRunnerService', () => {
       executionRepo as never,
       { initializeLeasedRun: jest.fn(() => initialization) } as never,
       { compileTextPage: jest.fn() } as never,
-      { aggregateLeased: jest.fn() } as never,
+      finalizer() as never,
       { getKnowledgePageDeadlineMs: () => 900_000 } as never,
     );
     const running = runner.runTextSlice(sliceInput(), {
@@ -256,12 +312,12 @@ describe('KnowledgeSpaceRunnerService', () => {
         return { outcome: 'succeeded', result: pageResult() };
       }),
     };
-    const aggregator = { aggregateLeased: jest.fn() };
+    const spaceFinalizer = finalizer();
     const runner = new KnowledgeSpaceRunnerService(
       executionRepo as never,
       { initializeLeasedRun: jest.fn() } as never,
       pageCompilation as never,
-      aggregator as never,
+      spaceFinalizer as never,
       { getKnowledgePageDeadlineMs: () => 900_000 } as never,
     );
 
@@ -284,7 +340,7 @@ describe('KnowledgeSpaceRunnerService', () => {
     expect(executionRepo.yieldSpaceSlice).toHaveBeenCalledWith(lease, {
       reason: 'page_limit',
     });
-    expect(aggregator.aggregateLeased).not.toHaveBeenCalled();
+    expect(spaceFinalizer.finalizeLeased).not.toHaveBeenCalled();
   });
 
   it('continues image merges after a retryable page is checkpointed on the final attempt', async () => {
@@ -324,7 +380,7 @@ describe('KnowledgeSpaceRunnerService', () => {
       executionRepo as never,
       { initializeLeasedRun: jest.fn() } as never,
       pageCompilation as never,
-      { aggregateLeased: jest.fn() } as never,
+      finalizer() as never,
       { getKnowledgePageDeadlineMs: () => 900_000 } as never,
     );
 
@@ -339,7 +395,7 @@ describe('KnowledgeSpaceRunnerService', () => {
     expect(pageCompilation.mergePageImages).toHaveBeenCalledTimes(5);
   });
 
-  it('runs the final aggregate only after the image merge barrier', async () => {
+  it('runs finalization only after the image merge barrier', async () => {
     const lease = mergeLeaseFixture();
     const executionRepo = createExecutionRepo(lease, []);
     executionRepo.findPendingMergePages = jest.fn().mockResolvedValue([]);
@@ -347,18 +403,12 @@ describe('KnowledgeSpaceRunnerService', () => {
       .fn()
       .mockResolvedValue({ barrierComplete: true });
     executionRepo.hasPartialOutcome = jest.fn().mockResolvedValue(true);
-    const aggregator = {
-      aggregateLeased: jest.fn().mockResolvedValue({
-        importedArtifactCount: 2,
-        quarantinedArtifactCount: 1,
-        catalogHash: 'sha256:final-catalog',
-      }),
-    };
+    const spaceFinalizer = finalizer();
     const runner = new KnowledgeSpaceRunnerService(
       executionRepo as never,
       { initializeLeasedRun: jest.fn() } as never,
       { mergePageImages: jest.fn() } as never,
-      aggregator as never,
+      spaceFinalizer as never,
       { getKnowledgePageDeadlineMs: () => 900_000 } as never,
     );
 
@@ -370,15 +420,11 @@ describe('KnowledgeSpaceRunnerService', () => {
       }),
     ).resolves.toEqual({ outcome: 'completed', completedPages: 0 });
     expect(executionRepo.advanceMergeBarrier).toHaveBeenCalledWith(lease);
-    expect(aggregator.aggregateLeased).toHaveBeenCalledWith(lease, {
+    expect(spaceFinalizer.finalizeLeased).toHaveBeenCalledWith(lease, {
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
     });
-    expect(executionRepo.finishRun).toHaveBeenCalledWith(lease, 'partial', {
-      importedArtifactCount: 2,
-      quarantinedArtifactCount: 1,
-      catalogHash: 'sha256:final-catalog',
-    });
+    expect(executionRepo.finishRun).toHaveBeenCalledWith(lease, 'partial');
   });
 });
 
@@ -386,6 +432,7 @@ function createExecutionRepo(
   lease: ReturnType<typeof leaseFixture> | ReturnType<typeof mergeLeaseFixture>,
   pages: unknown[],
 ) {
+  const firstPage = pages[0];
   return {
     claimSpaceSlice: jest.fn().mockResolvedValue(lease),
     findLeasedRun: jest.fn().mockResolvedValue({
@@ -395,6 +442,7 @@ function createExecutionRepo(
       failedPageCount: 0,
     }),
     findPendingTextPages: jest.fn().mockResolvedValue(pages),
+    claimNextTextPage: jest.fn().mockResolvedValue(firstPage),
     findPendingMergePages: jest.fn().mockResolvedValue([]),
     isLeaseActive: jest.fn().mockResolvedValue(true),
     isLeaseActiveForPublication: jest.fn().mockResolvedValue(true),
@@ -406,7 +454,9 @@ function createExecutionRepo(
     completeTextPage: jest.fn().mockResolvedValue({ barrierComplete: false }),
     heartbeatSpaceSlice: jest.fn().mockResolvedValue(true),
     yieldSpaceSlice: jest.fn().mockResolvedValue(true),
-    advanceTextBarrier: jest.fn().mockResolvedValue({ barrierComplete: true }),
+    advanceTextBarrier: jest
+      .fn()
+      .mockResolvedValue({ barrierComplete: true, imagesRequired: false }),
     hasImageWork: jest.fn().mockResolvedValue(false),
     completeInitialAggregate: jest.fn().mockResolvedValue({}),
     advanceMergeBarrier: jest.fn().mockResolvedValue({ barrierComplete: true }),
@@ -467,6 +517,15 @@ function settings() {
     maxMs: 300_000,
     heartbeatMs: 30_000,
     leaseTtlMs: 180_000,
+  };
+}
+
+function finalizer() {
+  return {
+    finalizeLeased: jest.fn().mockResolvedValue({
+      outcome: 'completed',
+      resolvedCanonicalLinkCount: 0,
+    }),
   };
 }
 

@@ -15,11 +15,36 @@ export type KnowledgeEmbedding = {
   dimensions: number;
 };
 
+export type KnowledgeEmbeddingErrorCode =
+  | 'embedding_not_configured'
+  | 'embedding_rate_limited'
+  | 'embedding_timeout'
+  | 'embedding_provider_error'
+  | 'embedding_invalid_vector'
+  | 'embedding_invalid_input'
+  | 'embedding_input_too_large';
+
+export class KnowledgeEmbeddingError extends Error {
+  constructor(
+    readonly code: KnowledgeEmbeddingErrorCode,
+    message: string,
+    readonly retryable: boolean,
+    readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = 'KnowledgeEmbeddingError';
+  }
+}
+
 export interface KnowledgeEmbeddingProvider {
   embedQuery(
     query: string,
     options?: { abortSignal?: AbortSignal },
   ): Promise<KnowledgeEmbedding | null>;
+  embedRequired(
+    text: string,
+    options?: { abortSignal?: AbortSignal },
+  ): Promise<KnowledgeEmbedding>;
 }
 
 export function buildKnowledgeEmbeddingProfile(input: {
@@ -46,10 +71,52 @@ export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingP
     query: string,
     options?: { abortSignal?: AbortSignal },
   ): Promise<KnowledgeEmbedding | null> {
+    return this.embedValue(query, false, options);
+  }
+
+  async embedRequired(
+    text: string,
+    options?: { abortSignal?: AbortSignal },
+  ): Promise<KnowledgeEmbedding> {
+    const result = await this.embedValue(text, true, options);
+    if (!result) {
+      // The required path always throws instead of returning null. This guard
+      // keeps the contract explicit if embedValue is changed later.
+      throw new KnowledgeEmbeddingError(
+        'embedding_provider_error',
+        'Knowledge embedding generation failed.',
+        true,
+      );
+    }
+    return result;
+  }
+
+  private async embedValue(
+    text: string,
+    required: boolean,
+    options?: { abortSignal?: AbortSignal },
+  ): Promise<KnowledgeEmbedding | null> {
     const driver = this.environmentService.getAiDriver();
     const modelName = this.environmentService.getAiEmbeddingModel();
     const model = this.createEmbeddingModel(driver);
-    if (!driver || !modelName || !model || query.trim().length === 0) {
+    if (text.trim().length === 0) {
+      if (required) {
+        throw new KnowledgeEmbeddingError(
+          'embedding_invalid_input',
+          'Knowledge chunk is empty and cannot be embedded.',
+          false,
+        );
+      }
+      return null;
+    }
+    if (!driver || !modelName || !model) {
+      if (required) {
+        throw new KnowledgeEmbeddingError(
+          'embedding_not_configured',
+          'Knowledge embedding provider is not configured.',
+          false,
+        );
+      }
       return null;
     }
 
@@ -60,7 +127,7 @@ export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingP
     try {
       const result = await embed({
         model,
-        value: query,
+        value: text,
         abortSignal: boundedSignal.signal,
       });
       const vector = result.embedding;
@@ -68,6 +135,13 @@ export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingP
         vector.length === 0 ||
         vector.some((value) => !Number.isFinite(value))
       ) {
+        if (required) {
+          throw new KnowledgeEmbeddingError(
+            'embedding_invalid_vector',
+            'Knowledge embedding provider returned an invalid vector.',
+            true,
+          );
+        }
         return null;
       }
 
@@ -85,6 +159,10 @@ export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingP
     } catch (error) {
       if (options?.abortSignal?.aborted) {
         throw options.abortSignal.reason ?? error;
+      }
+      if (required) {
+        if (error instanceof KnowledgeEmbeddingError) throw error;
+        throw classifyRequiredEmbeddingError(error, boundedSignal.signal);
       }
       return null;
     } finally {
@@ -138,6 +216,78 @@ export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingP
         return undefined;
     }
   }
+}
+
+function classifyRequiredEmbeddingError(
+  error: unknown,
+  boundedSignal: AbortSignal,
+): KnowledgeEmbeddingError {
+  if (boundedSignal.aborted) {
+    return new KnowledgeEmbeddingError(
+      'embedding_timeout',
+      'Knowledge embedding request timed out.',
+      true,
+      error,
+    );
+  }
+
+  const status = providerStatus(error);
+  if (status === 429) {
+    return new KnowledgeEmbeddingError(
+      'embedding_rate_limited',
+      'Knowledge embedding provider rate limit was reached.',
+      true,
+      error,
+    );
+  }
+  if (status === 401 || status === 403) {
+    return new KnowledgeEmbeddingError(
+      'embedding_not_configured',
+      'Knowledge embedding provider credentials are invalid.',
+      false,
+      error,
+    );
+  }
+  if (status === 400 && isInputTooLargeError(error)) {
+    return new KnowledgeEmbeddingError(
+      'embedding_input_too_large',
+      'Knowledge chunk exceeds the embedding provider input limit.',
+      false,
+      error,
+    );
+  }
+  return new KnowledgeEmbeddingError(
+    'embedding_provider_error',
+    'Knowledge embedding provider request failed.',
+    status === undefined || status >= 500 || status === 408,
+    error,
+  );
+}
+
+function providerStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  for (const key of ['statusCode', 'status'] as const) {
+    const value = (error as Record<string, unknown>)[key];
+    if (typeof value === 'number') return value;
+  }
+  const response = (error as Record<string, unknown>).response;
+  if (response && typeof response === 'object') {
+    const status = (response as Record<string, unknown>).status;
+    if (typeof status === 'number') return status;
+  }
+  return undefined;
+}
+
+function isInputTooLargeError(error: unknown): boolean {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+        ? error
+        : '';
+  return /(token|context|input).*(limit|length|large|maximum|max)/i.test(
+    message,
+  );
 }
 
 function normalizeIdentityPart(value: string): string {

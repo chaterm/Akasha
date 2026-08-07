@@ -108,70 +108,217 @@ export type KnowledgeGraphTraversalEdge = {
   sourcePageIds: string[];
 };
 
-export type ActiveKnowledgeArtifactCatalogRow = {
+export type CompilerCatalogCandidateRow = {
   artifactId: string;
   artifactKind: string;
   canonicalKey: string;
   title: string;
-  body: string;
+  explicitMatch: boolean;
+  canonicalExactMatch: boolean;
+  titleExactMatch: boolean;
+  exactMatch: boolean;
+  trigramScore: number;
+  ftsMatch: boolean;
 };
 
 @Injectable()
 export class KnowledgeCapsuleRepo {
   constructor(@InjectKysely() private readonly db: KyselyDB) {}
 
-  async findActiveArtifactCatalog(input: {
+  /**
+   * Searches canonical artifact identities entirely in PostgreSQL. Bodies and
+   * source lineage are used only for ranking and are never returned to Node or
+   * sent to the compiler model.
+   */
+  async findCompilerCatalogCandidates(input: {
     workspaceId: string;
     spaceId: string;
-    limit?: number;
-  }): Promise<ActiveKnowledgeArtifactCatalogRow[]> {
-    return this.db
-      .selectFrom('knowledgePages')
-      .select([
-        'id as artifactId',
-        'pageType as artifactKind',
-        'canonicalKey',
-        'title',
-        'body',
-      ])
-      .where('workspaceId', '=', input.workspaceId)
-      .where('spaceId', '=', input.spaceId)
-      .where('staleAt', 'is', null)
-      .where('canonicalKey', 'is not', null)
-      .where('pageType', 'in', [
-        'source_summary',
-        'concept',
-        'entity',
-        'comparison',
-      ])
-      .orderBy('pageType', 'asc')
-      .orderBy('canonicalKey', 'asc')
-      .limit(Math.min(Math.max(input.limit ?? 2_000, 1), 5_000))
-      .execute() as Promise<ActiveKnowledgeArtifactCatalogRow[]>;
-  }
-
-  async hasActiveSpaceOverview(input: {
-    workspaceId: string;
-    spaceId: string;
-  }): Promise<boolean> {
-    const row = await this.db
-      .selectFrom('knowledgePages as overview')
-      .innerJoin('knowledgeChunks as chunk', (join) =>
-        join
-          .onRef('chunk.knowledgePageId', '=', 'overview.id')
-          .onRef('chunk.workspaceId', '=', 'overview.workspaceId')
-          .on('chunk.staleAt', 'is', null)
-          .on('chunk.retrievalChannel', '=', 'memory'),
+    signals: string[];
+    explicitSourcePageIds?: string[];
+    limit: number;
+  }): Promise<CompilerCatalogCandidateRow[]> {
+    const signals = [...new Set(input.signals.map(normalizeCatalogSignal))]
+      .filter(Boolean)
+      .slice(0, 64);
+    const explicitSourcePageIds = [
+      ...new Set(input.explicitSourcePageIds ?? []),
+    ].slice(0, 64);
+    if (signals.length === 0 && explicitSourcePageIds.length === 0) return [];
+    const signalValues =
+      signals.length > 0
+        ? sql`ARRAY[${sql.join(signals)}]::text[]`
+        : sql`ARRAY[]::text[]`;
+    const explicitValues =
+      explicitSourcePageIds.length > 0
+        ? sql`ARRAY[${sql.join(explicitSourcePageIds)}]::uuid[]`
+        : sql`ARRAY[]::uuid[]`;
+    const boundedLimit = Math.min(Math.max(input.limit, 1), 512);
+    const result = await sql<CompilerCatalogCandidateRow>`
+      WITH signals(value) AS (
+        SELECT unnest(${signalValues})
+      ), explicit_candidates AS (
+        SELECT
+          page.id AS "artifactId",
+          page.page_type AS "artifactKind",
+          page.canonical_key AS "canonicalKey",
+          page.title,
+          true AS "explicitMatch",
+          false AS "canonicalExactMatch",
+          false AS "titleExactMatch",
+          false AS "exactMatch",
+          0::float8 AS "trigramScore",
+          false AS "ftsMatch"
+        FROM knowledge_artifact_contributions contribution
+        JOIN knowledge_pages page
+          ON page.workspace_id = contribution.workspace_id
+         AND page.space_id = contribution.space_id
+         AND page.id = contribution.artifact_id
+        WHERE contribution.workspace_id = ${input.workspaceId}::uuid
+          AND contribution.space_id = ${input.spaceId}::uuid
+          AND contribution.source_page_id = ANY(${explicitValues})
+          AND page.stale_at IS NULL
+          AND page.canonical_key IS NOT NULL
+          AND page.page_type IN ('source_summary', 'concept', 'entity', 'comparison')
+        LIMIT ${boundedLimit}
+      ), canonical_exact_candidates AS (
+        SELECT
+          page.id AS "artifactId",
+          page.page_type AS "artifactKind",
+          page.canonical_key AS "canonicalKey",
+          page.title,
+          false AS "explicitMatch",
+          true AS "canonicalExactMatch",
+          false AS "titleExactMatch",
+          true AS "exactMatch",
+          0::float8 AS "trigramScore",
+          false AS "ftsMatch"
+        FROM signals signal
+        JOIN knowledge_pages page
+          ON page.workspace_id = ${input.workspaceId}::uuid
+         AND page.space_id = ${input.spaceId}::uuid
+         AND page.page_type IN ('source_summary', 'concept', 'entity', 'comparison')
+         AND page.canonical_key = signal.value
+         AND page.stale_at IS NULL
+        LIMIT ${boundedLimit}
+      ), title_exact_candidates AS (
+        SELECT
+          page.id AS "artifactId",
+          page.page_type AS "artifactKind",
+          page.canonical_key AS "canonicalKey",
+          page.title,
+          false AS "explicitMatch",
+          false AS "canonicalExactMatch",
+          true AS "titleExactMatch",
+          true AS "exactMatch",
+          0::float8 AS "trigramScore",
+          false AS "ftsMatch"
+        FROM signals signal
+        JOIN knowledge_pages page
+          ON page.workspace_id = ${input.workspaceId}::uuid
+         AND page.space_id = ${input.spaceId}::uuid
+         AND page.page_type IN ('source_summary', 'concept', 'entity', 'comparison')
+         AND regexp_replace(lower(trim(page.title)), '\\s+', ' ', 'g') = signal.value
+         AND page.stale_at IS NULL
+        LIMIT ${boundedLimit}
+      ), trigram_candidates AS (
+        SELECT
+          match.id AS "artifactId",
+          match.page_type AS "artifactKind",
+          match.canonical_key AS "canonicalKey",
+          match.title,
+          false AS "explicitMatch",
+          false AS "canonicalExactMatch",
+          false AS "titleExactMatch",
+          false AS "exactMatch",
+          match.score AS "trigramScore",
+          false AS "ftsMatch"
+        FROM signals signal
+        JOIN LATERAL (
+          SELECT
+            page.id,
+            page.page_type,
+            page.canonical_key,
+            page.title,
+            similarity(page.title, signal.value)::float8 AS score
+          FROM knowledge_pages page
+          WHERE page.workspace_id = ${input.workspaceId}::uuid
+            AND page.space_id = ${input.spaceId}::uuid
+            AND page.stale_at IS NULL
+            AND page.canonical_key IS NOT NULL
+            AND page.page_type IN ('source_summary', 'concept', 'entity', 'comparison')
+            AND page.title % signal.value
+          ORDER BY similarity(page.title, signal.value) DESC, page.id ASC
+          LIMIT 8
+        ) match ON true
+      ), fts_candidates AS (
+        SELECT
+          match.id AS "artifactId",
+          match.page_type AS "artifactKind",
+          match.canonical_key AS "canonicalKey",
+          match.title,
+          false AS "explicitMatch",
+          false AS "canonicalExactMatch",
+          false AS "titleExactMatch",
+          false AS "exactMatch",
+          0::float8 AS "trigramScore",
+          true AS "ftsMatch"
+        FROM signals signal
+        JOIN LATERAL (
+          SELECT DISTINCT
+            page.id,
+            page.page_type,
+            page.canonical_key,
+            page.title
+          FROM knowledge_chunks chunk
+          JOIN knowledge_pages page
+            ON page.workspace_id = chunk.workspace_id
+           AND page.space_id = chunk.space_id
+           AND page.id = chunk.knowledge_page_id
+          WHERE chunk.workspace_id = ${input.workspaceId}::uuid
+            AND chunk.space_id = ${input.spaceId}::uuid
+            AND chunk.stale_at IS NULL
+            AND chunk.search_tsv @@ plainto_tsquery('simple', signal.value)
+            AND page.stale_at IS NULL
+            AND page.canonical_key IS NOT NULL
+            AND page.page_type IN ('source_summary', 'concept', 'entity', 'comparison')
+          ORDER BY page.id ASC
+          LIMIT 8
+        ) match ON true
+      ), candidates AS (
+        SELECT * FROM explicit_candidates
+        UNION ALL SELECT * FROM canonical_exact_candidates
+        UNION ALL SELECT * FROM title_exact_candidates
+        UNION ALL SELECT * FROM trigram_candidates
+        UNION ALL SELECT * FROM fts_candidates
+      ), ranked AS (
+        SELECT
+          "artifactId",
+          "artifactKind",
+          "canonicalKey",
+          title,
+          bool_or("explicitMatch") AS "explicitMatch",
+          bool_or("canonicalExactMatch") AS "canonicalExactMatch",
+          bool_or("titleExactMatch") AS "titleExactMatch",
+          bool_or("exactMatch") AS "exactMatch",
+          max("trigramScore") AS "trigramScore",
+          bool_or("ftsMatch") AS "ftsMatch"
+        FROM candidates
+        GROUP BY "artifactId", "artifactKind", "canonicalKey", title
       )
-      .select('overview.id')
-      .where('overview.workspaceId', '=', input.workspaceId)
-      .where('overview.spaceId', '=', input.spaceId)
-      .where('overview.pageType', '=', 'overview')
-      .where('overview.canonicalKey', '=', 'overview')
-      .where('overview.compileScope', '=', 'space')
-      .where('overview.staleAt', 'is', null)
-      .executeTakeFirst();
-    return Boolean(row);
+      SELECT *
+      FROM ranked
+      ORDER BY
+        "explicitMatch" DESC,
+        "canonicalExactMatch" DESC,
+        "titleExactMatch" DESC,
+        "trigramScore" DESC,
+        "ftsMatch" DESC,
+        "artifactKind" ASC,
+        "canonicalKey" ASC,
+        "artifactId" ASC
+      LIMIT ${boundedLimit}
+    `.execute(this.db);
+    return result.rows;
   }
 
   async resolveCanonicalLinks(
@@ -1117,72 +1264,6 @@ export class KnowledgeCapsuleRepo {
     };
   }
 
-  /**
-   * Reads exactly the page artifacts consumed by Space aggregation. Filtering
-   * and stable identity ordering happen before the bound so overview or other
-   * graph-only pages cannot displace an aggregate input.
-   */
-  async findAggregateCandidatesForSpace(
-    input: { workspaceId: string; spaceId: string; limit: number },
-    trx?: KyselyTransaction,
-  ): Promise<Pick<KnowledgeGraphCandidates, 'pages' | 'pageSources'>> {
-    const db = dbOrTx(this.db, trx);
-    const pages = await db
-      .selectFrom('knowledgePages')
-      .selectAll()
-      .where('workspaceId', '=', input.workspaceId)
-      .where('spaceId', '=', input.spaceId)
-      .where('staleAt', 'is', null)
-      .where('canonicalKey', 'is not', null)
-      .where('pageType', 'in', [
-        'source_summary',
-        'concept',
-        'entity',
-        'comparison',
-      ])
-      .orderBy('pageType', 'asc')
-      .orderBy('canonicalKey', 'asc')
-      .orderBy('id', 'asc')
-      .limit(input.limit)
-      .execute();
-    const pageIds = pages.map((page) => page.id);
-    const pageSources =
-      pageIds.length === 0
-        ? []
-        : await db
-            .selectFrom('knowledgePageSources')
-            .selectAll()
-            .where('workspaceId', '=', input.workspaceId)
-            .where('knowledgePageId', 'in', pageIds)
-            .orderBy('knowledgePageId', 'asc')
-            .orderBy('sourcePageId', 'asc')
-            .orderBy('sourceVersion', 'asc')
-            .orderBy('contentHash', 'asc')
-            .execute();
-    return { pages, pageSources };
-  }
-
-  async countActiveAggregateArtifacts(input: {
-    workspaceId: string;
-    spaceId: string;
-  }): Promise<number> {
-    const row = await this.db
-      .selectFrom('knowledgePages')
-      .select((eb) => eb.fn.countAll<number>().as('count'))
-      .where('workspaceId', '=', input.workspaceId)
-      .where('spaceId', '=', input.spaceId)
-      .where('staleAt', 'is', null)
-      .where('canonicalKey', 'is not', null)
-      .where('pageType', 'in', [
-        'source_summary',
-        'concept',
-        'entity',
-        'comparison',
-      ])
-      .executeTakeFirst();
-    return Number(row?.count ?? 0);
-  }
-
   async findDependencySourcePageIds(
     input: { workspaceId: string; knowledgePageIds: string[] },
     trx?: KyselyTransaction,
@@ -1438,7 +1519,7 @@ export class KnowledgeCapsuleRepo {
   }
 
   async markSourceArtifactsStaleBySourcePageIds(
-    input: { workspaceId: string; sourcePageIds: string[] },
+    input: { workspaceId: string; spaceId?: string; sourcePageIds: string[] },
     trx?: KyselyTransaction,
   ): Promise<void> {
     if (input.sourcePageIds.length === 0) return;
@@ -1454,6 +1535,9 @@ export class KnowledgeCapsuleRepo {
       .select('knowledgePages.id')
       .distinct()
       .where('knowledgePages.workspaceId', '=', input.workspaceId)
+      .$if(Boolean(input.spaceId), (query) =>
+        query.where('knowledgePages.spaceId', '=', input.spaceId!),
+      )
       .where('knowledgePages.pageType', '=', 'source_summary')
       .where('knowledgePageSources.sourcePageId', 'in', input.sourcePageIds)
       .execute();
@@ -1712,6 +1796,15 @@ function orderedPair(first: string, second: string): [string, string] {
 
 function pairKey(first: string, second: string): string {
   return `${first}\u001f${second}`;
+}
+
+function normalizeCatalogSignal(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLocaleLowerCase('en-US')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .slice(0, 160);
 }
 
 function splitPairKey(key: string): [string, string] {

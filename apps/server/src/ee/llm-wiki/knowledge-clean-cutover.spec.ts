@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 describe('knowledge compilation clean cutover', () => {
@@ -34,15 +34,37 @@ describe('knowledge compilation clean cutover', () => {
     expect(source).not.toContain('queueStandalonePage');
   });
 
-  it('keeps aggregation lease-bound and exposes no natural terminal writer', () => {
+  it('has no Space overview producer and retains a no-LLM finalizer', () => {
+    const aggregator = join(
+      __dirname,
+      'services/knowledge-space-aggregator.service.ts',
+    );
+    const finalizer = readFileSync(
+      join(__dirname, 'services/knowledge-space-finalizer.service.ts'),
+      'utf8',
+    );
+    const module = readFileSync(join(__dirname, 'llm-wiki.module.ts'), 'utf8');
+
+    expect(existsSync(aggregator)).toBe(false);
+    expect(module).not.toContain('KnowledgeSpaceAggregatorService');
+    expect(finalizer).toContain('resolveSpace');
+    expect(finalizer).not.toContain('KNOWLEDGE_COMPILER_LLM_PROVIDER');
+    expect(finalizer).not.toContain('KnowledgeVectorIndexService');
+    expect(finalizer).not.toContain('KnowledgeArtifactCatalogService');
+  });
+
+  it('ships an explicitly scoped, transactional manual Overview cleanup', () => {
     const source = readFileSync(
-      join(__dirname, 'services/knowledge-space-aggregator.service.ts'),
+      join(__dirname, '../../../scripts/cleanup-knowledge-overviews.sql'),
       'utf8',
     );
 
-    expect(source).not.toMatch(/\basync aggregate\(/);
-    expect(source).not.toContain('completeAggregation');
-    expect(source).not.toContain('KnowledgeSpaceCompilationRepo');
+    expect(source).toContain("page_type = 'overview'");
+    expect(source).toContain("compile_scope = 'space'");
+    expect(source).toContain("canonical_key = 'overview'");
+    expect(source).toContain('BEGIN;');
+    expect(source).toContain('COMMIT;');
+    expect(source).not.toContain('TRUNCATE');
   });
 
   it('keeps legacy natural Run writers out of the compilation repository', () => {

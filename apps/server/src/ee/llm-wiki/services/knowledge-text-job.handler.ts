@@ -7,6 +7,7 @@ import { KnowledgeSourceRepo } from '@akasha/db/repos/llm-wiki/knowledge-source.
 import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import {
   IKnowledgeMarkSourcesStaleJob,
+  IKnowledgeRetireSourcesJob,
   IKnowledgeRebuildEmbeddingsJob,
   IKnowledgeReindexAccessJob,
   IReviewDiscoverJob,
@@ -33,6 +34,7 @@ import { isDeepSearch, ResolvedReview } from '../review/approval';
 import { NegotiationTurn, reviewItemSchema } from '../review/review.schema';
 import { KnowledgeSpaceCompilationService } from './knowledge-space-compilation.service';
 import { KnowledgeVectorIndexService } from './knowledge-vector-index.service';
+import { KnowledgeSourceRetirementService } from './knowledge-source-retirement.service';
 
 type ReviewProcessorJobResult = {
   type: 'review-discover' | 'review-negotiate';
@@ -64,6 +66,7 @@ export class KnowledgeTextJobHandler {
     private readonly reviewApplicationRepo: KnowledgeReviewApplicationRepo,
     private readonly spaceCompilation: KnowledgeSpaceCompilationService,
     private readonly vectorIndex: KnowledgeVectorIndexService,
+    private readonly sourceRetirement: KnowledgeSourceRetirementService,
   ) {}
 
   async handle(
@@ -121,6 +124,11 @@ export class KnowledgeTextJobHandler {
           spaceId: data.spaceId,
           ...(data.afterChunkId ? { afterChunkId: data.afterChunkId } : {}),
         });
+        if (result.failedChunkIds?.length) {
+          throw new Error(
+            `Knowledge embedding rebuild failed for ${result.failedChunkIds.length} chunk(s).`,
+          );
+        }
         if (result.nextCursor) {
           await this.textQueue.add(
             QueueJob.KNOWLEDGE_REBUILD_EMBEDDINGS,
@@ -168,6 +176,14 @@ export class KnowledgeTextJobHandler {
             sourcePageIds,
           });
         }
+        break;
+      }
+      case QueueJob.KNOWLEDGE_RETIRE_SOURCES: {
+        const data = job.data as IKnowledgeRetireSourcesJob;
+        await this.sourceRetirement.retireOutOfScopeSources({
+          workspaceId: data.workspaceId,
+          sourcePageIds: uniqueValues(data.sourcePageIds),
+        });
         break;
       }
       case QueueJob.REVIEW_DISCOVER: {

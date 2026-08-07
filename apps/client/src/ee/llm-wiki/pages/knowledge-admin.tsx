@@ -113,6 +113,7 @@ const RUN_PHASE_OPTIONS = [
   "initial_aggregate",
   "images",
   "image_merge",
+  "finalizing",
   "final_aggregate",
   "complete",
 ].map((value) => ({ value, label: humanizeState(value) }));
@@ -813,7 +814,10 @@ export default function KnowledgeAdminPage() {
                         <Table.Tr key={page.runPageId}>
                           <Table.Td>
                             <Checkbox
-                              disabled={page.status !== "failed"}
+                              disabled={
+                                page.status !== "failed" &&
+                                page.mergeStatus !== "failed"
+                              }
                               checked={selectedPageIds.includes(
                                 page.sourcePageId,
                               )}

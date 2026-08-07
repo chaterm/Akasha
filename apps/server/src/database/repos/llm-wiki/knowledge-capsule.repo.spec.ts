@@ -165,68 +165,34 @@ function basePageSource(knowledgePageId: string, sourcePageId: string) {
 }
 
 describe('KnowledgeCapsuleRepo', () => {
-  it('returns only active canonical page artifacts for a Space catalog', async () => {
-    const row = {
-      artifactId: 'knowledge-page-1',
-      artifactKind: 'concept',
-      canonicalKey: 'event-sourcing',
-      title: 'Event sourcing',
-      body: 'Append-only changes.',
-    };
-    const query = new FakeKyselyQuery({ knowledgePages: [row] });
-    const repo = createRepo(query);
-
-    await expect(
-      repo.findActiveArtifactCatalog({
-        workspaceId: 'workspace-1',
-        spaceId: 'space-1',
-      }),
-    ).resolves.toEqual([row]);
-
-    expect(query.calls).toEqual(
-      expect.arrayContaining([
-        { method: 'selectFrom', args: ['knowledgePages'] },
-        { method: 'where', args: ['workspaceId', '=', 'workspace-1'] },
-        { method: 'where', args: ['spaceId', '=', 'space-1'] },
-        { method: 'where', args: ['staleAt', 'is', null] },
-        { method: 'where', args: ['canonicalKey', 'is not', null] },
-        {
-          method: 'where',
-          args: [
-            'pageType',
-            'in',
-            ['source_summary', 'concept', 'entity', 'comparison'],
-          ],
-        },
-      ]),
-    );
-  });
-
-  it('filters aggregate page kinds before the stable 5,000-row limit', async () => {
+  it('ranks a bounded compiler Catalog in SQL without returning bodies', async () => {
     const { repo, queries } = createSqlRepo();
 
-    await repo.findAggregateCandidatesForSpace({
+    await repo.findCompilerCatalogCandidates({
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
-      limit: 5_000,
+      signals: ['Event sourcing'],
+      explicitSourcePageIds: ['11111111-1111-4111-8111-111111111111'],
+      limit: 64,
     });
 
-    const pageQuery = queries[0].sql.toLowerCase().replace(/\s+/g, ' ');
-    expect(pageQuery).toContain('"canonical_key" is not null');
-    expect(pageQuery).toContain('"page_type" in');
+    const query = queries[0].sql.toLowerCase().replace(/\s+/g, ' ');
+    expect(query).toContain('knowledge_artifact_contributions');
+    expect(query).toContain('join lateral');
+    expect(query).toContain('page.title % signal.value');
+    expect(query).toContain('similarity(page.title, signal.value)');
+    expect(query).toContain('search_tsv @@ plainto_tsquery');
+    expect(query).toContain('union all');
+    expect(query).toContain('order by "explicitmatch" desc');
+    expect(query).toContain('"canonicalexactmatch" desc');
+    expect(query.indexOf('"trigramscore" desc')).toBeLessThan(
+      query.indexOf('"ftsmatch" desc'),
+    );
+    expect(query).not.toContain('page.body');
+    expect(query).not.toContain('chunk.content');
     expect(queries[0].parameters).toEqual(
-      expect.arrayContaining([
-        'source_summary',
-        'concept',
-        'entity',
-        'comparison',
-        5_000,
-      ]),
+      expect.arrayContaining(['event sourcing', 64]),
     );
-    expect(pageQuery).toContain(
-      'order by "page_type" asc, "canonical_key" asc, "id" asc limit',
-    );
-    expect(pageQuery).not.toContain('updated_at');
   });
 
   it('applies complete-source authorization before dense candidate limits', async () => {

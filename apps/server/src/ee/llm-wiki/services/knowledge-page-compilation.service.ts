@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { KnowledgeCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-compilation.repo';
 import { KyselyTransaction } from '@akasha/db/types/kysely.types';
 import {
@@ -31,6 +31,8 @@ import {
   KnowledgeOperationBudget,
 } from './knowledge-operation-budget';
 import { uniqueValues } from './knowledge-queue.utils';
+import { KnowledgeEmbeddingError } from './knowledge-embedding-provider.service';
+import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
 
 export type PageCompilationOutcome =
   | { outcome: 'succeeded' | 'noop'; result: KnowledgePageCompilationResult }
@@ -55,11 +57,13 @@ export interface TextPageExecutionContext {
   markRunning?(): Promise<void>;
   completePage(input: {
     status: 'succeeded' | 'failed' | 'skipped';
+    qualityStatus?: 'normal' | 'degraded' | 'partial_image';
     errorCode?: string | null;
     errorMessage?: string | null;
   }): Promise<unknown>;
   catalog(): Promise<KnowledgeArtifactCatalogEntry[]>;
   publicationGuard(trx: KyselyTransaction): Promise<boolean>;
+  bypassCache?(): Promise<boolean>;
 }
 
 export interface ImagePageMergeInput {
@@ -101,6 +105,8 @@ class UnavailableKnowledgeSourceError extends Error {
 
 @Injectable()
 export class KnowledgePageCompilationService {
+  private readonly logger = new Logger(KnowledgePageCompilationService.name);
+
   constructor(
     private readonly sourceExporter: KnowledgeSourceExporterService,
     @Inject(KNOWLEDGE_COMPILER_ADAPTER)
@@ -109,6 +115,8 @@ export class KnowledgePageCompilationService {
     private readonly accessIndexer: KnowledgeAccessIndexerService,
     private readonly compilationRepo: KnowledgeCompilationRepo,
     private readonly imageEnrichment: KnowledgeImageEnrichmentService,
+    @Optional()
+    private readonly runRepo?: KnowledgeSpaceCompilationRepo,
   ) {}
 
   async compileTextPage(
@@ -291,6 +299,23 @@ export class KnowledgePageCompilationService {
         return { outcome: 'noop', result: noOpPageResult(data, startedAt) };
       }
 
+      const bypassCache = (await input.execution.bypassCache?.()) ?? false;
+      const compilationRepo = this
+        .compilationRepo as KnowledgeCompilationRepo & {
+        hasLastSuccessfulPublication?: KnowledgeCompilationRepo['hasLastSuccessfulPublication'];
+        markResultQuality?: KnowledgeCompilationRepo['markResultQuality'];
+      };
+      const hasLastSuccess =
+        (await compilationRepo.hasLastSuccessfulPublication?.({
+          workspaceId: data.workspaceId,
+          spaceId: data.spaceId,
+          sourcePageId,
+        })) ?? false;
+      // Prepared-import reuse is deliberately disabled. Its historical key did
+      // not include the DB Top-K candidate set, so it could replay generation
+      // produced from stale Catalog identities. Analysis has a complete cache
+      // identity; generation is recomputed until a candidate-aware prepared
+      // import key exists.
       const catalogEntries = await input.execution.catalog();
       if (!(await input.execution.isActive())) {
         await this.skipCancelledAttempt({ data, sourcePageId, compileTaskId });
@@ -303,7 +328,9 @@ export class KnowledgePageCompilationService {
         promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
         compileTaskId,
         compileMode: 'pages' as const,
-        catalog: catalogEntries,
+        bypassCache,
+        hasLastSuccess,
+        ...(catalogEntries ? { catalog: catalogEntries } : {}),
         sources,
         publicationGuard: input.execution.publicationGuard,
         operationBudget,
@@ -357,7 +384,34 @@ export class KnowledgePageCompilationService {
         sourceContentHash: exportedSource.contentHash,
         effectiveKnowledgeHash,
       });
-      await this.completeTextPage(input, { status: 'succeeded' });
+      const resultQuality = compileResult.resultQuality ?? 'normal';
+      await compilationRepo.markResultQuality?.({
+        workspaceId: data.workspaceId,
+        sourcePageId,
+        compileTaskId,
+        quality: resultQuality,
+      });
+      await this.completeTextPage(input, {
+        status: 'succeeded',
+        qualityStatus: resultQuality,
+      });
+      if (
+        resultQuality === 'degraded' &&
+        (compileResult.generationAttemptCount ?? 3) < 3
+      ) {
+        await this.runRepo?.requestRuns({
+          requests: [
+            {
+              workspaceId: data.workspaceId,
+              spaceId: data.spaceId,
+              trigger: 'page_retry',
+              targetSourcePageIds: [sourcePageId],
+            },
+          ],
+          compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+          promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+        });
+      }
       return {
         outcome: 'succeeded',
         result: {
@@ -379,6 +433,14 @@ export class KnowledgePageCompilationService {
       const failure = abortSignal.aborted
         ? pageTimeoutFailure()
         : classifyCompilationFailure(error);
+      this.logCompilerDiagnostic(error, {
+        workspaceId: data.workspaceId,
+        spaceId: data.spaceId,
+        sourcePageId,
+        compileTaskId,
+        failureCode: failure.code,
+        retryable: failure.retryable,
+      });
       await this.compilationRepo.failAttempt({
         workspaceId: data.workspaceId,
         sourcePageId,
@@ -478,7 +540,7 @@ export class KnowledgePageCompilationService {
         promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
         compileTaskId,
         compileMode: 'pages' as const,
-        catalog,
+        ...(catalog ? { catalog } : {}),
         sources: [source],
         operationBudget,
       };
@@ -496,6 +558,14 @@ export class KnowledgePageCompilationService {
         input: compileInput,
         artifacts: compileResult.artifacts,
         publicationGuard: input.execution.publicationGuard,
+        onStage: async (stage) => {
+          await this.compilationRepo.updateStage({
+            workspaceId: data.workspaceId,
+            sourcePageId: data.sourcePageId,
+            compileTaskId,
+            stage,
+          });
+        },
         publicationComplete: async (trx: KyselyTransaction) => {
           await this.compilationRepo.succeedAttempt(
             {
@@ -561,6 +631,14 @@ export class KnowledgePageCompilationService {
       const failure = abortSignal.aborted
         ? pageTimeoutFailure()
         : classifyCompilationFailure(error);
+      this.logCompilerDiagnostic(error, {
+        workspaceId: data.workspaceId,
+        spaceId: data.spaceId,
+        sourcePageId: data.sourcePageId,
+        compileTaskId,
+        failureCode: failure.code,
+        retryable: failure.retryable,
+      });
       await this.compilationRepo.failAttempt({
         workspaceId: data.workspaceId,
         sourcePageId: data.sourcePageId,
@@ -599,6 +677,7 @@ export class KnowledgePageCompilationService {
     input: TextPageCompilationInput,
     outcome: {
       status: 'succeeded' | 'failed' | 'skipped';
+      qualityStatus?: 'normal' | 'degraded' | 'partial_image';
       errorCode?: string | null;
       errorMessage?: string | null;
     },
@@ -620,6 +699,27 @@ export class KnowledgePageCompilationService {
       reasonMessage: superseded
         ? 'Knowledge Space run was superseded.'
         : 'Knowledge Space compilation is currently running.',
+    });
+  }
+
+  private logCompilerDiagnostic(
+    error: unknown,
+    context: {
+      workspaceId: string;
+      spaceId: string;
+      sourcePageId: string;
+      compileTaskId: string;
+      failureCode: string;
+      retryable: boolean;
+    },
+  ): void {
+    if (!(error instanceof KnowledgeCompilerLlmError)) return;
+    if (!error.diagnostic && !error.diagnosticClass) return;
+    this.logger.warn({
+      message: 'Knowledge compiler provider failure diagnostic',
+      ...context,
+      diagnosticClass: error.diagnosticClass,
+      providerDiagnostic: error.diagnostic,
     });
   }
 }
@@ -688,6 +788,7 @@ function classifyCompilationFailure(error: unknown): {
   if (
     error instanceof KnowledgeCompilerLlmError ||
     error instanceof KnowledgeCompilationValidationError ||
+    error instanceof KnowledgeEmbeddingError ||
     error instanceof KnowledgeComplexityLimitError
   ) {
     return {

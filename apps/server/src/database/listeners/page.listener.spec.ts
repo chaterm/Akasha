@@ -64,6 +64,11 @@ describe('PageListener knowledge jobs', () => {
       }),
     );
     expect(runRepo.requestIncrementalCompileForPages).not.toHaveBeenCalled();
+    expect(knowledgeQueue.add).toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_RETIRE_SOURCES,
+      { workspaceId: 'workspace-1', sourcePageIds: ['page-1'] },
+      expect.objectContaining({ attempts: 5, delay: 1_000 }),
+    );
   });
 
   it('leaves content compilation to the post-commit content queue', async () => {
@@ -87,7 +92,7 @@ describe('PageListener knowledge jobs', () => {
     ['hard delete', 'handlePageDeleted'],
     ['soft delete', 'handlePageSoftDeleted'],
   ] as const)(
-    'uses the transactional fail-closed run request for %s',
+    'uses precise source retirement for %s',
     async (_label, method) => {
       const { listener, knowledgeQueue, runRepo } = createListener();
 
@@ -96,13 +101,15 @@ describe('PageListener knowledge jobs', () => {
         pageIds: ['page-1'],
       });
 
-      expect(runRepo.requestIncrementalCompileForPages).toHaveBeenCalledWith(
-        expect.objectContaining({
+      expect(knowledgeQueue.add).toHaveBeenCalledWith(
+        QueueJob.KNOWLEDGE_RETIRE_SOURCES,
+        {
           workspaceId: 'workspace-1',
           sourcePageIds: ['page-1'],
-          removed: true,
-        }),
+        },
+        expect.objectContaining({ attempts: 5, delay: 1_000 }),
       );
+      expect(runRepo.requestIncrementalCompileForPages).not.toHaveBeenCalled();
       expect(knowledgeQueue.add).not.toHaveBeenCalledWith(
         QueueJob.KNOWLEDGE_MARK_SOURCES_STALE,
         expect.anything(),

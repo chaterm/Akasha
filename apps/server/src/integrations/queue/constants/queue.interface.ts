@@ -151,6 +151,11 @@ export interface IKnowledgeMarkSourcesStaleJob {
   mode?: 'all_dependencies' | 'source_artifacts';
 }
 
+export interface IKnowledgeRetireSourcesJob {
+  workspaceId: string;
+  sourcePageIds: string[];
+}
+
 export interface IReviewDiscoverJob {
   workspaceId: string;
   spaceId: string;
