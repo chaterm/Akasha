@@ -156,7 +156,7 @@ describe('DocmostKnowledgeCompilerRunner', () => {
     });
   });
 
-  it('creates a typed overview artifact with union lineage for multi-source spaces', async () => {
+  it('does not create a Space overview for multi-source compilation', async () => {
     const runner = new TestDocmostKnowledgeCompilerRunner(
       () => new Date('2026-06-16T00:00:00.000Z'),
     );
@@ -190,80 +190,18 @@ describe('DocmostKnowledgeCompilerRunner', () => {
       ],
     });
 
-    const overview = result.artifacts.find(
-      (artifact) => artifact.artifactKind === 'overview',
-    );
-
-    expect(overview).toEqual(
-      expect.objectContaining({
-        artifactKind: 'overview',
-        title: 'Space knowledge overview',
-        sourcePageIds: ['page-1', 'page-2'],
-        compileTaskId: 'akasha-overview:space-1',
-        inputSourceRefs: [
-          {
-            workspaceId: 'workspace-1',
-            spaceId: 'space-1',
-            sourcePageId: 'page-1',
-            sourceVersion: 'v1',
-            contentHash: 'hash-1',
-          },
-          {
-            workspaceId: 'workspace-1',
-            spaceId: 'space-1',
-            sourcePageId: 'page-2',
-            sourceVersion: 'v2',
-            contentHash: 'hash-2',
-          },
-        ],
-        claims: [
-          {
-            text: 'This overview summarizes 2 source pages in the selected space.',
-            confidence: null,
-            inputSourceRefs: [
-              {
-                workspaceId: 'workspace-1',
-                spaceId: 'space-1',
-                sourcePageId: 'page-1',
-                sourceVersion: 'v1',
-                contentHash: 'hash-1',
-              },
-              {
-                workspaceId: 'workspace-1',
-                spaceId: 'space-1',
-                sourcePageId: 'page-2',
-                sourceVersion: 'v2',
-                contentHash: 'hash-2',
-              },
-            ],
-          },
-        ],
-        chunks: [
-          {
-            text:
-              'KMS 加密架构: KMS 使用信封加密保护敏感字段。\n\n' +
-              '密钥轮换策略: 密钥按季度轮换并保留审计记录。',
-            claimIndex: 0,
-            inputSourceRefs: [
-              {
-                workspaceId: 'workspace-1',
-                spaceId: 'space-1',
-                sourcePageId: 'page-1',
-                sourceVersion: 'v1',
-                contentHash: 'hash-1',
-              },
-              {
-                workspaceId: 'workspace-1',
-                spaceId: 'space-1',
-                sourcePageId: 'page-2',
-                sourceVersion: 'v2',
-                contentHash: 'hash-2',
-              },
-            ],
-          },
-        ],
-      }),
-    );
+    expect(result.artifacts).toHaveLength(2);
+    expect(result.artifacts.map((artifact) => artifact.artifactKind)).toEqual([
+      'source_summary',
+      'source_summary',
+    ]);
+    expect(
+      result.artifacts.some(
+        (artifact) =>
+          artifact.sourcePageIds.length > 1 ||
+          artifact.compileTaskId?.startsWith('akasha-overview:'),
+      ),
+    ).toBe(false);
   });
 
   it('skips empty sources and reports diagnostics', async () => {

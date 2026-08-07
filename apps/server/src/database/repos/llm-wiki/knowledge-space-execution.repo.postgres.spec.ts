@@ -91,21 +91,7 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
     );
     const initialized = await executionRepo.initializeRun(lease, {
       aggregateRequired: true,
-      catalogSnapshot: [],
-      catalogHash: 'sha256:catalog',
-      pages: [
-        {
-          sourcePageId: 'page-1',
-          expectedSourceVersion: 'v1',
-          expectedSourceContentHash: 'sha256:page-1',
-          expectedImageCount: 0,
-          status: 'pending',
-          imageStatus: 'not_required',
-          mergeStatus: 'not_required',
-        },
-      ],
-      images: [],
-      removedSourcePageIds: [],
+      targetSourcePageIds: null,
     });
     expect(initialized?.initialized).toBe(true);
     await expect(
@@ -113,14 +99,46 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
         { ...lease, executionToken: 'old-token' },
         {
           aggregateRequired: true,
-          catalogSnapshot: [],
-          catalogHash: 'ignored',
-          pages: [],
-          images: [],
-          removedSourcePageIds: [],
+          targetSourcePageIds: null,
         },
       ),
     ).resolves.toBeUndefined();
+
+    await expect(executionRepo.claimNextTextPage(lease)).resolves.toEqual(
+      expect.objectContaining({
+        sourcePageId: 'page-1',
+        bindingStatus: 'binding',
+        expectedSourceContentHash: null,
+      }),
+    );
+    await expect(
+      executionRepo.bindTextPage(
+        { ...lease, executionToken: 'stale-binding-token' },
+        { ...pagePlan('page-1'), images: [] },
+      ),
+    ).resolves.toBeUndefined();
+    await executionRepo.bindTextPage(lease, {
+      ...pagePlan('page-1'),
+      images: [],
+    });
+    const bound = await sql<{
+      bindingStatus: string;
+      expectedSourceContentHash: string;
+      expectedImageCount: number;
+    }>`
+      select binding_status as "bindingStatus",
+             expected_source_content_hash as "expectedSourceContentHash",
+             expected_image_count as "expectedImageCount"
+      from knowledge_space_compile_run_pages
+      where run_id = 'run-finish' and source_page_id = 'page-1'
+    `.execute(db);
+    expect(bound.rows).toEqual([
+      {
+        bindingStatus: 'bound',
+        expectedSourceContentHash: 'sha256:page-1',
+        expectedImageCount: 0,
+      },
+    ]);
 
     const checkpoint = await executionRepo.completeTextPage(lease, {
       sourcePageId: 'page-1',
@@ -183,11 +201,7 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
 
     await executionRepo.initializeRun(lease, {
       aggregateRequired: false,
-      catalogSnapshot: [],
-      catalogHash: 'sha256:reused-catalog',
-      pages: [],
-      images: [],
-      removedSourcePageIds: [],
+      targetSourcePageIds: null,
     });
 
     await expect(executionRepo.findLeasedRun(lease)).resolves.toEqual(
@@ -198,7 +212,7 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
     );
   });
 
-  it('initializes 5000 pages and 5000 frozen images without one oversized SQL statement', async () => {
+  it('initializes 5000 unbound pages with one metadata-only INSERT SELECT', async () => {
     await sql`
       select setval('run_image_seq', 100000, true);
       insert into spaces (id, workspace_id, name)
@@ -209,7 +223,10 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
       ) values (
         'run-large-plan', 'workspace-1', 'space-large-plan', 'manual',
         'compiler-v1', 'prompt-v1', 'pending-initialization', now()
-      )
+      );
+      insert into pages (id, workspace_id, space_id, updated_at)
+      select 'large-page-' || ordinal, 'workspace-1', 'space-large-plan', now()
+      from generate_series(0, 4999) ordinal
     `.execute(db);
     const lease = await claimedLease(
       compilationRepo,
@@ -217,40 +234,21 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
       'run-large-plan',
       'large-plan-token',
     );
-    const pages = Array.from({ length: 5_000 }, (_, index) => ({
-      sourcePageId: `large-page-${index}`,
-      expectedSourceVersion: 'v1',
-      expectedSourceContentHash: `sha256:large-page-${index}`,
-      expectedImageCount: index < 100 ? 50 : 0,
-      status: 'pending' as const,
-      imageStatus:
-        index < 100 ? ('pending' as const) : ('not_required' as const),
-      mergeStatus:
-        index < 100 ? ('waiting_images' as const) : ('not_required' as const),
-    }));
-    const images = Array.from({ length: 5_000 }, (_, index) => {
-      const pageIndex = Math.floor(index / 50);
-      const imageOrdinal = index % 50;
-      return {
-        sourcePageId: `large-page-${pageIndex}`,
-        attachmentId: `large-attachment-${index}`,
-        imageOrdinal,
-        fileName: `large-image-${index}.png`,
-        mimeType: 'image/png',
-        expectedAttachmentVersion: new Date('2026-08-03T00:00:00.000Z'),
-      };
-    });
-
     await expect(
       executionRepo.initializeRun(lease, {
         aggregateRequired: true,
-        catalogSnapshot: [],
-        catalogHash: 'sha256:large-plan',
-        pages,
-        images,
-        removedSourcePageIds: [],
+        targetSourcePageIds: null,
       }),
     ).resolves.toEqual(expect.objectContaining({ initialized: true }));
+
+    const metadataInsert = [...executedSql]
+      .reverse()
+      .find((statement) =>
+        statement.includes('insert into knowledge_space_compile_run_pages'),
+      );
+    expect(metadataInsert).toContain('from pages as page');
+    expect(metadataInsert).not.toContain('text_content');
+    expect(metadataInsert).not.toContain('page.content');
 
     const counts = await sql<{ pageCount: number; imageCount: number }>`
       select
@@ -259,9 +257,14 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
         (select count(*)::integer from knowledge_space_compile_run_images
          where run_id = 'run-large-plan') as "imageCount"
     `.execute(db);
-    expect(counts.rows).toEqual([{ pageCount: 5_000, imageCount: 5_000 }]);
+    expect(counts.rows).toEqual([{ pageCount: 5_000, imageCount: 0 }]);
 
     executedSql.length = 0;
+    await executionRepo.claimNextTextPage(lease);
+    await executionRepo.bindTextPage(lease, {
+      ...pagePlan('large-page-0'),
+      images: [],
+    });
     await executionRepo.completeTextPage(lease, {
       sourcePageId: 'large-page-0',
       sourceVersion: 'v1',
@@ -280,7 +283,7 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
     ).resolves.toHaveLength(1);
   });
 
-  it('physically retires fail-closed removed-source contributions during leased initialization', async () => {
+  it('does not mix source retirement into metadata-only initialization', async () => {
     await sql`
       insert into knowledge_artifact_contributions (
         id, workspace_id, space_id, source_page_id, artifact_id
@@ -300,11 +303,7 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
 
     await executionRepo.initializeRun(lease, {
       aggregateRequired: true,
-      catalogSnapshot: [],
-      catalogHash: 'sha256:retired',
-      pages: [],
-      images: [],
-      removedSourcePageIds: ['removed-page'],
+      targetSourcePageIds: null,
     });
 
     const evidence = await sql<{
@@ -318,7 +317,7 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
           where id = 'retire-artifact') as "artifactStale"
     `.execute(db);
     expect(evidence.rows).toEqual([
-      { contributionCount: 0, artifactStale: true },
+      { contributionCount: 1, artifactStale: false },
     ]);
   });
 
@@ -332,7 +331,9 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
       ) values (
         'run-text-changed', 'workspace-1', 'space-text-changed', 'manual',
         'compiler-v1', 'prompt-v1', 'pending-initialization', now()
-      )
+      );
+      insert into pages (id, workspace_id, space_id, updated_at)
+      values ('changed-page', 'workspace-1', 'space-text-changed', now())
     `.execute(db);
     const lease = await claimedLease(
       compilationRepo,
@@ -342,11 +343,12 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
     );
     await executionRepo.initializeRun(lease, {
       aggregateRequired: true,
-      catalogSnapshot: [],
-      catalogHash: 'sha256:text-changed',
-      pages: [pagePlan('changed-page')],
+      targetSourcePageIds: null,
+    });
+    await executionRepo.claimNextTextPage(lease);
+    await executionRepo.bindTextPage(lease, {
+      ...pagePlan('changed-page'),
       images: [],
-      removedSourcePageIds: [],
     });
 
     await executionRepo.completeTextPage(lease, {
@@ -403,11 +405,12 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
     );
     await executionRepo.initializeRun(lease, {
       aggregateRequired: true,
-      catalogSnapshot: [],
-      catalogHash: 'sha256:yield',
-      pages: [pagePlan('yield-page-1'), pagePlan('yield-page-2')],
+      targetSourcePageIds: null,
+    });
+    await executionRepo.claimNextTextPage(lease);
+    await executionRepo.bindTextPage(lease, {
+      ...pagePlan('yield-page-1'),
       images: [],
-      removedSourcePageIds: [],
     });
     await executionRepo.completeTextPage(lease, {
       sourcePageId: 'yield-page-1',
@@ -631,7 +634,7 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
       ),
     );
     const afterSecond = await executionRepo.findLeasedRun(lease);
-    expect(afterSecond?.phase).toBe('final_aggregate');
+    expect(afterSecond?.phase).toBe('finalizing');
     await expect(executionRepo.advanceMergeBarrier(lease)).resolves.toEqual({
       barrierComplete: true,
     });
@@ -677,6 +680,13 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       knowledge_generation integer not null default 0,
       deleted_at timestamptz,
       updated_at timestamptz not null default now()
+    );
+    create table pages (
+      id varchar primary key,
+      workspace_id varchar not null,
+      space_id varchar not null,
+      updated_at timestamptz not null default now(),
+      deleted_at timestamptz
     );
     create table knowledge_space_compile_runs (
       id varchar primary key default ('run-' || nextval('run_seq')),
@@ -731,9 +741,14 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       workspace_id varchar not null,
       space_id varchar not null,
       source_page_id varchar not null,
-      expected_source_version varchar not null,
-      expected_source_content_hash varchar not null,
-      expected_image_count integer not null default 0,
+      binding_status varchar not null default 'bound',
+      discovered_source_version timestamptz,
+      expected_source_version varchar,
+      expected_source_content_hash varchar,
+      expected_image_count integer default 0,
+      bound_at timestamptz default now(),
+      quality_status varchar not null default 'normal',
+      reused boolean not null default false,
       succeeded_image_count integer not null default 0,
       failed_image_count integer not null default 0,
       skipped_image_count integer not null default 0,
@@ -778,6 +793,11 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     );
+    create unique index uq_run_image_source_attachment
+      on knowledge_space_compile_run_images
+      (run_id, source_page_id, attachment_id);
+    create unique index uq_run_image_page_ordinal
+      on knowledge_space_compile_run_images (run_page_id, image_ordinal);
     create table knowledge_artifact_contributions (
       id varchar primary key,
       workspace_id varchar not null,
@@ -800,6 +820,10 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       ('space-force', 'workspace-1', 'Force'),
       ('space-images', 'workspace-1', 'Images'),
       ('space-merge', 'workspace-1', 'Merge');
+    insert into pages (id, workspace_id, space_id) values
+      ('page-1', 'workspace-1', 'space-finish'),
+      ('yield-page-1', 'workspace-1', 'space-yield'),
+      ('yield-page-2', 'workspace-1', 'space-yield');
     insert into knowledge_space_compile_runs (
       id, workspace_id, space_id, trigger, compiler_version, prompt_version,
       catalog_hash, space_job_queued_at

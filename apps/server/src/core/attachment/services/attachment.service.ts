@@ -27,6 +27,40 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import { Queue } from 'bullmq';
 import { createByteCountingStream } from '../../../common/helpers/utils';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { EventName } from '../../../common/events/event.contants';
+
+const KNOWLEDGE_IMAGE_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/pjpeg',
+  'image/png',
+  'image/x-png',
+  'image/apng',
+  'image/gif',
+  'image/webp',
+  'image/avif',
+  'image/tiff',
+  'image/x-tiff',
+  'image/bmp',
+  'image/x-bmp',
+  'image/x-ms-bmp',
+]);
+
+const KNOWLEDGE_IMAGE_EXTENSIONS = new Set([
+  '.jpg',
+  '.jpeg',
+  '.jpe',
+  '.png',
+  '.apng',
+  '.gif',
+  '.webp',
+  '.avif',
+  '.tif',
+  '.tiff',
+  '.bmp',
+  '.dib',
+]);
 
 @Injectable()
 export class AttachmentService {
@@ -39,6 +73,7 @@ export class AttachmentService {
     private readonly spaceRepo: SpaceRepo,
     @InjectKysely() private readonly db: KyselyDB,
     @InjectQueue(QueueName.ATTACHMENT_QUEUE) private attachmentQueue: Queue,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async uploadFile(opts: {
@@ -132,6 +167,7 @@ export class AttachmentService {
           },
         );
       }
+      this.emitKnowledgeRasterPageUpdated(attachment);
     } catch (err) {
       // delete uploaded file on error
       this.logger.error(err);
@@ -234,7 +270,9 @@ export class AttachmentService {
   async deleteRedundantFile(filePath: string) {
     try {
       await this.storageService.delete(filePath);
-      await this.attachmentRepo.deleteAttachmentByFilePath(filePath);
+      const deleted =
+        await this.attachmentRepo.deleteAttachmentByFilePath(filePath);
+      this.emitKnowledgeRasterPageUpdated(deleted);
     } catch (error) {
       this.logger.error('deleteRedundantFile', error);
     }
@@ -300,7 +338,10 @@ export class AttachmentService {
         attachments.map(async (attachment) => {
           try {
             await this.storageService.delete(attachment.filePath);
-            await this.attachmentRepo.deleteAttachmentById(attachment.id);
+            const deleted = await this.attachmentRepo.deleteAttachmentById(
+              attachment.id,
+            );
+            this.emitKnowledgeRasterPageUpdated(deleted);
           } catch (err) {
             this.logger.log(
               `DeleteAiChatAttachments: failed to delete attachment ${attachment.id}:`,
@@ -327,7 +368,10 @@ export class AttachmentService {
         attachments.map(async (attachment) => {
           try {
             await this.storageService.delete(attachment.filePath);
-            await this.attachmentRepo.deleteAttachmentById(attachment.id);
+            const deleted = await this.attachmentRepo.deleteAttachmentById(
+              attachment.id,
+            );
+            this.emitKnowledgeRasterPageUpdated(deleted);
           } catch (err) {
             failedDeletions.push(attachment.id);
             this.logger.log(
@@ -365,7 +409,10 @@ export class AttachmentService {
         userAvatars.map(async (attachment) => {
           try {
             await this.storageService.delete(attachment.filePath);
-            await this.attachmentRepo.deleteAttachmentById(attachment.id);
+            const deleted = await this.attachmentRepo.deleteAttachmentById(
+              attachment.id,
+            );
+            this.emitKnowledgeRasterPageUpdated(deleted);
           } catch (err) {
             this.logger.log(
               `DeleteUserAvatar: failed to delete user avatar ${attachment.id}:`,
@@ -461,4 +508,24 @@ export class AttachmentService {
 
     await this.workspaceRepo.updateWorkspace({ logo: null }, workspace.id);
   }
+
+  private emitKnowledgeRasterPageUpdated(attachment?: Attachment): void {
+    if (!attachment || !isKnowledgeRasterAttachment(attachment)) return;
+    this.eventEmitter.emit(EventName.PAGE_UPDATED, {
+      pageIds: [attachment.pageId],
+      workspaceId: attachment.workspaceId,
+    });
+  }
+}
+
+function isKnowledgeRasterAttachment(attachment: Attachment): boolean {
+  if (attachment.type !== AttachmentType.File || !attachment.pageId) {
+    return false;
+  }
+  const mimeType = attachment.mimeType?.trim().toLowerCase();
+  if (mimeType && KNOWLEDGE_IMAGE_MIME_TYPES.has(mimeType)) return true;
+  return (
+    (!mimeType || mimeType === 'application/octet-stream') &&
+    KNOWLEDGE_IMAGE_EXTENSIONS.has(attachment.fileExt.toLowerCase())
+  );
 }

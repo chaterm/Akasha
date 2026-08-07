@@ -164,17 +164,21 @@ export class AttachmentRepo {
       .execute();
   }
 
-  async deleteAttachmentById(attachmentId: string): Promise<void> {
-    await this.db
+  async deleteAttachmentById(attachmentId: string): Promise<Attachment> {
+    return this.db
       .deleteFrom('attachments')
       .where('id', '=', attachmentId)
+      .returning(this.baseFields)
       .executeTakeFirst();
   }
 
-  async deleteAttachmentByFilePath(attachmentFilePath: string): Promise<void> {
-    await this.db
+  async deleteAttachmentByFilePath(
+    attachmentFilePath: string,
+  ): Promise<Attachment> {
+    return this.db
       .deleteFrom('attachments')
       .where('filePath', '=', attachmentFilePath)
+      .returning(this.baseFields)
       .executeTakeFirst();
   }
 }

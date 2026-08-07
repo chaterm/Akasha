@@ -8,10 +8,6 @@ import {
   KnowledgeEmbedding,
 } from './knowledge-embedding-provider.service';
 import { mapKnowledgeOperations } from './knowledge-operation-budget';
-import {
-  buildKnowledgeOverviewEmbeddingText,
-  extractKnowledgeOverviewNarrative,
-} from './knowledge-overview-embedding';
 
 export type KnowledgeVectorIndexResult = 'created' | 'exists' | 'exact-only';
 
@@ -119,6 +115,7 @@ export class KnowledgeVectorIndexService {
       .where('chunk.workspaceId', '=', input.workspaceId)
       .where('chunk.spaceId', '=', input.spaceId)
       .where('chunk.staleAt', 'is', null)
+      .where('page.pageType', '!=', 'overview')
       .$if(Boolean(input.afterChunkId), (query) =>
         query.where('chunk.id', '>', input.afterChunkId!),
       )
@@ -245,12 +242,6 @@ function embeddingInput(chunk: {
         (value): value is string => typeof value === 'string' && Boolean(value),
       )
     : [];
-  if (chunk.pageType === 'overview') {
-    return buildKnowledgeOverviewEmbeddingText({
-      title: headingPath.join(' > '),
-      narrative: extractKnowledgeOverviewNarrative(chunk.text),
-    });
-  }
   return headingPath.length > 0
     ? `${headingPath.join(' > ')}\n\n${chunk.text}`
     : chunk.text;

@@ -864,7 +864,11 @@ describe('KnowledgeImportService', () => {
     expect(
       capsuleRepo.markSourceArtifactsStaleBySourcePageIds,
     ).toHaveBeenCalledWith(
-      { workspaceId: 'workspace-1', sourcePageIds: ['source-1'] },
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageIds: ['source-1'],
+      },
       expect.anything(),
     );
     expect(capsuleRepo.upsertCompiledArtifacts).toHaveBeenCalled();
@@ -984,12 +988,17 @@ describe('KnowledgeImportService', () => {
     expect(
       capsuleRepo.markSourceArtifactsStaleBySourcePageIds,
     ).toHaveBeenCalledWith(
-      { workspaceId: 'workspace-1', sourcePageIds: ['source-1'] },
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageIds: ['source-1'],
+      },
       trx,
     );
     expect(contributionRepo.replaceSourceContributions).toHaveBeenCalledWith(
       expect.objectContaining({
         workspaceId: 'workspace-1',
+        spaceId: 'space-1',
         sourcePageId: 'source-1',
         contributions: [
           expect.objectContaining({
@@ -1057,7 +1066,7 @@ describe('KnowledgeImportService', () => {
       chunks: [],
     };
     const sourceRepo = {
-      markSourcesStale: jest.fn().mockResolvedValue(undefined),
+      markSpaceSourcesStale: jest.fn().mockResolvedValue(undefined),
       upsertPageSource: jest.fn(),
       replaceSourceChunks: jest.fn(),
     };
@@ -1129,19 +1138,28 @@ describe('KnowledgeImportService', () => {
       operationBudget: expect.anything(),
     });
     expect(publicationGuard).toHaveBeenCalledWith(trx);
-    expect(sourceRepo.markSourcesStale).toHaveBeenCalledWith(
-      { workspaceId: 'workspace-1', sourcePageIds: ['source-1'] },
+    expect(sourceRepo.markSpaceSourcesStale).toHaveBeenCalledWith(
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageIds: ['source-1'],
+      },
       trx,
     );
     expect(
       capsuleRepo.markSourceArtifactsStaleBySourcePageIds,
     ).toHaveBeenCalledWith(
-      { workspaceId: 'workspace-1', sourcePageIds: ['source-1'] },
+      {
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageIds: ['source-1'],
+      },
       trx,
     );
     expect(contributionRepo.replaceSourceContributions).toHaveBeenCalledWith(
       {
         workspaceId: 'workspace-1',
+        spaceId: 'space-1',
         sourcePageId: 'source-1',
         contributions: [],
       },

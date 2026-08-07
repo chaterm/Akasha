@@ -13,6 +13,10 @@ export interface CompileSpaceInput extends KnowledgeScope {
   purpose?: string;
   schema?: string;
   catalog?: KnowledgeArtifactCatalogEntry[];
+  /** Explicit cache bypass used by administrator force rebuilds. */
+  bypassCache?: boolean;
+  /** Prevents a degraded fallback from replacing an existing publication. */
+  hasLastSuccess?: boolean;
   publicationGuard?: (trx: KyselyTransaction) => Promise<boolean>;
   operationBudget?: KnowledgeOperationBudget;
 }
@@ -112,4 +116,6 @@ export interface CompileSpaceResult extends KnowledgeScope {
   compilerRunId: string;
   artifacts: CompiledKnowledgeArtifact[];
   diagnostics: CompileDiagnostics;
+  resultQuality?: 'normal' | 'degraded';
+  generationAttemptCount?: number;
 }

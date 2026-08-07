@@ -102,6 +102,24 @@ describe('KnowledgeTextJobHandler maintenance boundary', () => {
     ).not.toHaveBeenCalled();
   });
 
+  it('routes deleted and moved sources through precise retirement', async () => {
+    const fixture = createFixture();
+
+    await fixture.handler.handle(
+      job(QueueJob.KNOWLEDGE_RETIRE_SOURCES, {
+        workspaceId: 'workspace-1',
+        sourcePageIds: ['page-1', 'page-1', 'page-2'],
+      }),
+    );
+
+    expect(
+      fixture.sourceRetirement.retireOutOfScopeSources,
+    ).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-1', 'page-2'],
+    });
+  });
+
   it('keeps content-updated pages available and schedules delayed compilation', async () => {
     const fixture = createFixture();
 
@@ -279,6 +297,9 @@ function createFixture() {
       .fn()
       .mockResolvedValue({ rebuiltChunkCount: 0 }),
   };
+  const sourceRetirement = {
+    retireOutOfScopeSources: jest.fn(),
+  };
   const handler = new KnowledgeTextJobHandler(
     accessIndexer as never,
     sourceRepo as never,
@@ -290,6 +311,7 @@ function createFixture() {
     reviewApplicationRepo as never,
     spaceCompilation as never,
     vectorIndex as never,
+    sourceRetirement as never,
   );
   return {
     handler,
@@ -302,6 +324,7 @@ function createFixture() {
     auditService,
     spaceCompilation,
     vectorIndex,
+    sourceRetirement,
   };
 }
 

@@ -22,6 +22,10 @@ class FakeKyselyQuery {
     return this;
   }
 
+  $if(condition: boolean, callback: (query: this) => this) {
+    return condition ? callback(this) : this;
+  }
+
   orderBy(...args: unknown[]) {
     this.calls.push({ method: 'orderBy', args });
     return this;
@@ -80,6 +84,7 @@ describe('KnowledgeArtifactContributionRepo', () => {
 
     await repo.replaceSourceContributions({
       workspaceId: 'workspace-1',
+      spaceId: 'space-1',
       sourcePageId: 'page-1',
       contributions: [
         {
@@ -104,6 +109,7 @@ describe('KnowledgeArtifactContributionRepo', () => {
     expect(query.calls).toEqual([
       { method: 'deleteFrom', args: ['knowledgeArtifactContributions'] },
       { method: 'where', args: ['workspaceId', '=', 'workspace-1'] },
+      { method: 'where', args: ['spaceId', '=', 'space-1'] },
       { method: 'where', args: ['sourcePageId', '=', 'page-1'] },
       { method: 'execute', args: [] },
       { method: 'insertInto', args: ['knowledgeArtifactContributions'] },

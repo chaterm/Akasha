@@ -165,6 +165,7 @@ export class KnowledgeImportService {
       const previousSourceContributions =
         await this.contributionRepo.findBySourcePage({
           workspaceId: input.input.workspaceId,
+          spaceId: input.input.spaceId,
           sourcePageId: source.sourcePageId,
         });
       const affectedArtifactIds = [
@@ -176,6 +177,7 @@ export class KnowledgeImportService {
       const affectedContributions =
         await this.contributionRepo.findByArtifactIds({
           workspaceId: input.input.workspaceId,
+          spaceId: input.input.spaceId,
           artifactIds: affectedArtifactIds,
         });
       const materialized = await this.materializer.materializeSourceUpdate({
@@ -529,9 +531,10 @@ export class KnowledgeImportService {
         }
 
         if (input.retireSources) {
-          await this.sourceRepo.markSourcesStale(
+          await this.sourceRepo.markSpaceSourcesStale(
             {
               workspaceId: input.input.workspaceId,
+              spaceId: input.input.spaceId,
               sourcePageIds: uniqueSourcePageIds(input.input),
             },
             trx,
@@ -600,6 +603,7 @@ export class KnowledgeImportService {
           await this.capsuleRepo.markSourceArtifactsStaleBySourcePageIds(
             {
               workspaceId: input.input.workspaceId,
+              spaceId: input.input.spaceId,
               sourcePageIds: [contributionPublication.sourcePageId],
             },
             trx,
@@ -607,6 +611,7 @@ export class KnowledgeImportService {
           await this.contributionRepo.replaceSourceContributions(
             {
               workspaceId: input.input.workspaceId,
+              spaceId: input.input.spaceId,
               sourcePageId: contributionPublication.sourcePageId,
               contributions: contributionPublication.contributions,
             },
@@ -623,6 +628,7 @@ export class KnowledgeImportService {
           await this.capsuleRepo.markSourceArtifactsStaleBySourcePageIds(
             {
               workspaceId: input.input.workspaceId,
+              spaceId: input.input.spaceId,
               sourcePageIds: uniqueSourcePageIds(input.input),
             },
             trx,
@@ -635,6 +641,7 @@ export class KnowledgeImportService {
             await this.capsuleRepo.markSourceArtifactsStaleBySourcePageIds(
               {
                 workspaceId: input.input.workspaceId,
+                spaceId: input.input.spaceId,
                 sourcePageIds: uniqueSourcePageIds(input.input),
               },
               trx,

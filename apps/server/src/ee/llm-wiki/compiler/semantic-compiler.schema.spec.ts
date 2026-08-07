@@ -145,6 +145,63 @@ describe('semantic compiler schemas', () => {
     ).toHaveLength(2);
   });
 
+  it('rejects a ninth generated artifact', () => {
+    const summary = {
+      kind: 'source_summary',
+      canonicalKey: 'source-page-1',
+      title: 'Source summary',
+      markdown: 'Source summary body.',
+      claims: [],
+      links: [],
+      tags: [],
+    };
+    const artifacts = [
+      summary,
+      ...Array.from({ length: 8 }, (_, index) => ({
+        ...summary,
+        kind: 'concept',
+        canonicalKey: `concept-${index}`,
+      })),
+    ];
+
+    expect(() =>
+      parseSemanticGenerationJson(JSON.stringify({ version: '1', artifacts })),
+    ).toThrow();
+  });
+
+  it.each([
+    ['entities', 32, analysisEntity],
+    ['concepts', 32, analysisConcept],
+    ['claims', 64, analysisClaim],
+    ['relations', 64, analysisRelation],
+    ['comparisons', 16, analysisComparison],
+    ['contradictions', 16, analysisContradiction],
+  ] as const)(
+    'rejects %s beyond the confirmed limit',
+    (field, limit, factory) => {
+      const value = baseAnalysis();
+      Object.assign(value, {
+        [field]: Array.from({ length: limit + 1 }, (_, index) =>
+          factory(index),
+        ),
+      });
+
+      expect(() => parseSemanticAnalysisJson(JSON.stringify(value))).toThrow();
+    },
+  );
+
+  it('rejects a fourth evidence quote on one analysis item', () => {
+    const value = baseAnalysis();
+    value.entities = [
+      {
+        ...analysisEntity(0),
+        evidenceQuotes: ['one', 'two', 'three', 'four'],
+      },
+    ];
+
+    expect(() => parseSemanticAnalysisJson(JSON.stringify(value))).toThrow();
+  });
+
   it('normalizes null optional artifact collections to empty arrays', () => {
     const parsed = parseSemanticGenerationJson(
       JSON.stringify({
@@ -221,3 +278,65 @@ describe('semantic compiler schemas', () => {
     });
   });
 });
+
+function baseAnalysis() {
+  return {
+    version: '1',
+    synopsis: 'Summary',
+    language: 'en',
+    entities: [] as unknown[],
+    concepts: [] as unknown[],
+    claims: [] as unknown[],
+    relations: [] as unknown[],
+    comparisons: [] as unknown[],
+    contradictions: [] as unknown[],
+  };
+}
+
+function analysisEntity(index: number) {
+  return {
+    canonicalKey: `entity-${index}`,
+    name: `Entity ${index}`,
+    description: 'Description',
+    evidenceQuotes: ['Evidence'],
+  };
+}
+
+function analysisConcept(index: number) {
+  return {
+    canonicalKey: `concept-${index}`,
+    name: `Concept ${index}`,
+    description: 'Description',
+    evidenceQuotes: ['Evidence'],
+  };
+}
+
+function analysisClaim(index: number) {
+  return { text: `Claim ${index}`, evidenceQuote: 'Evidence' };
+}
+
+function analysisRelation(index: number) {
+  return {
+    fromCanonicalKey: `entity-${index}`,
+    toCanonicalKey: `concept-${index}`,
+    relation: 'relates to',
+  };
+}
+
+function analysisComparison(index: number) {
+  return {
+    canonicalKey: `comparison-${index}`,
+    title: `Comparison ${index}`,
+    subjects: [`subject-${index}-a`, `subject-${index}-b`],
+    summary: 'Summary',
+    evidenceQuotes: ['Evidence'],
+  };
+}
+
+function analysisContradiction(index: number) {
+  return {
+    description: `Contradiction ${index}`,
+    relatedCanonicalKeys: [],
+    evidenceQuotes: ['Evidence'],
+  };
+}

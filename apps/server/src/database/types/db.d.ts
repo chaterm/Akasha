@@ -338,7 +338,11 @@ export interface KnowledgeClaimSources {
 }
 
 export interface KnowledgeCompilationAttempts {
+  analysisCandidateHash: string | null;
+  analysisCandidateIds: Generated<Json>;
   attemptCount: Generated<number>;
+  compilerModel: string | null;
+  compilerProfile: string | null;
   compilerRunId: string | null;
   compilerVersion: string;
   compileTaskId: string | null;
@@ -347,6 +351,10 @@ export interface KnowledgeCompilationAttempts {
   errorMessage: string | null;
   effectiveKnowledgeHash: string | null;
   finishedAt: Timestamp | null;
+  generationAttemptCount: Generated<number>;
+  generationAttemptSourceHash: string | null;
+  generationCandidateHash: string | null;
+  generationCandidateIds: Generated<Json>;
   id: Generated<string>;
   lastSucceededAt: Timestamp | null;
   lastSuccessfulEffectiveHash: string | null;
@@ -359,6 +367,7 @@ export interface KnowledgeCompilationAttempts {
   pendingSpaceId: string | null;
   promptVersion: string;
   queuedAt: Generated<Timestamp>;
+  resultQuality: Generated<string>;
   sourceContentHash: string | null;
   sourcePageId: string;
   sourceVersion: string | null;
@@ -662,12 +671,15 @@ export interface KnowledgePageCompileSchedules {
 }
 
 export interface KnowledgeSpaceCompileRunPages {
+  bindingStatus: Generated<string>;
+  boundAt: Generated<Timestamp | null>;
   createdAt: Generated<Timestamp>;
+  discoveredSourceVersion: Timestamp | null;
   errorCode: string | null;
   errorMessage: string | null;
-  expectedImageCount: Generated<number>;
-  expectedSourceContentHash: string;
-  expectedSourceVersion: string;
+  expectedImageCount: Generated<number | null>;
+  expectedSourceContentHash: string | null;
+  expectedSourceVersion: string | null;
   finishedAt: Timestamp | null;
   failedImageCount: Generated<number>;
   id: Generated<string>;
@@ -678,6 +690,8 @@ export interface KnowledgeSpaceCompileRunPages {
   mergedEffectiveKnowledgeHash: string | null;
   mergeStatus: Generated<string>;
   queuedAt: Timestamp | null;
+  qualityStatus: Generated<string>;
+  reused: Generated<boolean>;
   runId: string;
   sourcePageId: string;
   skippedImageCount: Generated<number>;

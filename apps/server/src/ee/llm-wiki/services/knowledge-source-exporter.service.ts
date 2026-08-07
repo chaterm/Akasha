@@ -27,39 +27,6 @@ export class KnowledgeSourceExporterService {
     @InjectKysely() private readonly db: KyselyDB = undefined as never,
   ) {}
 
-  async exportSpaceSources(input: {
-    workspaceId: string;
-    spaceId: string;
-    abortSignal?: AbortSignal;
-  }): Promise<KnowledgeSourceSnapshot[]> {
-    input.abortSignal?.throwIfAborted();
-    const scope = { workspaceId: input.workspaceId, spaceId: input.spaceId };
-    return this.inReadSnapshot(async (trx) => {
-      const snapshots: KnowledgeSourceSnapshot[] = [];
-      let afterId: string | undefined;
-      do {
-        const query = {
-          ...scope,
-          limit: KNOWLEDGE_EXPORT_PAGE_SIZE,
-          ...(afterId ? { afterId } : {}),
-        };
-        const pages = trx
-          ? await this.pageRepo.findPagesForKnowledgeExport(query, trx)
-          : await this.pageRepo.findPagesForKnowledgeExport(query);
-        snapshots.push(
-          ...(await this.toSnapshots(input.workspaceId, pages, trx)),
-        );
-        input.abortSignal?.throwIfAborted();
-        const last = pages[pages.length - 1];
-        afterId =
-          pages.length === KNOWLEDGE_EXPORT_PAGE_SIZE && last
-            ? last.id
-            : undefined;
-      } while (afterId);
-      return snapshots;
-    });
-  }
-
   async exportPageSources(input: {
     workspaceId: string;
     spaceId: string;
@@ -224,12 +191,16 @@ function hashSource(
   content: unknown,
   images: KnowledgeSourceImage[],
 ): string {
+  const canonicalContent = canonicalKnowledgeContent(
+    content,
+    new Set(images.map((image) => image.attachmentId)),
+  );
   return createHash('sha256')
     .update(title)
     .update('\n')
     .update(text)
     .update('\n')
-    .update(content ? JSON.stringify(content) : '')
+    .update(canonicalContent ? JSON.stringify(canonicalContent) : '')
     .update('\n')
     .update(
       JSON.stringify(
@@ -241,6 +212,61 @@ function hashSource(
       ),
     )
     .digest('hex');
+}
+
+const IGNORED_ATTACHMENT_NODE_TYPES = new Set([
+  'attachment',
+  'audio',
+  'video',
+  'pdf',
+  'drawio',
+  'excalidraw',
+]);
+
+/**
+ * Keeps document structure in the source fingerprint while excluding file
+ * attachment metadata that Knowledge compilation deliberately does not
+ * consume. Image nodes participate only when their attachment resolved to a
+ * supported, page-owned raster image; their version and size are fingerprinted
+ * separately below.
+ */
+function canonicalKnowledgeContent(
+  value: unknown,
+  supportedImageIds: Set<string>,
+): unknown {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => {
+      const canonical = canonicalKnowledgeContent(item, supportedImageIds);
+      return canonical === undefined ? [] : [canonical];
+    });
+  }
+  if (!value || typeof value !== 'object') return value;
+
+  const node = value as Record<string, unknown>;
+  const nodeType = typeof node.type === 'string' ? node.type : undefined;
+  if (nodeType && IGNORED_ATTACHMENT_NODE_TYPES.has(nodeType)) {
+    return undefined;
+  }
+  if (nodeType === 'image') {
+    const attrs =
+      node.attrs && typeof node.attrs === 'object'
+        ? (node.attrs as Record<string, unknown>)
+        : undefined;
+    const attachmentId =
+      typeof attrs?.attachmentId === 'string' ? attrs.attachmentId.trim() : '';
+    if (!attachmentId || !supportedImageIds.has(attachmentId)) {
+      return undefined;
+    }
+  }
+
+  return Object.fromEntries(
+    Object.entries(node)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .flatMap(([key, item]) => {
+        const canonical = canonicalKnowledgeContent(item, supportedImageIds);
+        return canonical === undefined ? [] : [[key, canonical]];
+      }),
+  );
 }
 
 type PageImageReference = {

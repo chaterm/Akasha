@@ -304,6 +304,39 @@ export class EnvironmentService {
     return this.configService.get<string>('AI_COMPLETION_MODEL');
   }
 
+  getKnowledgeCompilerModel(): string {
+    return this.configService.get<string>(
+      'KNOWLEDGE_COMPILER_MODEL',
+      'qwen3.8-max',
+    );
+  }
+
+  getKnowledgeCompilerThinking(): boolean {
+    return (
+      this.configService
+        .get<string>('KNOWLEDGE_COMPILER_THINKING', 'false')
+        .toLowerCase() === 'true'
+    );
+  }
+
+  getKnowledgeCompilerMaxOutputTokens(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_COMPILER_MAX_OUTPUT_TOKENS',
+        16_384,
+      ),
+    );
+  }
+
+  getKnowledgeImageMergeMaxOutputTokens(): number {
+    return Number(
+      this.configService.get<string | number>(
+        'KNOWLEDGE_IMAGE_MERGE_MAX_OUTPUT_TOKENS',
+        8_192,
+      ),
+    );
+  }
+
   getAiChatModel(): string {
     return (
       this.configService.get<string>('AI_CHAT_MODEL') ||
@@ -332,7 +365,7 @@ export class EnvironmentService {
     return Number(
       this.configService.get<string | number>(
         'KNOWLEDGE_COMPILER_TIMEOUT_MS',
-        120_000,
+        300_000,
       ),
     );
   }

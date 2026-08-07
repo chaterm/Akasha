@@ -77,13 +77,17 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
       provider.analyze({ system: 'system', prompt: 'prompt' }),
     ).resolves.toMatchObject({ synopsis: 'Summary' });
 
-    expect(modelFactory).toHaveBeenCalledWith('completion-model');
+    expect(modelFactory).toHaveBeenCalledWith(
+      'knowledge-compiler-model',
+      ...(driver === 'ollama' ? [{ think: false }] : []),
+    );
     expect(generateText).toHaveBeenCalledWith(
       expect.objectContaining({
         model: 'compiler-model',
         system: 'system',
         prompt: 'prompt',
         temperature: 0.1,
+        maxOutputTokens: 16_384,
         abortSignal: expect.any(AbortSignal),
         output: expect.objectContaining({
           name: 'knowledge_compiler_analysis_v1',
@@ -92,6 +96,31 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
       }),
     );
     expect(Output.json).toHaveBeenCalled();
+  });
+
+  it('sends thinking=false to the OpenAI-compatible compiler provider', async () => {
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
+      jest.fn().mockReturnValue('compiler-model'),
+    );
+    (generateText as jest.Mock).mockResolvedValue({
+      output: JSON.parse(analysisJson),
+    });
+
+    await createProvider({ aiDriver: 'openai-compatible' }).analyze({
+      system: 'system',
+      prompt: 'prompt',
+    });
+
+    expect(createOpenAICompatible).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'knowledgeCompiler' }),
+    );
+    expect(generateText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerOptions: {
+          knowledgeCompiler: { enable_thinking: false },
+        },
+      }),
+    );
   });
 
   it('uses the configured hard timeout for every model request', async () => {
@@ -184,6 +213,9 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     ).resolves.toMatchObject({
       artifacts: [{ kind: 'source_summary', canonicalKey: 'page-1' }],
     });
+    expect(generateText).toHaveBeenCalledWith(
+      expect.objectContaining({ maxOutputTokens: 16_384 }),
+    );
   });
 
   it('uses JSON mode and validates canonical merge output', async () => {
@@ -204,6 +236,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     );
     expect(generateText).toHaveBeenCalledWith(
       expect.objectContaining({
+        maxOutputTokens: 8_192,
         output: expect.objectContaining({
           name: 'knowledge_compiler_merge_v1',
         }),
@@ -214,7 +247,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   it('fails fast when the compiler model is not configured', async () => {
     const provider = createProvider({
       aiDriver: 'openai',
-      completionModel: '',
+      compilerModel: '',
     });
 
     await expect(
@@ -271,6 +304,27 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
         message: 'Knowledge compiler provider rate limit was exceeded.',
       }),
     );
+  });
+
+  it('does not misclassify a 5xx provider failure as oversized from message text', async () => {
+    (createOpenAI as jest.Mock).mockReturnValue(
+      jest.fn().mockReturnValue('compiler-model'),
+    );
+    (generateText as jest.Mock).mockRejectedValue(
+      Object.assign(new Error('maximum context service unavailable'), {
+        statusCode: 503,
+      }),
+    );
+
+    await expect(
+      createProvider({ aiDriver: 'openai' }).analyze({
+        system: 'system',
+        prompt: 'prompt',
+      }),
+    ).rejects.toMatchObject({
+      code: 'provider_error',
+      retryable: true,
+    });
   });
 
   it('classifies a retry-wrapped provider rate limit from the last error', async () => {
@@ -365,6 +419,64 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
       },
     });
   });
+
+  it('classifies HTTP 413 as a non-retryable oversized input', async () => {
+    (createOpenAI as jest.Mock).mockReturnValue(
+      jest.fn().mockReturnValue('compiler-model'),
+    );
+    (generateText as jest.Mock).mockRejectedValue(
+      Object.assign(new Error('private request body'), { statusCode: 413 }),
+    );
+
+    await expect(
+      createProvider({ aiDriver: 'openai' }).analyze({
+        system: 'system',
+        prompt: 'private source text',
+      }),
+    ).rejects.toMatchObject({
+      code: 'input_too_large',
+      retryable: false,
+      diagnosticClass: 'oversized',
+      message: 'Knowledge compiler input exceeds the provider context limit.',
+    });
+  });
+
+  it.each([
+    ['context_length_exceeded', 'input exceeds the context window'],
+    ['InvalidParameter', 'Maximum context length is 1000 tokens'],
+    ['InvalidParameter', 'request too large for token limit'],
+    ['maximum_context', 'provider only returned a code'],
+    ['token_limit', 'provider only returned a type'],
+  ])(
+    'classifies context overflow 400 code=%s as oversized',
+    async (code, message) => {
+      (createOpenAI as jest.Mock).mockReturnValue(
+        jest.fn().mockReturnValue('compiler-model'),
+      );
+      (generateText as jest.Mock).mockRejectedValue(
+        Object.assign(new Error('private provider wrapper'), {
+          status: 400,
+          data: {
+            error:
+              code === 'token_limit'
+                ? { type: code, message }
+                : { code, message },
+          },
+        }),
+      );
+
+      await expect(
+        createProvider({ aiDriver: 'openai' }).generate({
+          system: 'system',
+          prompt: 'private source text',
+        }),
+      ).rejects.toMatchObject({
+        code: 'input_too_large',
+        retryable: false,
+        diagnosticClass: 'oversized',
+      });
+    },
+  );
 
   it('classifies a retry-wrapped timeout from the upstream cause', async () => {
     (createOpenAI as jest.Mock).mockReturnValue(
@@ -516,6 +628,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     expect(generateText).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
+        maxOutputTokens: 16_384,
         system: expect.stringContaining('repair invalid analysis JSON'),
         prompt: expect.stringContaining('<validation_errors>'),
         output: expect.objectContaining({
@@ -557,24 +670,52 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     });
     expect(generateText).toHaveBeenCalledTimes(2);
   });
+
+  it('hard-bounds fallback Markdown even when a caller supplies too much text', async () => {
+    (createOpenAI as jest.Mock).mockReturnValue(
+      jest.fn().mockReturnValue('compiler-model'),
+    );
+    (generateText as jest.Mock).mockResolvedValue({ output: { version: 1 } });
+
+    const result = await createProvider({ aiDriver: 'openai' }).generate(
+      { system: 'system', prompt: 'prompt' },
+      {
+        canonicalKey: 'source-page-1',
+        title: 'Original title',
+        markdown: 'x'.repeat(20_000),
+      },
+    );
+
+    expect(result.artifacts[0].markdown).toHaveLength(8_000);
+  });
 });
 
 function createProvider(input: {
   aiDriver: string;
-  completionModel?: string;
+  compilerModel?: string;
   compilerTimeoutMs?: number;
+  compilerMaxOutputTokens?: number;
+  imageMergeMaxOutputTokens?: number;
 }): ConfiguredKnowledgeCompilerLlmProvider {
   return new ConfiguredKnowledgeCompilerLlmProvider({
     getAiDriver: jest.fn(() => input.aiDriver),
-    getAiCompletionModel: jest.fn(
-      () => input.completionModel ?? 'completion-model',
+    getAiCompletionModel: jest.fn(() => 'global-completion-model'),
+    getKnowledgeCompilerModel: jest.fn(
+      () => input.compilerModel ?? 'knowledge-compiler-model',
+    ),
+    getKnowledgeCompilerThinking: jest.fn(() => false),
+    getKnowledgeCompilerMaxOutputTokens: jest.fn(
+      () => input.compilerMaxOutputTokens ?? 16_384,
+    ),
+    getKnowledgeImageMergeMaxOutputTokens: jest.fn(
+      () => input.imageMergeMaxOutputTokens ?? 8_192,
     ),
     getOpenAiApiKey: jest.fn(() => 'openai-key'),
     getOpenAiApiUrl: jest.fn(() => 'https://openai.example/v1'),
     getGeminiApiKey: jest.fn(() => 'gemini-key'),
     getOllamaApiUrl: jest.fn(() => 'http://ollama.example'),
     getKnowledgeCompilerTimeoutMs: jest.fn(
-      () => input.compilerTimeoutMs ?? 120_000,
+      () => input.compilerTimeoutMs ?? 300_000,
     ),
   } as never);
 }

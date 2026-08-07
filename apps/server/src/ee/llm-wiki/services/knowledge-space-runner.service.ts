@@ -7,11 +7,10 @@ import { IKnowledgeSpaceSliceJob } from '../../../integrations/queue/constants/q
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import { KnowledgePageCompilationService } from './knowledge-page-compilation.service';
 import { KnowledgeSpaceCompilationService } from './knowledge-space-compilation.service';
-import { KnowledgeSpaceAggregatorService } from './knowledge-space-aggregator.service';
+import { KnowledgeSpaceFinalizerService } from './knowledge-space-finalizer.service';
 import { createBoundedAbortSignal } from './knowledge-operation-budget';
 import { decideSpaceSliceCheckpoint } from './knowledge-space-slice-policy';
 import { KNOWLEDGE_WORKER_SETTINGS } from './knowledge-worker-settings';
-import { KnowledgeArtifactCatalogEntry } from '../types/compiler-artifact.types';
 import { KnowledgeImageMergePageData } from '../types/knowledge-page-compilation.types';
 
 export interface KnowledgeTextSliceInput extends IKnowledgeSpaceSliceJob {
@@ -38,7 +37,7 @@ export class KnowledgeSpaceRunnerService {
     private readonly executionRepo: KnowledgeSpaceExecutionRepo,
     private readonly spaceCompilation: KnowledgeSpaceCompilationService,
     private readonly pageCompilation: KnowledgePageCompilationService,
-    private readonly spaceAggregator: KnowledgeSpaceAggregatorService,
+    private readonly spaceFinalizer: KnowledgeSpaceFinalizerService,
     private readonly environmentService: EnvironmentService,
   ) {}
 
@@ -96,25 +95,67 @@ export class KnowledgeSpaceRunnerService {
       if (!initialization) {
         return { outcome: 'superseded', completedPages: 0 };
       }
-      let pendingPages = await this.executionRepo.findPendingTextPages(lease);
-      if (
-        pendingPages.length === 0 &&
-        !initialization.pageCompilationRequired &&
-        !initialization.aggregateRequired
-      ) {
-        const finished = await this.executionRepo.finishRun(lease, 'succeeded');
-        return {
-          outcome: finished ? 'completed' : 'superseded',
-          completedPages: 0,
-        };
-      }
-
+      let pendingPages = compactPage(
+        await this.executionRepo.claimNextTextPage(lease),
+      );
       let completedPages = 0;
       while (pendingPages.length > 0) {
-        const page = pendingPages[0];
+        let page = pendingPages[0];
         if (!(await this.executionRepo.isLeaseActive(lease))) {
           return { outcome: 'superseded', completedPages };
         }
+        if (page.bindingStatus !== 'bound') {
+          const binding = await this.spaceCompilation.bindLeasedRunPage(lease, {
+            sourcePageId: page.sourcePageId,
+          });
+          if (!binding) {
+            return { outcome: 'superseded', completedPages };
+          }
+          if (binding.outcome !== 'bound') {
+            completedPages += 1;
+            const heartbeatAccepted =
+              await this.executionRepo.heartbeatSpaceSlice(lease, {
+                executionLeaseExpiresAt: leaseExpiry(settings.leaseTtlMs),
+              });
+            if (!heartbeatAccepted) {
+              return { outcome: 'superseded', completedPages };
+            }
+            pendingPages = compactPage(
+              await this.executionRepo.claimNextTextPage(lease),
+            );
+            const decision = decideSpaceSliceCheckpoint({
+              completedPages,
+              elapsedMs: monotonicNow() - startedAt,
+              remainingPages: pendingPages.length,
+              maxPages: settings.maxPages,
+              maxMs: settings.maxMs,
+            });
+            if (decision.yield) {
+              const yielded = await this.executionRepo.yieldSpaceSlice(lease, {
+                reason: decision.reason,
+              });
+              return {
+                outcome: yielded ? 'yielded' : 'superseded',
+                completedPages,
+              };
+            }
+            continue;
+          }
+          page = binding.page;
+        }
+        if (
+          page.expectedSourceVersion === null ||
+          page.expectedSourceContentHash === null
+        ) {
+          throw new Error(
+            `Bound RunPage ${page.sourcePageId} is missing its source identity.`,
+          );
+        }
+        const boundPage = {
+          ...page,
+          expectedSourceVersion: page.expectedSourceVersion,
+          expectedSourceContentHash: page.expectedSourceContentHash,
+        };
         const deadline = createBoundedAbortSignal(
           undefined,
           this.environmentService.getKnowledgePageDeadlineMs(),
@@ -126,15 +167,15 @@ export class KnowledgeSpaceRunnerService {
               data: {
                 workspaceId: input.workspaceId,
                 spaceId: input.spaceId,
-                sourcePageIds: [page.sourcePageId],
-                sourceVersion: page.expectedSourceVersion,
-                sourceContentHash: page.expectedSourceContentHash,
+                sourcePageIds: [boundPage.sourcePageId],
+                sourceVersion: boundPage.expectedSourceVersion,
+                sourceContentHash: boundPage.expectedSourceContentHash,
                 spaceRunId: input.spaceRunId,
                 knowledgeGeneration: input.knowledgeGeneration,
               },
-              compileTaskId: `${input.spaceJobId}__${page.sourcePageId}`,
+              compileTaskId: `${input.spaceJobId}__${boundPage.sourcePageId}`,
               finalAttempt: options.finalAttempt,
-              execution: this.textExecutionContext(lease, page),
+              execution: this.textExecutionContext(lease, boundPage),
             },
             deadline.signal,
           );
@@ -161,7 +202,9 @@ export class KnowledgeSpaceRunnerService {
         if (!heartbeatAccepted) {
           return { outcome: 'superseded', completedPages };
         }
-        pendingPages = await this.executionRepo.findPendingTextPages(lease);
+        pendingPages = compactPage(
+          await this.executionRepo.claimNextTextPage(lease),
+        );
         const decision = decideSpaceSliceCheckpoint({
           completedPages,
           elapsedMs: monotonicNow() - startedAt,
@@ -184,37 +227,19 @@ export class KnowledgeSpaceRunnerService {
       if (!barrier?.barrierComplete) {
         return { outcome: 'superseded', completedPages };
       }
-      const aggregate = await this.spaceAggregator.aggregateLeased(lease, {
+      if (barrier.imagesRequired) {
+        return { outcome: 'waiting_images', completedPages };
+      }
+      const finalized = await this.spaceFinalizer.finalizeLeased(lease, {
         workspaceId: input.workspaceId,
         spaceId: input.spaceId,
       });
-      if (!(await this.executionRepo.isLeaseActive(lease))) {
+      if (finalized.outcome === 'superseded') {
         return { outcome: 'superseded', completedPages };
       }
-      const imagesRequired = await this.executionRepo.hasImageWork(lease);
-      const advanced = await this.executionRepo.completeInitialAggregate(
-        lease,
-        {
-          catalogHash: aggregate.catalogHash,
-          importedArtifactCount: aggregate.importedArtifactCount,
-          quarantinedArtifactCount: aggregate.quarantinedArtifactCount,
-          imagesRequired,
-        },
-      );
-      if (!advanced) return { outcome: 'superseded', completedPages };
-      if (imagesRequired) return { outcome: 'waiting_images', completedPages };
-
       const current = await this.executionRepo.findLeasedRun(lease);
       const finishOutcome = current?.failedPageCount ? 'partial' : 'succeeded';
-      const finished = await this.executionRepo.finishRun(
-        lease,
-        finishOutcome,
-        {
-          importedArtifactCount: aggregate.importedArtifactCount,
-          quarantinedArtifactCount: aggregate.quarantinedArtifactCount,
-          catalogHash: aggregate.catalogHash,
-        },
-      );
+      const finished = await this.executionRepo.finishRun(lease, finishOutcome);
       return {
         outcome: finished ? 'completed' : 'superseded',
         completedPages,
@@ -353,22 +378,17 @@ export class KnowledgeSpaceRunnerService {
       if (!barrier?.barrierComplete) {
         return { outcome: 'superseded', completedPages };
       }
-      const aggregate = await this.spaceAggregator.aggregateLeased(lease, {
+      const finalized = await this.spaceFinalizer.finalizeLeased(lease, {
         workspaceId: input.workspaceId,
         spaceId: input.spaceId,
       });
-      if (!(await this.executionRepo.isLeaseActive(lease))) {
+      if (finalized.outcome === 'superseded') {
         return { outcome: 'superseded', completedPages };
       }
       const partial = await this.executionRepo.hasPartialOutcome(lease);
       const finished = await this.executionRepo.finishRun(
         lease,
         partial ? 'partial' : 'succeeded',
-        {
-          importedArtifactCount: aggregate.importedArtifactCount,
-          quarantinedArtifactCount: aggregate.quarantinedArtifactCount,
-          catalogHash: aggregate.catalogHash,
-        },
       );
       return {
         outcome: finished ? 'completed' : 'superseded',
@@ -393,6 +413,7 @@ export class KnowledgeSpaceRunnerService {
         status: 'succeeded' | 'failed' | 'skipped';
         errorCode?: string | null;
         errorMessage?: string | null;
+        qualityStatus?: 'normal' | 'degraded' | 'partial_image';
       }) =>
         this.executionRepo.completeTextPage(lease, {
           sourcePageId: page.sourcePageId,
@@ -400,12 +421,10 @@ export class KnowledgeSpaceRunnerService {
           sourceContentHash: page.expectedSourceContentHash,
           ...outcome,
         }),
-      catalog: async () => {
-        const run = await this.executionRepo.findLeasedRun(lease);
-        return Array.isArray(run?.catalogSnapshot)
-          ? (run.catalogSnapshot as unknown as KnowledgeArtifactCatalogEntry[])
-          : [];
-      },
+      catalog: async () => [],
+      bypassCache: async () =>
+        (await this.executionRepo.findLeasedRun(lease))?.mode ===
+        'force_rebuild',
       publicationGuard: (
         trx: Parameters<
           KnowledgeSpaceExecutionRepo['isLeaseActiveForPublication']
@@ -448,12 +467,7 @@ export class KnowledgeSpaceRunnerService {
           errorCode: outcome.errorCode,
           errorMessage: outcome.errorMessage,
         }),
-      catalog: async () => {
-        const run = await this.executionRepo.findLeasedRun(lease);
-        return Array.isArray(run?.catalogSnapshot)
-          ? (run.catalogSnapshot as unknown as KnowledgeArtifactCatalogEntry[])
-          : [];
-      },
+      catalog: async () => [],
       publicationGuard: (
         trx: Parameters<
           KnowledgeSpaceExecutionRepo['isLeaseActiveForMergePublication']
@@ -481,4 +495,8 @@ export class KnowledgeSpaceRunnerService {
 
 function leaseExpiry(ttlMs: number): Date {
   return new Date(Date.now() + ttlMs);
+}
+
+function compactPage<T>(page: T | undefined): T[] {
+  return page === undefined ? [] : [page];
 }

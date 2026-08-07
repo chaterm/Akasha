@@ -30,4 +30,22 @@ describe('KnowledgeLinkResolverService', () => {
       capsuleRepo.resolveCanonicalLinksAndMaterializeEdges,
     ).not.toHaveBeenCalled();
   });
+
+  it('does not touch the database when finalization is already aborted', async () => {
+    const capsuleRepo = { resolveCanonicalLinks: jest.fn() };
+    const service = new KnowledgeLinkResolverService(
+      capsuleRepo as unknown as KnowledgeCapsuleRepo,
+    );
+    const abortController = new AbortController();
+    abortController.abort(new Error('finalization timed out'));
+
+    await expect(
+      service.resolveSpace({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        abortSignal: abortController.signal,
+      }),
+    ).rejects.toThrow('finalization timed out');
+    expect(capsuleRepo.resolveCanonicalLinks).not.toHaveBeenCalled();
+  });
 });

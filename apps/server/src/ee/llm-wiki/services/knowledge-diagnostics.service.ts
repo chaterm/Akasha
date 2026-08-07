@@ -212,7 +212,7 @@ export class KnowledgeDiagnosticsService {
               sql<number>`count(*) filter (where run.status in ('queued', 'compiling', 'aggregate_pending', 'aggregating'))`.as(
                 'activeRunCount',
               ),
-              sql<number>`count(*) filter (where run.status in ('compiling', 'aggregating') and run.phase in ('text', 'initial_aggregate', 'image_merge', 'final_aggregate'))`.as(
+              sql<number>`count(*) filter (where run.status in ('compiling', 'aggregating') and run.phase in ('text', 'image_merge', 'finalizing'))`.as(
                 'activeSpaceSlotRunCount',
               ),
               sql<number>`count(*) filter (where run.status = 'queued')`.as(
@@ -230,7 +230,7 @@ export class KnowledgeDiagnosticsService {
               sql<number>`count(*) filter (where run.last_yield_at >= now() - interval '1 hour')`.as(
                 'recentYieldCount',
               ),
-              sql<Date>`min(run.space_job_queued_at) filter (where run.status = 'queued' and run.phase in ('text', 'initial_aggregate', 'image_merge', 'final_aggregate'))`.as(
+              sql<Date>`min(run.space_job_queued_at) filter (where run.status = 'queued' and run.phase in ('text', 'image_merge', 'finalizing'))`.as(
                 'oldestSpaceJobQueuedAt',
               ),
               sql<number>`count(*) filter (where run.status = 'queued' and run.space_job_id is not null and run.space_job_dispatched_at is null)`.as(
@@ -239,7 +239,7 @@ export class KnowledgeDiagnosticsService {
               sql<number>`count(*) filter (where run.execution_lease_expires_at < now() and run.status in ('compiling', 'aggregating'))`.as(
                 'expiredExecutionLeases',
               ),
-              sql<number>`count(*) filter (where run.space_job_recovery_count > 0 and run.status in ('queued', 'compiling', 'aggregate_pending', 'aggregating'))`.as(
+              sql<number>`count(*) filter (where run.space_job_recovery_count > 0 and run.status in ('queued', 'compiling', 'aggregating'))`.as(
                 'spaceRecovering',
               ),
               sql<number>`count(*) filter (where run.status = 'failed' and run.error_code = 'redis_job_missing_exhausted')`.as(

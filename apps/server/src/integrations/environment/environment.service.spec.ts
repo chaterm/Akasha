@@ -25,8 +25,12 @@ describe('EnvironmentService', () => {
     expect(service).toBeDefined();
   });
 
-  it('defaults the knowledge compiler timeout to two minutes', () => {
-    expect(service.getKnowledgeCompilerTimeoutMs()).toBe(120_000);
+  it('defaults the dedicated knowledge compiler profile', () => {
+    expect(service.getKnowledgeCompilerModel()).toBe('qwen3.8-max');
+    expect(service.getKnowledgeCompilerThinking()).toBe(false);
+    expect(service.getKnowledgeCompilerMaxOutputTokens()).toBe(16_384);
+    expect(service.getKnowledgeImageMergeMaxOutputTokens()).toBe(8_192);
+    expect(service.getKnowledgeCompilerTimeoutMs()).toBe(300_000);
   });
 
   it('defaults database and compilation execution limits', () => {
@@ -56,6 +60,11 @@ describe('EnvironmentService', () => {
       KNOWLEDGE_SPACE_SLICE_MAX_MS: '420000',
       KNOWLEDGE_SPACE_HEARTBEAT_MS: '20000',
       KNOWLEDGE_SPACE_LEASE_TTL_MS: '150000',
+      KNOWLEDGE_COMPILER_MODEL: 'compiler-model',
+      KNOWLEDGE_COMPILER_THINKING: 'false',
+      KNOWLEDGE_COMPILER_MAX_OUTPUT_TOKENS: '12000',
+      KNOWLEDGE_IMAGE_MERGE_MAX_OUTPUT_TOKENS: '6000',
+      KNOWLEDGE_COMPILER_TIMEOUT_MS: '45000',
     };
     const configured = new EnvironmentService({
       get: jest.fn((key: string, fallback: unknown) =>
@@ -74,6 +83,11 @@ describe('EnvironmentService', () => {
     expect(configured.getKnowledgeSpaceSliceMaxMs()).toBe(420_000);
     expect(configured.getKnowledgeSpaceHeartbeatMs()).toBe(20_000);
     expect(configured.getKnowledgeSpaceLeaseTtlMs()).toBe(150_000);
+    expect(configured.getKnowledgeCompilerModel()).toBe('compiler-model');
+    expect(configured.getKnowledgeCompilerThinking()).toBe(false);
+    expect(configured.getKnowledgeCompilerMaxOutputTokens()).toBe(12_000);
+    expect(configured.getKnowledgeImageMergeMaxOutputTokens()).toBe(6_000);
+    expect(configured.getKnowledgeCompilerTimeoutMs()).toBe(45_000);
   });
 
   it('reads a configured knowledge compiler timeout', () => {

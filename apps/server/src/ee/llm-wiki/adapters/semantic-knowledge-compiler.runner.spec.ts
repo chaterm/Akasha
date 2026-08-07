@@ -1,5 +1,8 @@
 import { KnowledgeCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-compilation.repo';
-import { KnowledgeCompilerLlmProvider } from '../compiler/knowledge-compiler-llm.provider';
+import {
+  KnowledgeCompilerLlmError,
+  KnowledgeCompilerLlmProvider,
+} from '../compiler/knowledge-compiler-llm.provider';
 import { SemanticAnalysis } from '../compiler/semantic-compiler.schema';
 import { CompileSpaceInput } from '../types/compiler-artifact.types';
 import { SemanticKnowledgeCompilerRunner } from './semantic-knowledge-compiler.runner';
@@ -153,11 +156,16 @@ describe('SemanticKnowledgeCompilerRunner', () => {
   it('does not reuse analysis when the effective knowledge hash changes', async () => {
     const provider = createProvider();
     const compilationRepo = createCompilationRepo();
-    compilationRepo.findAnalysis.mockImplementation(async (key) =>
-      key.effectiveKnowledgeHash === 'sha256:effective-text-only'
+    let firstCacheKey: string | undefined;
+    compilationRepo.findAnalysis.mockImplementation(async (key) => {
+      if (!firstCacheKey) {
+        firstCacheKey = key.effectiveKnowledgeHash;
+        return analysis;
+      }
+      return key.effectiveKnowledgeHash === firstCacheKey
         ? analysis
-        : undefined,
-    );
+        : undefined;
+    });
     const runner = new TestSemanticKnowledgeCompilerRunner(
       provider,
       compilationRepo,
@@ -175,15 +183,136 @@ describe('SemanticKnowledgeCompilerRunner', () => {
     expect(compilationRepo.findAnalysis).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
-        effectiveKnowledgeHash: 'sha256:effective-text-only',
+        effectiveKnowledgeHash: expect.stringMatching(/^sha256:/),
       }),
     );
     expect(compilationRepo.findAnalysis).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        effectiveKnowledgeHash: 'sha256:effective-with-image',
+        effectiveKnowledgeHash: expect.stringMatching(/^sha256:/),
       }),
     );
+    expect(
+      compilationRepo.findAnalysis.mock.calls[0][0].effectiveKnowledgeHash,
+    ).not.toBe(
+      compilationRepo.findAnalysis.mock.calls[1][0].effectiveKnowledgeHash,
+    );
+  });
+
+  it('includes the compiler model profile in the analysis cache identity', async () => {
+    const provider = createProvider();
+    const compilationRepo = createCompilationRepo();
+    const runner = new TestSemanticKnowledgeCompilerRunner(
+      provider,
+      compilationRepo,
+    );
+    provider.getCacheIdentity.mockReturnValue(
+      'openai-compatible:qwen-max:thinking=false',
+    );
+
+    await runner.compileSpace(compileInput());
+    provider.getCacheIdentity.mockReturnValue(
+      'openai-compatible:qwen3.8-max:thinking=false',
+    );
+    await runner.compileSpace(compileInput());
+
+    const cacheKeys = compilationRepo.findAnalysis.mock.calls.map(
+      ([key]) => key.effectiveKnowledgeHash,
+    );
+    expect(cacheKeys[0]).not.toBe(cacheKeys[1]);
+  });
+
+  it('explicitly bypasses the analysis cache for a force rebuild', async () => {
+    const provider = createProvider();
+    const compilationRepo = createCompilationRepo(analysis);
+    const runner = new TestSemanticKnowledgeCompilerRunner(
+      provider,
+      compilationRepo,
+    );
+
+    await runner.compileSpace({ ...compileInput(), bypassCache: true });
+
+    expect(compilationRepo.findAnalysis).not.toHaveBeenCalled();
+    expect(provider.analyze).toHaveBeenCalledTimes(1);
+    expect(compilationRepo.checkGenerationAttemptBudget).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceContentHash: 'hash-1',
+        reset: true,
+      }),
+    );
+    expect(compilationRepo.reserveGenerationAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceContentHash: 'hash-1',
+        reset: true,
+      }),
+    );
+  });
+
+  it('stops before generation when the source-content retry budget is exhausted', async () => {
+    const provider = createProvider();
+    const compilationRepo = createCompilationRepo();
+    compilationRepo.checkGenerationAttemptBudget.mockResolvedValue({
+      allowed: false,
+      attemptCount: 3,
+    });
+    const runner = new TestSemanticKnowledgeCompilerRunner(
+      provider,
+      compilationRepo,
+    );
+
+    await expect(runner.compileSpace(compileInput())).rejects.toMatchObject({
+      code: 'invalid_output',
+      retryable: false,
+    });
+    expect(provider.generate).not.toHaveBeenCalled();
+    expect(compilationRepo.reserveGenerationAttempt).not.toHaveBeenCalled();
+  });
+
+  it('does not spend generation retry budget on retryable provider failures', async () => {
+    const provider = createProvider();
+    provider.generate.mockRejectedValueOnce(
+      new KnowledgeCompilerLlmError(
+        'timeout',
+        'Knowledge compiler provider timed out.',
+        true,
+      ),
+    );
+    const compilationRepo = createCompilationRepo();
+    const runner = new TestSemanticKnowledgeCompilerRunner(
+      provider,
+      compilationRepo,
+    );
+
+    await expect(runner.compileSpace(compileInput())).rejects.toMatchObject({
+      code: 'timeout',
+      retryable: true,
+    });
+    expect(compilationRepo.checkGenerationAttemptBudget).toHaveBeenCalledTimes(
+      1,
+    );
+    expect(compilationRepo.reserveGenerationAttempt).not.toHaveBeenCalled();
+  });
+
+  it('spends generation retry budget on invalid model output failures', async () => {
+    const provider = createProvider();
+    provider.generate.mockRejectedValueOnce(
+      new KnowledgeCompilerLlmError(
+        'invalid_output',
+        'Knowledge compiler returned invalid generation output.',
+        true,
+      ),
+    );
+    const compilationRepo = createCompilationRepo();
+    const runner = new TestSemanticKnowledgeCompilerRunner(
+      provider,
+      compilationRepo,
+    );
+
+    await expect(runner.compileSpace(compileInput())).rejects.toMatchObject({
+      code: 'invalid_output',
+      retryable: true,
+    });
+    expect(compilationRepo.reserveGenerationAttempt).toHaveBeenCalledTimes(1);
   });
 
   it('includes final enriched source text in the compatibility cache key', async () => {
@@ -254,6 +383,50 @@ describe('SemanticKnowledgeCompilerRunner', () => {
         code: 'compiler_source_summary_fallback',
         sourcePageId: 'page-1',
       }),
+    );
+  });
+
+  it('builds the degraded fallback only from bounded validated analysis', async () => {
+    const provider = createProvider();
+    provider.analyze.mockResolvedValueOnce({
+      ...analysis,
+      synopsis: 'Validated synopsis. '.repeat(1_000),
+      claims: [
+        {
+          text: 'Validated claim.',
+          evidenceQuote: 'Validated evidence.',
+        },
+      ],
+    });
+    const runner = new TestSemanticKnowledgeCompilerRunner(
+      provider,
+      createCompilationRepo(),
+    );
+    const input = compileInput();
+    input.sources[0].text = `PRIVATE_FULL_SOURCE_BODY\n${'z'.repeat(20_000)}`;
+
+    await runner.compileSpace(input);
+
+    const fallback = provider.generate.mock.calls[0][1];
+    expect(fallback?.markdown).toContain('Validated synopsis.');
+    expect(fallback?.markdown).toContain('Validated claim.');
+    expect(fallback?.markdown).toContain('Validated evidence.');
+    expect(fallback?.markdown).not.toContain('PRIVATE_FULL_SOURCE_BODY');
+    expect(fallback?.markdown.length).toBeLessThanOrEqual(8_000);
+  });
+
+  it('does not offer a degraded fallback when a last-success exists', async () => {
+    const provider = createProvider();
+    const runner = new TestSemanticKnowledgeCompilerRunner(
+      provider,
+      createCompilationRepo(),
+    );
+
+    await runner.compileSpace({ ...compileInput(), hasLastSuccess: true });
+
+    expect(provider.generate).toHaveBeenCalledWith(
+      expect.any(Object),
+      undefined,
     );
   });
 
@@ -620,6 +793,10 @@ class TestSemanticKnowledgeCompilerRunner extends SemanticKnowledgeCompilerRunne
 
 function createProvider() {
   return {
+    getCacheIdentity: jest
+      .fn()
+      .mockReturnValue('openai-compatible:qwen3.8-max:thinking=false'),
+    getCompilerModel: jest.fn().mockReturnValue('qwen3.8-max'),
     analyze: jest.fn().mockResolvedValue(analysis),
     generate: jest.fn().mockResolvedValue(generation),
   } as unknown as jest.Mocked<KnowledgeCompilerLlmProvider>;
@@ -630,6 +807,15 @@ function createCompilationRepo(cachedAnalysis?: SemanticAnalysis) {
     findAnalysis: jest.fn().mockResolvedValue(cachedAnalysis),
     saveAnalysis: jest.fn().mockResolvedValue(undefined),
     updateStage: jest.fn().mockResolvedValue(undefined),
+    recordCompilerCandidates: jest.fn().mockResolvedValue(undefined),
+    checkGenerationAttemptBudget: jest.fn().mockResolvedValue({
+      allowed: true,
+      attemptCount: 0,
+    }),
+    reserveGenerationAttempt: jest.fn().mockResolvedValue({
+      allowed: true,
+      attemptCount: 1,
+    }),
   } as unknown as jest.Mocked<KnowledgeCompilationRepo>;
 }
 

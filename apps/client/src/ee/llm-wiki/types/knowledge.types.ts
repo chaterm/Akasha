@@ -130,6 +130,7 @@ export type KnowledgeRunPhase =
   | "initial_aggregate"
   | "images"
   | "image_merge"
+  | "finalizing"
   | "final_aggregate"
   | "complete";
 

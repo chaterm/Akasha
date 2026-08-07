@@ -1,3 +1,5 @@
+import { Logger } from '@nestjs/common';
+import { KnowledgeCompilerLlmError } from '../compiler/knowledge-compiler-llm.provider';
 import { KnowledgePageCompilationService } from './knowledge-page-compilation.service';
 
 describe('KnowledgePageCompilationService contract', () => {
@@ -52,7 +54,7 @@ describe('KnowledgePageCompilationService contract', () => {
     expect(execution.isActive).toHaveBeenCalled();
   });
 
-  it('retries a staged page import without invoking the compiler again', async () => {
+  it('recomputes generation and schedules self-healing for degraded output', async () => {
     const source = {
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
@@ -84,7 +86,14 @@ describe('KnowledgePageCompilationService contract', () => {
       quarantineInputs: [],
       quarantinedArtifactCount: 0,
     };
-    const compiler = { compileSpace: jest.fn() };
+    const compiler = {
+      compileSpace: jest.fn().mockResolvedValue({
+        artifacts: [artifact],
+        compilerRunId: 'fresh-compiler-run',
+        resultQuality: 'degraded',
+        generationAttemptCount: 1,
+      }),
+    };
     const importService = {
       importCompileResult: jest.fn().mockResolvedValue({
         importedArtifactCount: 1,
@@ -102,6 +111,7 @@ describe('KnowledgePageCompilationService contract', () => {
       skipAttempt: jest.fn(),
     };
     const accessIndexer = { reindexSourcePages: jest.fn() };
+    const runRepo = { requestRuns: jest.fn().mockResolvedValue([]) };
     const service = new KnowledgePageCompilationService(
       {
         exportPageSources: jest.fn().mockResolvedValue([source]),
@@ -111,6 +121,7 @@ describe('KnowledgePageCompilationService contract', () => {
       accessIndexer as never,
       compilationRepo as never,
       { readReadySource: jest.fn() } as never,
+      runRepo as never,
     );
     const execution = {
       isActive: jest.fn().mockResolvedValue(true),
@@ -140,20 +151,127 @@ describe('KnowledgePageCompilationService contract', () => {
       ),
     ).resolves.toMatchObject({
       outcome: 'succeeded',
-      result: { compilerRunId: 'original-compiler-run' },
+      result: { compilerRunId: 'fresh-compiler-run' },
     });
 
-    expect(compiler.compileSpace).not.toHaveBeenCalled();
-    expect(execution.catalog).not.toHaveBeenCalled();
+    expect(compilationRepo.findPendingImport).not.toHaveBeenCalled();
+    expect(compiler.compileSpace).toHaveBeenCalled();
+    expect(execution.catalog).toHaveBeenCalled();
     expect(importService.importCompileResult).toHaveBeenCalledWith(
       expect.objectContaining({
-        preparedImport: pendingImport,
-        artifacts: pendingImport.acceptedArtifacts,
+        artifacts: [artifact],
       }),
     );
+    expect(
+      importService.importCompileResult.mock.calls[0][0],
+    ).not.toHaveProperty('preparedImport');
     expect(compilationRepo.succeedAttempt).toHaveBeenCalled();
     expect(execution.completePage).toHaveBeenCalledWith({
       status: 'succeeded',
+      qualityStatus: 'degraded',
     });
+    expect(runRepo.requestRuns).toHaveBeenCalledWith({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          trigger: 'page_retry',
+          targetSourcePageIds: ['page-1'],
+        },
+      ],
+      compilerVersion: expect.any(String),
+      promptVersion: expect.any(String),
+    });
+  });
+
+  it('logs provider diagnostics when compiler failures carry diagnostic metadata', async () => {
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    const compilerError = new KnowledgeCompilerLlmError(
+      'input_too_large',
+      'Knowledge compiler input exceeds the provider context limit.',
+      false,
+      undefined,
+      {
+        stage: 'generation',
+        statusCode: 413,
+        providerCode: 'context_length_exceeded',
+        requestId: 'req-1',
+      },
+    );
+    const compilationRepo = {
+      startAttempt: jest.fn(),
+      updateSourceSnapshot: jest.fn(),
+      updateStage: jest.fn(),
+      failAttempt: jest.fn(),
+      skipAttempt: jest.fn(),
+    };
+    const execution = {
+      isActive: jest.fn().mockResolvedValue(true),
+      markRunning: jest.fn(),
+      completePage: jest.fn(),
+      catalog: jest.fn().mockResolvedValue([]),
+      publicationGuard: jest.fn(),
+    };
+    const source = {
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageId: 'page-1',
+      sourceVersion: 'v1',
+      contentHash: 'sha256:page-1',
+      title: 'Page one',
+      text: 'Page body',
+      references: [],
+      images: [],
+    };
+    const service = new KnowledgePageCompilationService(
+      {
+        exportPageSources: jest.fn().mockResolvedValue([source]),
+      } as never,
+      { compileSpace: jest.fn().mockRejectedValue(compilerError) } as never,
+      {} as never,
+      {} as never,
+      compilationRepo as never,
+      { readReadySource: jest.fn() } as never,
+    );
+
+    await expect(
+      service.compileTextPage(
+        {
+          data: {
+            workspaceId: 'workspace-1',
+            spaceId: 'space-1',
+            sourcePageIds: ['page-1'],
+            sourceVersion: 'v1',
+            sourceContentHash: 'sha256:page-1',
+            spaceRunId: 'run-1',
+            knowledgeGeneration: 1,
+          },
+          compileTaskId: 'task-1',
+          finalAttempt: true,
+          execution,
+        },
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      outcome: 'failed',
+      code: 'input_too_large',
+      retryable: false,
+    });
+
+    expect(compilationRepo.failAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorCode: 'input_too_large',
+      }),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        diagnosticClass: 'oversized',
+        providerDiagnostic: expect.objectContaining({
+          providerCode: 'context_length_exceeded',
+          requestId: 'req-1',
+        }),
+      }),
+    );
+    warnSpy.mockRestore();
   });
 });

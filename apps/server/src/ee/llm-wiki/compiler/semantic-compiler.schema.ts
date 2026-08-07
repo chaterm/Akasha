@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SEMANTIC_COMPILER_LIMITS } from './semantic-compiler.limits';
 
 const canonicalKeySchema = z
   .string()
@@ -18,7 +19,9 @@ const compilerVersionSchema = z.preprocess(
 
 const evidenceQuotesSchema = z.preprocess(
   (value) => (value == null ? [] : typeof value === 'string' ? [value] : value),
-  z.array(z.string().trim().min(1)).max(20),
+  z
+    .array(z.string().trim().min(1))
+    .max(SEMANTIC_COMPILER_LIMITS.evidenceQuotesPerItem),
 );
 
 function arrayOrEmpty<T extends z.ZodType>(schema: T) {
@@ -84,12 +87,34 @@ export const semanticAnalysisSchema = z
     version: compilerVersionSchema,
     synopsis: z.string().trim().min(1),
     language: z.string().trim().min(1),
-    entities: arrayOrEmpty(z.array(analyzedEntitySchema).max(100)),
-    concepts: arrayOrEmpty(z.array(analyzedConceptSchema).max(100)),
-    claims: arrayOrEmpty(z.array(analyzedClaimSchema).max(200)),
-    relations: arrayOrEmpty(z.array(analyzedRelationSchema).max(200)),
-    comparisons: arrayOrEmpty(z.array(analyzedComparisonSchema).max(50)),
-    contradictions: arrayOrEmpty(z.array(analyzedContradictionSchema).max(50)),
+    entities: arrayOrEmpty(
+      z
+        .array(analyzedEntitySchema)
+        .max(SEMANTIC_COMPILER_LIMITS.analysisEntities),
+    ),
+    concepts: arrayOrEmpty(
+      z
+        .array(analyzedConceptSchema)
+        .max(SEMANTIC_COMPILER_LIMITS.analysisConcepts),
+    ),
+    claims: arrayOrEmpty(
+      z.array(analyzedClaimSchema).max(SEMANTIC_COMPILER_LIMITS.analysisClaims),
+    ),
+    relations: arrayOrEmpty(
+      z
+        .array(analyzedRelationSchema)
+        .max(SEMANTIC_COMPILER_LIMITS.analysisRelations),
+    ),
+    comparisons: arrayOrEmpty(
+      z
+        .array(analyzedComparisonSchema)
+        .max(SEMANTIC_COMPILER_LIMITS.analysisComparisons),
+    ),
+    contradictions: arrayOrEmpty(
+      z
+        .array(analyzedContradictionSchema)
+        .max(SEMANTIC_COMPILER_LIMITS.analysisContradictions),
+    ),
   })
   .strict();
 
@@ -131,7 +156,10 @@ export type SemanticGeneratedArtifact = z.infer<
 export const semanticGenerationSchema = z
   .object({
     version: compilerVersionSchema,
-    artifacts: z.array(semanticGeneratedArtifactSchema).min(1).max(200),
+    artifacts: z
+      .array(semanticGeneratedArtifactSchema)
+      .min(1)
+      .max(SEMANTIC_COMPILER_LIMITS.generatedArtifacts),
   })
   .strict()
   .superRefine((value, context) => {

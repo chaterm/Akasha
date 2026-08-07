@@ -51,6 +51,10 @@ export class PageListener {
 
     await this.searchQueue.add(QueueJob.PAGE_UPDATED, { pageIds });
     await this.enqueueKnowledgeAccessReindex(workspaceId, pageIds);
+    // A regular edit is a cheap no-op here. A cross-Space move is detected by
+    // comparing current page ownership with persisted contribution scopes and
+    // retires only the old-Space contributions.
+    await this.enqueueKnowledgeSourceRetirement(workspaceId, pageIds);
     if (!event.skipKnowledgeCompile) {
       await this.scheduleKnowledgeRuns(workspaceId, pageIds, 'page_updated');
     }
@@ -63,7 +67,7 @@ export class PageListener {
       await this.searchQueue.add(QueueJob.PAGE_DELETED, { pageIds });
     }
 
-    await this.requestKnowledgeRuns(workspaceId, pageIds, true);
+    await this.enqueueKnowledgeSourceRetirement(workspaceId, pageIds);
   }
 
   @OnEvent(EventName.PAGE_SOFT_DELETED)
@@ -74,7 +78,7 @@ export class PageListener {
       await this.searchQueue.add(QueueJob.PAGE_SOFT_DELETED, { pageIds });
     }
 
-    await this.requestKnowledgeRuns(workspaceId, pageIds, true);
+    await this.enqueueKnowledgeSourceRetirement(workspaceId, pageIds);
   }
 
   @OnEvent(EventName.PAGE_RESTORED)
@@ -121,6 +125,28 @@ export class PageListener {
       workspaceId,
       sourcePageIds: pageIds,
     });
+  }
+
+  private async enqueueKnowledgeSourceRetirement(
+    workspaceId: string,
+    pageIds: string[],
+  ): Promise<void> {
+    if (!workspaceId || pageIds.length === 0) return;
+    await this.knowledgeQueue.add(
+      QueueJob.KNOWLEDGE_RETIRE_SOURCES,
+      {
+        workspaceId,
+        sourcePageIds: [...new Set(pageIds)],
+      },
+      {
+        // PageRepo can emit from a caller-owned transaction. A small delay
+        // makes the worker observe the committed delete/move state.
+        delay: 1_000,
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 2_000 },
+        removeOnComplete: true,
+      },
+    );
   }
 
   private async requestKnowledgeRuns(

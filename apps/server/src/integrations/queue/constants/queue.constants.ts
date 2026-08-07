@@ -65,6 +65,7 @@ export enum QueueJob {
   KNOWLEDGE_REBUILD_EMBEDDINGS = 'knowledge-rebuild-embeddings',
   KNOWLEDGE_REINDEX_ACCESS = 'knowledge-reindex-access',
   KNOWLEDGE_MARK_SOURCES_STALE = 'knowledge-mark-sources-stale',
+  KNOWLEDGE_RETIRE_SOURCES = 'knowledge-retire-sources',
   REVIEW_DISCOVER = 'review-discover',
   REVIEW_NEGOTIATE = 'review-negotiate',
 

@@ -28,6 +28,7 @@ export type KnowledgeSpaceCompileRunPhase =
   | 'images'
   | 'image_merge'
   | 'final_aggregate'
+  | 'finalizing'
   | 'complete';
 
 export type SpaceRunRequestDisposition =
@@ -192,10 +193,11 @@ export class KnowledgeSpaceCompilationRepo {
         'initial_aggregate',
         'image_merge',
         'final_aggregate',
+        'finalizing',
       ])
       .where('spaceJobId', 'is', null)
       .orderBy(
-        sql<number>`CASE WHEN phase IN ('image_merge', 'final_aggregate') THEN 1 ELSE 5 END`,
+        sql<number>`CASE WHEN phase IN ('image_merge', 'final_aggregate', 'finalizing') THEN 1 ELSE 5 END`,
         'asc',
       )
       .orderBy('spaceJobQueuedAt', 'asc')
@@ -223,11 +225,12 @@ export class KnowledgeSpaceCompilationRepo {
         'initial_aggregate',
         'image_merge',
         'final_aggregate',
+        'finalizing',
       ])
       .where('spaceJobId', 'is not', null)
       .where('spaceJobDispatchedAt', 'is', null)
       .orderBy(
-        sql<number>`CASE WHEN phase IN ('image_merge', 'final_aggregate') THEN 1 ELSE 5 END`,
+        sql<number>`CASE WHEN phase IN ('image_merge', 'final_aggregate', 'finalizing') THEN 1 ELSE 5 END`,
         'asc',
       )
       .orderBy('spaceJobQueuedAt', 'asc')
@@ -255,8 +258,8 @@ export class KnowledgeSpaceCompilationRepo {
   }): Promise<boolean> {
     const phases =
       input.jobPhase === 'text'
-        ? (['text', 'initial_aggregate'] as const)
-        : (['image_merge', 'final_aggregate'] as const);
+        ? (['text', 'initial_aggregate', 'finalizing'] as const)
+        : (['image_merge', 'final_aggregate', 'finalizing'] as const);
     const updated = await this.db
       .updateTable('knowledgeSpaceCompileRuns')
       .set({ spaceJobDispatchedAt: new Date(), updatedAt: new Date() })
@@ -843,6 +846,7 @@ export class KnowledgeSpaceCompilationRepo {
         promptVersion: versions.promptVersion,
         catalogSnapshot: [] as JsonValue,
         catalogHash: 'pending-initialization',
+        aggregateRequired: false,
         targetSourcePageIds: requestTargetSourcePageIds as JsonValue | null,
         queuedAt: now,
         spaceJobQueuedAt: now,
@@ -1032,7 +1036,7 @@ export class KnowledgeSpaceCompilationRepo {
         quarantinedArtifactCount: 0,
         catalogSnapshot: [] as JsonValue,
         catalogHash: 'pending-initialization',
-        aggregateRequired: true,
+        aggregateRequired: false,
         aggregateJobId: null,
         aggregateStartedAt: null,
         startedAt: null,
@@ -1280,11 +1284,7 @@ export class KnowledgeSpaceCompilationRepo {
           mode: 'force_rebuild',
           knowledgeGeneration: generation,
           phase: 'text',
-          status: input.deferInitialization
-            ? 'queued'
-            : input.sources.length === 0
-              ? 'aggregate_pending'
-              : 'queued',
+          status: 'queued',
           expectedPageCount: input.deferInitialization
             ? 0
             : input.sources.length,
@@ -1296,6 +1296,7 @@ export class KnowledgeSpaceCompilationRepo {
           catalogHash: input.deferInitialization
             ? 'pending-initialization'
             : input.catalogHash,
+          aggregateRequired: false,
           initializedAt: input.deferInitialization ? null : now,
           queuedAt: now,
           spaceJobQueuedAt: now,
@@ -1379,37 +1380,6 @@ export class KnowledgeSpaceCompilationRepo {
       .where('spaceId', '=', input.spaceId)
       .where('status', 'in', NONTERMINAL_RUN_STATUSES)
       .orderBy('createdAt', 'desc')
-      .executeTakeFirst();
-  }
-
-  async findLatestCompletedRunForAggregateReuse(input: {
-    workspaceId: string;
-    spaceId: string;
-    currentRunId: string;
-  }) {
-    return this.db
-      .selectFrom('knowledgeSpaceCompileRuns as run')
-      .innerJoin('spaces as space', (join) =>
-        join
-          .onRef('space.id', '=', 'run.spaceId')
-          .onRef('space.workspaceId', '=', 'run.workspaceId'),
-      )
-      .select([
-        'run.id',
-        'run.status',
-        'run.phase',
-        'run.compilerVersion',
-        'run.promptVersion',
-        'run.catalogHash',
-        'run.knowledgeGeneration',
-        'space.knowledgeGeneration as currentKnowledgeGeneration',
-      ])
-      .where('run.workspaceId', '=', input.workspaceId)
-      .where('run.spaceId', '=', input.spaceId)
-      .where('run.status', 'in', ['succeeded', 'partial'])
-      .where('run.phase', '=', 'complete')
-      .where('run.id', '!=', input.currentRunId)
-      .orderBy('run.createdAt', 'desc')
       .executeTakeFirst();
   }
 
@@ -1723,6 +1693,9 @@ export class KnowledgeSpaceCompilationRepo {
           failedImageCount: failed,
           skippedImageCount: skipped,
           imageStatus,
+          ...(['partial', 'failed'].includes(imageStatus)
+            ? { qualityStatus: 'partial_image' as const }
+            : {}),
           ...(nonterminal === 0
             ? { mergeStatus: succeeded > 0 ? 'pending' : 'skipped' }
             : {}),
@@ -1807,51 +1780,6 @@ export class KnowledgeSpaceCompilationRepo {
       .where('s.knowledgeGeneration', '=', input.knowledgeGeneration)
       .executeTakeFirst();
     return Boolean(row);
-  }
-
-  private async advanceFinalAggregateBarrier(
-    trx: KyselyTransaction,
-    runId: string,
-    knowledgeGeneration: number,
-  ): Promise<boolean> {
-    const blocker = await trx
-      .selectFrom('knowledgeSpaceCompileRunPages')
-      .select('id')
-      .where('runId', '=', runId)
-      .where((eb) =>
-        eb.or([
-          eb('imageStatus', 'not in', [
-            'not_required',
-            'succeeded',
-            'partial',
-            'failed',
-          ]),
-          eb('mergeStatus', 'not in', [
-            'not_required',
-            'succeeded',
-            'skipped',
-            'failed',
-          ]),
-        ]),
-      )
-      .limit(1)
-      .executeTakeFirst();
-    if (blocker) return false;
-    const updated = await trx
-      .updateTable('knowledgeSpaceCompileRuns')
-      .set({
-        status: 'aggregate_pending',
-        phase: 'final_aggregate',
-        aggregateJobId: null,
-        updatedAt: new Date(),
-      })
-      .where('id', '=', runId)
-      .where('knowledgeGeneration', '=', knowledgeGeneration)
-      .where('phase', '=', 'images')
-      .where('status', '=', 'compiling')
-      .returning('id')
-      .executeTakeFirst();
-    return Boolean(updated);
   }
 
   private async reserveRunImagesForRun(

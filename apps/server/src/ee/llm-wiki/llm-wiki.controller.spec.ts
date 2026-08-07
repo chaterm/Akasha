@@ -1154,20 +1154,6 @@ describe('LlmWikiController', () => {
 
   describe('single-Space knowledge operations', () => {
     it('updates exactly one Space only after exact-name confirmation', async () => {
-      const sourceExporter = {
-        exportSpaceSources: jest.fn().mockResolvedValue([
-          {
-            workspaceId: 'workspace-1',
-            spaceId: '11111111-1111-4111-8111-111111111111',
-            sourcePageId: 'page-1',
-            sourceVersion: 'v1',
-            contentHash: 'sha256:page-1',
-            title: 'Page 1',
-            text: 'content',
-            references: [],
-          },
-        ]),
-      };
       const spaceCompilation = {
         requestRuns: jest.fn().mockResolvedValue([
           {
@@ -1183,7 +1169,6 @@ describe('LlmWikiController', () => {
       const knowledgeQueue = { add: jest.fn() };
       const auditService = { log: jest.fn() };
       const controller = createController({
-        sourceExporter,
         spaceCompilation,
         knowledgeQueue,
         auditService,
@@ -1210,7 +1195,6 @@ describe('LlmWikiController', () => {
           scanRemovedSources: true,
         }),
       ]);
-      expect(sourceExporter.exportSpaceSources).not.toHaveBeenCalled();
       expect(knowledgeQueue.add).not.toHaveBeenCalled();
       expect(auditService.log).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1231,16 +1215,12 @@ describe('LlmWikiController', () => {
       const mismatch = new ConflictException(
         'Space name confirmation no longer matches.',
       );
-      const sourceExporter = {
-        exportSpaceSources: jest.fn().mockResolvedValue([]),
-      };
       const spaceCompilation = {
         requestRuns: jest.fn().mockRejectedValue(mismatch),
       };
       const knowledgeQueue = { add: jest.fn() };
       const auditService = { log: jest.fn() };
       const controller = createController({
-        sourceExporter,
         spaceCompilation,
         knowledgeQueue,
         auditService,
@@ -1260,9 +1240,6 @@ describe('LlmWikiController', () => {
     });
 
     it('force rebuilds through the destructive service and does not accept a client mode', async () => {
-      const sourceExporter = {
-        exportSpaceSources: jest.fn().mockResolvedValue([]),
-      };
       const spaceReset = {
         forceRebuild: jest.fn().mockResolvedValue({
           run: { id: 'force-run-1', mode: 'force_rebuild' },
@@ -1271,7 +1248,6 @@ describe('LlmWikiController', () => {
       };
       const knowledgeQueue = { add: jest.fn() };
       const controller = createController({
-        sourceExporter,
         spaceReset,
         knowledgeQueue,
       });
@@ -1299,14 +1275,12 @@ describe('LlmWikiController', () => {
           confirmationSpaceName: 'AIM-运维-公共文档',
         }),
       );
-      expect(sourceExporter.exportSpaceSources).not.toHaveBeenCalled();
       expect(knowledgeQueue.add).not.toHaveBeenCalled();
     });
 
     it('rejects both operations for non-admin users before export or queueing', async () => {
-      const sourceExporter = { exportSpaceSources: jest.fn() };
       const knowledgeQueue = { add: jest.fn() };
-      const controller = createController({ sourceExporter, knowledgeQueue });
+      const controller = createController({ knowledgeQueue });
 
       await expect(
         controller.updateSpaceKnowledge(
@@ -1325,7 +1299,6 @@ describe('LlmWikiController', () => {
         ),
       ).rejects.toBeInstanceOf(ForbiddenException);
 
-      expect(sourceExporter.exportSpaceSources).not.toHaveBeenCalled();
       expect(knowledgeQueue.add).not.toHaveBeenCalled();
     });
   });

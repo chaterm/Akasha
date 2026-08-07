@@ -20,7 +20,7 @@ export class KnowledgeArtifactContributionRepo {
   constructor(@InjectKysely() private readonly db: KyselyDB) {}
 
   async findBySourcePage(
-    input: { workspaceId: string; sourcePageId: string },
+    input: { workspaceId: string; sourcePageId: string; spaceId?: string },
     trx?: KyselyTransaction,
   ): Promise<KnowledgeArtifactContribution[]> {
     return dbOrTx(this.db, trx)
@@ -28,12 +28,15 @@ export class KnowledgeArtifactContributionRepo {
       .selectAll()
       .where('workspaceId', '=', input.workspaceId)
       .where('sourcePageId', '=', input.sourcePageId)
+      .$if(Boolean(input.spaceId), (query) =>
+        query.where('spaceId', '=', input.spaceId!),
+      )
       .orderBy('artifactId', 'asc')
       .execute();
   }
 
   async findByArtifactIds(
-    input: { workspaceId: string; artifactIds: string[] },
+    input: { workspaceId: string; artifactIds: string[]; spaceId?: string },
     trx?: KyselyTransaction,
   ): Promise<KnowledgeArtifactContribution[]> {
     if (input.artifactIds.length === 0) return [];
@@ -42,6 +45,25 @@ export class KnowledgeArtifactContributionRepo {
       .selectAll()
       .where('workspaceId', '=', input.workspaceId)
       .where('artifactId', 'in', input.artifactIds)
+      .$if(Boolean(input.spaceId), (query) =>
+        query.where('spaceId', '=', input.spaceId!),
+      )
+      .orderBy('sourcePageId', 'asc')
+      .execute();
+  }
+
+  async findSourceScopes(input: {
+    workspaceId: string;
+    sourcePageIds: string[];
+  }): Promise<Array<{ sourcePageId: string; spaceId: string }>> {
+    if (input.sourcePageIds.length === 0) return [];
+    return this.db
+      .selectFrom('knowledgeArtifactContributions')
+      .select(['sourcePageId', 'spaceId'])
+      .distinct()
+      .where('workspaceId', '=', input.workspaceId)
+      .where('sourcePageId', 'in', input.sourcePageIds)
+      .orderBy('spaceId', 'asc')
       .orderBy('sourcePageId', 'asc')
       .execute();
   }
@@ -64,6 +86,7 @@ export class KnowledgeArtifactContributionRepo {
   async replaceSourceContributions(
     input: {
       workspaceId: string;
+      spaceId: string;
       sourcePageId: string;
       contributions: ReplaceKnowledgeContributionInput[];
     },
@@ -73,6 +96,7 @@ export class KnowledgeArtifactContributionRepo {
     await db
       .deleteFrom('knowledgeArtifactContributions')
       .where('workspaceId', '=', input.workspaceId)
+      .where('spaceId', '=', input.spaceId)
       .where('sourcePageId', '=', input.sourcePageId)
       .execute();
 

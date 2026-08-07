@@ -11,6 +11,9 @@ const migrationFiles = [
   '20260728T120000-knowledge-image-run-page-skips.ts',
   '20260731T100000-multi-space-compilation.ts',
   '20260803T100000-persist-knowledge-run-plan.ts',
+  '20260807T100000-knowledge-run-page-binding.ts',
+  '20260807T110000-knowledge-compiler-attempt-metadata.ts',
+  '20260807T120000-knowledge-retirement-durable-contributions.ts',
 ] as const;
 const migrationPaths = migrationFiles.map((file) =>
   resolve(__dirname, 'migrations', file),
@@ -33,6 +36,9 @@ describe('reliable knowledge compilation migration sequence', () => {
       skippedImages,
       multiSpace,
       persistedPlan,
+      runPageBinding,
+      attemptMetadata,
+      durableContributions,
     ] = await Promise.all(
       migrationPaths.map((migrationPath) => readFile(migrationPath, 'utf8')),
     );
@@ -60,6 +66,16 @@ describe('reliable knowledge compilation migration sequence', () => {
     expect(persistedPlan).toContain(
       ".addColumn('aggregate_required', 'boolean'",
     );
+    expect(runPageBinding).toContain(".addColumn('binding_status', 'varchar'");
+    expect(runPageBinding).toContain(".addColumn('quality_status', 'varchar'");
+    expect(attemptMetadata).toContain(".addColumn('compiler_model', 'varchar'");
+    expect(attemptMetadata).toContain(
+      "'final_aggregate', 'finalizing', 'complete'",
+    );
+    expect(durableContributions).toContain(
+      'knowledge_artifact_contributions_source_page_id_fkey',
+    );
+    expect(durableContributions).toContain('DROP CONSTRAINT IF EXISTS');
   });
 
   it('keeps generated database and entity contracts aligned with the schema', async () => {
@@ -93,7 +109,14 @@ describe('reliable knowledge compilation migration sequence', () => {
     expect(runs).toContain('initializedAt: Timestamp | null;');
     expect(runs).toContain('aggregateRequired: Generated<boolean>;');
     expect(runs).toContain('spaceJobSequence: Generated<number>;');
-    expect(runPages).toContain('expectedImageCount: Generated<number>;');
+    expect(runPages).toContain('expectedImageCount: Generated<number | null>;');
+    expect(runPages).toContain('bindingStatus: Generated<string>;');
+    expect(runPages).toContain('boundAt: Generated<Timestamp | null>;');
+    expect(runPages).toContain('discoveredSourceVersion: Timestamp | null;');
+    expect(runPages).toContain('expectedSourceContentHash: string | null;');
+    expect(runPages).toContain('expectedSourceVersion: string | null;');
+    expect(runPages).toContain('qualityStatus: Generated<string>;');
+    expect(runPages).toContain('reused: Generated<boolean>;');
     expect(runPages).toContain('succeededImageCount: Generated<number>;');
     expect(runPages).toContain('failedImageCount: Generated<number>;');
     expect(runPages).toContain('skippedImageCount: Generated<number>;');
@@ -103,6 +126,8 @@ describe('reliable knowledge compilation migration sequence', () => {
     expect(runImages).toContain('expectedAttachmentVersion: Timestamp;');
     expect(attempts).toContain('effectiveKnowledgeHash: string | null;');
     expect(attempts).toContain('lastSuccessfulEffectiveHash: string | null;');
+    expect(attempts).toContain('compilerModel: string | null;');
+    expect(attempts).toContain('generationAttemptCount: Generated<number>;');
     expect(extractions).toContain('attachmentVersion: Timestamp | null;');
 
     expect(entityTypes).toContain('Selectable<KnowledgeSpaceCompileRunPages>');
