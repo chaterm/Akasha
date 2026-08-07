@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Group, Text, ScrollArea, ActionIcon, Tooltip } from "@mantine/core";
+import { Group, Text, ScrollArea, ActionIcon } from "@mantine/core";
 import {
   IconUser,
   IconSettings,
@@ -24,7 +24,6 @@ import useUserRole from "@/hooks/use-user-role.tsx";
 import { useAtom } from "jotai";
 import { entitlementAtom } from "@/ee/entitlement/entitlement-atom";
 import { Feature } from "@/ee/features";
-import { useUpgradeLabel } from "@/ee/hooks/use-upgrade-label";
 import {
   prefetchApiKeyManagement,
   prefetchApiKeys,
@@ -147,7 +146,6 @@ export default function SettingsSidebar() {
   const { goBack } = useSettingsNavigation();
   const { isAdmin, isOwner } = useUserRole();
   const [entitlements] = useAtom(entitlementAtom);
-  const upgradeLabel = useUpgradeLabel();
   const [mobileSidebarOpened] = useAtom(mobileSidebarAtom);
   const toggleMobileSidebar = useToggleSidebar(mobileSidebarAtom);
 
@@ -230,32 +228,8 @@ export default function SettingsSidebar() {
               break;
           }
 
-          const isDisabled = isItemDisabled(item);
-
-          if (isDisabled) {
-            return (
-              <Tooltip
-                key={item.label}
-                label={upgradeLabel}
-                position="right"
-                withArrow
-              >
-                <span
-                  className={classes.link}
-                  data-disabled
-                  role="link"
-                  aria-disabled="true"
-                  tabIndex={0}
-                  style={{
-                    opacity: 0.5,
-                    cursor: "not-allowed",
-                  }}
-                >
-                  <item.icon className={classes.linkIcon} stroke={2} />
-                  <span>{t(item.label)}</span>
-                </span>
-              </Tooltip>
-            );
+          if (isItemDisabled(item)) {
+            return null;
           }
 
           return (

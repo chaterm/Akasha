@@ -1,18 +1,11 @@
 import { useEffect, useState } from "react";
-import {
-  ScrollArea,
-  Text,
-  Divider,
-  Modal,
-  UnstyledButton,
-} from "@mantine/core";
+import { ScrollArea, Text, Divider } from "@mantine/core";
 import {
   IconHome,
   IconClock,
   IconStar,
   IconLayoutGrid,
   IconSettings,
-  IconUserPlus,
   IconTemplate,
   IconDatabaseSearch,
 } from "@tabler/icons-react";
@@ -24,8 +17,6 @@ import { mobileSidebarAtom } from "@/components/layouts/global/hooks/atoms/sideb
 import { useToggleSidebar } from "@/components/layouts/global/hooks/hooks/use-toggle-sidebar";
 import { useFavoritesQuery } from "@/features/favorite/queries/favorite-query";
 import { getSpaceUrl } from "@/lib/config";
-import { useDisclosure } from "@mantine/hooks";
-import { WorkspaceInviteForm } from "@/features/workspace/components/members/components/workspace-invite-form";
 import { CustomAvatar } from "@/components/ui/custom-avatar";
 import { AvatarIconType } from "@/features/attachments/types/attachment.types";
 import { useHasFeature } from "@/ee/hooks/use-feature";
@@ -66,9 +57,6 @@ export default function GlobalSidebar() {
       );
       return cmp !== 0 ? cmp : a.id.localeCompare(b.id);
     });
-  const [inviteOpened, { open: openInvite, close: closeInvite }] =
-    useDisclosure(false);
-
   useEffect(() => {
     setActive(location.pathname);
   }, [location.pathname]);
@@ -144,12 +132,6 @@ export default function GlobalSidebar() {
       </ScrollArea>
 
       <div className={classes.bottomSection}>
-        {isOwner && (
-          <UnstyledButton className={classes.link} onClick={openInvite}>
-            <IconUserPlus className={classes.linkIcon} stroke={2} />
-            <span>{t("Invite People")}</span>
-          </UnstyledButton>
-        )}
         <Link
           className={classes.link}
           data-active={active.startsWith("/settings") || undefined}
@@ -161,19 +143,6 @@ export default function GlobalSidebar() {
           <span>{t("Settings")}</span>
         </Link>
       </div>
-
-      <Modal
-        size="550"
-        opened={inviteOpened}
-        onClose={closeInvite}
-        title={t("Invite new members")}
-        centered
-      >
-        <Divider size="xs" mb="xs" />
-        <ScrollArea h="80%">
-          <WorkspaceInviteForm onClose={closeInvite} />
-        </ScrollArea>
-      </Modal>
     </div>
   );
 }
