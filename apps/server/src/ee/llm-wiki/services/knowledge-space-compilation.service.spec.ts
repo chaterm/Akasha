@@ -7,7 +7,6 @@ import {
   SpaceExecutionLease,
 } from '@akasha/db/repos/llm-wiki/knowledge-space-execution.repo';
 import { QueueJob } from '../../../integrations/queue/constants';
-import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import {
   DEFAULT_KNOWLEDGE_COMPILER_VERSION,
   DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
@@ -16,6 +15,7 @@ import {
 import { buildEffectiveKnowledgeHash } from './knowledge-effective-hash';
 import { KnowledgeSourceExporterService } from './knowledge-source-exporter.service';
 import { KnowledgeSpaceCompilationService } from './knowledge-space-compilation.service';
+import { KnowledgeImageUnderstandingProvider } from './knowledge-image-understanding-provider.service';
 
 describe('KnowledgeSpaceCompilationService', () => {
   it('dispatches a DB-reserved Space slice and never fans out page jobs', async () => {
@@ -482,8 +482,8 @@ function createService(
       .fn()
       .mockResolvedValue({ terminalized: true }),
   };
-  const environmentService = {
-    getAiVisionModel: jest.fn().mockReturnValue('vision-model'),
+  const imageProvider = {
+    getCacheIdentity: jest.fn().mockReturnValue('sha256:vision-provider'),
   };
   const service = new KnowledgeSpaceCompilationService(
     spaceQueue as unknown as Queue,
@@ -491,8 +491,8 @@ function createService(
     repo as unknown as KnowledgeSpaceCompilationRepo,
     compilationRepo as unknown as KnowledgeCompilationRepo,
     imageExtractionRepo as unknown as KnowledgeImageExtractionRepo,
-    environmentService as unknown as EnvironmentService,
     sourceExporter as unknown as KnowledgeSourceExporterService,
+    imageProvider as unknown as KnowledgeImageUnderstandingProvider,
     executionRepo as unknown as KnowledgeSpaceExecutionRepo,
   );
   return {
@@ -504,6 +504,7 @@ function createService(
     executionRepo,
     compilationRepo,
     imageExtractionRepo,
+    imageProvider,
   };
 }
 
@@ -572,7 +573,7 @@ function readyExtraction(
     attachmentVersion,
     currentAttachmentVersion: attachmentVersion,
     status: 'ready',
-    model: 'vision-model',
+    model: 'sha256:vision-provider',
     promptVersion: DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
     cacheFingerprint: `cache-${image.attachmentId}`,
     contentHash: `sha256:${image.attachmentId}`,

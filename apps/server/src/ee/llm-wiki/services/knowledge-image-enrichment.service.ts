@@ -175,6 +175,7 @@ export class KnowledgeImageEnrichmentService {
         truncatedCount: 0,
       };
     }
+    const providerCacheIdentity = await this.imageProvider.getCacheIdentity();
     const rows = await this.extractionRepo.findCurrentReadyForSnapshotImages({
       workspaceId: source.workspaceId,
       spaceId: source.spaceId,
@@ -183,7 +184,7 @@ export class KnowledgeImageEnrichmentService {
         attachmentId: image.attachmentId,
         attachmentVersion: image.attachmentVersion,
       })),
-      model: this.environmentService.getAiVisionModel().trim(),
+      model: providerCacheIdentity,
       promptVersion: DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
     });
     const rowByAttachmentId = new Map(
@@ -257,7 +258,7 @@ export class KnowledgeImageEnrichmentService {
     if (sourceImages.length === 0) {
       return emptyResult(source, warnings, allSourceImages.length, skipped);
     }
-    if (!this.imageProvider.isConfigured()) {
+    if (!(await this.imageProvider.isConfigured())) {
       return {
         ...emptyResult(source, warnings, allSourceImages.length, skipped),
         imageCount: sourceImages.length,
@@ -282,6 +283,8 @@ export class KnowledgeImageEnrichmentService {
     );
     const extracted: ExtractedImageText[] = [];
     let cacheHitCount = 0;
+    // Resolved once per run: the identity is stable across all images here.
+    const providerCacheIdentity = await this.imageProvider.getCacheIdentity();
 
     // Keep the first release sequential inside the page worker. Atomic cache
     // leases prevent duplicate VLM calls across multiple server instances.
@@ -356,13 +359,13 @@ export class KnowledgeImageEnrichmentService {
               detectedMime,
               normalizeCacheMetadata(image.fileName),
               normalizeCacheMetadata(image.altText ?? ''),
-              this.imageProvider.getCacheIdentity(),
+              providerCacheIdentity,
               DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
             ]),
           ),
         ),
         contentHash,
-        model: this.environmentService.getAiVisionModel().trim(),
+        model: providerCacheIdentity,
         promptVersion: DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
       };
 

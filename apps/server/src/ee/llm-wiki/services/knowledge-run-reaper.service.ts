@@ -47,8 +47,14 @@ export class KnowledgeRunReaperService {
           );
           continue;
         }
-        if (EXECUTABLE_JOB_STATES.has(state)) continue;
-        if (!['failed', 'completed', 'missing'].includes(state)) continue;
+        const queuedReservation = candidate.status === 'queued';
+        if (queuedReservation && EXECUTABLE_JOB_STATES.has(state)) continue;
+        if (
+          !EXECUTABLE_JOB_STATES.has(state) &&
+          !['failed', 'completed', 'missing'].includes(state)
+        ) {
+          continue;
+        }
 
         const recoveryLease = await this.executionRepo.claimRecoveryLease({
           runId: candidate.runId,
@@ -71,7 +77,10 @@ export class KnowledgeRunReaperService {
         });
         if (!recoveryLease) continue;
 
-        if (state === 'missing' && candidate.spaceJobRecoveryCount < 3) {
+        if (
+          (state === 'missing' || EXECUTABLE_JOB_STATES.has(state)) &&
+          candidate.spaceJobRecoveryCount < 3
+        ) {
           await this.executionRepo.requeueMissingSpaceSlice(recoveryLease);
           continue;
         }
@@ -80,7 +89,9 @@ export class KnowledgeRunReaperService {
             ? 'job_attempts_exhausted'
             : state === 'completed'
               ? 'job_completed_without_db_terminal'
-              : 'redis_job_missing_exhausted';
+              : state === 'missing'
+                ? 'redis_job_missing_exhausted'
+                : 'redis_job_stale_exhausted';
         await this.executionRepo.finishRun(recoveryLease, 'failed', {
           errorCode,
           errorMessage: terminalMessage(errorCode),
@@ -98,6 +109,8 @@ function terminalMessage(errorCode: string): string {
       return 'Knowledge Space job retries were exhausted.';
     case 'job_completed_without_db_terminal':
       return 'Knowledge Space job completed without a database terminal state.';
+    case 'redis_job_stale_exhausted':
+      return 'Knowledge Space job stayed executable after the database execution lease expired.';
     default:
       return 'Knowledge Space job disappeared after bounded recovery.';
   }

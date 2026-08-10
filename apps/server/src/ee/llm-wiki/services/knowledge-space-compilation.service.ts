@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -22,18 +23,19 @@ import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import {
   DEFAULT_KNOWLEDGE_COMPILER_VERSION,
   DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
+  KNOWLEDGE_IMAGE_UNDERSTANDING_PROVIDER,
   KNOWLEDGE_PAGE_COMPILE_QUIET_PERIOD_MS,
   DEFAULT_KNOWLEDGE_PROMPT_VERSION,
 } from '../llm-wiki.constants';
 import { KnowledgeSourceSnapshot } from '../types/source-snapshot.types';
 import { KnowledgeSourceExporterService } from './knowledge-source-exporter.service';
-import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import {
   buildEffectiveKnowledgeHash,
   ReadyKnowledgeImage,
 } from './knowledge-effective-hash';
 import { knowledgeImageJobOptions } from './knowledge-worker-settings';
 import { KnowledgeSourceRetirementService } from './knowledge-source-retirement.service';
+import { KnowledgeImageUnderstandingProvider } from './knowledge-image-understanding-provider.service';
 
 @Injectable()
 export class KnowledgeSpaceCompilationService implements OnModuleInit {
@@ -48,8 +50,9 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     private readonly runRepo: KnowledgeSpaceCompilationRepo,
     private readonly compilationRepo: KnowledgeCompilationRepo,
     private readonly imageExtractionRepo: KnowledgeImageExtractionRepo,
-    private readonly environmentService: EnvironmentService,
     private readonly sourceExporter: KnowledgeSourceExporterService,
+    @Inject(KNOWLEDGE_IMAGE_UNDERSTANDING_PROVIDER)
+    private readonly imageProvider: KnowledgeImageUnderstandingProvider,
     executionRepo?: KnowledgeSpaceExecutionRepo,
     retirementService?: KnowledgeSourceRetirementService,
   ) {
@@ -301,7 +304,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       return bound ? { outcome: 'reused' as const, page: bound } : undefined;
     }
 
-    const visionModel = this.environmentService.getAiVisionModel().trim();
+    const visionModel = await this.imageProvider.getCacheIdentity();
     const readyExtractions =
       await this.imageExtractionRepo.findCurrentReadyForSnapshotImages({
         ...scope,

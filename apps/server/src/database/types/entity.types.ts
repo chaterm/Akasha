@@ -61,6 +61,7 @@ import {
   UserMfa as _UserMFA,
   UserSessions,
   ApiKeys,
+  AiModelConfigs,
   ScimTokens,
   Watchers,
   Audit as _Audit,
@@ -369,6 +370,11 @@ export type UpdatableUserMFA = Updateable<Omit<_UserMFA, 'id'>>;
 export type ApiKey = Selectable<ApiKeys>;
 export type InsertableApiKey = Insertable<ApiKeys>;
 export type UpdatableApiKey = Updateable<Omit<ApiKeys, 'id'>>;
+
+// AI Model Config
+export type AiModelConfig = Selectable<AiModelConfigs>;
+export type InsertableAiModelConfig = Insertable<AiModelConfigs>;
+export type UpdatableAiModelConfig = Updateable<Omit<AiModelConfigs, 'id'>>;
 
 // Scim Tokens
 export type ScimToken = Selectable<ScimTokens>;

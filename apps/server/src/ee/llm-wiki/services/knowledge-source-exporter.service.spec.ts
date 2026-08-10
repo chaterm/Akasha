@@ -212,6 +212,13 @@ describe('KnowledgeSourceExporterService', () => {
           type: 'image',
           attrs: { attachmentId: 'image-1', alt: 'System diagram' },
         },
+        {
+          type: 'image',
+          attrs: {
+            src: '/api/files/019eaf5b-5e81-744c-8438-f8c53ef34658/diagram-from-src.png',
+            alt: 'Imported diagram',
+          },
+        },
         { type: 'image', attrs: { attachmentId: 'foreign-image' } },
         { type: 'image', attrs: { attachmentId: 'image-1' } },
       ],
@@ -248,6 +255,19 @@ describe('KnowledgeSourceExporterService', () => {
           deletedAt: null,
         },
         {
+          id: '019eaf5b-5e81-744c-8438-f8c53ef34658',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          pageId: 'page-1',
+          type: 'file',
+          fileName: 'diagram-from-src.png',
+          fileExt: '.png',
+          fileSize: 4096,
+          mimeType: 'image/png',
+          updatedAt: new Date('2026-07-27T00:02:00.000Z'),
+          deletedAt: null,
+        },
+        {
           id: 'foreign-image',
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
@@ -276,6 +296,7 @@ describe('KnowledgeSourceExporterService', () => {
 
     expect(attachmentRepo.findByIds).toHaveBeenCalledWith([
       'image-1',
+      '019eaf5b-5e81-744c-8438-f8c53ef34658',
       'foreign-image',
     ]);
     expect(snapshot.images).toEqual([
@@ -286,6 +307,14 @@ describe('KnowledgeSourceExporterService', () => {
         fileSize: 2048,
         attachmentVersion: '2026-07-27T00:01:00.000Z',
         altText: 'System diagram',
+      },
+      {
+        attachmentId: '019eaf5b-5e81-744c-8438-f8c53ef34658',
+        fileName: 'diagram-from-src.png',
+        mimeType: 'image/png',
+        fileSize: 4096,
+        attachmentVersion: '2026-07-27T00:02:00.000Z',
+        altText: 'Imported diagram',
       },
     ]);
     expect(snapshot.contentHash).toMatch(/^sha256:/);

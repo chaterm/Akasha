@@ -1262,6 +1262,8 @@ export class KnowledgeSpaceCompilationRepo {
           lastSuccessfulEffectiveHash: null,
           lastSuccessfulSourceVersion: null,
           lastSuccessfulSourceHash: null,
+          generationAttemptSourceHash: null,
+          generationAttemptCount: 0,
           pendingImport: null,
           pendingSpaceId: null,
           pendingSourceVersion: null,

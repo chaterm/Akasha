@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { Queue } from 'bullmq';
 import { CamelCasePlugin, Kysely } from 'kysely';
 import { PostgresJSDialect } from 'kysely-postgres-js';
-import * as postgres from 'postgres';
+import postgres from 'postgres';
 import { KyselyDB } from '../src/database/types/kysely.types';
 import { KnowledgeCompilationRepo } from '../src/database/repos/llm-wiki/knowledge-compilation.repo';
 import { KnowledgeImageExtractionRepo } from '../src/database/repos/llm-wiki/knowledge-image-extraction.repo';

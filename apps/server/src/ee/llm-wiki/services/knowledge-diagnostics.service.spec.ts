@@ -107,7 +107,7 @@ describe('scalable Knowledge Run diagnostics', () => {
         workerCount: 1,
         capacity: 10,
         exact: false,
-        lockDuration: 120_000,
+        lockDuration: 600_000,
         stalledInterval: 30_000,
         maxStalledCount: 2,
       },

@@ -1,8 +1,5 @@
 import { generateText, streamText } from 'ai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { createOllama } from 'ai-sdk-ollama';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import { ConfiguredKnowledgeAnswerProvider } from './knowledge-answer-provider.service';
 
@@ -11,20 +8,8 @@ jest.mock('ai', () => ({
   streamText: jest.fn(),
 }));
 
-jest.mock('@ai-sdk/openai', () => ({
-  createOpenAI: jest.fn(),
-}));
-
 jest.mock('@ai-sdk/openai-compatible', () => ({
   createOpenAICompatible: jest.fn(),
-}));
-
-jest.mock('@ai-sdk/google', () => ({
-  createGoogleGenerativeAI: jest.fn(),
-}));
-
-jest.mock('ai-sdk-ollama', () => ({
-  createOllama: jest.fn(),
 }));
 
 describe('ConfiguredKnowledgeAnswerProvider', () => {
@@ -33,12 +18,12 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
     (generateText as jest.Mock).mockResolvedValue({ text: 'grounded answer' });
   });
 
-  it('uses the OpenAI chat model with grounded knowledge instructions', async () => {
+  it('uses the OpenAI-compatible chat model with grounded knowledge instructions', async () => {
     const openaiProvider = jest.fn().mockReturnValue('openai-model');
-    (createOpenAI as jest.Mock).mockReturnValue(openaiProvider);
+    (createOpenAICompatible as jest.Mock).mockReturnValue(openaiProvider);
     const service = createService({
-      aiDriver: 'openai',
-      aiChatModel: 'gpt-4.1-mini',
+      aiDriver: 'openai-compatible',
+      aiChatModel: 'qwen-max',
       openAiApiKey: 'openai-key',
       openAiApiUrl: 'https://api.openai.test/v1',
     });
@@ -51,11 +36,12 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
       }),
     ).resolves.toBe('grounded answer');
 
-    expect(createOpenAI).toHaveBeenCalledWith({
+    expect(createOpenAICompatible).toHaveBeenCalledWith({
+      name: 'openai-compatible',
       apiKey: 'openai-key',
       baseURL: 'https://api.openai.test/v1',
     });
-    expect(openaiProvider).toHaveBeenCalledWith('gpt-4.1-mini');
+    expect(openaiProvider).toHaveBeenCalledWith('qwen-max');
     expect(generateText).toHaveBeenCalledWith({
       model: 'openai-model',
       system: expect.stringContaining(
@@ -81,7 +67,7 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
     );
   });
 
-  it('uses OpenAI-compatible configuration when AI_DRIVER is openai-compatible', async () => {
+  it('uses the DB OpenAI-compatible answer configuration', async () => {
     const provider = jest.fn().mockReturnValue('compatible-model');
     (createOpenAICompatible as jest.Mock).mockReturnValue(provider);
     const service = createService({
@@ -101,39 +87,12 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
     expect(provider).toHaveBeenCalledWith('qwen');
   });
 
-  it('uses Gemini and Ollama providers from environment settings', async () => {
-    const googleProvider = jest.fn().mockReturnValue('gemini-model');
-    const ollamaProvider = jest.fn().mockReturnValue('ollama-model');
-    (createGoogleGenerativeAI as jest.Mock).mockReturnValue(googleProvider);
-    (createOllama as jest.Mock).mockReturnValue(ollamaProvider);
-
-    await createService({
-      aiDriver: 'gemini',
-      aiChatModel: 'gemini-2.0-flash',
-      geminiApiKey: 'gemini-key',
-    }).answer({ query: 'Q', context: 'Context' });
-    await createService({
-      aiDriver: 'ollama',
-      aiChatModel: 'llama3.2',
-      ollamaApiUrl: 'http://ollama.test',
-    }).answer({ query: 'Q', context: 'Context' });
-
-    expect(createGoogleGenerativeAI).toHaveBeenCalledWith({
-      apiKey: 'gemini-key',
-    });
-    expect(googleProvider).toHaveBeenCalledWith('gemini-2.0-flash');
-    expect(createOllama).toHaveBeenCalledWith({
-      baseURL: 'http://ollama.test',
-    });
-    expect(ollamaProvider).toHaveBeenCalledWith('llama3.2');
-  });
-
   it('instructs the model to answer from knowledge or request a clean general fallback', async () => {
     const openaiProvider = jest.fn().mockReturnValue('openai-model');
-    (createOpenAI as jest.Mock).mockReturnValue(openaiProvider);
+    (createOpenAICompatible as jest.Mock).mockReturnValue(openaiProvider);
 
     await expect(
-      createService({ aiDriver: 'openai' }).answer({
+      createService({ aiDriver: 'openai-compatible' }).answer({
         query: 'What weekday is today?',
         context: '   ',
       }),
@@ -160,10 +119,10 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
 
   it('uses a separate general-knowledge prompt only when explicitly requested', async () => {
     const openaiProvider = jest.fn().mockReturnValue('openai-model');
-    (createOpenAI as jest.Mock).mockReturnValue(openaiProvider);
+    (createOpenAICompatible as jest.Mock).mockReturnValue(openaiProvider);
 
     await expect(
-      createService({ aiDriver: 'openai' }).answer({
+      createService({ aiDriver: 'openai-compatible' }).answer({
         query: 'What is the weather generally like in Shanghai in July?',
         context: '',
         mode: 'general',
@@ -196,11 +155,11 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
 
   it('rewrites a contextual follow-up into a standalone retrieval query', async () => {
     const openaiProvider = jest.fn().mockReturnValue('openai-model');
-    (createOpenAI as jest.Mock).mockReturnValue(openaiProvider);
+    (createOpenAICompatible as jest.Mock).mockReturnValue(openaiProvider);
     (generateText as jest.Mock).mockResolvedValueOnce({
       text: 'Codex 的套餐多少钱',
     });
-    const service = createService({ aiDriver: 'openai' });
+    const service = createService({ aiDriver: 'openai-compatible' });
 
     const result = await (
       service as unknown as {
@@ -241,9 +200,9 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
 
   it('keeps the original retrieval query when contextual rewriting fails', async () => {
     const openaiProvider = jest.fn().mockReturnValue('openai-model');
-    (createOpenAI as jest.Mock).mockReturnValue(openaiProvider);
+    (createOpenAICompatible as jest.Mock).mockReturnValue(openaiProvider);
     (generateText as jest.Mock).mockRejectedValueOnce(new Error('timeout'));
-    const service = createService({ aiDriver: 'openai' });
+    const service = createService({ aiDriver: 'openai-compatible' });
 
     await expect(
       service.rewriteQuery({
@@ -255,9 +214,9 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
 
   it('uses the configured total input limit only as a large-context safeguard', async () => {
     const openaiProvider = jest.fn().mockReturnValue('openai-model');
-    (createOpenAI as jest.Mock).mockReturnValue(openaiProvider);
+    (createOpenAICompatible as jest.Mock).mockReturnValue(openaiProvider);
     const service = createService({
-      aiDriver: 'openai',
+      aiDriver: 'openai-compatible',
       aiChatMaxInputChars: 700_000,
     });
 
@@ -280,9 +239,9 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
 
   it('does not trim conversation context when the total input is below the safeguard', async () => {
     const openaiProvider = jest.fn().mockReturnValue('openai-model');
-    (createOpenAI as jest.Mock).mockReturnValue(openaiProvider);
+    (createOpenAICompatible as jest.Mock).mockReturnValue(openaiProvider);
     const service = createService({
-      aiDriver: 'openai',
+      aiDriver: 'openai-compatible',
       aiChatMaxInputChars: 700_000,
     });
     const history = `history-start ${'h'.repeat(150_000)} history-end`;
@@ -301,14 +260,14 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
 
   it('exposes the model text stream without buffering the answer', async () => {
     const openaiProvider = jest.fn().mockReturnValue('openai-model');
-    (createOpenAI as jest.Mock).mockReturnValue(openaiProvider);
+    (createOpenAICompatible as jest.Mock).mockReturnValue(openaiProvider);
     (streamText as jest.Mock).mockReturnValue({
       textStream: (async function* () {
         yield 'first ';
         yield 'second';
       })(),
     });
-    const service = createService({ aiDriver: 'openai' });
+    const service = createService({ aiDriver: 'openai-compatible' });
 
     const tokens: string[] = [];
     for await (const token of service.stream({
@@ -331,22 +290,28 @@ function createService(input: {
   aiChatMaxInputChars?: number;
   openAiApiKey?: string;
   openAiApiUrl?: string;
-  geminiApiKey?: string;
-  ollamaApiUrl?: string;
 }) {
   const environmentService = {
-    getAiDriver: jest.fn().mockReturnValue(input.aiDriver),
-    getAiChatModel: jest.fn().mockReturnValue(input.aiChatModel ?? 'model'),
     getAiChatMaxInputChars: jest
       .fn()
       .mockReturnValue(input.aiChatMaxInputChars ?? 700_000),
-    getOpenAiApiKey: jest.fn().mockReturnValue(input.openAiApiKey),
-    getOpenAiApiUrl: jest.fn().mockReturnValue(input.openAiApiUrl),
-    getGeminiApiKey: jest.fn().mockReturnValue(input.geminiApiKey),
-    getOllamaApiUrl: jest.fn().mockReturnValue(input.ollamaApiUrl),
+  };
+  const configService = {
+    getResolvedConfig: jest.fn(async () => ({
+      driver: Object.prototype.hasOwnProperty.call(input, 'aiDriver')
+        ? input.aiDriver
+        : 'openai-compatible',
+      model: input.aiChatModel ?? 'model',
+      apiKey: input.openAiApiKey ?? 'openai-key',
+      baseUrl: input.openAiApiUrl ?? 'https://openai.example/v1',
+      parameters: {},
+      fromDatabase: false,
+    })),
+    invalidate: jest.fn(),
   };
 
   return new ConfiguredKnowledgeAnswerProvider(
     environmentService as unknown as EnvironmentService,
+    configService as never,
   );
 }

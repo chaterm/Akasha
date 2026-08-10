@@ -163,13 +163,9 @@ describe('KnowledgeCompilationRepo', () => {
       method: 'onConflict',
       args: [expect.any(Function)],
     });
-    expect(query.calls).toContainEqual({
-      method: 'where',
-      args: [expect.any(Function)],
-    });
   });
 
-  it('qualifies the compile task fence and allows terminal attempts to restart in the PostgreSQL conflict update', async () => {
+  it('allows a new compile task to replace a stale running diagnostic attempt', async () => {
     const queries: CompiledQuery[] = [];
     const dialect = {
       createAdapter: () => new PostgresAdapter(),
@@ -200,12 +196,12 @@ describe('KnowledgeCompilationRepo', () => {
     });
 
     expect(queries[0]?.sql).toContain(
-      'where ("knowledge_compilation_attempts"."compile_task_id" = $',
+      'on conflict ("workspace_id", "source_page_id") do update set',
     );
-    expect(queries[0]?.sql).toContain(
-      '"knowledge_compilation_attempts"."status" in ($',
+    expect(queries[0]?.sql).toContain('"compile_task_id" = $');
+    expect(queries[0]?.sql).not.toContain(
+      'where ("knowledge_compilation_attempts"."compile_task_id"',
     );
-    expect(queries[0]?.sql).not.toContain('where "compile_task_id" = $');
     await db.destroy();
   });
 

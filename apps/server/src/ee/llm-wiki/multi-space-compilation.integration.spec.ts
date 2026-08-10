@@ -137,6 +137,7 @@ function createService(runRepo: ReturnType<typeof createRunRepo>) {
     {} as never,
     {} as never,
     {} as never,
+    {} as never,
   );
   return { service, spaceQueue, imageQueue };
 }

@@ -16,6 +16,7 @@ import { useUpgradeLabel } from "@/ee/hooks/use-upgrade-label";
 import { isCloud } from "@/lib/config.ts";
 import { useLocation, useNavigate } from "react-router-dom";
 import SkillSettings from "@/ee/ai/components/skill-settings.tsx";
+import AiModelSettings from "@/ee/ai/components/ai-model-settings.tsx";
 
 export default function AiSettings() {
   const { t } = useTranslation();
@@ -29,7 +30,9 @@ export default function AiSettings() {
     ? "mcp"
     : location.pathname.endsWith("/skill")
       ? "skill"
-      : "ai";
+      : location.pathname.endsWith("/models")
+        ? "models"
+        : "ai";
 
   if (!isAdmin) {
     return null;
@@ -40,6 +43,8 @@ export default function AiSettings() {
       navigate("/settings/ai/mcp");
     } else if (value === "skill") {
       navigate("/settings/ai/skill");
+    } else if (value === "models") {
+      navigate("/settings/ai/models");
     } else {
       navigate("/settings/ai");
     }
@@ -63,6 +68,9 @@ export default function AiSettings() {
           <Tabs.Tab fw={500} value="skill">
             {t("Skill")}
           </Tabs.Tab>
+          <Tabs.Tab fw={500} value="models">
+            {t("Models")}
+          </Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="ai" pt="md">
@@ -79,6 +87,10 @@ export default function AiSettings() {
 
         <Tabs.Panel value="skill" pt="md">
           <SkillSettings />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="models" pt="md">
+          <AiModelSettings />
         </Tabs.Panel>
       </Tabs>
     </>

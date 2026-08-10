@@ -1112,6 +1112,20 @@ export class KnowledgeSpaceExecutionRepo {
       const run = await this.lockLeasedRun(trx, lease);
       if (!run || run.spaceJobRecoveryCount >= 3) return false;
       const now = new Date();
+      await trx
+        .updateTable('knowledgeCompilationAttempts')
+        .set({
+          status: 'skipped',
+          errorCode: 'run_superseded',
+          errorMessage: 'Knowledge Space slice was requeued after recovery.',
+          finishedAt: now,
+          updatedAt: now,
+        })
+        .where('workspaceId', '=', run.workspaceId)
+        .where('spaceId', '=', run.spaceId)
+        .where('status', '=', 'running')
+        .where('compileTaskId', 'like', `${lease.spaceJobId}__%`)
+        .execute();
       const updated = await trx
         .updateTable('knowledgeSpaceCompileRuns')
         .set({

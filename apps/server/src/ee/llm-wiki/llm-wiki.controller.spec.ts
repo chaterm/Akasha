@@ -20,6 +20,7 @@ import { PageRepo } from '@akasha/db/repos/page/page.repo';
 import { KnowledgeSourceExporterService } from './services/knowledge-source-exporter.service';
 import { KnowledgeSpaceCompilationService } from './services/knowledge-space-compilation.service';
 import { KnowledgeSpaceResetService } from './services/knowledge-space-reset.service';
+import { AiModelConfigService } from './services/ai-model-config.service';
 import { SpaceAuthorizationService } from '../../core/space/services/space-authorization.service';
 import { PageAccessService } from '../../core/page/page-access/page-access.service';
 
@@ -1319,6 +1320,7 @@ function createController(
     spaceReset?: Partial<KnowledgeSpaceResetService>;
     spaceAuthorization?: Partial<SpaceAuthorizationService>;
     pageAccessService?: Partial<PageAccessService>;
+    aiModelConfigService?: Partial<AiModelConfigService>;
   } = {},
 ) {
   return new LlmWikiController(
@@ -1389,6 +1391,11 @@ function createController(
       validateCanReadCitationSourceWithPermissions: jest.fn(),
       ...overrides.pageAccessService,
     } as unknown as PageAccessService,
+    {
+      listConfigViews: jest.fn().mockResolvedValue([]),
+      updateConfig: jest.fn(),
+      ...overrides.aiModelConfigService,
+    } as unknown as AiModelConfigService,
   );
 }
 

@@ -12,9 +12,11 @@ import type { StructuredWiki } from './structured-wiki';
 
 jest.mock('ai', () => ({ generateText: jest.fn() }));
 jest.mock('@ai-sdk/openai-compatible', () => ({
-  createOpenAICompatible: jest.fn(() => ({
-    chatModel: jest.fn(() => 'review-model'),
-  })),
+  createOpenAICompatible: jest.fn(() =>
+    Object.assign(jest.fn(() => 'review-model'), {
+      chatModel: jest.fn(() => 'review-model'),
+    }),
+  ),
 }));
 
 describe('ReviewService external call bounds', () => {
@@ -33,12 +35,21 @@ describe('ReviewService external call bounds', () => {
         }),
       });
     const timeoutSpy = jest.spyOn(global, 'setTimeout');
-    const service = new ReviewService({
-      getOpenAiApiKey: jest.fn(() => 'key'),
-      getOpenAiApiUrl: jest.fn(() => 'https://example.test/v1'),
-      getAiChatModel: jest.fn(() => 'chat-model'),
-      getKnowledgeCompilerTimeoutMs: jest.fn(() => 120_000),
-    } as never);
+    const service = new ReviewService(
+      {
+        getKnowledgeCompilerTimeoutMs: jest.fn(() => 120_000),
+      } as never,
+      {
+        getResolvedConfig: jest.fn().mockResolvedValue({
+          driver: 'openai-compatible',
+          model: 'chat-model',
+          apiKey: 'key',
+          baseUrl: 'https://example.test/v1',
+          parameters: {},
+          fromDatabase: true,
+        }),
+      } as never,
+    );
     const wiki: StructuredWiki = {
       version: '1',
       folders: [],

@@ -2,11 +2,33 @@ import { KnowledgeRunReaperService } from './knowledge-run-reaper.service';
 
 describe('KnowledgeRunReaperService', () => {
   it.each(['active', 'waiting', 'delayed', 'prioritized', 'waiting-children'])(
-    'does not recover an exact Redis job that is still %s',
+    'does not recover a stale queued reservation while the exact Redis job is still %s',
+    async (state) => {
+      const fixture = createFixture({ state });
+      fixture.repo.findSpaceRecoveryCandidates.mockResolvedValue([
+        candidate({ status: 'queued', executionLeaseExpiresAt: null }),
+      ]);
+      await fixture.service.reap();
+      expect(fixture.repo.claimRecoveryLease).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['active', 'waiting', 'delayed', 'prioritized', 'waiting-children'])(
+    'requeues an expired leased job even when the exact Redis job is still %s',
     async (state) => {
       const fixture = createFixture({ state });
       await fixture.service.reap();
-      expect(fixture.repo.claimRecoveryLease).not.toHaveBeenCalled();
+      expect(fixture.repo.claimRecoveryLease).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: 'run-1',
+          spaceJobId: 'job-1',
+          recoveryKind: 'expired',
+        }),
+      );
+      expect(fixture.repo.requeueMissingSpaceSlice).toHaveBeenCalledWith(
+        fixture.lease,
+      );
+      expect(fixture.repo.finishRun).not.toHaveBeenCalled();
     },
   );
 
@@ -56,6 +78,17 @@ describe('KnowledgeRunReaperService', () => {
       fixture.lease,
       'failed',
       expect.objectContaining({ errorCode: 'redis_job_missing_exhausted' }),
+    );
+  });
+
+  it('fails an expired leased executable job after bounded recovery is exhausted', async () => {
+    const fixture = createFixture({ state: 'active', recoveryCount: 3 });
+    await fixture.service.reap();
+    expect(fixture.repo.requeueMissingSpaceSlice).not.toHaveBeenCalled();
+    expect(fixture.repo.finishRun).toHaveBeenCalledWith(
+      fixture.lease,
+      'failed',
+      expect.objectContaining({ errorCode: 'redis_job_stale_exhausted' }),
     );
   });
 

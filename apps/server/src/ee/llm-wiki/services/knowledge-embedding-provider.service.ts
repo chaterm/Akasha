@@ -1,12 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { createOpenAI } from '@ai-sdk/openai';
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { embed, EmbeddingModel } from 'ai';
-import { createOllama } from 'ai-sdk-ollama';
-import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import { createBoundedAbortSignal } from './knowledge-operation-budget';
+import { AiModelConfigService } from './ai-model-config.service';
+import { createEmbeddingModelFromConfig } from './ai-model-factory';
 
 export type KnowledgeEmbedding = {
   vector: number[];
@@ -65,7 +62,7 @@ export function buildKnowledgeEmbeddingProfile(input: {
 
 @Injectable()
 export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingProvider {
-  constructor(private readonly environmentService: EnvironmentService) {}
+  constructor(private readonly configService: AiModelConfigService) {}
 
   async embedQuery(
     query: string,
@@ -96,9 +93,10 @@ export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingP
     required: boolean,
     options?: { abortSignal?: AbortSignal },
   ): Promise<KnowledgeEmbedding | null> {
-    const driver = this.environmentService.getAiDriver();
-    const modelName = this.environmentService.getAiEmbeddingModel();
-    const model = this.createEmbeddingModel(driver);
+    const config = await this.configService.getResolvedConfig('embedding');
+    const driver = config.driver;
+    const modelName = config.model;
+    const model = createEmbeddingModelFromConfig(config, 'openai-compatible');
     if (text.trim().length === 0) {
       if (required) {
         throw new KnowledgeEmbeddingError(
@@ -149,7 +147,7 @@ export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingP
         vector,
         profile: buildKnowledgeEmbeddingProfile({
           driver,
-          baseUrl: this.embeddingBaseUrl(driver),
+          baseUrl: config.baseUrl,
           model: modelName,
           dimensions: vector.length,
         }),
@@ -170,52 +168,6 @@ export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingP
     }
   }
 
-  private createEmbeddingModel(driver?: string): EmbeddingModel | undefined {
-    const modelName = this.environmentService.getAiEmbeddingModel();
-    if (!driver || !modelName) {
-      return undefined;
-    }
-
-    switch (driver) {
-      case 'openai': {
-        return createOpenAI({
-          apiKey: this.environmentService.getOpenAiApiKey(),
-          baseURL: this.environmentService.getOpenAiApiUrl(),
-        }).embeddingModel(modelName);
-      }
-      case 'openai-compatible': {
-        return createOpenAICompatible({
-          name: 'openai-compatible',
-          apiKey: this.environmentService.getOpenAiApiKey(),
-          baseURL: this.environmentService.getOpenAiApiUrl(),
-        }).embeddingModel(modelName);
-      }
-      case 'gemini': {
-        return createGoogleGenerativeAI({
-          apiKey: this.environmentService.getGeminiApiKey(),
-        }).textEmbeddingModel(modelName);
-      }
-      case 'ollama': {
-        return createOllama({
-          baseURL: this.environmentService.getOllamaApiUrl(),
-        }).textEmbeddingModel(modelName);
-      }
-      default:
-        return undefined;
-    }
-  }
-
-  private embeddingBaseUrl(driver: string): string | undefined {
-    switch (driver) {
-      case 'openai':
-      case 'openai-compatible':
-        return this.environmentService.getOpenAiApiUrl();
-      case 'ollama':
-        return this.environmentService.getOllamaApiUrl();
-      default:
-        return undefined;
-    }
-  }
 }
 
 function classifyRequiredEmbeddingError(

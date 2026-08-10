@@ -3,18 +3,13 @@
  * Please do not edit it manually.
  */
 
-import type { ColumnType } from 'kysely';
+import type { ColumnType } from "kysely";
 
-export type Generated<T> =
-  T extends ColumnType<infer S, infer I, infer U>
-    ? ColumnType<S, I | undefined, U>
-    : ColumnType<T, T | undefined, T>;
+export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
+  ? ColumnType<S, I | undefined, U>
+  : ColumnType<T, T | undefined, T>;
 
-export type Int8 = ColumnType<
-  string,
-  bigint | number | string,
-  bigint | number | string
->;
+export type Int8 = ColumnType<string, bigint | number | string, bigint | number | string>;
 
 export type Json = JsonValue;
 
@@ -53,6 +48,18 @@ export interface AiChats {
   title: string | null;
   updatedAt: Generated<Timestamp>;
   workspaceId: string;
+}
+
+export interface AiModelConfigs {
+  apiKeyEncrypted: string | null;
+  baseUrl: string | null;
+  createdAt: Generated<Timestamp>;
+  feature: string;
+  id: Generated<string>;
+  model: string;
+  parameters: Json | null;
+  provider: string;
+  updatedAt: Generated<Timestamp>;
 }
 
 export interface ApiKeys {
@@ -347,9 +354,9 @@ export interface KnowledgeCompilationAttempts {
   compilerVersion: string;
   compileTaskId: string | null;
   createdAt: Generated<Timestamp>;
+  effectiveKnowledgeHash: string | null;
   errorCode: string | null;
   errorMessage: string | null;
-  effectiveKnowledgeHash: string | null;
   finishedAt: Timestamp | null;
   generationAttemptCount: Generated<number>;
   generationAttemptSourceHash: string | null;
@@ -392,6 +399,18 @@ export interface KnowledgeGraphEdges {
   workspaceId: string;
 }
 
+export interface KnowledgeGraphEdgeSources {
+  attachmentId: string | null;
+  contentHash: string;
+  graphEdgeId: string;
+  provenanceKind: string;
+  quoteHash: string | null;
+  sourcePageId: string;
+  sourceRange: Json | null;
+  sourceVersion: string;
+  workspaceId: string;
+}
+
 export interface KnowledgeImageExtractions {
   attachmentId: string;
   attachmentVersion: Timestamp | null;
@@ -410,22 +429,10 @@ export interface KnowledgeImageExtractions {
   model: string;
   ocrText: string | null;
   promptVersion: string;
-  retryAfter: Timestamp | null;
   retryable: boolean | null;
+  retryAfter: Timestamp | null;
   status: string;
   updatedAt: Generated<Timestamp>;
-  workspaceId: string;
-}
-
-export interface KnowledgeGraphEdgeSources {
-  attachmentId: string | null;
-  contentHash: string;
-  graphEdgeId: string;
-  provenanceKind: string;
-  quoteHash: string | null;
-  sourcePageId: string;
-  sourceRange: Json | null;
-  sourceVersion: string;
   workspaceId: string;
 }
 
@@ -457,6 +464,20 @@ export interface KnowledgeLinkSources {
   sourcePageId: string;
   sourceRange: Json | null;
   sourceVersion: string;
+  workspaceId: string;
+}
+
+export interface KnowledgePageCompileSchedules {
+  changeCount: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  eligibleAt: Timestamp;
+  firstChangedAt: Timestamp;
+  id: Generated<string>;
+  lastChangedAt: Timestamp;
+  sourcePageId: string;
+  spaceId: string;
+  trigger: string;
+  updatedAt: Generated<Timestamp>;
   workspaceId: string;
 }
 
@@ -656,54 +677,6 @@ export interface KnowledgeSources {
   workspaceId: string;
 }
 
-export interface KnowledgePageCompileSchedules {
-  changeCount: Generated<number>;
-  createdAt: Generated<Timestamp>;
-  eligibleAt: Timestamp;
-  firstChangedAt: Timestamp;
-  id: Generated<string>;
-  lastChangedAt: Timestamp;
-  sourcePageId: string;
-  spaceId: string;
-  trigger: string;
-  updatedAt: Generated<Timestamp>;
-  workspaceId: string;
-}
-
-export interface KnowledgeSpaceCompileRunPages {
-  bindingStatus: Generated<string>;
-  boundAt: Generated<Timestamp | null>;
-  createdAt: Generated<Timestamp>;
-  discoveredSourceVersion: Timestamp | null;
-  errorCode: string | null;
-  errorMessage: string | null;
-  expectedImageCount: Generated<number | null>;
-  expectedSourceContentHash: string | null;
-  expectedSourceVersion: string | null;
-  finishedAt: Timestamp | null;
-  failedImageCount: Generated<number>;
-  id: Generated<string>;
-  jobId: string | null;
-  imageJobId: string | null;
-  imageStatus: Generated<string>;
-  mergeJobId: string | null;
-  mergedEffectiveKnowledgeHash: string | null;
-  mergeStatus: Generated<string>;
-  queuedAt: Timestamp | null;
-  qualityStatus: Generated<string>;
-  reused: Generated<boolean>;
-  runId: string;
-  sourcePageId: string;
-  skippedImageCount: Generated<number>;
-  spaceId: string;
-  startedAt: Timestamp | null;
-  status: Generated<string>;
-  succeededImageCount: Generated<number>;
-  targetEffectiveKnowledgeHash: string | null;
-  updatedAt: Generated<Timestamp>;
-  workspaceId: string;
-}
-
 export interface KnowledgeSpaceCompileRunImages {
   altText: string | null;
   attachmentId: string;
@@ -728,6 +701,40 @@ export interface KnowledgeSpaceCompileRunImages {
   sourcePageId: string;
   spaceId: string;
   status: Generated<string>;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
+export interface KnowledgeSpaceCompileRunPages {
+  bindingStatus: Generated<string>;
+  boundAt: Generated<Timestamp | null>;
+  createdAt: Generated<Timestamp>;
+  discoveredSourceVersion: Timestamp | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  expectedImageCount: Generated<number | null>;
+  expectedSourceContentHash: string | null;
+  expectedSourceVersion: string | null;
+  failedImageCount: Generated<number>;
+  finishedAt: Timestamp | null;
+  id: Generated<string>;
+  imageJobId: string | null;
+  imageStatus: Generated<string>;
+  jobId: string | null;
+  mergedEffectiveKnowledgeHash: string | null;
+  mergeJobId: string | null;
+  mergeStatus: Generated<string>;
+  qualityStatus: Generated<string>;
+  queuedAt: Timestamp | null;
+  reused: Generated<boolean>;
+  runId: string;
+  skippedImageCount: Generated<number>;
+  sourcePageId: string;
+  spaceId: string;
+  startedAt: Timestamp | null;
+  status: Generated<string>;
+  succeededImageCount: Generated<number>;
+  targetEffectiveKnowledgeHash: string | null;
   updatedAt: Generated<Timestamp>;
   workspaceId: string;
 }
@@ -1120,6 +1127,7 @@ export interface Workspaces {
 export interface DB {
   aiChatMessages: AiChatMessages;
   aiChats: AiChats;
+  aiModelConfigs: AiModelConfigs;
   apiKeys: ApiKeys;
   attachments: Attachments;
   audit: Audit;
@@ -1143,9 +1151,9 @@ export interface DB {
   knowledgeImageExtractions: KnowledgeImageExtractions;
   knowledgeLinks: KnowledgeLinks;
   knowledgeLinkSources: KnowledgeLinkSources;
+  knowledgePageCompileSchedules: KnowledgePageCompileSchedules;
   knowledgePages: KnowledgePages;
   knowledgePageSources: KnowledgePageSources;
-  knowledgePageCompileSchedules: KnowledgePageCompileSchedules;
   knowledgeParentSections: KnowledgeParentSections;
   knowledgeParentSectionSources: KnowledgeParentSectionSources;
   knowledgeQuarantinedArtifacts: KnowledgeQuarantinedArtifacts;
@@ -1158,8 +1166,8 @@ export interface DB {
   knowledgeSourceAnalyses: KnowledgeSourceAnalyses;
   knowledgeSourceChunks: KnowledgeSourceChunks;
   knowledgeSources: KnowledgeSources;
-  knowledgeSpaceCompileRunPages: KnowledgeSpaceCompileRunPages;
   knowledgeSpaceCompileRunImages: KnowledgeSpaceCompileRunImages;
+  knowledgeSpaceCompileRunPages: KnowledgeSpaceCompileRunPages;
   knowledgeSpaceCompileRuns: KnowledgeSpaceCompileRuns;
   labels: Labels;
   notifications: Notifications;

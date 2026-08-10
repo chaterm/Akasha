@@ -6,6 +6,7 @@ const ENV_KEYS = [
   'KNOWLEDGE_SPACE_SLICE_MAX_MS',
   'KNOWLEDGE_SPACE_HEARTBEAT_MS',
   'KNOWLEDGE_SPACE_LEASE_TTL_MS',
+  'KNOWLEDGE_QUEUE_LOCK_DURATION_MS',
 ] as const;
 
 describe('knowledge worker settings', () => {
@@ -30,17 +31,18 @@ describe('knowledge worker settings', () => {
       sliceMaxMs: 300_000,
       heartbeatMs: 30_000,
       executionLeaseTtlMs: 180_000,
+      queueLockDurationMs: 600_000,
     });
     expect(Object.isFrozen(module.KNOWLEDGE_WORKER_SETTINGS)).toBe(true);
     expect(module.KNOWLEDGE_SPACE_WORKER_OPTIONS).toEqual({
       concurrency: 10,
-      lockDuration: 120_000,
+      lockDuration: 600_000,
       stalledInterval: 30_000,
       maxStalledCount: 2,
     });
     expect(module.KNOWLEDGE_IMAGE_WORKER_OPTIONS).toEqual({
       concurrency: 5,
-      lockDuration: 120_000,
+      lockDuration: 600_000,
       stalledInterval: 30_000,
       maxStalledCount: 2,
     });
@@ -58,6 +60,7 @@ describe('knowledge worker settings', () => {
       KNOWLEDGE_SPACE_SLICE_MAX_MS: '420000',
       KNOWLEDGE_SPACE_HEARTBEAT_MS: '20000',
       KNOWLEDGE_SPACE_LEASE_TTL_MS: '150000',
+      KNOWLEDGE_QUEUE_LOCK_DURATION_MS: '240000',
     });
 
     expect(loadSettings().KNOWLEDGE_WORKER_SETTINGS).toEqual({
@@ -68,6 +71,7 @@ describe('knowledge worker settings', () => {
       sliceMaxMs: 420_000,
       heartbeatMs: 20_000,
       executionLeaseTtlMs: 150_000,
+      queueLockDurationMs: 240_000,
     });
   });
 
@@ -81,6 +85,8 @@ describe('knowledge worker settings', () => {
     ['KNOWLEDGE_SPACE_SLICE_MAX_MS', '59999'],
     ['KNOWLEDGE_SPACE_HEARTBEAT_MS', '60001'],
     ['KNOWLEDGE_SPACE_LEASE_TTL_MS', '119999'],
+    ['KNOWLEDGE_QUEUE_LOCK_DURATION_MS', '119999'],
+    ['KNOWLEDGE_QUEUE_LOCK_DURATION_MS', '1200001'],
   ])('fails module loading for invalid %s=%s', (key, value) => {
     process.env[key] = value;
     expect(() => loadSettings()).toThrow(key);
