@@ -14,7 +14,10 @@ import {
   CurrentReadyKnowledgeImageExtraction,
   KnowledgeImageExtractionRepo,
 } from '@akasha/db/repos/llm-wiki/knowledge-image-extraction.repo';
-import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
+import {
+  KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER,
+  KnowledgeSpaceCompilationRepo,
+} from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
 import {
   KnowledgeSpaceExecutionRepo,
   SpaceExecutionLease,
@@ -99,6 +102,25 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     }
     await this.dispatchPending();
     return results;
+  }
+
+  async requestImmediatePagePublish(input: {
+    workspaceId: string;
+    spaceId: string;
+    sourcePageId: string;
+  }) {
+    const [result] = await this.requestRuns([
+      {
+        workspaceId: input.workspaceId,
+        spaceId: input.spaceId,
+        trigger: KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER,
+        targetSourcePageIds: [input.sourcePageId],
+      },
+    ]);
+    if (result?.run?.spaceJobId) {
+      await this.promoteWaitingSpaceJob(result.run.spaceJobId);
+    }
+    return result;
   }
 
   async cancelRun(input: {
@@ -457,7 +479,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
           },
           {
             jobId: slice.spaceJobId,
-            priority: slice.jobPhase === 'image_merge' ? 1 : 5,
+            priority: knowledgeSpaceSlicePriority(slice),
           },
         );
         await this.runRepo.markSpaceSliceDispatched(slice);
@@ -544,6 +566,32 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       cleanupErrorCount,
     };
   }
+
+  private async promoteWaitingSpaceJob(jobId: string): Promise<void> {
+    try {
+      const job = await this.spaceQueue.getJob(jobId);
+      if (!job) return;
+      await job.changePriority({ priority: 0 });
+    } catch {
+      this.logger.warn({
+        event: 'knowledge_manual_page_publish_priority_update_failed',
+        jobId,
+      });
+    }
+  }
+}
+
+function knowledgeSpaceSlicePriority(slice: {
+  trigger?: string;
+  jobPhase: 'text' | 'image_merge';
+}): number {
+  if (
+    slice.trigger === KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER &&
+    slice.jobPhase === 'text'
+  ) {
+    return 0;
+  }
+  return slice.jobPhase === 'image_merge' ? 1 : 5;
 }
 
 /**

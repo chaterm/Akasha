@@ -1,7 +1,10 @@
 import { Queue } from 'bullmq';
 import { KnowledgeCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-compilation.repo';
 import { KnowledgeImageExtractionRepo } from '@akasha/db/repos/llm-wiki/knowledge-image-extraction.repo';
-import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
+import {
+  KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER,
+  KnowledgeSpaceCompilationRepo,
+} from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
 import {
   KnowledgeSpaceExecutionRepo,
   SpaceExecutionLease,
@@ -67,6 +70,67 @@ describe('KnowledgeSpaceCompilationService', () => {
       expect.objectContaining({ phase: 'image_merge' }),
       expect.objectContaining({ priority: 1 }),
     );
+  });
+
+  it('dispatches manual page publish slices ahead of regular text work', async () => {
+    const fixture = createService({
+      undispatchedSpaceSlices: [
+        {
+          ...spaceSlice(),
+          trigger: KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER,
+        },
+      ],
+    });
+
+    await fixture.service.dispatchPending();
+
+    expect(fixture.spaceQueue.add).toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_COMPILE_SPACE_TEXT,
+      expect.objectContaining({ phase: 'text' }),
+      expect.objectContaining({ priority: 0 }),
+    );
+  });
+
+  it('requests an immediate page-scoped publish and promotes an existing waiting job', async () => {
+    const changePriority = jest.fn().mockResolvedValue(undefined);
+    const fixture = createService();
+    fixture.repo.requestRuns.mockResolvedValue([
+      {
+        disposition: 'coalesced',
+        run: {
+          id: 'run-1',
+          spaceJobId: 'knowledge-space-text__run-1__text__1',
+        },
+      },
+    ]);
+    fixture.spaceQueue.getJob.mockResolvedValue({ changePriority });
+
+    await expect(
+      fixture.service.requestImmediatePagePublish({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageId: 'page-1',
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        disposition: 'coalesced',
+        run: expect.objectContaining({ id: 'run-1' }),
+      }),
+    );
+
+    expect(fixture.repo.requestRuns).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requests: [
+          {
+            workspaceId: 'workspace-1',
+            spaceId: 'space-1',
+            trigger: KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER,
+            targetSourcePageIds: ['page-1'],
+          },
+        ],
+      }),
+    );
+    expect(changePriority).toHaveBeenCalledWith({ priority: 0 });
   });
 
   it('requests a queued run without exporter, catalog, image, or LLM planning', async () => {
@@ -524,6 +588,7 @@ function spaceSlice() {
     runId: 'run-space',
     workspaceId: 'workspace-1',
     spaceId: 'space-1',
+    trigger: 'manual_compile',
     knowledgeGeneration: 4,
     jobPhase: 'text',
     spaceJobSequence: 1,

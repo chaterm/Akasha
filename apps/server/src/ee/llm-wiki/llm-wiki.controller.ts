@@ -222,6 +222,59 @@ export class LlmWikiController {
   }
 
   @HttpCode(HttpStatus.OK)
+  @Post('pages/:pageId/publish')
+  async publishPageKnowledge(
+    @Param('pageId', ParseUUIDPipe) pageId: string,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    if (!this.chatService.isEnabledForWorkspace(workspace)) {
+      throw new ForbiddenException('AI knowledge chat is disabled');
+    }
+
+    const page = await this.pageRepo.findById(pageId);
+    if (
+      !page ||
+      page.workspaceId !== workspace.id ||
+      page.deletedAt !== null
+    ) {
+      throw new NotFoundException('Page not found');
+    }
+
+    await this.pageAccessService.validateCanEdit(page, user);
+
+    const request = await this.spaceCompilation.requestImmediatePagePublish({
+      workspaceId: workspace.id,
+      spaceId: page.spaceId,
+      sourcePageId: page.id,
+    });
+    const run = request.run!;
+    const result = {
+      pageId: page.id,
+      spaceId: page.spaceId,
+      runId: run.id,
+      disposition: request.disposition,
+      mode: 'incremental' as const,
+      knowledgeGeneration: run.knowledgeGeneration,
+    };
+
+    this.auditService.log({
+      event: AuditEvent.KNOWLEDGE_COMPILE_QUEUED,
+      resourceType: AuditResource.PAGE,
+      resourceId: page.id,
+      spaceId: page.spaceId,
+      metadata: {
+        origin: 'manual_page_publish',
+        runId: run.id,
+        disposition: request.disposition,
+        priority: 0,
+      },
+    });
+
+    return result;
+  }
+
+  @HttpCode(HttpStatus.OK)
   @Post('admin/spaces/:spaceId/update-knowledge')
   async updateSpaceKnowledge(
     @Param('spaceId', ParseUUIDPipe) spaceId: string,

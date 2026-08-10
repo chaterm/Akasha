@@ -12,6 +12,7 @@ import {
   IconMarkdown,
   IconMessage,
   IconPrinter,
+  IconRocket,
   IconStar,
   IconStarFilled,
   IconTrash,
@@ -24,7 +25,10 @@ import { historyAtoms } from "@/features/page-history/atoms/history-atoms.ts";
 import { useDisclosure, useHotkeys } from "@mantine/hooks";
 import { useClipboard } from "@/hooks/use-clipboard";
 import { useParams } from "react-router-dom";
-import { usePageQuery } from "@/features/page/queries/page-query.ts";
+import {
+  usePageQuery,
+  usePublishPageKnowledgeMutation,
+} from "@/features/page/queries/page-query.ts";
 import { buildPageUrl } from "@/features/page/page.utils.ts";
 import { notifications } from "@mantine/notifications";
 import { getAppUrl } from "@/lib/config.ts";
@@ -164,6 +168,7 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
   const { data: watchStatus } = useWatchStatusQuery(page?.id);
   const watchPage = useWatchPageMutation();
   const unwatchPage = useUnwatchPageMutation();
+  const publishPageKnowledge = usePublishPageKnowledgeMutation();
 
   const handleCopyLink = () => {
     const pageUrl =
@@ -204,6 +209,21 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
     } else {
       addFavoriteMutation.mutate(params);
     }
+  };
+
+  const handlePublishPage = () => {
+    if (!page?.id || publishPageKnowledge.isPending) return;
+    publishPageKnowledge.mutate(page.id, {
+      onSuccess: () => {
+        notifications.show({ message: t("Page publish started") });
+      },
+      onError: () => {
+        notifications.show({
+          message: t("Failed to publish page"),
+          color: "red",
+        });
+      },
+    });
   };
 
   return (
@@ -267,6 +287,16 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
               onClick={() => watchPage.mutate(page.id)}
             >
               {t("Watch page")}
+            </Menu.Item>
+          )}
+
+          {!readOnly && (
+            <Menu.Item
+              leftSection={<IconRocket size={16} />}
+              onClick={handlePublishPage}
+              disabled={publishPageKnowledge.isPending}
+            >
+              {t("Publish now")}
             </Menu.Item>
           )}
 
