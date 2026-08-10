@@ -1210,6 +1210,8 @@
   "Question": "问题",
   "Update knowledge": "更新知识库",
   "Knowledge update queued": "已提交 {{count}} 个空间的知识库更新",
+  "Reindex access": "重建访问权限索引",
+  "Mark stale": "标记知识过期",
   "Force rebuild knowledge": "强制重建知识库",
   "Dangerous actions": "危险操作",
   "Danger zone": "危险区域",

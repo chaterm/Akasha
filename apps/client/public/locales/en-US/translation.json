@@ -1210,6 +1210,8 @@
   "Question": "Question",
   "Update knowledge": "Update knowledge",
   "Knowledge update queued": "Queued knowledge update for {{count}} spaces",
+  "Reindex access": "Reindex access",
+  "Mark stale": "Mark stale",
   "Force rebuild knowledge": "Force rebuild knowledge",
   "Dangerous actions": "Dangerous actions",
   "Danger zone": "Danger zone",

@@ -2104,10 +2104,14 @@ function MaintenanceMenu({
       </Menu.Target>
       <Menu.Dropdown>
         <Menu.Item onClick={() => onAction("reindex_access")}>
-          {t("Reindex access")}
+          <Stack gap={2}>
+            <Text size="sm">{t("Reindex access")}</Text>
+          </Stack>
         </Menu.Item>
         <Menu.Item onClick={() => onAction("mark_stale")}>
-          {t("Mark stale")}
+          <Stack gap={2}>
+            <Text size="sm">{t("Mark stale")}</Text>
+          </Stack>
         </Menu.Item>
         <Menu.Item color="red" onClick={onForce}>
           {t("Force rebuild knowledge")}
