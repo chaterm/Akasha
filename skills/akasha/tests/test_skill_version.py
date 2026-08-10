@@ -46,12 +46,12 @@ class SkillCurrentCapabilitiesInstructionTests(unittest.TestCase):
         self.assertIn("citation get <PAGE_URL>", instructions)
         self.assertIn("不要求该地址来自知识问答", instructions)
 
-    def test_skill_keeps_shared_pages_read_only_and_stops_on_403(self) -> None:
+    def test_skill_allows_shared_page_writes_only_through_page_permissions(self) -> None:
         instructions = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
 
-        self.assertIn("共享空间 Page 只读", instructions)
+        self.assertIn("公共/共享空间只要该用户有编辑权限即可写入", instructions)
         self.assertIn("`citation get` 返回 403 时立即停止", instructions)
-        self.assertIn("不能把共享 Page 读取结果用于 `page update`", instructions)
+        self.assertIn("服务端按 API Key 所属用户的空间和 Page 权限校验", instructions)
 
     def test_api_reference_documents_the_citation_page_contract(self) -> None:
         api_reference = (SKILL_DIR / "references" / "api.md").read_text(
@@ -99,7 +99,7 @@ class SkillVersionHeaderTests(unittest.TestCase):
         client.get_current_user()
 
         headers = {key.lower(): value for key, value in requests[0].header_items()}
-        self.assertEqual(headers["x-akasha-skill-version"], "1.1.0")
+        self.assertEqual(headers["x-akasha-skill-version"], "1.2.0")
 
     def test_current_user_request_is_cached_for_one_command(self) -> None:
         requests = []
@@ -334,7 +334,7 @@ class SkillUpdateNoticeTests(unittest.TestCase):
         calls: list[str] = []
         notice = {
             "currentVersion": "1.0.0",
-            "latestVersion": "1.1.0",
+            "latestVersion": "1.2.0",
             "message": "请提示用户升级 Akasha Skill。",
             "upgradeUrl": "https://example.com/akasha-skill",
         }
@@ -378,7 +378,7 @@ class SkillUpdateNoticeTests(unittest.TestCase):
     def test_failed_business_request_still_surfaces_the_update_notice(self) -> None:
         notice = {
             "currentVersion": "1.0.0",
-            "latestVersion": "1.1.0",
+            "latestVersion": "1.2.0",
             "message": "请提示用户升级 Akasha Skill。",
             "upgradeUrl": "https://example.com/akasha-skill",
         }

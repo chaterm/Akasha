@@ -47,9 +47,10 @@ import { KnowledgeSpaceProcessor } from './processors/knowledge-space.processor'
 import { KnowledgeRunReaperService } from './services/knowledge-run-reaper.service';
 import { KnowledgeImageReaperService } from './services/knowledge-image-reaper.service';
 import { KnowledgeQualityService } from './services/knowledge-quality.service';
+import { AiModelConfigModule } from './services/ai-model-config.module';
 
 @Module({
-  imports: [NoopAuditModule, ReviewModule],
+  imports: [NoopAuditModule, AiModelConfigModule, ReviewModule],
   controllers: [LlmWikiController],
   providers: [
     SpaceAuthorizationService,

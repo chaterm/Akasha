@@ -120,42 +120,6 @@ export class EnvironmentVariables {
   TYPESENSE_LOCALE: string;
 
   @IsOptional()
-  @ValidateIf((obj) => obj.AI_DRIVER)
-  @IsIn(['openai', 'openai-compatible', 'gemini', 'ollama'])
-  @IsString()
-  AI_DRIVER: string;
-
-  @IsOptional()
-  @IsString()
-  AI_EMBEDDING_MODEL: string;
-
-  @ValidateIf((obj) => obj.AI_EMBEDDING_DIMENSION)
-  @IsIn(['768', '1024', '1536', '2000', '3072'])
-  @IsString()
-  AI_EMBEDDING_DIMENSION: string;
-
-  @IsOptional()
-  @ValidateIf((obj) => obj.AI_EMBEDDING_SUPPORTS_MRL)
-  @IsIn(['true', 'false'])
-  @IsString()
-  AI_EMBEDDING_SUPPORTS_MRL: string;
-
-  @ValidateIf((obj) => obj.AI_DRIVER)
-  @IsString()
-  @IsNotEmpty()
-  AI_CHAT_MODEL: string;
-
-  @IsOptional()
-  @IsString()
-  @IsNotEmpty()
-  KNOWLEDGE_COMPILER_MODEL: string;
-
-  @IsOptional()
-  @IsIn(['false'])
-  @IsString()
-  KNOWLEDGE_COMPILER_THINKING: string;
-
-  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
@@ -168,11 +132,6 @@ export class EnvironmentVariables {
   @Min(1)
   @Max(131_072)
   KNOWLEDGE_IMAGE_MERGE_MAX_OUTPUT_TOKENS: number;
-
-  @IsOptional()
-  @IsString()
-  @IsNotEmpty()
-  AI_VISION_MODEL: string;
 
   @IsOptional()
   @Type(() => Number)
@@ -250,33 +209,6 @@ export class EnvironmentVariables {
   @Min(120_000)
   @Max(600_000)
   KNOWLEDGE_SPACE_LEASE_TTL_MS: number;
-
-  @IsOptional()
-  @ValidateIf(
-    (obj) =>
-      obj.AI_DRIVER && ['openai', 'openai-compatible'].includes(obj.AI_DRIVER),
-  )
-  @IsString()
-  @IsNotEmpty()
-  OPENAI_API_KEY: string;
-
-  @IsOptional()
-  @ValidateIf(
-    (obj) =>
-      obj.AI_DRIVER === 'openai-compatible' ||
-      (obj.AI_DRIVER === 'openai' && obj.OPENAI_API_URL),
-  )
-  @IsUrl({ protocols: ['http', 'https'], require_tld: false })
-  OPENAI_API_URL: string;
-
-  @ValidateIf((obj) => obj.AI_DRIVER && obj.AI_DRIVER === 'gemini')
-  @IsString()
-  @IsNotEmpty()
-  GEMINI_API_KEY: string;
-
-  @ValidateIf((obj) => obj.AI_DRIVER && obj.AI_DRIVER === 'ollama')
-  @IsUrl({ protocols: ['http', 'https'], require_tld: false })
-  OLLAMA_API_URL: string;
 
   @IsOptional()
   @IsIn(['postgres', 'clickhouse'])

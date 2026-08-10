@@ -59,7 +59,7 @@ def _client(routes: dict[str, object], calls: list[tuple[str, dict]]):
     )
 
 
-def _run_cli(argv, fake_client):
+def _run_cli(argv, fake_client, stdin=None):
     with tempfile.TemporaryDirectory() as temp_dir:
         credential_file = Path(temp_dir) / "credentials.env"
         save_credentials(
@@ -70,6 +70,7 @@ def _run_cli(argv, fake_client):
         error_output = io.StringIO()
         exit_code = akasha.main(
             argv,
+            stdin=stdin,
             stdout=output,
             stderr=error_output,
             credential_file=credential_file,
@@ -234,6 +235,114 @@ class PersonalPageListClientTests(unittest.TestCase):
         self.assertEqual(result, {"items": [], "meta": {"count": 0, "limit": 20}})
 
 
+class PermissionScopedPageClientTests(unittest.TestCase):
+    def test_search_can_target_a_shared_space(self) -> None:
+        calls: list[tuple[str, dict]] = []
+        routes = {
+            "/api/pages/search": {
+                "items": [{"pageId": "page-1", "title": "公共技能"}],
+                "meta": {"count": 1, "limit": 10},
+            },
+        }
+        client = _client(routes, calls)
+
+        result = client.search_pages("技能", space_id="space-shared", limit=10)
+
+        self.assertEqual(result["meta"]["count"], 1)
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "/api/pages/search",
+                    {"query": "技能", "limit": 10, "spaceId": "space-shared"},
+                )
+            ],
+        )
+
+    def test_create_can_target_a_shared_space(self) -> None:
+        calls: list[tuple[str, dict]] = []
+        routes = {
+            "/api/pages/create": {
+                "id": "page-1",
+                "spaceId": "space-shared",
+                "title": "公共技能",
+            },
+        }
+        client = _client(routes, calls)
+
+        result = client.create_page(
+            title="公共技能",
+            content="# 公共技能",
+            space_id="space-shared",
+        )
+
+        self.assertEqual(result["spaceId"], "space-shared")
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "/api/pages/create",
+                    {
+                        "spaceId": "space-shared",
+                        "title": "公共技能",
+                        "content": "# 公共技能",
+                        "format": "markdown",
+                    },
+                )
+            ],
+        )
+
+    def test_get_accepts_a_shared_space_page_returned_by_the_api(self) -> None:
+        calls: list[tuple[str, dict]] = []
+        routes = {
+            "/api/pages/info": {
+                "id": "page-1",
+                "spaceId": "space-shared",
+                "title": "公共技能",
+                "content": "# 公共技能",
+            },
+        }
+        client = _client(routes, calls)
+
+        result = client.get_page("page-1")
+
+        self.assertEqual(result["spaceId"], "space-shared")
+        self.assertEqual(calls, [("/api/pages/info", {"pageId": "page-1", "format": "markdown"})])
+
+    def test_update_relies_on_server_permissions_for_shared_space_pages(self) -> None:
+        calls: list[tuple[str, dict]] = []
+        routes = {
+            "/api/pages/update": {
+                "id": "page-1",
+                "spaceId": "space-shared",
+                "title": "公共技能",
+            },
+        }
+        client = _client(routes, calls)
+
+        result = client.update_page(
+            page_id="page-1",
+            content="# 更新后的公共技能",
+            operation="replace",
+        )
+
+        self.assertEqual(result["spaceId"], "space-shared")
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "/api/pages/update",
+                    {
+                        "pageId": "page-1",
+                        "content": "# 更新后的公共技能",
+                        "format": "markdown",
+                        "operation": "replace",
+                    },
+                )
+            ],
+        )
+
+
 class NewCommandCliTests(unittest.TestCase):
     def test_space_list_checks_identity_then_lists_spaces(self) -> None:
         order: list[str] = []
@@ -261,6 +370,63 @@ class NewCommandCliTests(unittest.TestCase):
         payload = json.loads(output.getvalue())
         self.assertEqual(payload["meta"]["count"], 1)
         self.assertTrue(payload["items"][0]["isPersonal"])
+
+    def test_page_create_passes_the_requested_space_id(self) -> None:
+        seen: dict[str, object] = {}
+
+        class FakeClient:
+            def get_current_user(self):
+                return {}
+
+            def create_page(self, *, title, content, space_id, parent_page_id):
+                seen.update(
+                    {
+                        "title": title,
+                        "content": content,
+                        "spaceId": space_id,
+                        "parentPageId": parent_page_id,
+                    }
+                )
+                return {"id": "page-1", "spaceId": space_id}
+
+        exit_code, output, _ = _run_cli(
+            [
+                "page",
+                "create",
+                "--space-id",
+                "space-shared",
+                "--title",
+                "公共技能",
+                "--content-file",
+                "-",
+            ],
+            FakeClient(),
+            stdin=io.StringIO("# 公共技能"),
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(seen["spaceId"], "space-shared")
+        self.assertEqual(seen["content"], "# 公共技能")
+        self.assertEqual(json.loads(output.getvalue())["spaceId"], "space-shared")
+
+    def test_page_search_passes_the_requested_space_id(self) -> None:
+        seen: dict[str, object] = {}
+
+        class FakeClient:
+            def get_current_user(self):
+                return {}
+
+            def search_pages(self, *, query, limit, space_id):
+                seen.update({"query": query, "limit": limit, "spaceId": space_id})
+                return {"items": [], "meta": {"count": 0, "limit": limit}}
+
+        exit_code, _, _ = _run_cli(
+            ["page", "search", "技能", "--space-id", "space-shared"],
+            FakeClient(),
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(seen, {"query": "技能", "limit": 10, "spaceId": "space-shared"})
 
     def test_page_delete_reports_the_trashed_page(self) -> None:
         class FakeClient:

@@ -188,11 +188,12 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
     const idByKey = new Map<string, string>();
     for (const entry of generationCatalog.entries) {
       if (!entry.artifactId) continue;
+      const normalizedKey = normalizeCanonicalKey(entry.canonicalKey);
+      // Artifacts without a canonical key (e.g. source_summary/overview) cannot
+      // be resolved as link targets, and would otherwise collide on "kind:".
+      if (!normalizedKey) continue;
       idByKey.set(
-        artifactLookupKey(
-          entry.artifactKind,
-          normalizeCanonicalKey(entry.canonicalKey),
-        ),
+        artifactLookupKey(entry.artifactKind, normalizedKey),
         entry.artifactId,
       );
     }
@@ -282,7 +283,7 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
     const effectiveKnowledgeHash = analysisCacheHash({
       sourceEffectiveKnowledgeHash,
       providerIdentity:
-        this.provider.getCacheIdentity?.() ?? 'provider:unspecified',
+        (await this.provider.getCacheIdentity?.()) ?? 'provider:unspecified',
       promptVersion: input.promptVersion,
       catalogCandidateHash: candidateHash,
     });
@@ -330,9 +331,10 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
       compileTaskId: input.compileTaskId,
       stage: input.stage,
       compilerModel:
-        this.provider.getCompilerModel?.() ?? input.input.compilerVersion,
+        (await this.provider.getCompilerModel?.()) ??
+        input.input.compilerVersion,
       compilerProfile:
-        this.provider.getCacheIdentity?.() ?? 'provider:unspecified',
+        (await this.provider.getCacheIdentity?.()) ?? 'provider:unspecified',
       candidateIds: input.selection.candidateIds,
       candidateHash: input.selection.candidateHash,
     });
@@ -833,8 +835,10 @@ function toSourceRef(source: KnowledgeSourceSnapshot): KnowledgeSourceRef {
   };
 }
 
-function normalizeCanonicalKey(value: string): string {
-  return value.trim().toLocaleLowerCase('en-US');
+function normalizeCanonicalKey(value: string | null | undefined): string {
+  // Stored source_summary/overview artifacts legitimately have a null
+  // canonicalKey, so guard against it rather than assuming a string.
+  return (value ?? '').trim().toLocaleLowerCase('en-US');
 }
 
 function artifactLookupKey(kind: string, canonicalKey: string): string {

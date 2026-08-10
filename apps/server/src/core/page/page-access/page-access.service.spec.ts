@@ -1,4 +1,3 @@
-import { ForbiddenException } from '@nestjs/common';
 import { withApiKeyAccess } from '../../../common/auth/api-key-access';
 import { UserRole } from '../../../common/helpers/types/permission';
 import { PageAccessService } from './page-access.service';
@@ -36,40 +35,46 @@ describe('PageAccessService API key policy', () => {
     };
   };
 
-  it('rejects editing a shared-space page even with page-level writer access', async () => {
+  it('allows editing a shared-space page when the API key owner has page-level writer access', async () => {
     const { service, pagePermissionRepo } = createService();
 
-    await expect(service.validateCanEdit(page, apiUser)).rejects.toBeInstanceOf(
-      ForbiddenException,
+    await expect(service.validateCanEdit(page, apiUser)).resolves.toEqual({
+      hasRestriction: true,
+    });
+    expect(pagePermissionRepo.canUserEditPage).toHaveBeenCalledWith(
+      'user-1',
+      'page-1',
     );
-    expect(pagePermissionRepo.canUserEditPage).not.toHaveBeenCalled();
   });
 
-  it('reports shared-space pages as non-editable while preserving read access', async () => {
+  it('reports shared-space pages as editable when the API key owner has edit access', async () => {
     const { service } = createService();
 
     await expect(
       service.validateCanViewWithPermissions(page, apiUser),
-    ).resolves.toEqual({ canEdit: false, hasRestriction: true });
+    ).resolves.toEqual({ canEdit: true, hasRestriction: true });
   });
 
-  it('allows an ACL-readable shared Page only through the citation source policy', async () => {
+  it('uses the same permissions for citation source reads', async () => {
     const { service } = createService();
 
     await expect(
       service.validateCanReadCitationSourceWithPermissions(page, apiUser),
-    ).resolves.toEqual({ canEdit: false, hasRestriction: true });
+    ).resolves.toEqual({ canEdit: true, hasRestriction: true });
   });
 
-  it('rejects reading shared-space source content with an API key', async () => {
+  it('allows reading shared-space source content through ordinary Page visibility', async () => {
     const { service, spaceAbility, pagePermissionRepo } = createService();
 
     await expect(
       service.validateCanReadSourceWithPermissions(page, apiUser),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    ).resolves.toEqual({ canEdit: true, hasRestriction: true });
 
-    expect(spaceAbility.createForUser).not.toHaveBeenCalled();
-    expect(pagePermissionRepo.canUserEditPage).not.toHaveBeenCalled();
+    expect(spaceAbility.createForUser).toHaveBeenCalledWith(apiUser, 'shared-1');
+    expect(pagePermissionRepo.canUserEditPage).toHaveBeenCalledWith(
+      'user-1',
+      'page-1',
+    );
   });
 
   it('allows reading source content from the API key personal space', async () => {

@@ -20,6 +20,7 @@ import { PageRepo } from '@akasha/db/repos/page/page.repo';
 import { KnowledgeSourceExporterService } from './services/knowledge-source-exporter.service';
 import { KnowledgeSpaceCompilationService } from './services/knowledge-space-compilation.service';
 import { KnowledgeSpaceResetService } from './services/knowledge-space-reset.service';
+import { AiModelConfigService } from './services/ai-model-config.service';
 import { SpaceAuthorizationService } from '../../core/space/services/space-authorization.service';
 import { PageAccessService } from '../../core/page/page-access/page-access.service';
 
@@ -586,6 +587,76 @@ describe('LlmWikiController', () => {
         acceptedRunCount: 2,
         coalescedRunCount: 0,
         rerunRequestedCount: 1,
+      },
+    });
+  });
+
+  it('publishes an editable page through an immediate page-scoped run', async () => {
+    const auditService = { log: jest.fn() };
+    const pageRepo = {
+      findById: jest.fn().mockResolvedValue({
+        id: '11111111-1111-4111-8111-111111111111',
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        deletedAt: null,
+      }),
+    };
+    const pageAccessService = {
+      validateCanEdit: jest.fn().mockResolvedValue({ hasRestriction: false }),
+    };
+    const spaceCompilation = {
+      requestImmediatePagePublish: jest.fn().mockResolvedValue({
+        disposition: 'created',
+        run: {
+          id: 'run-1',
+          spaceId: 'space-1',
+          knowledgeGeneration: 7,
+        },
+      }),
+    };
+    const controller = createController({
+      auditService,
+      pageRepo,
+      pageAccessService,
+      spaceCompilation,
+    });
+
+    await expect(
+      controller.publishPageKnowledge(
+        '11111111-1111-4111-8111-111111111111',
+        user(),
+        workspace(),
+      ),
+    ).resolves.toEqual({
+      pageId: '11111111-1111-4111-8111-111111111111',
+      spaceId: 'space-1',
+      runId: 'run-1',
+      disposition: 'created',
+      mode: 'incremental',
+      knowledgeGeneration: 7,
+    });
+
+    expect(pageAccessService.validateCanEdit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: '11111111-1111-4111-8111-111111111111',
+      }),
+      user(),
+    );
+    expect(spaceCompilation.requestImmediatePagePublish).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageId: '11111111-1111-4111-8111-111111111111',
+    });
+    expect(auditService.log).toHaveBeenCalledWith({
+      event: AuditEvent.KNOWLEDGE_COMPILE_QUEUED,
+      resourceType: AuditResource.PAGE,
+      resourceId: '11111111-1111-4111-8111-111111111111',
+      spaceId: 'space-1',
+      metadata: {
+        origin: 'manual_page_publish',
+        runId: 'run-1',
+        disposition: 'created',
+        priority: 0,
       },
     });
   });
@@ -1319,6 +1390,7 @@ function createController(
     spaceReset?: Partial<KnowledgeSpaceResetService>;
     spaceAuthorization?: Partial<SpaceAuthorizationService>;
     pageAccessService?: Partial<PageAccessService>;
+    aiModelConfigService?: Partial<AiModelConfigService>;
   } = {},
 ) {
   return new LlmWikiController(
@@ -1373,6 +1445,7 @@ function createController(
     } as unknown as KnowledgeSourceExporterService,
     {
       requestRuns: jest.fn(),
+      requestImmediatePagePublish: jest.fn(),
       ...overrides.spaceCompilation,
     } as unknown as KnowledgeSpaceCompilationService,
     {
@@ -1387,8 +1460,14 @@ function createController(
     } as unknown as SpaceAuthorizationService,
     {
       validateCanReadCitationSourceWithPermissions: jest.fn(),
+      validateCanEdit: jest.fn(),
       ...overrides.pageAccessService,
     } as unknown as PageAccessService,
+    {
+      listConfigViews: jest.fn().mockResolvedValue([]),
+      updateConfig: jest.fn(),
+      ...overrides.aiModelConfigService,
+    } as unknown as AiModelConfigService,
   );
 }
 

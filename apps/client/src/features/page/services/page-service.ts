@@ -32,6 +32,24 @@ export async function updatePage(data: Partial<IPageInput>): Promise<IPage> {
   return req.data;
 }
 
+export interface PublishPageKnowledgeResult {
+  pageId: string;
+  spaceId: string;
+  runId: string;
+  disposition: "created" | "coalesced" | "rerun_requested";
+  mode: "incremental";
+  knowledgeGeneration: number;
+}
+
+export async function publishPageKnowledge(
+  pageId: string,
+): Promise<PublishPageKnowledgeResult> {
+  const req = await api.post<PublishPageKnowledgeResult>(
+    `/llm-wiki/pages/${pageId}/publish`,
+  );
+  return req.data;
+}
+
 export async function deletePage(pageId: string, permanentlyDelete = false): Promise<void> {
   await api.post("/pages/delete", { pageId, permanentlyDelete });
 }

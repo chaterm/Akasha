@@ -13,7 +13,6 @@ import {
   SpaceCaslSubject,
 } from '../interfaces/space-ability.type';
 import { findHighestUserSpaceRole } from '@akasha/db/repos/space/utils';
-import { isOrdinaryApiKeySpaceReadOnly } from '../../../common/auth/api-key-access';
 
 @Injectable()
 export default class SpaceAbilityFactory {
@@ -30,17 +29,12 @@ export default class SpaceAbilityFactory {
     );
 
     const userSpaceRole = findHighestUserSpaceRole(userSpaceRoles);
-    const apiKeyReadOnly = isOrdinaryApiKeySpaceReadOnly(user, spaceId);
 
     switch (userSpaceRole) {
       case SpaceRole.ADMIN:
-        return apiKeyReadOnly
-          ? buildSpaceReaderAbility()
-          : buildSpaceAdminAbility();
+        return buildSpaceAdminAbility();
       case SpaceRole.WRITER:
-        return apiKeyReadOnly
-          ? buildSpaceReaderAbility()
-          : buildSpaceWriterAbility();
+        return buildSpaceWriterAbility();
       case SpaceRole.READER:
         return buildSpaceReaderAbility();
       default:

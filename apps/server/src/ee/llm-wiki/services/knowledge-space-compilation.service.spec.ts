@@ -1,13 +1,15 @@
 import { Queue } from 'bullmq';
 import { KnowledgeCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-compilation.repo';
 import { KnowledgeImageExtractionRepo } from '@akasha/db/repos/llm-wiki/knowledge-image-extraction.repo';
-import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
+import {
+  KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER,
+  KnowledgeSpaceCompilationRepo,
+} from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
 import {
   KnowledgeSpaceExecutionRepo,
   SpaceExecutionLease,
 } from '@akasha/db/repos/llm-wiki/knowledge-space-execution.repo';
 import { QueueJob } from '../../../integrations/queue/constants';
-import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import {
   DEFAULT_KNOWLEDGE_COMPILER_VERSION,
   DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
@@ -16,6 +18,7 @@ import {
 import { buildEffectiveKnowledgeHash } from './knowledge-effective-hash';
 import { KnowledgeSourceExporterService } from './knowledge-source-exporter.service';
 import { KnowledgeSpaceCompilationService } from './knowledge-space-compilation.service';
+import { KnowledgeImageUnderstandingProvider } from './knowledge-image-understanding-provider.service';
 
 describe('KnowledgeSpaceCompilationService', () => {
   it('dispatches a DB-reserved Space slice and never fans out page jobs', async () => {
@@ -67,6 +70,67 @@ describe('KnowledgeSpaceCompilationService', () => {
       expect.objectContaining({ phase: 'image_merge' }),
       expect.objectContaining({ priority: 1 }),
     );
+  });
+
+  it('dispatches manual page publish slices ahead of regular text work', async () => {
+    const fixture = createService({
+      undispatchedSpaceSlices: [
+        {
+          ...spaceSlice(),
+          trigger: KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER,
+        },
+      ],
+    });
+
+    await fixture.service.dispatchPending();
+
+    expect(fixture.spaceQueue.add).toHaveBeenCalledWith(
+      QueueJob.KNOWLEDGE_COMPILE_SPACE_TEXT,
+      expect.objectContaining({ phase: 'text' }),
+      expect.objectContaining({ priority: 0 }),
+    );
+  });
+
+  it('requests an immediate page-scoped publish and promotes an existing waiting job', async () => {
+    const changePriority = jest.fn().mockResolvedValue(undefined);
+    const fixture = createService();
+    fixture.repo.requestRuns.mockResolvedValue([
+      {
+        disposition: 'coalesced',
+        run: {
+          id: 'run-1',
+          spaceJobId: 'knowledge-space-text__run-1__text__1',
+        },
+      },
+    ]);
+    fixture.spaceQueue.getJob.mockResolvedValue({ changePriority });
+
+    await expect(
+      fixture.service.requestImmediatePagePublish({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        sourcePageId: 'page-1',
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        disposition: 'coalesced',
+        run: expect.objectContaining({ id: 'run-1' }),
+      }),
+    );
+
+    expect(fixture.repo.requestRuns).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requests: [
+          {
+            workspaceId: 'workspace-1',
+            spaceId: 'space-1',
+            trigger: KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER,
+            targetSourcePageIds: ['page-1'],
+          },
+        ],
+      }),
+    );
+    expect(changePriority).toHaveBeenCalledWith({ priority: 0 });
   });
 
   it('requests a queued run without exporter, catalog, image, or LLM planning', async () => {
@@ -482,8 +546,8 @@ function createService(
       .fn()
       .mockResolvedValue({ terminalized: true }),
   };
-  const environmentService = {
-    getAiVisionModel: jest.fn().mockReturnValue('vision-model'),
+  const imageProvider = {
+    getCacheIdentity: jest.fn().mockReturnValue('sha256:vision-provider'),
   };
   const service = new KnowledgeSpaceCompilationService(
     spaceQueue as unknown as Queue,
@@ -491,8 +555,8 @@ function createService(
     repo as unknown as KnowledgeSpaceCompilationRepo,
     compilationRepo as unknown as KnowledgeCompilationRepo,
     imageExtractionRepo as unknown as KnowledgeImageExtractionRepo,
-    environmentService as unknown as EnvironmentService,
     sourceExporter as unknown as KnowledgeSourceExporterService,
+    imageProvider as unknown as KnowledgeImageUnderstandingProvider,
     executionRepo as unknown as KnowledgeSpaceExecutionRepo,
   );
   return {
@@ -504,6 +568,7 @@ function createService(
     executionRepo,
     compilationRepo,
     imageExtractionRepo,
+    imageProvider,
   };
 }
 
@@ -523,6 +588,7 @@ function spaceSlice() {
     runId: 'run-space',
     workspaceId: 'workspace-1',
     spaceId: 'space-1',
+    trigger: 'manual_compile',
     knowledgeGeneration: 4,
     jobPhase: 'text',
     spaceJobSequence: 1,
@@ -572,7 +638,7 @@ function readyExtraction(
     attachmentVersion,
     currentAttachmentVersion: attachmentVersion,
     status: 'ready',
-    model: 'vision-model',
+    model: 'sha256:vision-provider',
     promptVersion: DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
     cacheFingerprint: `cache-${image.attachmentId}`,
     contentHash: `sha256:${image.attachmentId}`,

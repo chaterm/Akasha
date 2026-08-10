@@ -7,19 +7,15 @@ import {
   NoOutputGeneratedError,
   Output,
 } from 'ai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { createOpenAI } from '@ai-sdk/openai';
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { createOllama } from 'ai-sdk-ollama';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import { createBoundedAbortSignal } from './knowledge-operation-budget';
+import {
+  AiModelConfigService,
+  ResolvedAiModelConfig,
+} from './ai-model-config.service';
+import { createLanguageModelFromConfig } from './ai-model-factory';
 
-const supportedDrivers = new Set([
-  'openai',
-  'openai-compatible',
-  'gemini',
-  'ollama',
-]);
+const supportedDrivers = new Set(['openai-compatible']);
 const MAX_PROVIDER_IMAGE_BYTES = 12 * 1024 * 1024;
 const MAX_OCR_OUTPUT_CHARS = 12_000;
 const MAX_CAPTION_OUTPUT_CHARS = 2_000;
@@ -58,8 +54,8 @@ export class KnowledgeImageUnderstandingError extends Error {
 }
 
 export interface KnowledgeImageUnderstandingProvider {
-  isConfigured(): boolean;
-  getCacheIdentity(): string;
+  isConfigured(): Promise<boolean>;
+  getCacheIdentity(): Promise<string>;
   describe(
     input: KnowledgeImageUnderstandingInput,
     abortSignal?: AbortSignal,
@@ -68,29 +64,20 @@ export interface KnowledgeImageUnderstandingProvider {
 
 @Injectable()
 export class ConfiguredKnowledgeImageUnderstandingProvider implements KnowledgeImageUnderstandingProvider {
-  constructor(private readonly environmentService: EnvironmentService) {}
+  constructor(
+    private readonly environmentService: EnvironmentService,
+    private readonly configService: AiModelConfigService,
+  ) {}
 
-  isConfigured(): boolean {
-    const driver = this.environmentService.getAiDriver()?.trim().toLowerCase();
-    if (
-      !driver ||
-      !supportedDrivers.has(driver) ||
-      !this.environmentService.getAiVisionModel()?.trim()
-    ) {
+  async isConfigured(): Promise<boolean> {
+    const config = await this.configService.getResolvedConfig('image');
+    const driver = config.driver?.trim().toLowerCase();
+    if (!driver || !supportedDrivers.has(driver) || !config.model?.trim()) {
       return false;
     }
     switch (driver) {
-      case 'openai':
-        return Boolean(this.environmentService.getOpenAiApiKey()?.trim());
       case 'openai-compatible':
-        return Boolean(
-          this.environmentService.getOpenAiApiKey()?.trim() &&
-          this.environmentService.getOpenAiApiUrl()?.trim(),
-        );
-      case 'gemini':
-        return Boolean(this.environmentService.getGeminiApiKey()?.trim());
-      case 'ollama':
-        return Boolean(this.environmentService.getOllamaApiUrl()?.trim());
+        return Boolean(config.apiKey?.trim() && config.baseUrl?.trim());
       default:
         return false;
     }
@@ -100,17 +87,11 @@ export class ConfiguredKnowledgeImageUnderstandingProvider implements KnowledgeI
    * A non-secret identity used to invalidate extraction caches when the model
    * route changes. API keys are deliberately excluded.
    */
-  getCacheIdentity(): string {
-    const driver = this.environmentService.getAiDriver()?.trim().toLowerCase();
-    const model = this.environmentService.getAiVisionModel()?.trim();
-    const endpoint = normalizeEndpoint(
-      driver === 'ollama'
-        ? this.environmentService.getOllamaApiUrl()
-        : driver === 'gemini'
-          ? 'google-generative-ai'
-          : this.environmentService.getOpenAiApiUrl() ||
-            (driver === 'openai' ? 'https://api.openai.com/v1' : ''),
-    );
+  async getCacheIdentity(): Promise<string> {
+    const config = await this.configService.getResolvedConfig('image');
+    const driver = config.driver?.trim().toLowerCase();
+    const model = config.model?.trim();
+    const endpoint = normalizeEndpoint(config.baseUrl || '');
     return `sha256:${createHash('sha256')
       .update(
         JSON.stringify([PROVIDER_PROTOCOL_VERSION, driver, endpoint, model]),
@@ -125,13 +106,15 @@ export class ConfiguredKnowledgeImageUnderstandingProvider implements KnowledgeI
     validateInput(input);
 
     let value: unknown;
+    const { model, config } = await this.createModel();
     const boundedSignal = createBoundedAbortSignal(
       abortSignal,
       this.environmentService.getKnowledgeImageTimeoutMs(),
     );
     try {
+      const temperature = isOpenAiReasoningModel(config) ? undefined : 0;
       const result = await generateText({
-        model: this.createModel(),
+        model,
         system: buildSystemPrompt(),
         messages: [
           {
@@ -149,9 +132,12 @@ export class ConfiguredKnowledgeImageUnderstandingProvider implements KnowledgeI
             ],
           },
         ],
-        temperature: 0,
+        ...(temperature === undefined ? {} : { temperature }),
         maxOutputTokens: 8_000,
         abortSignal: boundedSignal.signal,
+        providerOptions: isOpenAiReasoningModel(config)
+          ? { openaiCompatible: { reasoningEffort: 'low' } }
+          : {},
         output: Output.json({
           name: 'knowledge_image_understanding_v1',
           description:
@@ -176,45 +162,38 @@ export class ConfiguredKnowledgeImageUnderstandingProvider implements KnowledgeI
     return parseImageUnderstandingOutput(value);
   }
 
-  private createModel(): LanguageModel {
-    const driver = this.environmentService.getAiDriver()?.trim().toLowerCase();
-    const modelName = this.environmentService.getAiVisionModel()?.trim();
-    if (!driver || !modelName || !supportedDrivers.has(driver)) {
+  private async createModel(): Promise<{
+    model: LanguageModel;
+    config: ResolvedAiModelConfig;
+  }> {
+    const config = await this.configService.getResolvedConfig('image');
+    const driver = config.driver?.trim().toLowerCase();
+    if (!driver || !supportedDrivers.has(driver)) {
       throw new KnowledgeImageUnderstandingError(
         'configuration_error',
         'Knowledge image understanding model is not configured.',
         false,
       );
     }
-
-    switch (driver) {
-      case 'openai':
-        return createOpenAI({
-          apiKey: this.environmentService.getOpenAiApiKey(),
-          baseURL: this.environmentService.getOpenAiApiUrl(),
-        })(modelName);
-      case 'openai-compatible':
-        return createOpenAICompatible({
-          name: 'openai-compatible',
-          apiKey: this.environmentService.getOpenAiApiKey(),
-          baseURL: this.environmentService.getOpenAiApiUrl(),
-        })(modelName);
-      case 'gemini':
-        return createGoogleGenerativeAI({
-          apiKey: this.environmentService.getGeminiApiKey(),
-        })(modelName);
-      case 'ollama':
-        return createOllama({
-          baseURL: this.environmentService.getOllamaApiUrl(),
-        })(modelName);
-      default:
-        throw new KnowledgeImageUnderstandingError(
-          'configuration_error',
-          'Knowledge image understanding model is not configured.',
-          false,
-        );
+    const model = createLanguageModelFromConfig(config, 'openai-compatible');
+    if (!model) {
+      throw new KnowledgeImageUnderstandingError(
+        'configuration_error',
+        'Knowledge image understanding model is not configured.',
+        false,
+      );
     }
+    return { model, config };
   }
+}
+
+function isOpenAiReasoningModel(config: ResolvedAiModelConfig): boolean {
+  if (config.driver?.trim().toLowerCase() !== 'openai-compatible') {
+    return false;
+  }
+  const model = config.model?.trim().toLowerCase();
+  if (!model) return false;
+  return model.includes('gpt') || /(^|[-_])o[134](?:[-_]|$)/.test(model);
 }
 
 function validateInput(input: KnowledgeImageUnderstandingInput): void {

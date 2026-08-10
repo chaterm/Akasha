@@ -252,8 +252,7 @@ function canonicalKnowledgeContent(
       node.attrs && typeof node.attrs === 'object'
         ? (node.attrs as Record<string, unknown>)
         : undefined;
-    const attachmentId =
-      typeof attrs?.attachmentId === 'string' ? attrs.attachmentId.trim() : '';
+    const attachmentId = imageAttachmentIdFromAttrs(attrs);
     if (!attachmentId || !supportedImageIds.has(attachmentId)) {
       return undefined;
     }
@@ -288,10 +287,10 @@ function findPageImageReferences(content: unknown): PageImageReference[] {
     if (node.type === 'image' && node.attrs && typeof node.attrs === 'object') {
       const attrs = node.attrs as {
         attachmentId?: unknown;
+        src?: unknown;
         alt?: unknown;
       };
-      const attachmentId =
-        typeof attrs.attachmentId === 'string' ? attrs.attachmentId.trim() : '';
+      const attachmentId = imageAttachmentIdFromAttrs(attrs);
       if (attachmentId && !seen.has(attachmentId)) {
         seen.add(attachmentId);
         const altText =
@@ -309,6 +308,20 @@ function findPageImageReferences(content: unknown): PageImageReference[] {
 
   visit(content);
   return images;
+}
+
+const LOCAL_FILE_SRC_ATTACHMENT_ID_PATTERN =
+  /^\/(?:api\/)?files\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i;
+
+function imageAttachmentIdFromAttrs(
+  attrs: Record<string, unknown> | undefined,
+): string {
+  const explicit =
+    typeof attrs?.attachmentId === 'string' ? attrs.attachmentId.trim() : '';
+  if (explicit) return explicit;
+
+  const src = typeof attrs?.src === 'string' ? attrs.src.trim() : '';
+  return src.match(LOCAL_FILE_SRC_ATTACHMENT_ID_PATTERN)?.[1] ?? '';
 }
 
 function supportedPageImageMimeType(

@@ -4,10 +4,7 @@ import {
   NoOutputGeneratedError,
   Output,
 } from 'ai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { createOllama } from 'ai-sdk-ollama';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import {
   ConfiguredKnowledgeImageUnderstandingProvider,
@@ -20,14 +17,9 @@ jest.mock('ai', () => ({
   NoOutputGeneratedError: { isInstance: jest.fn(() => false) },
   NoObjectGeneratedError: { isInstance: jest.fn(() => false) },
 }));
-jest.mock('@ai-sdk/openai', () => ({ createOpenAI: jest.fn() }));
 jest.mock('@ai-sdk/openai-compatible', () => ({
   createOpenAICompatible: jest.fn(),
 }));
-jest.mock('@ai-sdk/google', () => ({
-  createGoogleGenerativeAI: jest.fn(),
-}));
-jest.mock('ai-sdk-ollama', () => ({ createOllama: jest.fn() }));
 
 const imageBytes = Buffer.from('image-bytes');
 
@@ -42,35 +34,33 @@ describe('ConfiguredKnowledgeImageUnderstandingProvider', () => {
     );
   });
 
-  it.each([
-    ['openai', createOpenAI],
-    ['openai-compatible', createOpenAICompatible],
-    ['gemini', createGoogleGenerativeAI],
-    ['ollama', createOllama],
-  ])('creates the configured %s vision model', async (driver, factory) => {
-    const modelFactory = jest.fn().mockReturnValue('vision-model-instance');
-    (factory as jest.Mock).mockReturnValue(modelFactory);
-    (generateText as jest.Mock).mockResolvedValue({
-      output: { ocrText: 'Visible text', caption: 'A diagram.' },
-    });
-    const provider = createProvider({ driver });
+  it.each([['openai-compatible', createOpenAICompatible]])(
+    'creates the configured %s vision model',
+    async (driver, factory) => {
+      const modelFactory = jest.fn().mockReturnValue('vision-model-instance');
+      (factory as jest.Mock).mockReturnValue(modelFactory);
+      (generateText as jest.Mock).mockResolvedValue({
+        output: { ocrText: 'Visible text', caption: 'A diagram.' },
+      });
+      const provider = createProvider({ driver });
 
-    await expect(
-      provider.describe({
-        bytes: imageBytes,
-        mimeType: 'image/png',
-      }),
-    ).resolves.toEqual({
-      ocrText: 'Visible text',
-      caption: 'A diagram.',
-    });
+      await expect(
+        provider.describe({
+          bytes: imageBytes,
+          mimeType: 'image/png',
+        }),
+      ).resolves.toEqual({
+        ocrText: 'Visible text',
+        caption: 'A diagram.',
+      });
 
-    expect(modelFactory).toHaveBeenCalledWith('qwen3.7-plus');
-  });
+      expect(modelFactory).toHaveBeenCalledWith('vision-model');
+    },
+  );
 
   it('sends private image bytes and metadata as a multimodal message', async () => {
     const modelFactory = jest.fn().mockReturnValue('vision-model-instance');
-    (createOpenAI as jest.Mock).mockReturnValue(modelFactory);
+    (createOpenAICompatible as jest.Mock).mockReturnValue(modelFactory);
     (generateText as jest.Mock).mockResolvedValue({
       output: { ocrText: '  OCR result  ', caption: '  Caption result  ' },
     });
@@ -112,6 +102,7 @@ describe('ConfiguredKnowledgeImageUnderstandingProvider', () => {
       temperature: 0,
       maxOutputTokens: 8_000,
       abortSignal: expect.any(AbortSignal),
+      providerOptions: {},
       output: expect.objectContaining({
         name: 'knowledge_image_understanding_v1',
         type: 'json',
@@ -121,8 +112,28 @@ describe('ConfiguredKnowledgeImageUnderstandingProvider', () => {
     timeoutSpy.mockRestore();
   });
 
+  it('uses fixed low reasoning effort and omits temperature for GPT vision models', async () => {
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
+      jest.fn().mockReturnValue('vision-model-instance'),
+    );
+    (generateText as jest.Mock).mockResolvedValue({
+      output: { ocrText: 'Visible', caption: 'Caption' },
+    });
+
+    await createProvider({ visionModel: 'openai-gpt-5.6-luna' }).describe({
+      bytes: imageBytes,
+      mimeType: 'image/png',
+    });
+
+    const request = (generateText as jest.Mock).mock.calls[0][0];
+    expect(request).not.toHaveProperty('temperature');
+    expect(request.providerOptions).toEqual({
+      openaiCompatible: { reasoningEffort: 'low' },
+    });
+  });
+
   it('passes parent cancellation into the bounded vision request', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('vision-model-instance'),
     );
     (generateText as jest.Mock).mockResolvedValue({
@@ -141,7 +152,7 @@ describe('ConfiguredKnowledgeImageUnderstandingProvider', () => {
   });
 
   it('normalizes common JSON field aliases and fenced output', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('vision-model-instance'),
     );
     (generateText as jest.Mock).mockResolvedValue({
@@ -161,7 +172,7 @@ describe('ConfiguredKnowledgeImageUnderstandingProvider', () => {
   });
 
   it('recovers JSON text exposed by NoObjectGeneratedError', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('vision-model-instance'),
     );
     const error = Object.assign(new Error('structured output failed'), {
@@ -183,23 +194,25 @@ describe('ConfiguredKnowledgeImageUnderstandingProvider', () => {
     });
   });
 
-  it('reports whether a supported driver and vision model are configured', () => {
-    expect(createProvider().isConfigured()).toBe(true);
-    expect(createProvider({ driver: 'unsupported' }).isConfigured()).toBe(
+  it('reports whether a supported driver and vision model are configured', async () => {
+    expect(await createProvider().isConfigured()).toBe(true);
+    expect(await createProvider({ driver: 'unsupported' }).isConfigured()).toBe(
       false,
     );
-    expect(createProvider({ visionModel: '' }).isConfigured()).toBe(false);
-    expect(createProvider({ apiKey: '' }).isConfigured()).toBe(false);
+    expect(await createProvider({ visionModel: '' }).isConfigured()).toBe(
+      false,
+    );
+    expect(await createProvider({ apiKey: '' }).isConfigured()).toBe(false);
   });
 
-  it('fingerprints the non-secret provider route for cache invalidation', () => {
-    const first = createProvider({
+  it('fingerprints the non-secret provider route for cache invalidation', async () => {
+    const first = await createProvider({
       apiUrl: 'https://user:password@llm.example/v1?token=secret',
     }).getCacheIdentity();
-    const sameRouteWithAnotherSecret = createProvider({
+    const sameRouteWithAnotherSecret = await createProvider({
       apiUrl: 'https://another:credential@llm.example/v1?key=other',
     }).getCacheIdentity();
-    const anotherRoute = createProvider({
+    const anotherRoute = await createProvider({
       apiUrl: 'https://other-llm.example/v1',
     }).getCacheIdentity();
 
@@ -210,7 +223,7 @@ describe('ConfiguredKnowledgeImageUnderstandingProvider', () => {
   });
 
   it('bounds extracted text before it reaches the cache or compiler', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('vision-model-instance'),
     );
     (generateText as jest.Mock).mockResolvedValue({
@@ -259,7 +272,7 @@ describe('ConfiguredKnowledgeImageUnderstandingProvider', () => {
   );
 
   it('classifies unusable structured output', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('vision-model-instance'),
     );
     (generateText as jest.Mock).mockResolvedValue({
@@ -290,7 +303,7 @@ describe('ConfiguredKnowledgeImageUnderstandingProvider', () => {
   ])(
     'classifies provider failures without exposing their message',
     async (error, code) => {
-      (createOpenAI as jest.Mock).mockReturnValue(
+      (createOpenAICompatible as jest.Mock).mockReturnValue(
         jest.fn().mockReturnValue('vision-model-instance'),
       );
       (generateText as jest.Mock).mockRejectedValue(error);
@@ -320,14 +333,23 @@ function createProvider(
   } = {},
 ): ConfiguredKnowledgeImageUnderstandingProvider {
   const environmentService = {
-    getAiDriver: jest.fn(() => input.driver ?? 'openai'),
-    getAiVisionModel: jest.fn(() => input.visionModel ?? 'qwen3.7-plus'),
     getKnowledgeImageTimeoutMs: jest.fn(() => input.timeoutMs ?? 120_000),
-    getOpenAiApiKey: jest.fn(() => input.apiKey ?? 'openai-key'),
-    getOpenAiApiUrl: jest.fn(() => input.apiUrl ?? 'https://llm.example/v1'),
-    getGeminiApiKey: jest.fn(() => 'gemini-key'),
-    getOllamaApiUrl: jest.fn(() => 'http://ollama.example'),
   } as unknown as EnvironmentService;
+  const driver = input.driver ?? 'openai-compatible';
+  const configService = {
+    getResolvedConfig: jest.fn(async () => ({
+      driver,
+      model: input.visionModel ?? 'vision-model',
+      apiKey: input.apiKey ?? 'openai-key',
+      baseUrl: input.apiUrl ?? 'https://llm.example/v1',
+      parameters: {},
+      fromDatabase: false,
+    })),
+    invalidate: jest.fn(),
+  } as never;
 
-  return new ConfiguredKnowledgeImageUnderstandingProvider(environmentService);
+  return new ConfiguredKnowledgeImageUnderstandingProvider(
+    environmentService,
+    configService,
+  );
 }

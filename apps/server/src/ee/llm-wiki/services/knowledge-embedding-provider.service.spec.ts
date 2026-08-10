@@ -144,15 +144,18 @@ function environment(
     driver: 'openai-compatible',
   },
 ) {
+  const driver = Object.prototype.hasOwnProperty.call(input, 'driver')
+    ? input.driver
+    : 'openai-compatible';
   return {
-    getAiDriver: jest.fn(() =>
-      Object.prototype.hasOwnProperty.call(input, 'driver')
-        ? input.driver
-        : 'openai-compatible',
-    ),
-    getAiEmbeddingModel: jest.fn(() => 'bge-m3'),
-    getAiEmbeddingDimension: jest.fn(() => input.embeddingDimensions),
-    getOpenAiApiKey: jest.fn(() => 'must-not-affect-profile'),
-    getOpenAiApiUrl: jest.fn(() => 'https://llm.example/v1/'),
+    getResolvedConfig: jest.fn(async () => ({
+      driver,
+      model: 'bge-m3',
+      apiKey: 'must-not-affect-profile',
+      baseUrl: 'https://llm.example/v1/',
+      parameters: { dimension: input.embeddingDimensions },
+      fromDatabase: false,
+    })),
+    invalidate: jest.fn(),
   };
 }

@@ -4,10 +4,7 @@ import {
   NoOutputGeneratedError,
   Output,
 } from 'ai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { createOllama } from 'ai-sdk-ollama';
 import {
   ConfiguredKnowledgeCompilerLlmProvider,
   KnowledgeCompilerLlmError,
@@ -19,14 +16,9 @@ jest.mock('ai', () => ({
   NoOutputGeneratedError: { isInstance: jest.fn(() => false) },
   NoObjectGeneratedError: { isInstance: jest.fn(() => false) },
 }));
-jest.mock('@ai-sdk/openai', () => ({ createOpenAI: jest.fn() }));
 jest.mock('@ai-sdk/openai-compatible', () => ({
   createOpenAICompatible: jest.fn(),
 }));
-jest.mock('@ai-sdk/google', () => ({
-  createGoogleGenerativeAI: jest.fn(),
-}));
-jest.mock('ai-sdk-ollama', () => ({ createOllama: jest.fn() }));
 
 const analysisJson = JSON.stringify({
   version: '1',
@@ -60,45 +52,40 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     jest.clearAllMocks();
   });
 
-  it.each([
-    ['openai', createOpenAI],
-    ['openai-compatible', createOpenAICompatible],
-    ['gemini', createGoogleGenerativeAI],
-    ['ollama', createOllama],
-  ])('creates the configured %s completion model', async (driver, factory) => {
-    const modelFactory = jest.fn().mockReturnValue('compiler-model');
-    (factory as jest.Mock).mockReturnValue(modelFactory);
-    (generateText as jest.Mock).mockResolvedValue({
-      output: JSON.parse(analysisJson),
-    });
-    const provider = createProvider({ aiDriver: driver });
+  it.each([['openai-compatible', createOpenAICompatible]])(
+    'creates the configured %s completion model',
+    async (driver, factory) => {
+      const modelFactory = jest.fn().mockReturnValue('compiler-model');
+      (factory as jest.Mock).mockReturnValue(modelFactory);
+      (generateText as jest.Mock).mockResolvedValue({
+        output: JSON.parse(analysisJson),
+      });
+      const provider = createProvider({ aiDriver: driver });
 
-    await expect(
-      provider.analyze({ system: 'system', prompt: 'prompt' }),
-    ).resolves.toMatchObject({ synopsis: 'Summary' });
+      await expect(
+        provider.analyze({ system: 'system', prompt: 'prompt' }),
+      ).resolves.toMatchObject({ synopsis: 'Summary' });
 
-    expect(modelFactory).toHaveBeenCalledWith(
-      'knowledge-compiler-model',
-      ...(driver === 'ollama' ? [{ think: false }] : []),
-    );
-    expect(generateText).toHaveBeenCalledWith(
-      expect.objectContaining({
-        model: 'compiler-model',
-        system: 'system',
-        prompt: 'prompt',
-        temperature: 0.1,
-        maxOutputTokens: 16_384,
-        abortSignal: expect.any(AbortSignal),
-        output: expect.objectContaining({
-          name: 'knowledge_compiler_analysis_v1',
-          type: 'json',
+      expect(modelFactory).toHaveBeenCalledWith('knowledge-compiler-model');
+      expect(generateText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'compiler-model',
+          system: 'system',
+          prompt: 'prompt',
+          temperature: 0.1,
+          maxOutputTokens: 16_384,
+          abortSignal: expect.any(AbortSignal),
+          output: expect.objectContaining({
+            name: 'knowledge_compiler_analysis_v1',
+            type: 'json',
+          }),
         }),
-      }),
-    );
-    expect(Output.json).toHaveBeenCalled();
-  });
+      );
+      expect(Output.json).toHaveBeenCalled();
+    },
+  );
 
-  it('sends thinking=false to the OpenAI-compatible compiler provider', async () => {
+  it('disables provider thinking for non-GPT OpenAI-compatible compiler models', async () => {
     (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
@@ -123,8 +110,31 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     );
   });
 
+  it('uses fixed low reasoning effort and omits temperature for GPT compiler models', async () => {
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
+      jest.fn().mockReturnValue('compiler-model'),
+    );
+    (generateText as jest.Mock).mockResolvedValue({
+      output: JSON.parse(analysisJson),
+    });
+
+    await createProvider({
+      aiDriver: 'openai-compatible',
+      compilerModel: 'openai-gpt-5.6-luna',
+    }).analyze({
+      system: 'system',
+      prompt: 'prompt',
+    });
+
+    const request = (generateText as jest.Mock).mock.calls[0][0];
+    expect(request).not.toHaveProperty('temperature');
+    expect(request.providerOptions).toEqual({
+      openaiCompatible: { reasoningEffort: 'low' },
+    });
+  });
+
   it('uses the configured hard timeout for every model request', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
     (generateText as jest.Mock).mockResolvedValue({
@@ -133,7 +143,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     const timeoutSpy = jest.spyOn(global, 'setTimeout');
 
     await createProvider({
-      aiDriver: 'openai',
+      aiDriver: 'openai-compatible',
       compilerTimeoutMs: 45_000,
     }).analyze({ system: 'system', prompt: 'prompt' });
 
@@ -145,7 +155,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   });
 
   it('binds initial and repair requests to the same parent deadline', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
     let resolveRepair!: (value: unknown) => void;
@@ -159,10 +169,14 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
       );
     const parent = new AbortController();
 
-    const operation = createProvider({ aiDriver: 'openai' }).analyze(
+    const operation = createProvider({ aiDriver: 'openai-compatible' }).analyze(
       { system: 'system', prompt: 'prompt' },
       { abortSignal: parent.signal },
     );
+    // Flush enough microtasks to advance through config resolution, the
+    // initial request, and into the repair request.
+    await Promise.resolve();
+    await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
 
@@ -176,7 +190,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   });
 
   it('classifies TimeoutError as a retryable timeout', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
     (generateText as jest.Mock).mockRejectedValue(
@@ -186,7 +200,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     );
 
     await expect(
-      createProvider({ aiDriver: 'openai' }).analyze({
+      createProvider({ aiDriver: 'openai-compatible' }).analyze({
         system: 'system',
         prompt: 'prompt',
       }),
@@ -198,7 +212,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   });
 
   it('parses Stage 2 output with the generation schema', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
     (generateText as jest.Mock).mockResolvedValue({
@@ -206,7 +220,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     });
 
     await expect(
-      createProvider({ aiDriver: 'openai' }).generate({
+      createProvider({ aiDriver: 'openai-compatible' }).generate({
         system: 'system',
         prompt: 'prompt',
       }),
@@ -219,7 +233,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   });
 
   it('uses JSON mode and validates canonical merge output', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
     (generateText as jest.Mock).mockResolvedValue({
@@ -227,7 +241,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     });
 
     await expect(
-      createProvider({ aiDriver: 'openai' }).completeMerge?.({
+      createProvider({ aiDriver: 'openai-compatible' }).completeMerge?.({
         system: 'system',
         prompt: 'prompt',
       }),
@@ -246,7 +260,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
 
   it('fails fast when the compiler model is not configured', async () => {
     const provider = createProvider({
-      aiDriver: 'openai',
+      aiDriver: 'openai-compatible',
       compilerModel: '',
     });
 
@@ -261,7 +275,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   });
 
   it('classifies invalid model JSON without exposing the model response', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
     const structuredOutputError = new Error('private source text and not JSON');
@@ -271,7 +285,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     (generateText as jest.Mock).mockRejectedValue(structuredOutputError);
 
     await expect(
-      createProvider({ aiDriver: 'openai' }).analyze({
+      createProvider({ aiDriver: 'openai-compatible' }).analyze({
         system: 'system',
         prompt: 'prompt',
       }),
@@ -285,7 +299,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   });
 
   it('classifies provider rate limits as retryable', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
     (generateText as jest.Mock).mockRejectedValue(
@@ -293,7 +307,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     );
 
     await expect(
-      createProvider({ aiDriver: 'openai' }).generate({
+      createProvider({ aiDriver: 'openai-compatible' }).generate({
         system: 'system',
         prompt: 'prompt',
       }),
@@ -307,7 +321,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   });
 
   it('does not misclassify a 5xx provider failure as oversized from message text', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
     (generateText as jest.Mock).mockRejectedValue(
@@ -317,7 +331,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     );
 
     await expect(
-      createProvider({ aiDriver: 'openai' }).analyze({
+      createProvider({ aiDriver: 'openai-compatible' }).analyze({
         system: 'system',
         prompt: 'prompt',
       }),
@@ -328,7 +342,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   });
 
   it('classifies a retry-wrapped provider rate limit from the last error', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
     const upstream = Object.assign(new Error('private quota detail'), {
@@ -354,7 +368,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     );
 
     await expect(
-      createProvider({ aiDriver: 'openai' }).analyze({
+      createProvider({ aiDriver: 'openai-compatible' }).analyze({
         system: 'system',
         prompt: 'prompt',
       }),
@@ -376,7 +390,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   });
 
   it('keeps retry-wrapped provider input errors non-retryable and diagnostic', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
     const upstream = Object.assign(new Error('private context detail'), {
@@ -402,7 +416,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     );
 
     await expect(
-      createProvider({ aiDriver: 'openai' }).analyze({
+      createProvider({ aiDriver: 'openai-compatible' }).analyze({
         system: 'system',
         prompt: 'prompt',
       }),
@@ -421,7 +435,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   });
 
   it('classifies HTTP 413 as a non-retryable oversized input', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
     (generateText as jest.Mock).mockRejectedValue(
@@ -429,7 +443,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     );
 
     await expect(
-      createProvider({ aiDriver: 'openai' }).analyze({
+      createProvider({ aiDriver: 'openai-compatible' }).analyze({
         system: 'system',
         prompt: 'private source text',
       }),
@@ -450,7 +464,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   ])(
     'classifies context overflow 400 code=%s as oversized',
     async (code, message) => {
-      (createOpenAI as jest.Mock).mockReturnValue(
+      (createOpenAICompatible as jest.Mock).mockReturnValue(
         jest.fn().mockReturnValue('compiler-model'),
       );
       (generateText as jest.Mock).mockRejectedValue(
@@ -466,7 +480,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
       );
 
       await expect(
-        createProvider({ aiDriver: 'openai' }).generate({
+        createProvider({ aiDriver: 'openai-compatible' }).generate({
           system: 'system',
           prompt: 'private source text',
         }),
@@ -479,7 +493,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   );
 
   it('classifies a retry-wrapped timeout from the upstream cause', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
     const timeout = Object.assign(new Error('private timeout detail'), {
@@ -501,7 +515,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     );
 
     await expect(
-      createProvider({ aiDriver: 'openai' }).analyze({
+      createProvider({ aiDriver: 'openai-compatible' }).analyze({
         system: 'system',
         prompt: 'prompt',
       }),
@@ -519,7 +533,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   });
 
   it('classifies schema validation failures without exposing model output', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
     const schemaError = new Error('private malformed generation output');
@@ -529,7 +543,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     (generateText as jest.Mock).mockRejectedValue(schemaError);
 
     await expect(
-      createProvider({ aiDriver: 'openai' }).generate({
+      createProvider({ aiDriver: 'openai-compatible' }).generate({
         system: 'system',
         prompt: 'prompt',
       }),
@@ -543,7 +557,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   });
 
   it('validates structured JSON against the compiler schema locally', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
     (generateText as jest.Mock).mockResolvedValue({
@@ -551,7 +565,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     });
 
     await expect(
-      createProvider({ aiDriver: 'openai' }).analyze({
+      createProvider({ aiDriver: 'openai-compatible' }).analyze({
         system: 'system',
         prompt: 'prompt',
       }),
@@ -565,7 +579,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   });
 
   it('normalizes common compatible-model aliases before schema validation', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
     (generateText as jest.Mock).mockResolvedValue({
@@ -587,7 +601,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     });
 
     await expect(
-      createProvider({ aiDriver: 'openai' }).generate({
+      createProvider({ aiDriver: 'openai-compatible' }).generate({
         system: 'system',
         prompt: 'prompt',
       }),
@@ -610,7 +624,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   });
 
   it('re-prompts once with validation feedback when local repair is insufficient', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
     (generateText as jest.Mock)
@@ -618,7 +632,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
       .mockResolvedValueOnce({ output: JSON.parse(analysisJson) });
 
     await expect(
-      createProvider({ aiDriver: 'openai' }).analyze({
+      createProvider({ aiDriver: 'openai-compatible' }).analyze({
         system: 'system',
         prompt: '<output_contract>{"version":"1"}</output_contract>',
       }),
@@ -639,13 +653,13 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   });
 
   it('publishes a deterministic source summary fallback after generation repair fails', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
     (generateText as jest.Mock).mockResolvedValue({ output: { version: 1 } });
 
     await expect(
-      createProvider({ aiDriver: 'openai' }).generate(
+      createProvider({ aiDriver: 'openai-compatible' }).generate(
         { system: 'system', prompt: 'prompt' },
         {
           canonicalKey: 'source-page-1',
@@ -672,12 +686,14 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
   });
 
   it('hard-bounds fallback Markdown even when a caller supplies too much text', async () => {
-    (createOpenAI as jest.Mock).mockReturnValue(
+    (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
     (generateText as jest.Mock).mockResolvedValue({ output: { version: 1 } });
 
-    const result = await createProvider({ aiDriver: 'openai' }).generate(
+    const result = await createProvider({
+      aiDriver: 'openai-compatible',
+    }).generate(
       { system: 'system', prompt: 'prompt' },
       {
         canonicalKey: 'source-page-1',
@@ -697,26 +713,32 @@ function createProvider(input: {
   compilerMaxOutputTokens?: number;
   imageMergeMaxOutputTokens?: number;
 }): ConfiguredKnowledgeCompilerLlmProvider {
-  return new ConfiguredKnowledgeCompilerLlmProvider({
-    getAiDriver: jest.fn(() => input.aiDriver),
-    getKnowledgeCompilerModel: jest.fn(
-      () => input.compilerModel ?? 'knowledge-compiler-model',
-    ),
-    getKnowledgeCompilerThinking: jest.fn(() => false),
+  const environmentService = {
     getKnowledgeCompilerMaxOutputTokens: jest.fn(
       () => input.compilerMaxOutputTokens ?? 16_384,
     ),
     getKnowledgeImageMergeMaxOutputTokens: jest.fn(
       () => input.imageMergeMaxOutputTokens ?? 8_192,
     ),
-    getOpenAiApiKey: jest.fn(() => 'openai-key'),
-    getOpenAiApiUrl: jest.fn(() => 'https://openai.example/v1'),
-    getGeminiApiKey: jest.fn(() => 'gemini-key'),
-    getOllamaApiUrl: jest.fn(() => 'http://ollama.example'),
     getKnowledgeCompilerTimeoutMs: jest.fn(
       () => input.compilerTimeoutMs ?? 300_000,
     ),
-  } as never);
+  } as never;
+  const configService = {
+    getResolvedConfig: jest.fn(async () => ({
+      driver: input.aiDriver,
+      model: input.compilerModel ?? 'knowledge-compiler-model',
+      apiKey: 'openai-key',
+      baseUrl: 'https://openai.example/v1',
+      parameters: {},
+      fromDatabase: false,
+    })),
+    invalidate: jest.fn(),
+  } as never;
+  return new ConfiguredKnowledgeCompilerLlmProvider(
+    environmentService,
+    configService,
+  );
 }
 
 void KnowledgeCompilerLlmError;

@@ -292,29 +292,6 @@ export class EnvironmentService {
       .toLowerCase();
   }
 
-  getAiDriver(): string {
-    return this.configService.get<string>('AI_DRIVER');
-  }
-
-  getAiEmbeddingModel(): string {
-    return this.configService.get<string>('AI_EMBEDDING_MODEL');
-  }
-
-  getKnowledgeCompilerModel(): string {
-    return this.configService.get<string>(
-      'KNOWLEDGE_COMPILER_MODEL',
-      'qwen3.8-max',
-    );
-  }
-
-  getKnowledgeCompilerThinking(): boolean {
-    return (
-      this.configService
-        .get<string>('KNOWLEDGE_COMPILER_THINKING', 'false')
-        .toLowerCase() === 'true'
-    );
-  }
-
   getKnowledgeCompilerMaxOutputTokens(): number {
     return Number(
       this.configService.get<string | number>(
@@ -333,10 +310,6 @@ export class EnvironmentService {
     );
   }
 
-  getAiChatModel(): string {
-    return this.configService.get<string>('AI_CHAT_MODEL');
-  }
-
   getAiChatMaxInputChars(): number {
     const configured = Number(
       this.configService.get<string | number>(
@@ -348,10 +321,6 @@ export class EnvironmentService {
       configured >= MIN_AI_CHAT_MAX_INPUT_CHARS
       ? Math.floor(configured)
       : DEFAULT_AI_CHAT_MAX_INPUT_CHARS;
-  }
-
-  getAiVisionModel(): string {
-    return this.configService.get<string>('AI_VISION_MODEL', 'qwen3.7-plus');
   }
 
   getKnowledgeCompilerTimeoutMs(): number {
@@ -447,38 +416,6 @@ export class EnvironmentService {
         'KNOWLEDGE_SPACE_LEASE_TTL_MS',
         180_000,
       ),
-    );
-  }
-
-  getAiEmbeddingDimension(): number {
-    return parseInt(
-      this.configService.get<string>('AI_EMBEDDING_DIMENSION'),
-      10,
-    );
-  }
-
-  getAiEmbeddingSupportsMrl(): boolean | undefined {
-    const val = this.configService.get<string>('AI_EMBEDDING_SUPPORTS_MRL');
-    if (val === undefined || val === null || val === '') return undefined;
-    return val === 'true';
-  }
-
-  getOpenAiApiKey(): string {
-    return this.configService.get<string>('OPENAI_API_KEY');
-  }
-
-  getOpenAiApiUrl(): string {
-    return this.configService.get<string>('OPENAI_API_URL');
-  }
-
-  getGeminiApiKey(): string {
-    return this.configService.get<string>('GEMINI_API_KEY');
-  }
-
-  getOllamaApiUrl(): string {
-    return this.configService.get<string>(
-      'OLLAMA_API_URL',
-      'http://localhost:11434',
     );
   }
 

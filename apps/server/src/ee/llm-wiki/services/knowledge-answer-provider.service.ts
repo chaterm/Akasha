@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { generateText, LanguageModel, streamText } from 'ai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { createOpenAI } from '@ai-sdk/openai';
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { createOllama } from 'ai-sdk-ollama';
+import type { ProviderOptions } from '@ai-sdk/provider-utils';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
+import {
+  AiModelConfigService,
+  ResolvedAiModelConfig,
+} from './ai-model-config.service';
+import { createLanguageModelFromConfig } from './ai-model-factory';
 
 export type KnowledgeAnswerProviderInput = {
   query: string;
@@ -26,19 +28,17 @@ export interface KnowledgeAnswerProvider {
 
 @Injectable()
 export class ConfiguredKnowledgeAnswerProvider implements KnowledgeAnswerProvider {
-  constructor(private readonly environmentService: EnvironmentService) {}
+  constructor(
+    private readonly environmentService: EnvironmentService,
+    private readonly configService: AiModelConfigService,
+  ) {}
 
   async rewriteQuery(input: KnowledgeQueryRewriteInput): Promise<string> {
     if (input.chatContext.length === 0) {
       return input.query;
     }
 
-    const driver = this.environmentService.getAiDriver();
-    if (!driver) {
-      return input.query;
-    }
-
-    const model = this.createModel(driver);
+    const { model, config } = await this.createModel();
     if (!model) {
       return input.query;
     }
@@ -48,7 +48,8 @@ export class ConfiguredKnowledgeAnswerProvider implements KnowledgeAnswerProvide
         model,
         system: buildQueryRewriteSystemPrompt(),
         prompt: buildQueryRewritePrompt(input),
-        temperature: 0,
+        ...(isOpenAiReasoningModel(config) ? {} : { temperature: 0 }),
+        providerOptions: providerOptions(config),
         maxOutputTokens: 256,
         abortSignal: AbortSignal.timeout(30_000),
       });
@@ -59,12 +60,7 @@ export class ConfiguredKnowledgeAnswerProvider implements KnowledgeAnswerProvide
   }
 
   async answer(input: KnowledgeAnswerProviderInput): Promise<string> {
-    const driver = this.environmentService.getAiDriver();
-    if (!driver) {
-      return '';
-    }
-
-    const model = this.createModel(driver);
+    const { model, config } = await this.createModel();
     if (!model) {
       return '';
     }
@@ -78,15 +74,14 @@ export class ConfiguredKnowledgeAnswerProvider implements KnowledgeAnswerProvide
         input,
         this.environmentService.getAiChatMaxInputChars() - system.length,
       ),
+      providerOptions: providerOptions(config),
     });
 
     return result.text;
   }
 
   async *stream(input: KnowledgeAnswerProviderInput): AsyncIterable<string> {
-    const driver = this.environmentService.getAiDriver();
-    if (!driver) return;
-    const model = this.createModel(driver);
+    const { model, config } = await this.createModel();
     if (!model) return;
 
     const system = buildSystemPrompt(input.mode);
@@ -98,46 +93,43 @@ export class ConfiguredKnowledgeAnswerProvider implements KnowledgeAnswerProvide
         input,
         this.environmentService.getAiChatMaxInputChars() - system.length,
       ),
+      providerOptions: providerOptions(config),
     });
     for await (const token of result.textStream) {
       yield token;
     }
   }
 
-  private createModel(driver: string): LanguageModel | undefined {
-    const modelName = this.environmentService.getAiChatModel();
-    if (!modelName) {
-      return undefined;
-    }
-
-    switch (driver) {
-      case 'openai': {
-        return createOpenAI({
-          apiKey: this.environmentService.getOpenAiApiKey(),
-          baseURL: this.environmentService.getOpenAiApiUrl(),
-        })(modelName);
-      }
-      case 'openai-compatible': {
-        return createOpenAICompatible({
-          name: 'openai-compatible',
-          apiKey: this.environmentService.getOpenAiApiKey(),
-          baseURL: this.environmentService.getOpenAiApiUrl(),
-        })(modelName);
-      }
-      case 'gemini': {
-        return createGoogleGenerativeAI({
-          apiKey: this.environmentService.getGeminiApiKey(),
-        })(modelName);
-      }
-      case 'ollama': {
-        return createOllama({
-          baseURL: this.environmentService.getOllamaApiUrl(),
-        })(modelName);
-      }
-      default:
-        return undefined;
-    }
+  private async createModel(): Promise<{
+    model: LanguageModel | undefined;
+    config: ResolvedAiModelConfig;
+  }> {
+    const config = await this.configService.getResolvedConfig('answer');
+    return {
+      model: createLanguageModelFromConfig(config, 'openai-compatible'),
+      config,
+    };
   }
+}
+
+function providerOptions(
+  config: ResolvedAiModelConfig,
+): ProviderOptions | undefined {
+  if (!isOpenAiReasoningModel(config)) return undefined;
+  return {
+    openaiCompatible: {
+      reasoningEffort: 'low',
+    },
+  };
+}
+
+function isOpenAiReasoningModel(config: ResolvedAiModelConfig): boolean {
+  const driver = config.driver?.toLowerCase();
+  const model = config.model?.toLowerCase() ?? '';
+  return (
+    driver === 'openai-compatible' &&
+    (model.includes('gpt') || /(^|[-_])o[134]/.test(model))
+  );
 }
 
 function buildQueryRewriteSystemPrompt(): string {

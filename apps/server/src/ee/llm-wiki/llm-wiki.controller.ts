@@ -12,6 +12,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -63,6 +64,9 @@ import { KnowledgeImportService } from './services/knowledge-import.service';
 import { KnowledgeSourceExporterService } from './services/knowledge-source-exporter.service';
 import { KnowledgeSpaceCompilationService } from './services/knowledge-space-compilation.service';
 import { KnowledgeSpaceResetService } from './services/knowledge-space-reset.service';
+import { AiModelConfigService } from './services/ai-model-config.service';
+import { AiModelConfigFeature } from '../../database/repos/llm-wiki/ai-model-config.repo';
+import { UpdateAiModelConfigDto } from './dto/ai-model-config.dto';
 import {
   buildKnowledgeAdminActionJobId,
   uniqueValues,
@@ -89,6 +93,7 @@ export class LlmWikiController {
     private readonly spaceReset: KnowledgeSpaceResetService,
     private readonly spaceAuthorization: SpaceAuthorizationService,
     private readonly pageAccessService: PageAccessService,
+    private readonly aiModelConfigService: AiModelConfigService,
   ) {}
 
   @HttpCode(HttpStatus.OK)
@@ -214,6 +219,59 @@ export class LlmWikiController {
       spaceId: dto.spaceId,
       limit: dto.limit,
     });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('pages/:pageId/publish')
+  async publishPageKnowledge(
+    @Param('pageId', ParseUUIDPipe) pageId: string,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    if (!this.chatService.isEnabledForWorkspace(workspace)) {
+      throw new ForbiddenException('AI knowledge chat is disabled');
+    }
+
+    const page = await this.pageRepo.findById(pageId);
+    if (
+      !page ||
+      page.workspaceId !== workspace.id ||
+      page.deletedAt !== null
+    ) {
+      throw new NotFoundException('Page not found');
+    }
+
+    await this.pageAccessService.validateCanEdit(page, user);
+
+    const request = await this.spaceCompilation.requestImmediatePagePublish({
+      workspaceId: workspace.id,
+      spaceId: page.spaceId,
+      sourcePageId: page.id,
+    });
+    const run = request.run!;
+    const result = {
+      pageId: page.id,
+      spaceId: page.spaceId,
+      runId: run.id,
+      disposition: request.disposition,
+      mode: 'incremental' as const,
+      knowledgeGeneration: run.knowledgeGeneration,
+    };
+
+    this.auditService.log({
+      event: AuditEvent.KNOWLEDGE_COMPILE_QUEUED,
+      resourceType: AuditResource.PAGE,
+      resourceId: page.id,
+      spaceId: page.spaceId,
+      metadata: {
+        origin: 'manual_page_publish',
+        runId: run.id,
+        disposition: request.disposition,
+        priority: 0,
+      },
+    });
+
+    return result;
   }
 
   @HttpCode(HttpStatus.OK)
@@ -795,6 +853,35 @@ export class LlmWikiController {
     return result;
   }
 
+  @HttpCode(HttpStatus.OK)
+  @Get('admin/model-configs')
+  async listModelConfigs(@AuthUser() user: User) {
+    this.assertAdmin(user, 'AI model configuration is restricted to admins');
+    return { configs: await this.aiModelConfigService.listConfigViews() };
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Put('admin/model-configs/:feature')
+  async updateModelConfig(
+    @Param('feature') feature: string,
+    @Body() dto: UpdateAiModelConfigDto,
+    @AuthUser() user: User,
+  ) {
+    this.assertAdmin(user, 'AI model configuration is restricted to admins');
+    if (!isModelConfigFeature(feature)) {
+      throw new BadRequestException('Unknown AI model configuration feature.');
+    }
+    return this.aiModelConfigService.updateConfig(feature, {
+      provider: dto.provider,
+      model: dto.model,
+      baseUrl: dto.baseUrl ?? null,
+      apiKey: dto.apiKey,
+      parameters: dto.parameters
+        ? (dto.parameters as unknown as Record<string, unknown>)
+        : null,
+    });
+  }
+
   private assertAdmin(user: User, message: string): void {
     if (user.role !== UserRole.OWNER && user.role !== UserRole.ADMIN) {
       throw new ForbiddenException(message);
@@ -928,4 +1015,13 @@ export class LlmWikiController {
 
 function hashQuery(query: string): string {
   return `sha256:${createHash('sha256').update(query).digest('hex')}`;
+}
+
+function isModelConfigFeature(value: string): value is AiModelConfigFeature {
+  return (
+    value === 'compiler' ||
+    value === 'answer' ||
+    value === 'image' ||
+    value === 'embedding'
+  );
 }

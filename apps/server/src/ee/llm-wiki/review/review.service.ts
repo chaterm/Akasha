@@ -1,8 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { generateText, LanguageModel } from 'ai';
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import type { ProviderOptions } from '@ai-sdk/provider-utils';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
+import {
+  AiModelConfigService,
+  ResolvedAiModelConfig,
+} from '../services/ai-model-config.service';
+import { createLanguageModelFromConfig } from '../services/ai-model-factory';
 import { SearchProvider, SearchResult } from './search-provider';
 import {
   DraftContent,
@@ -170,15 +175,23 @@ const DRAFT_OUTPUT_SHAPE = [
 
 @Injectable()
 export class ReviewService {
-  constructor(private readonly environmentService: EnvironmentService) {}
+  constructor(
+    private readonly environmentService: EnvironmentService,
+    private readonly aiModelConfigService: AiModelConfigService,
+  ) {}
 
-  private createModel(): LanguageModel {
-    const provider = createOpenAICompatible({
-      name: 'akasha-review',
-      apiKey: this.environmentService.getOpenAiApiKey(),
-      baseURL: this.environmentService.getOpenAiApiUrl(),
-    });
-    return provider.chatModel(this.environmentService.getAiChatModel());
+  private async createModel(): Promise<{
+    model: LanguageModel;
+    config: ResolvedAiModelConfig;
+  }> {
+    const config = await this.aiModelConfigService.getResolvedConfig('answer');
+    const model = createLanguageModelFromConfig(config, 'akasha-review');
+    if (!model) {
+      throw new Error(
+        'AI review model is not configured. Configure the answer model in Settings > AI > Models.',
+      );
+    }
+    return { model, config };
   }
 
   async reviewWiki(source: WikiSource): Promise<ReviewResult> {
@@ -191,10 +204,12 @@ export class ReviewService {
     );
     let text: string;
     try {
+      const { model, config } = await this.createModel();
       ({ text } = await generateText({
-        model: this.createModel(),
+        model,
         system: `${REVIEW_SYSTEM_PROMPT}\n\n${REVIEW_OUTPUT_SHAPE}`,
         prompt: serialized,
+        providerOptions: providerOptions(config),
         abortSignal: boundedSignal.signal,
       }));
     } finally {
@@ -263,10 +278,12 @@ export class ReviewService {
     );
     let text: string;
     try {
+      const { model, config } = await this.createModel();
       ({ text } = await generateText({
-        model: this.createModel(),
+        model,
         system: `${NEGOTIATION_SYSTEM_PROMPT}\n\n${DRAFT_OUTPUT_SHAPE}`,
         prompt,
+        providerOptions: providerOptions(config),
         abortSignal: boundedSignal.signal,
       }));
     } finally {
@@ -276,6 +293,26 @@ export class ReviewService {
     const parsedJson = extractJson(text);
     return draftContentSchema.parse(parsedJson);
   }
+}
+
+function providerOptions(
+  config: ResolvedAiModelConfig,
+): ProviderOptions | undefined {
+  if (!isOpenAiReasoningModel(config)) return undefined;
+  return {
+    openaiCompatible: {
+      reasoningEffort: 'low',
+    },
+  };
+}
+
+function isOpenAiReasoningModel(config: ResolvedAiModelConfig): boolean {
+  const driver = config.driver?.toLowerCase();
+  const model = config.model?.toLowerCase() ?? '';
+  return (
+    driver === 'openai-compatible' &&
+    (model.includes('gpt') || /(^|[-_])o[134]/.test(model))
+  );
 }
 
 export function serializeWikiForReview(wiki: StructuredWiki): string {

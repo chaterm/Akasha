@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import {
   generateText,
   LanguageModel,
@@ -6,12 +6,13 @@ import {
   NoOutputGeneratedError,
   Output,
 } from 'ai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { createOpenAI } from '@ai-sdk/openai';
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { createOllama } from 'ai-sdk-ollama';
 import { z } from 'zod';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
+import {
+  AiModelConfigService,
+  ResolvedAiModelConfig,
+} from '../services/ai-model-config.service';
+import { createLanguageModelFromConfig } from '../services/ai-model-factory';
 import {
   SemanticAnalysis,
   SemanticCompilerOutputError,
@@ -70,8 +71,8 @@ export class KnowledgeCompilerLlmError extends Error {
 }
 
 export interface KnowledgeCompilerLlmProvider {
-  getCacheIdentity?(): string;
-  getCompilerModel?(): string;
+  getCacheIdentity?(): string | Promise<string>;
+  getCompilerModel?(): string | Promise<string>;
   analyze(
     messages: SemanticCompilerMessages,
     options?: KnowledgeCompilerRequestOptions,
@@ -119,16 +120,25 @@ type KnowledgeCompilerProviderOptions = Record<
 
 @Injectable()
 export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompilerLlmProvider {
-  constructor(private readonly environmentService: EnvironmentService) {}
+  private readonly logger = new Logger(
+    ConfiguredKnowledgeCompilerLlmProvider.name,
+  );
 
-  getCacheIdentity(): string {
-    const driver = this.environmentService.getAiDriver()?.trim().toLowerCase();
-    const model = this.environmentService.getKnowledgeCompilerModel()?.trim();
-    return `${driver || 'unconfigured'}:${model || 'unconfigured'}:thinking=${this.environmentService.getKnowledgeCompilerThinking()}`;
+  constructor(
+    private readonly environmentService: EnvironmentService,
+    private readonly configService: AiModelConfigService,
+  ) {}
+
+  async getCacheIdentity(): Promise<string> {
+    const config = await this.configService.getResolvedConfig('compiler');
+    const driver = config.driver?.trim().toLowerCase();
+    const model = config.model?.trim();
+    return `${driver || 'unconfigured'}:${model || 'unconfigured'}:${isOpenAiReasoningModel(config) ? 'reasoning=low' : 'thinking=false'}`;
   }
 
-  getCompilerModel(): string {
-    return this.environmentService.getKnowledgeCompilerModel().trim();
+  async getCompilerModel(): Promise<string> {
+    const config = await this.configService.getResolvedConfig('compiler');
+    return (config.model ?? '').trim();
   }
 
   async analyze(
@@ -183,9 +193,11 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
     fallback?: KnowledgeCompilerGenerationFallback,
     options?: KnowledgeCompilerRequestOptions,
   ): Promise<T> {
-    const model = this.createModel();
+    const config = await this.configService.getResolvedConfig('compiler');
+    const model = this.createModel(config);
     const initial = await this.requestStructuredOutput({
       model,
+      config,
       messages,
       stage,
       name,
@@ -212,6 +224,7 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
         });
     const retry = await this.requestStructuredOutput({
       model,
+      config,
       messages: retryMessages,
       stage,
       name: `${name}_repair`,
@@ -235,6 +248,20 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
       return sourceSummaryFallback(fallback) as unknown as T;
     }
 
+    this.logger.warn({
+      event: 'knowledge_compiler_invalid_structured_output',
+      stage,
+      provider: config.driver,
+      model: config.model,
+      requestName: name,
+      initialHadNoOutput: initial.hadNoOutput,
+      retryHadNoOutput: retry.hadNoOutput,
+      initialValidationDetail: initialParsed.detail,
+      retryValidationDetail: retryParsed.detail,
+      initialOutputShape: summarizeInvalidCompilerOutput(initial.value),
+      retryOutputShape: summarizeInvalidCompilerOutput(retry.value),
+    });
+
     throw invalidOutputError(
       stage,
       new SemanticCompilerOutputError(
@@ -245,6 +272,7 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
 
   private async requestStructuredOutput(input: {
     model: LanguageModel;
+    config: ResolvedAiModelConfig;
     messages: SemanticCompilerMessages;
     stage: 'analysis' | 'generation' | 'merge';
     name: string;
@@ -255,14 +283,15 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
       this.environmentService.getKnowledgeCompilerTimeoutMs(),
     );
     try {
+      const temperature = this.temperature(input.config);
       const result = await generateText({
         model: input.model,
         system: input.messages.system,
         prompt: input.messages.prompt,
-        temperature: 0.1,
+        ...(temperature === undefined ? {} : { temperature }),
         maxOutputTokens: this.maxOutputTokens(input.stage),
         abortSignal: boundedSignal.signal,
-        providerOptions: this.providerOptions(),
+        providerOptions: this.providerOptions(input.config),
         output: Output.json({
           name: input.name,
           description: `Akasha knowledge compiler ${input.stage} output`,
@@ -283,46 +312,16 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
     }
   }
 
-  private createModel(): LanguageModel {
-    const driver = this.environmentService.getAiDriver();
-    const modelName = this.environmentService.getKnowledgeCompilerModel();
-    if (!driver || !modelName) {
+  private createModel(config: ResolvedAiModelConfig): LanguageModel {
+    const model = createLanguageModelFromConfig(config, 'knowledgeCompiler');
+    if (!model) {
       throw new KnowledgeCompilerLlmError(
         'configuration_error',
         'Knowledge compiler LLM is not configured.',
         false,
       );
     }
-
-    switch (driver) {
-      case 'openai':
-        return createOpenAI({
-          apiKey: this.environmentService.getOpenAiApiKey(),
-          baseURL: this.environmentService.getOpenAiApiUrl(),
-        })(modelName);
-      case 'openai-compatible':
-        return createOpenAICompatible({
-          name: 'knowledgeCompiler',
-          apiKey: this.environmentService.getOpenAiApiKey(),
-          baseURL: this.environmentService.getOpenAiApiUrl(),
-        })(modelName);
-      case 'gemini':
-        return createGoogleGenerativeAI({
-          apiKey: this.environmentService.getGeminiApiKey(),
-        })(modelName);
-      case 'ollama':
-        return createOllama({
-          baseURL: this.environmentService.getOllamaApiUrl(),
-        })(modelName, {
-          think: this.environmentService.getKnowledgeCompilerThinking(),
-        });
-      default:
-        throw new KnowledgeCompilerLlmError(
-          'configuration_error',
-          'Knowledge compiler LLM is not configured.',
-          false,
-        );
-    }
+    return model;
   }
 
   private maxOutputTokens(stage: 'analysis' | 'generation' | 'merge'): number {
@@ -331,23 +330,31 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
       : this.environmentService.getKnowledgeCompilerMaxOutputTokens();
   }
 
-  private providerOptions(): KnowledgeCompilerProviderOptions {
-    const thinking = this.environmentService.getKnowledgeCompilerThinking();
-    switch (this.environmentService.getAiDriver()) {
+  private temperature(config: ResolvedAiModelConfig): number | undefined {
+    return isOpenAiReasoningModel(config) ? undefined : 0.1;
+  }
+
+  private providerOptions(
+    config: ResolvedAiModelConfig,
+  ): KnowledgeCompilerProviderOptions {
+    switch (config.driver?.trim().toLowerCase()) {
       case 'openai-compatible':
-        return { knowledgeCompiler: { enable_thinking: thinking } };
-      case 'openai':
-        return { openai: { reasoningEffort: thinking ? 'medium' : 'none' } };
-      case 'gemini':
-        return {
-          google: {
-            thinkingConfig: { thinkingBudget: thinking ? -1 : 0 },
-          },
-        };
+        return isOpenAiReasoningModel(config)
+          ? { openaiCompatible: { reasoningEffort: 'low' } }
+          : { knowledgeCompiler: { enable_thinking: false } };
       default:
         return {};
     }
   }
+}
+
+function isOpenAiReasoningModel(config: ResolvedAiModelConfig): boolean {
+  if (config.driver?.trim().toLowerCase() !== 'openai-compatible') {
+    return false;
+  }
+  const model = config.model?.trim().toLowerCase();
+  if (!model) return false;
+  return model.includes('gpt') || /(^|[-_])o[134](?:[-_]|$)/.test(model);
 }
 
 function invalidOutputError(
@@ -459,6 +466,47 @@ function serializeRepairValue(value: unknown): string {
           }
         })();
   return serialized.slice(0, 120_000);
+}
+
+function summarizeInvalidCompilerOutput(
+  value: unknown,
+): Record<string, unknown> {
+  const summary: Record<string, unknown> = {
+    type: Array.isArray(value) ? 'array' : typeof value,
+  };
+  if (value === undefined || value === null) return summary;
+
+  if (typeof value === 'string') {
+    summary.length = value.length;
+    return summary;
+  }
+
+  if (Array.isArray(value)) {
+    summary.length = value.length;
+    return summary;
+  }
+
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    summary.keys = Object.keys(record).slice(0, 30);
+    const artifacts = record.artifacts;
+    if (Array.isArray(artifacts)) {
+      summary.artifactCount = artifacts.length;
+      summary.artifactKinds = artifacts
+        .map((artifact) =>
+          artifact && typeof artifact === 'object'
+            ? (artifact as Record<string, unknown>).kind
+            : undefined,
+        )
+        .slice(0, 30);
+      summary.firstArtifactKeys =
+        artifacts[0] && typeof artifacts[0] === 'object'
+          ? Object.keys(artifacts[0] as Record<string, unknown>).slice(0, 30)
+          : undefined;
+    }
+  }
+
+  return summary;
 }
 
 function withRecovery<T>(value: T, recovery: false | 'local' | 'model'): T {

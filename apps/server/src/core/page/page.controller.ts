@@ -146,29 +146,43 @@ export class PageController {
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
   ) {
-    const personalSpaceId = getApiKeyAccess(user)?.personalSpaceId;
-    if (!personalSpaceId) {
+    const spaceId = dto.spaceId ?? getApiKeyAccess(user)?.personalSpaceId;
+    if (!spaceId) {
       throw new ForbiddenException(
-        'API key personal space is required for Page source search',
+        'spaceId is required for Page source search',
       );
+    }
+
+    const ability = await this.spaceAbility.createForUser(user, spaceId);
+    if (ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page)) {
+      throw new ForbiddenException();
     }
 
     const pages = await this.pageRepo.searchPagesInSpace({
       workspaceId: workspace.id,
-      spaceId: personalSpaceId,
+      spaceId,
       query: dto.query,
       limit: dto.limit,
     });
+    const accessiblePageIds =
+      await this.pagePermissionRepo.filterAccessiblePageIds({
+        pageIds: pages.map((page) => page.id),
+        userId: user.id,
+        spaceId,
+      });
+    const accessibleSet = new Set(accessiblePageIds);
 
     return {
-      items: pages.map((page) => ({
-        pageId: page.id,
-        title: getPageTitle(page.title),
-        excerpt: pageSearchExcerpt(page.textContent, dto.query),
-        updatedAt: page.updatedAt,
-      })),
+      items: pages
+        .filter((page) => accessibleSet.has(page.id))
+        .map((page) => ({
+          pageId: page.id,
+          title: getPageTitle(page.title),
+          excerpt: pageSearchExcerpt(page.textContent, dto.query),
+          updatedAt: page.updatedAt,
+        })),
       meta: {
-        count: pages.length,
+        count: accessibleSet.size,
         limit: dto.limit,
       },
     };

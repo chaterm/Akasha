@@ -149,22 +149,7 @@ export class KnowledgeCompilationRepo {
             startedAt: now,
             finishedAt: null,
             updatedAt: now,
-          })
-          .where((eb) =>
-            eb.or([
-              eb(
-                'knowledgeCompilationAttempts.compileTaskId',
-                '=',
-                input.compileTaskId,
-              ),
-              eb('knowledgeCompilationAttempts.status', 'in', [
-                'queued',
-                'skipped',
-                'failed',
-                'succeeded',
-              ]),
-            ]),
-          ),
+          }),
       )
       .execute();
   }

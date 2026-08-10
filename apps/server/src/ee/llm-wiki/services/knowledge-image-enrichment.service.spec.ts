@@ -40,7 +40,7 @@ describe('KnowledgeImageEnrichmentService', () => {
         attachmentPageId: 'page-1',
         cacheFingerprint: 'sha256:cache',
         contentHash: 'sha256:image',
-        model: 'qwen3.7-plus',
+        model: 'sha256:provider-identity',
         promptVersion: 'akasha-page-image-understanding-v1',
       },
     ]);
@@ -126,7 +126,7 @@ describe('KnowledgeImageEnrichmentService', () => {
         attachmentId: 'image-1',
         attachmentVersion: new Date('2026-07-27T00:01:00.000Z'),
         cacheFingerprint: expect.stringMatching(/^sha256:/),
-        model: 'qwen3.7-plus',
+        model: 'sha256:provider-identity',
         promptVersion: 'akasha-page-image-understanding-v1',
       }),
       150_000,
@@ -493,7 +493,6 @@ function createFixture(overrides?: { pageId?: string; bytes?: Buffer }) {
     read: jest.fn().mockResolvedValue(overrides?.bytes ?? pngBytes),
   };
   const environmentService = {
-    getAiVisionModel: jest.fn().mockReturnValue('qwen3.7-plus'),
     getKnowledgeImageTimeoutMs: jest.fn().mockReturnValue(120_000),
   };
   const provider = {

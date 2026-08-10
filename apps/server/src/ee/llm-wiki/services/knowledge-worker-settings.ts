@@ -8,6 +8,7 @@ export interface KnowledgeWorkerSettings {
   sliceMaxMs: number;
   heartbeatMs: number;
   executionLeaseTtlMs: number;
+  queueLockDurationMs: number;
 }
 
 export function parseKnowledgeWorkerSettings(
@@ -63,6 +64,13 @@ export function parseKnowledgeWorkerSettings(
       120_000,
       600_000,
     ),
+    queueLockDurationMs: integerSetting(
+      environment,
+      'KNOWLEDGE_QUEUE_LOCK_DURATION_MS',
+      600_000,
+      120_000,
+      1_200_000,
+    ),
   };
 
   if (settings.heartbeatMs >= settings.executionLeaseTtlMs) {
@@ -88,14 +96,14 @@ export const KNOWLEDGE_WORKER_SETTINGS = parseKnowledgeWorkerSettings(
 
 export const KNOWLEDGE_SPACE_WORKER_OPTIONS = Object.freeze({
   concurrency: KNOWLEDGE_WORKER_SETTINGS.spaceConcurrency,
-  lockDuration: 120_000,
+  lockDuration: KNOWLEDGE_WORKER_SETTINGS.queueLockDurationMs,
   stalledInterval: 30_000,
   maxStalledCount: 2,
 });
 
 export const KNOWLEDGE_IMAGE_WORKER_OPTIONS = Object.freeze({
   concurrency: KNOWLEDGE_WORKER_SETTINGS.imageConcurrency,
-  lockDuration: 120_000,
+  lockDuration: KNOWLEDGE_WORKER_SETTINGS.queueLockDurationMs,
   stalledInterval: 30_000,
   maxStalledCount: 2,
 });

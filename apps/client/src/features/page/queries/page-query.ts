@@ -21,6 +21,7 @@ import {
   getAllSidebarPages,
   getDeletedPages,
   restorePage,
+  publishPageKnowledge,
 } from "@/features/page/services/page-service";
 import {
   IMovePage,
@@ -113,6 +114,12 @@ export function useUpdatePageMutation() {
     onSuccess: (data) => {
       updatePageData(data);
     },
+  });
+}
+
+export function usePublishPageKnowledgeMutation() {
+  return useMutation({
+    mutationFn: (pageId: string) => publishPageKnowledge(pageId),
   });
 }
 

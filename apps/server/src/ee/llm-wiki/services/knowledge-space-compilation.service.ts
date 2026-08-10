@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -13,7 +14,10 @@ import {
   CurrentReadyKnowledgeImageExtraction,
   KnowledgeImageExtractionRepo,
 } from '@akasha/db/repos/llm-wiki/knowledge-image-extraction.repo';
-import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
+import {
+  KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER,
+  KnowledgeSpaceCompilationRepo,
+} from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
 import {
   KnowledgeSpaceExecutionRepo,
   SpaceExecutionLease,
@@ -22,18 +26,19 @@ import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import {
   DEFAULT_KNOWLEDGE_COMPILER_VERSION,
   DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
+  KNOWLEDGE_IMAGE_UNDERSTANDING_PROVIDER,
   KNOWLEDGE_PAGE_COMPILE_QUIET_PERIOD_MS,
   DEFAULT_KNOWLEDGE_PROMPT_VERSION,
 } from '../llm-wiki.constants';
 import { KnowledgeSourceSnapshot } from '../types/source-snapshot.types';
 import { KnowledgeSourceExporterService } from './knowledge-source-exporter.service';
-import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import {
   buildEffectiveKnowledgeHash,
   ReadyKnowledgeImage,
 } from './knowledge-effective-hash';
 import { knowledgeImageJobOptions } from './knowledge-worker-settings';
 import { KnowledgeSourceRetirementService } from './knowledge-source-retirement.service';
+import { KnowledgeImageUnderstandingProvider } from './knowledge-image-understanding-provider.service';
 
 @Injectable()
 export class KnowledgeSpaceCompilationService implements OnModuleInit {
@@ -48,8 +53,9 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     private readonly runRepo: KnowledgeSpaceCompilationRepo,
     private readonly compilationRepo: KnowledgeCompilationRepo,
     private readonly imageExtractionRepo: KnowledgeImageExtractionRepo,
-    private readonly environmentService: EnvironmentService,
     private readonly sourceExporter: KnowledgeSourceExporterService,
+    @Inject(KNOWLEDGE_IMAGE_UNDERSTANDING_PROVIDER)
+    private readonly imageProvider: KnowledgeImageUnderstandingProvider,
     executionRepo?: KnowledgeSpaceExecutionRepo,
     retirementService?: KnowledgeSourceRetirementService,
   ) {
@@ -96,6 +102,25 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     }
     await this.dispatchPending();
     return results;
+  }
+
+  async requestImmediatePagePublish(input: {
+    workspaceId: string;
+    spaceId: string;
+    sourcePageId: string;
+  }) {
+    const [result] = await this.requestRuns([
+      {
+        workspaceId: input.workspaceId,
+        spaceId: input.spaceId,
+        trigger: KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER,
+        targetSourcePageIds: [input.sourcePageId],
+      },
+    ]);
+    if (result?.run?.spaceJobId) {
+      await this.promoteWaitingSpaceJob(result.run.spaceJobId);
+    }
+    return result;
   }
 
   async cancelRun(input: {
@@ -301,7 +326,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       return bound ? { outcome: 'reused' as const, page: bound } : undefined;
     }
 
-    const visionModel = this.environmentService.getAiVisionModel().trim();
+    const visionModel = await this.imageProvider.getCacheIdentity();
     const readyExtractions =
       await this.imageExtractionRepo.findCurrentReadyForSnapshotImages({
         ...scope,
@@ -454,7 +479,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
           },
           {
             jobId: slice.spaceJobId,
-            priority: slice.jobPhase === 'image_merge' ? 1 : 5,
+            priority: knowledgeSpaceSlicePriority(slice),
           },
         );
         await this.runRepo.markSpaceSliceDispatched(slice);
@@ -541,6 +566,32 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       cleanupErrorCount,
     };
   }
+
+  private async promoteWaitingSpaceJob(jobId: string): Promise<void> {
+    try {
+      const job = await this.spaceQueue.getJob(jobId);
+      if (!job) return;
+      await job.changePriority({ priority: 0 });
+    } catch {
+      this.logger.warn({
+        event: 'knowledge_manual_page_publish_priority_update_failed',
+        jobId,
+      });
+    }
+  }
+}
+
+function knowledgeSpaceSlicePriority(slice: {
+  trigger?: string;
+  jobPhase: 'text' | 'image_merge';
+}): number {
+  if (
+    slice.trigger === KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER &&
+    slice.jobPhase === 'text'
+  ) {
+    return 0;
+  }
+  return slice.jobPhase === 'image_merge' ? 1 : 5;
 }
 
 /**

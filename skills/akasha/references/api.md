@@ -5,7 +5,8 @@
 - 当前用户与 Skill 更新提示
 - 可见空间与已编译 Wiki 查询
 - 有权限的共享 Page 读取
-- 个人 Page 搜索、读取、创建、更新、删除和恢复
+- Page 搜索、读取、创建、更新
+- 个人 Page 删除和恢复
 - 个人 Page 最近列表与回收站
 - 错误处理
 
@@ -13,7 +14,7 @@
 
     Authorization: Bearer <API_KEY>
     Content-Type: application/json
-    X-Akasha-Skill-Version: 1.1.0
+    X-Akasha-Skill-Version: 1.2.0
 
 Akasha 服务的成功响应使用统一包装，Skill 会自动取出 `data`；下文描述的响应字段均指 `data` 内部字段：
 
@@ -23,7 +24,7 @@ Akasha 服务的成功响应使用统一包装，Skill 会自动取出 `data`；
       "status": 200
     }
 
-知识问答只能使用已编译 Wiki 接口。当前用户有 ACL 权限的共享 Page 可通过独立只读接口按站内地址获取，地址不要求来自知识问答；任意 Page 搜索、读取和写入仍仅限用户明确要求编辑的个人空间 Page。
+知识问答只能使用已编译 Wiki 接口。当前用户有 ACL 权限的共享 Page 可通过独立只读接口按站内地址获取，地址不要求来自知识问答；Page 搜索、读取、创建和更新只在用户明确要求编辑时使用，并由服务端按 API Key 所属用户的空间与 Page 权限校验。
 
 ## 当前用户
 
@@ -33,7 +34,7 @@ POST /api/users/me
 
     {}
 
-个人 Page 原文读写能力要求响应包含稳定字段：
+个人空间默认能力要求响应包含稳定字段：
 
     {
       "user": {"id": "user-1"},
@@ -44,7 +45,7 @@ POST /api/users/me
       },
       "skillUpdateNotice": {
         "currentVersion": "1.0.0",
-        "latestVersion": "1.1.0",
+        "latestVersion": "1.2.0",
         "message": "当前 Skill 版本较旧，建议提示用户升级。",
         "upgradeUrl": "https://example.com/akasha-skill"
       }
@@ -105,16 +106,17 @@ POST /api/llm-wiki/citation-page
 
 接口只读。400 表示地址不是合法站内 Page 地址，404 表示 Page 不存在、已删除或不属于当前 workspace，403 表示当前用户无权读取；任何一种失败都不能回退到其他 Page 原文接口。
 
-## 搜索待编辑的个人 Page
+## 搜索待编辑的 Page
 
 POST /api/pages/search
 
     {
       "query": "雷雨",
+      "spaceId": "可选；不传则默认 personalSpaceId",
       "limit": 10
     }
 
-请求不接受 spaceId。服务端只能从 API Key 上下文读取 personalSpaceId，并只在当前 workspace 的个人空间中搜索未删除 Page。响应只返回定位所需字段：
+不传 `spaceId` 时，服务端从 API Key 上下文读取 `personalSpaceId`，并只在个人空间中搜索。传 `spaceId` 时，服务端按当前用户的空间读权限和 Page ACL 搜索该空间未删除 Page。响应只返回定位所需字段：
 
     {
       "items": [
@@ -128,7 +130,7 @@ POST /api/pages/search
       "meta": {"count": 1, "limit": 10}
     }
 
-## 读取待编辑的个人 Page
+## 读取待编辑的 Page
 
 POST /api/pages/info
 
@@ -137,23 +139,23 @@ POST /api/pages/info
       "format": "markdown"
     }
 
-API Key 只能读取 personalSpaceId 对应空间的原文；共享空间必须返回 403。Skill 还必须校验响应 spaceId 与 personalSpaceId 一致。
+API Key 可读取当前用户具备访问权限的 Page 原文。服务端按空间权限和 Page ACL 校验，403 表示无权读取。
 
-## 创建个人空间 Page
+## 创建 Page
 
 POST /api/pages/create
 
     {
-      "spaceId": "<apiAccess.personalSpaceId>",
+      "spaceId": "<apiAccess.personalSpaceId 或用户确认的目标 spaceId>",
       "title": "标题",
       "content": "Markdown 正文",
       "format": "markdown",
       "parentPageId": "可选"
     }
 
-CLI 不接受用户提供 spaceId。API 必须拒绝向其他空间写入。
+CLI 未传 `--space-id` 时默认使用 `apiAccess.personalSpaceId`。传 `--space-id` 时，API 必须按目标空间创建权限校验。
 
-## 更新个人空间 Page
+## 更新 Page
 
 POST /api/pages/update
 
@@ -165,7 +167,7 @@ POST /api/pages/update
       "operation": "replace"
     }
 
-operation 支持 replace、append 和 prepend。不要发送 spaceId。精准改写既有内容时，应先读取个人 Page 的完整原文、保留未要求修改的部分，再以 replace 提交完整修改稿。API 必须根据 pageId 校验其属于当前用户个人空间。
+operation 支持 replace、append 和 prepend。不要发送 spaceId。精准改写既有内容时，应先读取 Page 的完整原文、保留未要求修改的部分，再以 replace 提交完整修改稿。API 必须根据 pageId 按当前用户空间和 Page 编辑权限校验。
 
 ## 删除个人空间 Page
 

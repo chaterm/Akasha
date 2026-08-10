@@ -44,6 +44,7 @@ import { KnowledgeReviewApplicationRepo } from '@akasha/db/repos/llm-wiki/knowle
 import { KnowledgeReviewSnapshotRepo } from '@akasha/db/repos/llm-wiki/knowledge-review-snapshot.repo';
 import { KnowledgeImageExtractionRepo } from '@akasha/db/repos/llm-wiki/knowledge-image-extraction.repo';
 import { AiChatRepo } from '@akasha/db/repos/ai-chat/ai-chat.repo';
+import { AiModelConfigRepo } from '@akasha/db/repos/llm-wiki/ai-model-config.repo';
 import { buildDatabasePostgresOptions } from './database-postgres-options';
 
 export {
@@ -113,6 +114,7 @@ export {
     KnowledgeSpaceExecutionRepo,
     KnowledgeImageExtractionRepo,
     AiChatRepo,
+    AiModelConfigRepo,
     PageListener,
   ],
   exports: [
@@ -151,6 +153,7 @@ export {
     KnowledgeSpaceExecutionRepo,
     KnowledgeImageExtractionRepo,
     AiChatRepo,
+    AiModelConfigRepo,
   ],
 })
 export class DatabaseModule implements OnModuleInit {

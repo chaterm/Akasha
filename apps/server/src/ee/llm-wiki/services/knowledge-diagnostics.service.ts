@@ -425,7 +425,7 @@ export class KnowledgeDiagnosticsService {
       query = query.where((eb) =>
         eb.or([
           eb('space.name', 'ilike', `%${search}%`),
-          eb('run.id', 'ilike', `%${search}%`),
+          sql<boolean>`run.id::text ilike ${`%${search}%`}`,
         ]),
       );
     }

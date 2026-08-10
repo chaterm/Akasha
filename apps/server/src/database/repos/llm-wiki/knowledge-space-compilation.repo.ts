@@ -48,6 +48,8 @@ export interface SpaceRunRequest {
   targetSourcePageIds?: string[];
 }
 
+export const KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER = 'manual_page_publish';
+
 /**
  * Reconciles the page scope of a coalescing target Run with an incoming
  * request. A full-Space request (no target pages) always widens the Run to
@@ -186,7 +188,14 @@ export class KnowledgeSpaceCompilationRepo {
   async findSpaceSliceReservationCandidates(limit = 100) {
     return this.db
       .selectFrom('knowledgeSpaceCompileRuns')
-      .select(['id', 'workspaceId', 'spaceId', 'phase', 'spaceJobQueuedAt'])
+      .select([
+        'id',
+        'workspaceId',
+        'spaceId',
+        'phase',
+        'trigger',
+        'spaceJobQueuedAt',
+      ])
       .where('status', '=', 'queued')
       .where('phase', 'in', [
         'text',
@@ -197,7 +206,12 @@ export class KnowledgeSpaceCompilationRepo {
       ])
       .where('spaceJobId', 'is', null)
       .orderBy(
-        sql<number>`CASE WHEN phase IN ('image_merge', 'final_aggregate', 'finalizing') THEN 1 ELSE 5 END`,
+        sql<number>`CASE
+          WHEN trigger = ${KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER}
+           AND phase IN ('text', 'initial_aggregate', 'finalizing') THEN 0
+          WHEN phase IN ('image_merge', 'final_aggregate', 'finalizing') THEN 1
+          ELSE 5
+        END`,
         'asc',
       )
       .orderBy('spaceJobQueuedAt', 'asc')
@@ -213,6 +227,7 @@ export class KnowledgeSpaceCompilationRepo {
         'id',
         'workspaceId',
         'spaceId',
+        'trigger',
         'phase',
         'knowledgeGeneration',
         'spaceJobSequence',
@@ -230,7 +245,12 @@ export class KnowledgeSpaceCompilationRepo {
       .where('spaceJobId', 'is not', null)
       .where('spaceJobDispatchedAt', 'is', null)
       .orderBy(
-        sql<number>`CASE WHEN phase IN ('image_merge', 'final_aggregate', 'finalizing') THEN 1 ELSE 5 END`,
+        sql<number>`CASE
+          WHEN trigger = ${KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER}
+           AND phase IN ('text', 'initial_aggregate', 'finalizing') THEN 0
+          WHEN phase IN ('image_merge', 'final_aggregate', 'finalizing') THEN 1
+          ELSE 5
+        END`,
         'asc',
       )
       .orderBy('spaceJobQueuedAt', 'asc')
@@ -241,6 +261,7 @@ export class KnowledgeSpaceCompilationRepo {
       runId: run.id,
       workspaceId: run.workspaceId,
       spaceId: run.spaceId,
+      trigger: run.trigger,
       knowledgeGeneration: run.knowledgeGeneration,
       jobPhase: runPhaseToJobPhase(run.phase as KnowledgeSpaceCompileRunPhase),
       spaceJobSequence: run.spaceJobSequence,
@@ -774,14 +795,22 @@ export class KnowledgeSpaceCompilationRepo {
         ),
         requestTargetSourcePageIds: requestTargetSourcePageIds ?? undefined,
       });
+      const shouldPromoteTrigger =
+        request.trigger === KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER &&
+        activeRun!.trigger !== KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER;
       let run = activeRun!;
-      if (scope.changed) {
+      if (scope.changed || shouldPromoteTrigger) {
         run =
           (await trx
             .updateTable('knowledgeSpaceCompileRuns')
             .set({
-              targetSourcePageIds:
-                scope.targetSourcePageIds as JsonValue | null,
+              ...(scope.changed
+                ? {
+                    targetSourcePageIds:
+                      scope.targetSourcePageIds as JsonValue | null,
+                  }
+                : {}),
+              ...(shouldPromoteTrigger ? { trigger: request.trigger } : {}),
               updatedAt: now,
             })
             .where('id', '=', activeRun!.id)
@@ -1262,6 +1291,8 @@ export class KnowledgeSpaceCompilationRepo {
           lastSuccessfulEffectiveHash: null,
           lastSuccessfulSourceVersion: null,
           lastSuccessfulSourceHash: null,
+          generationAttemptSourceHash: null,
+          generationAttemptCount: 0,
           pendingImport: null,
           pendingSpaceId: null,
           pendingSourceVersion: null,

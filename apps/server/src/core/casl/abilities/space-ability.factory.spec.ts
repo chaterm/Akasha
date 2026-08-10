@@ -12,7 +12,7 @@ describe('SpaceAbilityFactory API key policy', () => {
     role: UserRole.MEMBER,
   } as any;
 
-  it('downgrades shared spaces to read-only for an ordinary API key', async () => {
+  it('preserves the real shared-space membership ability for an API key', async () => {
     const spaceMemberRepo = {
       getUserSpaceRoles: jest
         .fn()
@@ -29,9 +29,7 @@ describe('SpaceAbilityFactory API key policy', () => {
     const ability = await factory.createForUser(user, 'shared-1');
 
     expect(ability.can(SpaceCaslAction.Read, SpaceCaslSubject.Page)).toBe(true);
-    expect(ability.can(SpaceCaslAction.Edit, SpaceCaslSubject.Page)).toBe(
-      false,
-    );
+    expect(ability.can(SpaceCaslAction.Edit, SpaceCaslSubject.Page)).toBe(true);
     expect(spaceMemberRepo.getUserSpaceRoles).toHaveBeenCalledWith(
       'user-1',
       'shared-1',

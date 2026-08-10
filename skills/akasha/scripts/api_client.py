@@ -11,8 +11,41 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 Transport = Callable[[Request, float], Any]
-SKILL_VERSION = "1.1.0"
+SKILL_VERSION = "1.2.0"
 INTERNAL_CITATION_PAGE_URL = re.compile(r"/p/[A-Za-z0-9_-]+")
+# Matches the ".../p/<pageSlug>" segment inside a full browser URL or path.
+_CITATION_PAGE_SEGMENT = re.compile(r"/p/([^/?#\s]+)")
+# A real slugId is a fixed 10-char [0-9A-Za-z] token (see server generateSlugId);
+# it never contains "-", so the title prefix is always separable on "-".
+_SLUG_ID = re.compile(r"[0-9A-Za-z]{10}")
+_UUID = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
+    r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+
+
+def _extract_citation_slug(page_url: str) -> str | None:
+    """Extract the canonical /p/<slugId> address from a page URL.
+
+    Accepts the strict internal form (/p/<slugId>) as well as the full
+    browser address (http://host/s/<space>/p/<titleSlug>-<slugId>[?...#...]).
+    Mirrors the client's extractPageSlugId: take the /p/ segment, and if it
+    is not a UUID, keep the last "-"-separated part. Returns None when no
+    plausible page slug is present.
+    """
+    if not isinstance(page_url, str):
+        return None
+    candidate = page_url.strip()
+    if not candidate:
+        return None
+    match = _CITATION_PAGE_SEGMENT.search(candidate)
+    page_slug = match.group(1) if match else candidate
+    if _UUID.fullmatch(page_slug):
+        return page_slug
+    slug_id = page_slug.rsplit("-", 1)[-1]
+    if not _SLUG_ID.fullmatch(slug_id):
+        return None
+    return slug_id
 
 
 class ApiError(RuntimeError):
@@ -258,13 +291,15 @@ class AkashaApiClient:
         return result
 
     def get_citation_page(self, page_url: str) -> dict[str, Any]:
-        if not INTERNAL_CITATION_PAGE_URL.fullmatch(page_url):
+        slug_id = _extract_citation_slug(page_url)
+        if slug_id is None:
             raise ApiConfigurationError(
-                "Shared Page URL must be an internal /p/<slug> URL."
+                "Shared Page URL must contain an internal /p/<slug> address."
             )
+        normalized_url = f"/p/{slug_id}"
         result = self.request_json(
             "/api/llm-wiki/citation-page",
-            {"pageUrl": page_url},
+            {"pageUrl": normalized_url},
         )
         if not isinstance(result, dict):
             raise ApiContractError(
@@ -272,16 +307,17 @@ class AkashaApiClient:
             )
         return result
 
-    def create_personal_page(
+    def create_page(
         self,
         *,
         title: str,
         content: str,
+        space_id: str | None = None,
         parent_page_id: str | None = None,
         content_format: str = "markdown",
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
-            "spaceId": self.get_personal_space_id(),
+            "spaceId": space_id or self.get_personal_space_id(),
             "title": title,
             "content": content,
             "format": content_format,
@@ -293,21 +329,41 @@ class AkashaApiClient:
             raise ApiContractError("/api/pages/create must return an object.")
         return result
 
-    def search_personal_pages(
+    def create_personal_page(
+        self,
+        *,
+        title: str,
+        content: str,
+        parent_page_id: str | None = None,
+        content_format: str = "markdown",
+    ) -> dict[str, Any]:
+        return self.create_page(
+            title=title,
+            content=content,
+            parent_page_id=parent_page_id,
+            content_format=content_format,
+        )
+
+    def search_pages(
         self,
         query: str,
         *,
         limit: int = 10,
+        space_id: str | None = None,
     ) -> dict[str, Any]:
         if not query.strip():
             raise ApiConfigurationError("Page search query is required.")
         if limit < 1 or limit > 20:
             raise ApiConfigurationError("Page search limit must be between 1 and 20.")
 
-        self.get_personal_space_id()
+        body: dict[str, Any] = {"query": query, "limit": limit}
+        if space_id:
+            body["spaceId"] = space_id
+        else:
+            self.get_personal_space_id()
         result = self.request_json(
             "/api/pages/search",
-            {"query": query, "limit": limit},
+            body,
         )
         if not isinstance(result, dict) or not isinstance(result.get("items"), list):
             raise ApiContractError("/api/pages/search returned invalid results.")
@@ -315,24 +371,30 @@ class AkashaApiClient:
             raise ApiContractError("/api/pages/search returned an invalid Page item.")
         return result
 
-    def get_personal_page(self, page_id: str) -> dict[str, Any]:
+    def search_personal_pages(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        return self.search_pages(query, limit=limit)
+
+    def get_page(self, page_id: str) -> dict[str, Any]:
         if not page_id:
             raise ApiConfigurationError("Page ID is required.")
 
-        personal_space_id = self.get_personal_space_id()
         result = self.request_json(
             "/api/pages/info",
             {"pageId": page_id, "format": "markdown"},
         )
         if not isinstance(result, dict):
             raise ApiContractError("/api/pages/info must return an object.")
-        if result.get("spaceId") != personal_space_id:
-            raise PermissionDeniedError(
-                "Akasha API returned a Page outside the personal space."
-            )
         return result
 
-    def update_personal_page(
+    def get_personal_page(self, page_id: str) -> dict[str, Any]:
+        return self.get_page(page_id)
+
+    def update_page(
         self,
         *,
         page_id: str,
@@ -345,8 +407,6 @@ class AkashaApiClient:
             raise ApiConfigurationError("Page title or content is required.")
         if operation not in {"replace", "append", "prepend"}:
             raise ApiConfigurationError("Unsupported page content operation.")
-
-        self.get_personal_space_id()
 
         body: dict[str, Any] = {"pageId": page_id}
         if title is not None:
@@ -363,6 +423,23 @@ class AkashaApiClient:
         if not isinstance(result, dict):
             raise ApiContractError("/api/pages/update must return an object.")
         return result
+
+    def update_personal_page(
+        self,
+        *,
+        page_id: str,
+        title: str | None = None,
+        content: str | None = None,
+        operation: str = "replace",
+        content_format: str = "markdown",
+    ) -> dict[str, Any]:
+        return self.update_page(
+            page_id=page_id,
+            title=title,
+            content=content,
+            operation=operation,
+            content_format=content_format,
+        )
 
     def _assert_page_in_personal_space(self, page_id: str) -> str:
         """Confirm the page lives in the personal space before mutating it.
