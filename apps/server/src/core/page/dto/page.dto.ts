@@ -55,6 +55,10 @@ export class PersonalPageSearchDto {
   query: string;
 
   @IsOptional()
+  @IsUUID()
+  spaceId?: string;
+
+  @IsOptional()
   @IsInt()
   @Min(1)
   @Max(20)

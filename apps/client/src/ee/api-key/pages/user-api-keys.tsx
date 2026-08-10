@@ -64,31 +64,11 @@ export default function UserApiKeys() {
             anchor: <Anchor href="https://akasha.com/api-docs" target="_blank" size="sm" />,
           }}
         />
+        {" "}
+        {t(
+          "API keys and Akasha Skills follow your existing space and page permissions, including public/shared spaces you can edit. Page edits use normal version history and can be rolled back in Akasha.",
+        )}
       </Text>
-
-      {mcpEnabled && canCreate && (
-        <Alert variant="light" color="blue" mb="md" p="sm" icon={<IconInfoCircle />}>
-          <Text size="sm">
-            {t(
-              "Your workspace has MCP enabled. Use your API key to connect AI assistants.",
-            )}{" "}
-            <Anchor
-              href="https://akasha.com/docs/user-guide/mcp"
-              target="_blank"
-              size="sm"
-            >
-              {t("Learn more")}
-            </Anchor>
-          </Text>
-          <Text size="sm" mt={4}>
-            {t("MCP server URL:")}{" "}
-            <Text size="sm" fw={500} span ff="monospace">
-              {`${getAppUrl()}/mcp`}
-            </Text>
-          </Text>
-        </Alert>
-      )}
-
       {canCreate ? (
         <Group justify="flex-end" mb="md">
           <Button onClick={() => setCreateModalOpened(true)}>

@@ -67,20 +67,21 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     get_citation.add_argument("page_url")
 
-    page = commands.add_parser("page", help="Write pages in the personal space")
+    page = commands.add_parser("page", help="Read and write pages you can access")
     page_commands = page.add_subparsers(dest="page_command", required=True)
 
     create_page = page_commands.add_parser(
         "create",
-        help="Create a page in the personal space",
+        help="Create a page in a space you can edit",
     )
     create_page.add_argument("--title", required=True)
     create_page.add_argument("--content-file", required=True)
+    create_page.add_argument("--space-id")
     create_page.add_argument("--parent-page-id")
 
     update_page = page_commands.add_parser(
         "update",
-        help="Update a page in the personal space",
+        help="Update a page you can edit",
     )
     update_page.add_argument("page_id")
     update_page.add_argument("--title")
@@ -93,14 +94,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     search_page = page_commands.add_parser(
         "search",
-        help="Search page source in the personal space",
+        help="Search page source in the personal space or a specified space",
     )
     search_page.add_argument("query")
     search_page.add_argument("--limit", type=int, default=10)
+    search_page.add_argument("--space-id")
 
     get_page = page_commands.add_parser(
         "get",
-        help="Read a page from the personal space",
+        help="Read a page you can access",
     )
     get_page.add_argument("page_id")
 
@@ -379,9 +381,10 @@ def main(
                 factory,
                 credential_file=credential_file,
             )
-            result = client.create_personal_page(
+            result = client.create_page(
                 title=args.title,
                 content=_read_utf8_content(args.content_file, input_stream),
+                space_id=args.space_id,
                 parent_page_id=args.parent_page_id,
             )
             _write_json(
@@ -395,9 +398,10 @@ def main(
                 factory,
                 credential_file=credential_file,
             )
-            result = client.search_personal_pages(
+            result = client.search_pages(
                 query=args.query,
                 limit=args.limit,
+                space_id=args.space_id,
             )
             _write_json(
                 output,
@@ -410,7 +414,7 @@ def main(
                 factory,
                 credential_file=credential_file,
             )
-            result = client.get_personal_page(args.page_id)
+            result = client.get_page(args.page_id)
             _write_json(
                 output,
                 _with_skill_update_notice(_page_read_result(result), identity),
@@ -431,7 +435,7 @@ def main(
                 factory,
                 credential_file=credential_file,
             )
-            result = client.update_personal_page(
+            result = client.update_page(
                 page_id=args.page_id,
                 title=args.title,
                 content=content,

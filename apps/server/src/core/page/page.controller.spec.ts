@@ -85,7 +85,7 @@ describe('PageController', () => {
     expect(migrationService.restorePageAuthors).not.toHaveBeenCalled();
   });
 
-  describe('personal Page source access for API keys', () => {
+  describe('Page source access for API keys', () => {
     const apiUser = withApiKeyAccess(
       { id: 'user-1', role: UserRole.MEMBER } as any,
       { apiKeyId: 'key-1', personalSpaceId: 'personal-1' },
@@ -111,6 +111,14 @@ describe('PageController', () => {
           },
         ]),
       };
+      const pagePermissionRepo = {
+        filterAccessiblePageIds: jest.fn().mockResolvedValue(['page-1']),
+      };
+      const spaceAbility = {
+        createForUser: jest.fn().mockResolvedValue({
+          cannot: jest.fn().mockReturnValue(false),
+        }),
+      };
       const pageAccessService = {
         validateCanReadSourceWithPermissions: jest.fn().mockResolvedValue({
           canEdit: true,
@@ -121,9 +129,9 @@ describe('PageController', () => {
       const controller = new PageController(
         {} as any,
         pageRepo as any,
+        pagePermissionRepo as any,
         {} as any,
-        {} as any,
-        {} as any,
+        spaceAbility as any,
         pageAccessService as any,
         {} as any,
         {} as any,
@@ -132,7 +140,7 @@ describe('PageController', () => {
         {} as any,
       );
 
-      return { controller, pageRepo, pageAccessService };
+      return { controller, pageRepo, pagePermissionRepo, spaceAbility, pageAccessService };
     };
 
     it('uses the source-read policy for page info', async () => {
@@ -155,7 +163,7 @@ describe('PageController', () => {
       expect(result.permissions.canEdit).toBe(true);
     });
 
-    it('searches only the personal space resolved from the API key', async () => {
+    it('uses the personal space as the default source search scope', async () => {
       const { controller, pageRepo } = createPageSubject();
 
       const result = await controller.searchPersonalPages(
@@ -179,7 +187,35 @@ describe('PageController', () => {
       ]);
     });
 
-    it('rejects personal search when the API key has no personal space', async () => {
+    it('searches a requested shared space when the API key owner can read it', async () => {
+      const { controller, pageRepo, pagePermissionRepo, spaceAbility } =
+        createPageSubject();
+
+      const result = await controller.searchPersonalPages(
+        { query: '雷雨', limit: 5, spaceId: 'shared-1' } as any,
+        apiUser,
+        workspace,
+      );
+
+      expect(spaceAbility.createForUser).toHaveBeenCalledWith(
+        apiUser,
+        'shared-1',
+      );
+      expect(pageRepo.searchPagesInSpace).toHaveBeenCalledWith({
+        workspaceId: 'workspace-1',
+        spaceId: 'shared-1',
+        query: '雷雨',
+        limit: 5,
+      });
+      expect(pagePermissionRepo.filterAccessiblePageIds).toHaveBeenCalledWith({
+        pageIds: ['page-1'],
+        userId: 'user-1',
+        spaceId: 'shared-1',
+      });
+      expect(result.items).toHaveLength(1);
+    });
+
+    it('rejects source search without a target space when the API key has no personal space', async () => {
       const { controller, pageRepo } = createPageSubject();
       const userWithoutPersonalSpace = withApiKeyAccess(
         { id: 'user-1', role: UserRole.MEMBER } as any,

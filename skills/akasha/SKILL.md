@@ -1,13 +1,13 @@
 ---
 name: akasha
-description: Use when a user asks to query Akasha or 已编译 Wiki knowledge (optionally limited to specific spaces), list readable spaces, read an ACL-authorized shared Page from an internal /p/slug URL, create a 个人空间 Page, or search, read, update, delete, restore, or list recent and trashed personal Pages.
+description: Use when a user asks to query Akasha or 已编译 Wiki knowledge (optionally limited to specific spaces), list readable spaces, read an ACL-authorized Page from an internal /p/slug URL, create/search/read/update Pages according to the user's Akasha permissions, or delete, restore, list recent, and list trashed personal Pages.
 ---
 
 # Akasha
 
 ## 核心原则
 
-通过随包 Python CLI 使用 Akasha。知识问答只查询已编译 Wiki；可以按用户提供或 Akasha 返回的准确站内 Page 地址读取当前用户有权限访问的共享 Page 原文，或在编辑个人空间 Page 时搜索和读取个人 Page。共享空间 Page 只读，Page 写入仍只面向个人空间，最终权限始终由 Akasha API 决定。
+通过随包 Python CLI 使用 Akasha。知识问答只查询已编译 Wiki；可以按用户提供或 Akasha 返回的准确站内 Page 地址读取当前用户有权限访问的 Page 原文。Page 搜索、读取、创建和更新遵循 API Key 所属用户在 Akasha 中已有的空间和页面权限；公共/共享空间只要该用户有编辑权限即可写入。页面写入走 Akasha 正常版本历史，写错可在页面中回滚，最终权限始终由 Akasha API 决定。
 
 从当前 `SKILL.md` 的实际路径解析本 Skill 所在目录，并记为 <AKASHA_SKILL_DIR>。不要假设它位于固定的全局目录，也不要让用户查找或猜测 Skill 目录。执行：
 
@@ -54,9 +54,9 @@ macOS 凭据保存在 `~/.akasha/credentials.env`，Linux 保存在 `~/.config/a
 
     python3 <AKASHA_SKILL_DIR>/scripts/akasha.py space list
 
-返回每个可见空间的 `spaceId`、`name`、`slug` 和 `isPersonal`（是否为当前用户个人空间）。据此和用户确认目标空间，再用可信 `spaceId` 作为 `query --space-id`。这是只读列表，不用于创建、修改或删除空间；不要据此向共享空间写入。
+返回每个可见空间的 `spaceId`、`name`、`slug` 和 `isPersonal`（是否为当前用户个人空间）。据此和用户确认目标空间，再用可信 `spaceId` 作为 `query --space-id` 或 Page 命令的 `--space-id`。这是只读列表，不用于创建、修改或删除空间本身。
 
-## 读取有权限的共享 Page
+## 读取有权限的 Page
 
 当用户要求读取共享 Page、查看完整来源，或回答确实需要核对论据摘录之外的上下文时，使用用户提供或 Akasha 返回的准确站内 Page 地址；不要改写、补全或猜测地址：
 
@@ -64,21 +64,25 @@ macOS 凭据保存在 `~/.akasha/credentials.env`，Linux 保存在 `~/.config/a
 
 命令接受准确的 `/p/<slug>` 站内地址，不要求该地址来自知识问答。服务端会按当前用户的空间与 Page ACL 检查权限，成功时返回 `pageId`、`spaceId`、`title`、`url`、完整 Markdown `content` 和 `updatedAt`。原始 Page 可能比已编译知识更新，若两者不一致，应明确说明依据来自当前 Page 原文。
 
-共享空间 Page 只读。不能把共享 Page 读取结果用于 `page update`；即使需要编辑个人空间 Page，也必须重新走 `page search` / `page get`，由个人空间权限校验确认目标。`citation get` 返回 403 时立即停止，不要改用 `/api/pages/info`、搜索、其他账号或猜测的 Page ID 绕过。
+如果需要编辑该 Page，仍需先获得可信 page ID，并确保用户明确要求修改。`citation get` 返回 403 时立即停止，不要改用搜索、其他账号或猜测的 Page ID 绕过。
 
-## 查找和读取待编辑的个人 Page
+## 查找和读取待编辑的 Page
 
-仅在用户明确要求编辑个人空间 Page 时，才可搜索原文：
+仅在用户明确要求编辑 Page 时，才可搜索原文。默认搜索个人空间：
 
     python3 <AKASHA_SKILL_DIR>/scripts/akasha.py page search "关键词" --limit 10
+
+若用户要编辑公共/共享空间，必须先用 `space list` 或用户提供的可信 space ID 确认目标空间，再指定：
+
+    python3 <AKASHA_SKILL_DIR>/scripts/akasha.py page search "关键词" --space-id <SPACE_ID> --limit 10
 
 根据 title 和 excerpt 选择目标。若多个结果都可能匹配，先让用户确认，不要猜测。取得可信 page ID 后读取完整原文：
 
     python3 <AKASHA_SKILL_DIR>/scripts/akasha.py page get <PAGE_ID>
 
-只能读取 API 返回为个人空间的 Page。遇到共享空间或 403 时立即停止；不要用知识查询结果代替完整原文，也不要尝试其他 Page 接口。
+只能读取 API 返回允许访问的 Page。遇到 403 时立即停止；不要用知识查询结果代替完整原文，也不要尝试其他账号或猜测 Page ID。
 
-## 创建个人空间 Page
+## 创建 Page
 
 用户明确要求创建 Page 时，将确认后的 UTF-8 内容放入工作文件，然后执行：
 
@@ -86,16 +90,23 @@ macOS 凭据保存在 `~/.akasha/credentials.env`，Linux 保存在 `~/.config/a
       --title "标题" \
       --content-file <CONTENT_FILE>
 
-需要创建子 Page 时增加 --parent-page-id。不要传 space ID；脚本从 API 的 personalSpaceId 选择个人空间。不要尝试向共享空间写入。
+默认创建到个人空间。需要创建到公共/共享空间时，必须使用用户提供或 `space list` 返回的可信 `spaceId`：
 
-## 更新个人空间 Page
+    python3 <AKASHA_SKILL_DIR>/scripts/akasha.py page create \
+      --space-id <SPACE_ID> \
+      --title "标题" \
+      --content-file <CONTENT_FILE>
+
+需要创建子 Page 时增加 --parent-page-id。是否允许创建由 Akasha 服务端权限决定。
+
+## 更新 Page
 
 必须有可信 page ID 和用户明确要求的修改。需要改写既有内容时，先用 `page get` 读取完整原文，只修改指定部分，并保留用户未要求修改的内容。
 
 - 仅修改标题：只传 --title。
 - 增加内容：传 --content-file，并选择 --operation append 或 prepend。
 - 精准改写：把修改后的完整原文写入 UTF-8 工作文件，使用 replace。
-- 完整覆盖：仅当已读取个人 Page 的完整原文，或用户提供完整替换内容并明确要求覆盖时使用 replace。
+- 完整覆盖：仅当已读取 Page 的完整原文，或用户提供完整替换内容并明确要求覆盖时使用 replace。
 
 执行：
 
@@ -103,7 +114,7 @@ macOS 凭据保存在 `~/.akasha/credentials.env`，Linux 保存在 `~/.config/a
       --content-file <CONTENT_FILE> \
       --operation replace
 
-不要发送 space ID，不要移动 Page，不要推断缺失的原文。
+不要发送 space ID，不要移动 Page，不要推断缺失的原文。公共/共享空间 Page 只有在 API Key 所属用户具备编辑权限时才会成功；否则服务端返回 403。
 
 ## 删除和恢复个人空间 Page
 
@@ -138,7 +149,7 @@ macOS 凭据保存在 `~/.akasha/credentials.env`，Linux 保存在 `~/.config/a
 | 把 `retrievedSources` 当作回答论据 | 只使用 `citations` 和对应的 `citationEvidence` |
 | 拼接或猜测 Page 地址 | 使用用户提供或 Akasha 返回的准确 `/p/<slug>` 地址 |
 | 每次 query 后读取所有完整 Page | 仅在用户要求或确需更多上下文时调用 `citation get` |
-| 用共享 Page 原文更新共享 Page | 共享 Page 只读；写入只走个人 Page 命令 |
+| 绕过权限写公共空间 Page | 只使用 `page get/search/create/update`，由服务端按 API Key 所属用户的空间和 Page 权限校验 |
 
 ## 权限与错误处理
 
@@ -153,7 +164,7 @@ macOS 凭据保存在 `~/.akasha/credentials.env`，Linux 保存在 `~/.config/a
 | 5 | 报告网络或 API 暂时不可用 |
 | 6 | 报告服务端契约尚未满足 |
 
-遇到 403 时停止，不要改用其他接口、账号或路径绕过。普通用户 API Key 可通过 `citation get` 只读访问当前用户有 Page ACL 的共享 Page，不要求地址来自知识问答；任意 Page 原文搜索以及 Page 写入仍仅限个人空间。
+遇到 403 时停止，不要改用其他接口、账号或路径绕过。普通用户 API Key 可通过 `citation get` 只读访问当前用户有 Page ACL 的共享 Page，不要求地址来自知识问答；Page 原文搜索以及 Page 创建/更新按 API Key 所属用户在目标空间和目标 Page 上的真实权限执行。
 
 个人 Page 支持软删除和恢复，但不提供永久删除、跨空间移动或 ACL 修改，也不要建议用户用脚本直接调用这些接口。
 

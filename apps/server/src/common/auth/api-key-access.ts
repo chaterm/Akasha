@@ -1,5 +1,4 @@
 import type { User } from '@akasha/db/types/entity.types';
-import { UserRole } from '../helpers/types/permission';
 
 const API_KEY_ACCESS = Symbol('apiKeyAccess');
 
@@ -27,16 +26,4 @@ export function withApiKeyAccess(
 
 export function getApiKeyAccess(user: User): ApiKeyAccess | undefined {
   return (user as ApiKeyAuthenticatedUser)[API_KEY_ACCESS];
-}
-
-export function isOrdinaryApiKeySpaceReadOnly(
-  user: User,
-  spaceId: string,
-): boolean {
-  const access = getApiKeyAccess(user);
-  return Boolean(
-    access &&
-    user.role === UserRole.MEMBER &&
-    access.personalSpaceId !== spaceId,
-  );
 }

@@ -91,6 +91,11 @@ export default function McpSettings() {
               "Use your API key for authentication. You can manage API keys in your account settings.",
             )}
           </Text>
+          <Text size="sm" c="dimmed" mt={4}>
+            {t(
+              "API keys, MCP clients, and Akasha Skills can read or edit public/shared spaces only according to the key owner's existing space and page permissions. Page edits use normal version history and can be rolled back in Akasha.",
+            )}
+          </Text>
 
           <div>
             <Text size="sm" fw={500} mt="md" mb={4}>

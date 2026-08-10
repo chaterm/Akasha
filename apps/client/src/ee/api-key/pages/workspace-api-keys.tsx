@@ -62,6 +62,10 @@ export default function WorkspaceApiKeys() {
             anchor: <Anchor href="https://akasha.com/api-docs" target="_blank" size="sm" />,
           }}
         />
+        {" "}
+        {t(
+          "API keys and Akasha Skills follow the key owner's existing space and page permissions, including public/shared spaces they can edit. Page edits use normal version history and can be rolled back in Akasha.",
+        )}
       </Text>
 
       {/* <RestrictApiToAdmins />
