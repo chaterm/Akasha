@@ -56,7 +56,7 @@ export default function TopMenu() {
               size="sm"
             />
             <Text fw={500} size="sm" lh={1} mr={3} lineClamp={1}>
-              {workspace?.name}
+              {user.name}
             </Text>
             <IconChevronDown size={16} />
           </Group>
