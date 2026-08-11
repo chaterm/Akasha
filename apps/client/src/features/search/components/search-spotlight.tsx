@@ -5,7 +5,10 @@ import React, { useState, useMemo } from "react";
 import { useDebouncedValue } from "@mantine/hooks";
 import { useTranslation } from "react-i18next";
 import { searchSpotlightStore } from "../constants.ts";
-import { SearchSpotlightFilters } from "./search-spotlight-filters.tsx";
+import {
+  SearchSpotlightFilters,
+  SearchSpotlightFilterValues,
+} from "./search-spotlight-filters.tsx";
 import { useUnifiedSearch } from "../hooks/use-unified-search.ts";
 import { SearchResultItem } from "./search-result-item.tsx";
 
@@ -16,10 +19,7 @@ export function SearchSpotlight({ spaceId }: SearchSpotlightProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [debouncedSearchQuery] = useDebouncedValue(query, 300);
-  const [filters, setFilters] = useState<{
-    spaceId?: string | null;
-    contentType?: string;
-  }>({
+  const [filters, setFilters] = useState<SearchSpotlightFilterValues>({
     contentType: "page",
   });
 
@@ -30,9 +30,23 @@ export function SearchSpotlight({ spaceId }: SearchSpotlightProps) {
       contentType: filters.contentType || "page", // Only used for frontend routing
     };
 
-    // Handle space filtering - only pass spaceId if a specific space is selected
     if (filters.spaceId) {
       params.spaceId = filters.spaceId;
+    }
+    if (filters.creatorId) {
+      params.creatorId = filters.creatorId;
+    }
+    if (filters.labelIds?.length) {
+      params.labelIds = filters.labelIds;
+    }
+    if (filters.titleOnly && filters.contentType === "page") {
+      params.titleOnly = true;
+    }
+    if (filters.modifiedFrom) {
+      params.modifiedFrom = filters.modifiedFrom;
+    }
+    if (filters.modifiedTo) {
+      params.modifiedTo = filters.modifiedTo;
     }
 
     return params;
@@ -52,7 +66,7 @@ export function SearchSpotlight({ spaceId }: SearchSpotlightProps) {
     />
   ));
 
-  const handleFiltersChange = (newFilters: any) => {
+  const handleFiltersChange = (newFilters: SearchSpotlightFilterValues) => {
     setFilters(newFilters);
   };
 

@@ -35,6 +35,10 @@ describe("useUnifiedSearch", () => {
           query: "guide",
           contentType: "attachment",
           spaceId: "space-1",
+          creatorId: "user-1",
+          labelIds: ["label-1"],
+          modifiedFrom: "2026-07-01",
+          modifiedTo: "2026-07-31",
         }),
       { wrapper },
     );
@@ -43,6 +47,10 @@ describe("useUnifiedSearch", () => {
     expect(searchAttachments).toHaveBeenCalledWith({
       query: "guide",
       spaceId: "space-1",
+      creatorId: "user-1",
+      labelIds: ["label-1"],
+      modifiedFrom: "2026-07-01",
+      modifiedTo: "2026-07-31",
     });
     expect(searchPage).not.toHaveBeenCalled();
   });
