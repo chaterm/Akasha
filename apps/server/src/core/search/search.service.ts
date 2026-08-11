@@ -9,9 +9,24 @@ import { SpaceMemberRepo } from '@akasha/db/repos/space/space-member.repo';
 import { ShareRepo } from '@akasha/db/repos/share/share.repo';
 import { PagePermissionRepo } from '@akasha/db/repos/page/page-permission.repo';
 import { UserRole } from '../../common/helpers/types/permission';
+import { LabelType } from '@akasha/db/repos/label/label.repo';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const tsquery = require('pg-tsquery')();
+
+function hasLabelFilters(searchParams: SearchDTO) {
+  return Boolean(
+    searchParams.labelIds?.length || searchParams.labelNames?.length,
+  );
+}
+
+function modifiedToUpperBound(value: string) {
+  const date = new Date(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    date.setUTCDate(date.getUTCDate() + 1);
+  }
+  return date;
+}
 
 @Injectable()
 export class SearchService {
@@ -55,13 +70,60 @@ export class SearchService {
           'highlight',
         ),
       ])
-      .where(
-        'tsv',
-        '@@',
-        sql<string>`to_tsquery('english', f_unaccent(${searchQuery}))`,
+      .where((eb) =>
+        searchParams.titleOnly
+          ? eb(
+              sql`LOWER(f_unaccent(pages.title))`,
+              'like',
+              sql`LOWER(f_unaccent(${`%${query.trim()}%`}))`,
+            )
+          : eb.or([
+              eb(
+                'tsv',
+                '@@',
+                sql<string>`to_tsquery('english', f_unaccent(${searchQuery}))`,
+              ),
+              eb(
+                sql`LOWER(f_unaccent(pages.title))`,
+                'like',
+                sql`LOWER(f_unaccent(${`%${query.trim()}%`}))`,
+              ),
+              eb(
+                sql`LOWER(f_unaccent(pages.text_content))`,
+                'like',
+                sql`LOWER(f_unaccent(${`%${query.trim()}%`}))`,
+              ),
+            ]),
       )
       .$if(Boolean(searchParams.creatorId), (qb) =>
         qb.where('creatorId', '=', searchParams.creatorId),
+      )
+      .$if(Boolean(searchParams.modifiedFrom), (qb) =>
+        qb.where('updatedAt', '>=', new Date(searchParams.modifiedFrom!)),
+      )
+      .$if(Boolean(searchParams.modifiedTo), (qb) =>
+        qb.where(
+          'updatedAt',
+          '<',
+          modifiedToUpperBound(searchParams.modifiedTo!),
+        ),
+      )
+      .$if(hasLabelFilters(searchParams), (qb) =>
+        qb.where(
+          sql<boolean>`exists (
+            select 1
+            from page_labels pl
+            inner join labels l on l.id = pl.label_id
+            where pl.page_id = pages.id
+              and l.workspace_id = ${opts.workspaceId}
+              and l.type = ${LabelType.PAGE}
+              and (
+                ${searchParams.labelIds?.length ? sql`l.id in (${sql.join(searchParams.labelIds.map((id) => sql`${id}`))})` : sql`false`}
+                or
+                ${searchParams.labelNames?.length ? sql`l.name in (${sql.join(searchParams.labelNames.map((name) => sql`${name}`))})` : sql`false`}
+              )
+          )`,
+        ),
       )
       .where('deletedAt', 'is', null)
       .orderBy('rank', 'desc')
@@ -197,6 +259,40 @@ export class SearchService {
       .where('pages.workspaceId', '=', opts.workspaceId)
       .where('pages.deletedAt', 'is', null)
       .where('attachments.fileName', 'ilike', `%${query}%`)
+      .$if(Boolean(searchParams.creatorId), (qb) =>
+        qb.where('attachments.creatorId', '=', searchParams.creatorId),
+      )
+      .$if(Boolean(searchParams.modifiedFrom), (qb) =>
+        qb.where(
+          'attachments.updatedAt',
+          '>=',
+          new Date(searchParams.modifiedFrom!),
+        ),
+      )
+      .$if(Boolean(searchParams.modifiedTo), (qb) =>
+        qb.where(
+          'attachments.updatedAt',
+          '<',
+          modifiedToUpperBound(searchParams.modifiedTo!),
+        ),
+      )
+      .$if(hasLabelFilters(searchParams), (qb) =>
+        qb.where(
+          sql<boolean>`exists (
+            select 1
+            from page_labels pl
+            inner join labels l on l.id = pl.label_id
+            where pl.page_id = pages.id
+              and l.workspace_id = ${opts.workspaceId}
+              and l.type = ${LabelType.PAGE}
+              and (
+                ${searchParams.labelIds?.length ? sql`l.id in (${sql.join(searchParams.labelIds.map((id) => sql`${id}`))})` : sql`false`}
+                or
+                ${searchParams.labelNames?.length ? sql`l.name in (${sql.join(searchParams.labelNames.map((name) => sql`${name}`))})` : sql`false`}
+              )
+          )`,
+        ),
+      )
       .orderBy('attachments.fileName', 'asc')
       .limit(candidateLimit);
 

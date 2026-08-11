@@ -102,6 +102,50 @@ describe('SearchService attachment search', () => {
     expect(spaceMemberRepo.getUserSpaceIdsQuery).not.toHaveBeenCalled();
     expect(pagePermissionRepo.filterAccessiblePageIds).not.toHaveBeenCalled();
   });
+
+  it('applies advanced filters to attachment candidates before permission filtering', async () => {
+    const query = fluentQuery([]);
+    const service = new SearchService(
+      { selectFrom: jest.fn().mockReturnValue(query) } as never,
+      {} as never,
+      {} as never,
+      {
+        getUserSpaceIdsQuery: jest.fn().mockReturnValue('readable-space-ids'),
+      } as never,
+      { filterAccessiblePageIds: jest.fn().mockResolvedValue([]) } as never,
+    );
+
+    await (service as any).searchAttachments(
+      {
+        query: 'guide',
+        creatorId: 'user-1',
+        modifiedFrom: '2026-07-01',
+        modifiedTo: '2026-07-31',
+        labelIds: ['018ff6f7-39a4-7f4c-8c0d-f31a88b94b1c'],
+      },
+      {
+        userId: 'user-2',
+        userRole: UserRole.MEMBER,
+        workspaceId: 'workspace-1',
+      },
+    );
+
+    expect(query.where).toHaveBeenCalledWith(
+      'attachments.creatorId',
+      '=',
+      'user-1',
+    );
+    expect(query.where).toHaveBeenCalledWith(
+      'attachments.updatedAt',
+      '>=',
+      new Date('2026-07-01'),
+    );
+    expect(query.where).toHaveBeenCalledWith(
+      'attachments.updatedAt',
+      '<',
+      new Date('2026-08-01'),
+    );
+  });
 });
 
 function attachmentRow(id: string, pageId: string) {
@@ -129,6 +173,7 @@ function fluentQuery(result: unknown[]) {
     orderBy: jest.fn(),
     limit: jest.fn(),
     offset: jest.fn(),
+    $if: jest.fn(),
     execute: jest.fn().mockResolvedValue(result),
   };
 
@@ -142,6 +187,9 @@ function fluentQuery(result: unknown[]) {
   ]) {
     method.mockReturnValue(query);
   }
+  query.$if.mockImplementation((condition, callback) =>
+    condition ? callback(query) : query,
+  );
 
   return query;
 }

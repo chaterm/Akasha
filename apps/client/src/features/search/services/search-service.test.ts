@@ -17,11 +17,22 @@ describe("searchAttachments", () => {
     vi.mocked(api.post).mockResolvedValue({ data: { items: [] } });
 
     await expect(
-      searchAttachments({ query: "guide", spaceId: "space-1" }),
+      searchAttachments({
+        query: "guide",
+        spaceId: "space-1",
+        creatorId: "user-1",
+        labelIds: ["label-1"],
+        modifiedFrom: "2026-07-01",
+        modifiedTo: "2026-07-31",
+      }),
     ).resolves.toEqual([]);
     expect(api.post).toHaveBeenCalledWith("/search/attachments", {
       query: "guide",
       spaceId: "space-1",
+      creatorId: "user-1",
+      labelIds: ["label-1"],
+      modifiedFrom: "2026-07-01",
+      modifiedTo: "2026-07-31",
     });
   });
 });
