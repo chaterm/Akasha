@@ -367,8 +367,12 @@ AI handles the infinite "how" space. Humans define "why" — the value function,
 
 * [Node.js](https://nodejs.org/) 22+ (LTS recommended)
 * [pnpm](https://pnpm.io/) 10.4.0 (see `packageManager` in `package.json`)
-* [Docker](https://www.docker.com/) (for PostgreSQL with pgvector)
+* PostgreSQL 18 with the [pgvector](https://github.com/pgvector/pgvector) extension available — via [Docker](https://www.docker.com/) or a native install
 * Redis (local install or container)
+
+The migrations run `CREATE EXTENSION IF NOT EXISTS vector` themselves, so you do
+not create the extension by hand. What you must provide is a PostgreSQL server
+that *has pgvector installed*, otherwise that migration fails.
 
 ## Local development
 
@@ -387,20 +391,65 @@ AI handles the infinite "how" space. Humans define "why" — the value function,
 
    Generate an `APP_SECRET` with `openssl rand -hex 32`. The other defaults are ready for the included PostgreSQL Docker Compose service and a local Redis on `6379`.
 
-3. Start PostgreSQL (pgvector):
+3. Start PostgreSQL (pgvector). Pick **either** Docker or a native install.
+
+   **Option A — Docker (recommended).** The `pgvector/pgvector` image ships the
+   extension, and Compose already provisions the `akasha` role and database from
+   `docker-compose.yml`:
 
    ```bash
    docker compose up -d db
    ```
 
+   **Option B — native install (macOS/Homebrew).** Use this when Docker is not
+   available. `postgresql@18` is keg-only, so the binaries are not on `PATH`;
+   the snippets below call them through `$PGB`:
+
+   ```bash
+   brew install postgresql@18 pgvector
+   export PGB=/opt/homebrew/opt/postgresql@18/bin
+
+   # Initialize the cluster (once) and start the server.
+   $PGB/initdb --locale=C -E UTF-8 -D /opt/homebrew/var/postgresql@18
+   mkdir -p /opt/homebrew/var/log
+   $PGB/pg_ctl -D /opt/homebrew/var/postgresql@18 \
+     -l /opt/homebrew/var/log/postgresql@18.log start
+   ```
+
+   Then create the role and database that `DATABASE_URL` expects. Adjust the
+   name and password if you changed the connection string:
+
+   ```bash
+   $PGB/psql -d postgres -c \
+     "CREATE ROLE akasha LOGIN PASSWORD 'STRONG_DB_PASSWORD' SUPERUSER;"
+   $PGB/createdb -O akasha akasha
+   ```
+
+   Verify pgvector is visible to the server before moving on. If this errors,
+   the extension is not installed where this cluster looks for it:
+
+   ```bash
+   $PGB/psql -d akasha -c "CREATE EXTENSION IF NOT EXISTS vector;" \
+     -c "SELECT extname, extversion FROM pg_extension;"
+   ```
+
 4. Start Redis locally, for example:
 
    ```bash
-   # macOS (Homebrew)
+   # macOS (Homebrew), as a managed background service
    brew services start redis
+
+   # or as a plain process, without registering a service
+   redis-server --port 6379 --daemonize yes
 
    # or run a Redis container
    docker run -d --name akasha-redis -p 6379:6379 redis:7
+   ```
+
+   Check it responds:
+
+   ```bash
+   redis-cli ping   # -> PONG
    ```
 
 5. Install dependencies (from the repository root):
@@ -433,6 +482,59 @@ To verify the backend and its dependencies:
 curl http://127.0.0.1:8080/api/health
 ```
 
+A healthy stack reports both dependencies as `up`:
+
+```json
+{
+  "status": "ok",
+  "info": { "database": { "status": "up" }, "redis": { "status": "up" } },
+  "error": {},
+  "details": { "database": { "status": "up" }, "redis": { "status": "up" } }
+}
+```
+
+## Restarting after a reboot
+
+Docker Compose and `brew services` both restart on their own. A natively
+installed PostgreSQL started through `pg_ctl`, or a Redis started with
+`--daemonize`, does not — bring them back up before `pnpm run dev`:
+
+```bash
+export PGB=/opt/homebrew/opt/postgresql@18/bin
+$PGB/pg_ctl -D /opt/homebrew/var/postgresql@18 \
+  -l /opt/homebrew/var/log/postgresql@18.log start
+redis-server --port 6379 --daemonize yes
+pnpm run dev
+```
+
+## Troubleshooting
+
+**`initdb: error: file ".../postgres.bki" does not exist` after installing
+`postgresql@18` via Homebrew.** Homebrew installs the keg but performs the
+prefix symlinks in a separate post-install step. On older Homebrew versions that
+step can abort (`unknown install step: link_dir`, or `undefined method
+'stop_timeout'`), leaving the keg's `share/postgresql` unlinked as
+`share/postgresql@18` — which is where `pg_config` points. Upgrade Homebrew
+itself, then reinstall so the step runs:
+
+```bash
+brew update
+brew reinstall postgresql@18
+```
+
+**AI features appear inert.** The AI and knowledge-compilation features are
+gated on `AI_DRIVER`. When it is unset, the validation in
+`apps/server/src/integrations/environment/environment.validation.ts` skips every
+AI-related variable and those subsystems stay idle; the wiki, editor, and
+real-time collaboration are unaffected. To enable them, set `AI_DRIVER` plus the
+matching credentials for that provider.
+
+**`DATABASE_URL` points at a database that does not exist.** The name in your
+`.env` must match the database you actually created in step 3. Older local
+`.env` files inherited from the upstream project may still reference `docmost`
+rather than `akasha`; either update the connection string and re-run the
+migrations, or create the database under the name already configured.
+
 ---
 
 # Self-hosted First
@@ -454,6 +556,3 @@ Organizations own their:
 * organizational intelligence
 
 Memory is not something you rent. You cannot rent a nervous system.
-
-pnpm --filter ./apps/server migration:latest
-CREATE EXTENSION IF NOT EXISTS vector;
