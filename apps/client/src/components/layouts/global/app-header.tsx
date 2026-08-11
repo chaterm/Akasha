@@ -3,7 +3,6 @@ import {
   Badge,
   Box,
   Group,
-  Text,
   Tooltip,
   UnstyledButton,
 } from "@mantine/core";
@@ -34,6 +33,7 @@ import {
 } from "@/features/search/constants.ts";
 import { NotificationPopover } from "@/features/notification/components/notification-popover.tsx";
 import { workspaceAtom } from "@/features/user/atoms/current-user-atom.ts";
+import { BrandLogo, BrandWordmark } from "@/components/common/brand-logo.tsx";
 
 const links = [{ link: APP_ROUTE.HOME, label: "Home" }];
 
@@ -84,21 +84,15 @@ export function AppHeader() {
 
           <Link to="/home" className={classes.brand} aria-label="Akasha">
             <Box hiddenFrom="sm" className={classes.brandIcon}>
-              <img
-                src="/icons/favicon-32x32.png"
-                alt="Akasha"
-                width={22}
-                height={22}
+              <BrandLogo width={22} height={22} />
+            </Box>
+            <Box visibleFrom="sm" className={classes.brandIcon}>
+              <BrandWordmark
+                width={126}
+                height={30}
+                style={{ objectFit: "contain" }}
               />
             </Box>
-            <Text
-              size="lg"
-              fw={600}
-              style={{ userSelect: "none" }}
-              visibleFrom="sm"
-            >
-              Akasha
-            </Text>
           </Link>
 
           <Group ml={50} gap={5} className={classes.links} visibleFrom="sm">
