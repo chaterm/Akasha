@@ -64,7 +64,7 @@ describe("TopMenu", () => {
     });
   });
 
-  it("uses the current user's avatar in the menu trigger", () => {
+  it("shows the current user's avatar and name in the menu trigger", () => {
     render(
       <MantineProvider>
         <MemoryRouter>
@@ -74,7 +74,8 @@ describe("TopMenu", () => {
     );
 
     expect(screen.getByTitle("name001")).toBeTruthy();
-    expect(screen.queryByTitle("知识库")).toBeNull();
+    expect(screen.getByRole("button", { name: /name001/ })).toBeTruthy();
+    expect(screen.queryByText("知识库")).toBeNull();
   });
 
   it("shows a personal space shortcut for the current user", async () => {
@@ -86,7 +87,7 @@ describe("TopMenu", () => {
       </MantineProvider>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /知识库/ }));
+    fireEvent.click(screen.getByRole("button", { name: /name001/ }));
 
     const personalSpace = await screen.findByRole("menuitem", {
       name: "Personal space",
