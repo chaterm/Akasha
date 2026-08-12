@@ -12,13 +12,12 @@ import { generateSlugId } from '../../common/helpers';
 import { jsonToText } from '../../collaboration/collaboration.util';
 import { getProsemirrorContent } from '../../common/helpers/prosemirror/utils';
 import { executeTx } from '@akasha/db/utils';
+import { KyselyTransaction } from '@akasha/db/types/kysely.types';
 import { ImportService } from '../../integrations/import/services/import.service';
 import { ImportAttachmentService } from '../../integrations/import/services/import-attachment.service';
 import { PageService } from '../../core/page/services/page.service';
 import { BacklinkRepo } from '@akasha/db/repos/backlink/backlink.repo';
-import {
-  buildAttachmentCandidates,
-} from '../../integrations/import/utils/import.utils';
+import { buildAttachmentCandidates } from '../../integrations/import/utils/import.utils';
 import { formatImportHtml } from '../../integrations/import/utils/import-formatter';
 import { EventName } from '../../common/events/event.contants';
 import {
@@ -26,13 +25,14 @@ import {
   mergeConfluencePageMappings,
   parseConfluencePageId,
 } from './confluence-page-mapping';
+import { EnvironmentService } from '../../integrations/environment/environment.service';
 
 interface ConfluencePageNode {
   id: string;
   confluencePageId: string;
   slugId: string;
   title: string;
-  filePath: string;       // 相对 extractDir 的路径，如 "7320321.html"
+  filePath: string; // 相对 extractDir 的路径，如 "7320321.html"
   parentPageId: string | null;
   position?: string;
 }
@@ -94,6 +94,7 @@ export class ConfluenceImportService {
     private readonly importAttachmentService: ImportAttachmentService,
     private readonly pageService: PageService,
     private readonly backlinkRepo: BacklinkRepo,
+    private readonly environmentService: EnvironmentService,
     @InjectKysely() private readonly db: KyselyDB,
     private readonly eventEmitter: EventEmitter2,
   ) {}
@@ -148,6 +149,8 @@ export class ConfluenceImportService {
       .select(['slug'])
       .where('id', '=', fileTask.spaceId)
       .executeTakeFirst();
+    const appUrl = this.environmentService.getAppUrl();
+    const confluenceSpaceKey = getConfluenceSpaceKey(fileTask.metadata);
 
     const validPageIds = new Set<string>();
     const allBacklinks: any[] = [];
@@ -234,6 +237,8 @@ export class ConfluenceImportService {
             confluencePageId: page.confluencePageId,
             akashaPageId: page.id,
             title: insertablePage.title ?? '',
+            spaceKey: confluenceSpaceKey,
+            targetUrl: buildPageUrl(appUrl, space?.slug, page.slugId),
           });
           totalProcessed++;
 
@@ -256,6 +261,13 @@ export class ConfluenceImportService {
             );
           }
         }
+
+        await this.persistLegacyPageMappings(trx, {
+          workspaceId: fileTask.workspaceId,
+          spaceId: fileTask.spaceId,
+          importTaskId: fileTask.id,
+          pageMappings,
+        });
 
         await trx
           .updateTable('fileTasks')
@@ -307,9 +319,7 @@ export class ConfluenceImportService {
       const indexInSub = path.join(candidate, 'index.html');
       try {
         await fs.access(indexInSub);
-        this.logger.debug(
-          `Resolved content dir: ${subDirs[0].name}/`,
-        );
+        this.logger.debug(`Resolved content dir: ${subDirs[0].name}/`);
         return candidate;
       } catch {
         // 子目录里也没有 index.html，回退
@@ -379,7 +389,9 @@ export class ConfluenceImportService {
       processUl($rootUl, null);
     } else {
       // 兜底：直接从 body 找
-      $('body > div ul').first().each((_, ul) => processUl(ul, null));
+      $('body > div ul')
+        .first()
+        .each((_, ul) => processUl(ul, null));
     }
 
     this.logger.debug(`Parsed ${pagesMap.size} pages from index.html`);
@@ -406,7 +418,8 @@ export class ConfluenceImportService {
       const firstPos = await this.pageService.nextPagePosition(spaceId);
       let prev: string | null = null;
       rootSibs.forEach((p, i) => {
-        p.position = i === 0 ? firstPos : generateJitteredKeyBetween(prev, null);
+        p.position =
+          i === 0 ? firstPos : generateJitteredKeyBetween(prev, null);
         prev = p.position;
       });
     }
@@ -527,7 +540,10 @@ export class ConfluenceImportService {
 
       const fileName = $a.text().trim();
       // mime 类型在链接后的文本节点里，如 " (image/png)"
-      const mimeMatch = $a.parent().text().match(/\(([^)]+)\)\s*$/);
+      const mimeMatch = $a
+        .parent()
+        .text()
+        .match(/\(([^)]+)\)\s*$/);
       const mimeType = mimeMatch ? mimeMatch[1].trim() : '';
 
       if (!seen.has(href)) {
@@ -617,9 +633,7 @@ export class ConfluenceImportService {
     const htmlFiles = entries
       .filter(
         (e) =>
-          e.isFile() &&
-          e.name.endsWith('.html') &&
-          e.name !== 'index.html',
+          e.isFile() && e.name.endsWith('.html') && e.name !== 'index.html',
       )
       .map((e) => e.name);
 
@@ -627,6 +641,13 @@ export class ConfluenceImportService {
 
     const attachmentCandidates = await buildAttachmentCandidates(extractDir);
     const firstPos = await this.pageService.nextPagePosition(fileTask.spaceId);
+    const space = await this.db
+      .selectFrom('spaces')
+      .select(['slug'])
+      .where('id', '=', fileTask.spaceId)
+      .executeTakeFirst();
+    const appUrl = this.environmentService.getAppUrl();
+    const confluenceSpaceKey = getConfluenceSpaceKey(fileTask.metadata);
     const validPageIds = new Set<string>();
     const pageMappings: ConfluencePageMapping[] = [];
 
@@ -702,6 +723,8 @@ export class ConfluenceImportService {
             confluencePageId,
             akashaPageId: pageId,
             title: insertablePage.title ?? '',
+            spaceKey: confluenceSpaceKey,
+            targetUrl: buildPageUrl(appUrl, space?.slug, insertablePage.slugId),
           });
         } else {
           this.logger.warn(
@@ -709,6 +732,13 @@ export class ConfluenceImportService {
           );
         }
       }
+
+      await this.persistLegacyPageMappings(trx, {
+        workspaceId: fileTask.workspaceId,
+        spaceId: fileTask.spaceId,
+        importTaskId: fileTask.id,
+        pageMappings,
+      });
 
       await trx
         .updateTable('fileTasks')
@@ -730,6 +760,50 @@ export class ConfluenceImportService {
       });
     }
   }
+
+  private async persistLegacyPageMappings(
+    trx: KyselyTransaction,
+    input: {
+      workspaceId: string;
+      spaceId: string;
+      importTaskId: string;
+      pageMappings: ConfluencePageMapping[];
+    },
+  ): Promise<void> {
+    if (input.pageMappings.length === 0) return;
+
+    await trx
+      .insertInto('legacyLinkMappings')
+      .values(
+        input.pageMappings.map((mapping) => ({
+          workspaceId: input.workspaceId,
+          source: 'confluence',
+          legacySpaceKey: mapping.spaceKey ?? null,
+          legacyPageId: mapping.confluencePageId,
+          legacyTitle: mapping.title,
+          legacyPath: `/pages/viewpage.action?pageId=${mapping.confluencePageId}`,
+          targetSpaceId: input.spaceId,
+          targetPageId: mapping.akashaPageId,
+          targetUrl: mapping.targetUrl,
+          importTaskId: input.importTaskId,
+        })),
+      )
+      .onConflict((oc) =>
+        oc
+          .columns(['workspaceId', 'source', 'legacyPageId'])
+          .doUpdateSet((eb) => ({
+            legacySpaceKey: eb.ref('excluded.legacySpaceKey'),
+            legacyTitle: eb.ref('excluded.legacyTitle'),
+            legacyPath: eb.ref('excluded.legacyPath'),
+            targetSpaceId: eb.ref('excluded.targetSpaceId'),
+            targetPageId: eb.ref('excluded.targetPageId'),
+            targetUrl: eb.ref('excluded.targetUrl'),
+            importTaskId: eb.ref('excluded.importTaskId'),
+            updatedAt: new Date(),
+          })),
+      )
+      .execute();
+  }
 }
 
 /**
@@ -750,4 +824,33 @@ function stripConfluenceSpacePrefix(rawTitle: string): string {
   if (sepIndex === -1) return rawTitle;
   const stripped = rawTitle.slice(sepIndex + 3).trim();
   return stripped.length > 0 ? stripped : rawTitle;
+}
+
+function buildPageUrl(
+  appUrl: string,
+  spaceSlug: string | undefined,
+  pageSlugId: string,
+): string {
+  const prefix = appUrl.replace(/\/+$/, '');
+  return spaceSlug
+    ? `${prefix}/s/${spaceSlug}/p/${pageSlugId}`
+    : `${prefix}/p/${pageSlugId}`;
+}
+
+function getConfluenceSpaceKey(
+  metadata: FileTask['metadata'],
+): string | undefined {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return undefined;
+  }
+  const confluence = metadata.confluence;
+  if (
+    !confluence ||
+    typeof confluence !== 'object' ||
+    Array.isArray(confluence)
+  ) {
+    return undefined;
+  }
+  const spaceKey = String(confluence.spaceKey ?? '').trim();
+  return spaceKey.length > 0 ? spaceKey : undefined;
 }

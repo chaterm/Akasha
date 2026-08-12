@@ -3,13 +3,18 @@
  * Please do not edit it manually.
  */
 
-import type { ColumnType } from "kysely";
+import type { ColumnType } from 'kysely';
 
-export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
-  ? ColumnType<S, I | undefined, U>
-  : ColumnType<T, T | undefined, T>;
+export type Generated<T> =
+  T extends ColumnType<infer S, infer I, infer U>
+    ? ColumnType<S, I | undefined, U>
+    : ColumnType<T, T | undefined, T>;
 
-export type Int8 = ColumnType<string, bigint | number | string, bigint | number | string>;
+export type Int8 = ColumnType<
+  string,
+  bigint | number | string,
+  bigint | number | string
+>;
 
 export type Json = JsonValue;
 
@@ -784,6 +789,26 @@ export interface KnowledgeSpaceCompileRuns {
   workspaceId: string;
 }
 
+export interface LegacyLinkMappings {
+  createdAt: Generated<Timestamp>;
+  id: Generated<string>;
+  importTaskId: string | null;
+  legacyAnchor: string | null;
+  legacyHost: string | null;
+  legacyPageId: string | null;
+  legacyPath: string | null;
+  legacySpaceId: string | null;
+  legacySpaceKey: string | null;
+  legacyTitle: string | null;
+  source: string;
+  targetAttachmentId: string | null;
+  targetPageId: string | null;
+  targetSpaceId: string | null;
+  targetUrl: string | null;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
 export interface Labels {
   createdAt: Generated<Timestamp>;
   id: Generated<string>;
@@ -1169,6 +1194,7 @@ export interface DB {
   knowledgeSpaceCompileRunImages: KnowledgeSpaceCompileRunImages;
   knowledgeSpaceCompileRunPages: KnowledgeSpaceCompileRunPages;
   knowledgeSpaceCompileRuns: KnowledgeSpaceCompileRuns;
+  legacyLinkMappings: LegacyLinkMappings;
   labels: Labels;
   notifications: Notifications;
   pageAccess: PageAccess;

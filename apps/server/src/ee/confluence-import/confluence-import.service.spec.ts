@@ -9,9 +9,12 @@ jest.mock('../../integrations/import/utils/import-formatter', () => ({
 jest.mock('../../integrations/import/services/import.service', () => ({
   ImportService: class ImportService {},
 }));
-jest.mock('../../integrations/import/services/import-attachment.service', () => ({
-  ImportAttachmentService: class ImportAttachmentService {},
-}));
+jest.mock(
+  '../../integrations/import/services/import-attachment.service',
+  () => ({
+    ImportAttachmentService: class ImportAttachmentService {},
+  }),
+);
 jest.mock('../../core/page/services/page.service', () => ({
   PageService: class PageService {},
 }));
@@ -21,8 +24,10 @@ describe('ConfluenceImportService page mapping persistence', () => {
     {
       name: 'index hierarchy path',
       files: {
-        'index.html': '<div id="content"><ul><li><a href="10.html">页面 10</a></li></ul></div>',
-        '10.html': '<h1 id="title-heading">空间 : 页面 10</h1><div id="main-content"><p>正文</p></div>',
+        'index.html':
+          '<div id="content"><ul><li><a href="10.html">页面 10</a></li></ul></div>',
+        '10.html':
+          '<h1 id="title-heading">空间 : 页面 10</h1><div id="main-content"><p>正文</p></div>',
       },
       sourcePageId: '10',
       title: '页面 10',
@@ -30,7 +35,8 @@ describe('ConfluenceImportService page mapping persistence', () => {
     {
       name: 'flat fallback path',
       files: {
-        '20.html': '<h1 id="title-heading">空间 : 页面 20</h1><div id="main-content"><p>正文</p></div>',
+        '20.html':
+          '<h1 id="title-heading">空间 : 页面 20</h1><div id="main-content"><p>正文</p></div>',
       },
       sourcePageId: '20',
       title: '页面 20',
@@ -68,12 +74,33 @@ describe('ConfluenceImportService page mapping persistence', () => {
             confluencePageId: fixture.sourcePageId,
             akashaPageId: harness.insertedPages[0].id,
             title: fixture.title,
+            spaceKey: 'open',
+            targetUrl: expect.stringContaining(
+              `https://akasha.example.test/s/space-slug/p/`,
+            ),
           },
         ],
       });
+      expect(harness.insertedLegacyMappings).toEqual([
+        expect.objectContaining({
+          workspaceId: 'workspace-1',
+          source: 'confluence',
+          legacySpaceKey: 'open',
+          legacyPageId: fixture.sourcePageId,
+          legacyTitle: fixture.title,
+          legacyPath: `/pages/viewpage.action?pageId=${fixture.sourcePageId}`,
+          targetSpaceId: 'space-1',
+          targetPageId: harness.insertedPages[0].id,
+          targetUrl: expect.stringContaining(
+            'https://akasha.example.test/s/space-slug/p/',
+          ),
+          importTaskId: 'task-1',
+        }),
+      ]);
       expect(harness.events).toEqual([
         'transaction:start',
         'insert:pages',
+        'insert:legacyLinkMappings',
         'update:fileTasks',
         'transaction:end',
       ]);
@@ -116,6 +143,7 @@ describe('ConfluenceImportService page mapping persistence', () => {
         }),
       ).rejects.toThrow(/metadata write failed/);
       expect(harness.events).toContain('insert:pages');
+      expect(harness.events).toContain('insert:legacyLinkMappings');
       expect(harness.events).toContain('update:fileTasks');
       expect(harness.emitted).toHaveLength(0);
     } finally {
@@ -178,6 +206,7 @@ describe('ConfluenceImportService page mapping persistence', () => {
 
 function createHarness({ failMetadataUpdate = false } = {}) {
   const insertedPages: Record<string, any>[] = [];
+  const insertedLegacyMappings: Record<string, any>[] = [];
   const emitted: unknown[] = [];
   const events: string[] = [];
   let taskMetadata: unknown;
@@ -190,6 +219,14 @@ function createHarness({ failMetadataUpdate = false } = {}) {
             insertedPages.push(value);
             events.push('insert:pages');
           }
+          if (table === 'legacyLinkMappings') {
+            const rows = Array.isArray(value) ? value : [value];
+            insertedLegacyMappings.push(...rows);
+            events.push('insert:legacyLinkMappings');
+          }
+          return this;
+        },
+        onConflict() {
           return this;
         },
         async execute() {
@@ -259,6 +296,7 @@ function createHarness({ failMetadataUpdate = false } = {}) {
     { processAttachments: async ({ html }: { html: string }) => html } as never,
     { nextPagePosition: async () => 'a0' } as never,
     { insertBacklink: async () => undefined } as never,
+    { getAppUrl: () => 'https://akasha.example.test' } as never,
     db as never,
     { emit: (...args: unknown[]) => emitted.push(args) } as never,
   );
@@ -266,6 +304,7 @@ function createHarness({ failMetadataUpdate = false } = {}) {
   return {
     service,
     insertedPages,
+    insertedLegacyMappings,
     emitted,
     events,
     get taskMetadata() {
