@@ -45,6 +45,8 @@ export class PageAuthorMigrationService {
           'lastUpdatedById',
           'sourceCreatorName',
           'sourceLastUpdatedByName',
+          'createdAt',
+          'updatedAt',
         ])
         .where('id', 'in', pageIds)
         .where('workspaceId', '=', workspaceId)
@@ -167,6 +169,8 @@ export class PageAuthorMigrationService {
         'lastUpdatedById',
         'sourceLastUpdatedByName',
       );
+      this.applyTimestamp(patch, page, item.createdAt, 'createdAt');
+      this.applyTimestamp(patch, page, item.updatedAt, 'updatedAt');
 
       if (Object.keys(patch).length === 0) {
         results.push({ pageId: item.pageId, status: 'unchanged' });
@@ -231,6 +235,21 @@ export class PageAuthorMigrationService {
     if (target.name && page[nameField] !== target.name) {
       patch[nameField] = target.name;
     }
+  }
+
+  private applyTimestamp(
+    patch: UpdatablePage,
+    page: { createdAt?: Date | string | null; updatedAt?: Date | string | null },
+    value: string | undefined,
+    field: 'createdAt' | 'updatedAt',
+  ) {
+    if (value === undefined) return;
+    const next = new Date(value);
+    if (Number.isNaN(next.getTime())) return;
+    const current = page[field] ? new Date(page[field]).getTime() : null;
+    if (current === next.getTime()) return;
+    if (field === 'createdAt') patch.createdAt = next;
+    else patch.updatedAt = next;
   }
 }
 
