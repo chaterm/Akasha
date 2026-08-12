@@ -251,6 +251,229 @@ describe('ConfluenceImportService page mapping persistence', () => {
   });
 });
 
+describe('ConfluenceImportService transformExpandMacros', () => {
+  const transform = (html: string): string =>
+    (createHarness().service as any).transformExpandMacros(html);
+
+  it('converts an expand macro into a details/summary/detailsContent block', () => {
+    const input = [
+      '<div id="expander-123" class="expand-container">',
+      '<div class="expand-control"><span class="expand-control-text">点击展开</span></div>',
+      '<div class="expand-content expand-hidden"><p>隐藏正文</p></div>',
+      '</div>',
+    ].join('');
+
+    const out = transform(input);
+
+    expect(out).toMatch(/<details open="?"?>/);
+    expect(out).toContain('<summary>点击展开</summary>');
+    expect(out).toContain('<div data-type="detailsContent">');
+    expect(out).toContain('<p>隐藏正文</p>');
+    // 原始 Confluence 容器结构已被替换掉
+    expect(out).not.toContain('expand-container');
+    expect(out).not.toContain('expand-content');
+  });
+
+  it('falls back to a default summary when control text is empty', () => {
+    const input = [
+      '<div class="expand-container">',
+      '<div class="expand-control"><span class="expand-control-text">   </span></div>',
+      '<div class="expand-content"><p>正文</p></div>',
+      '</div>',
+    ].join('');
+
+    const out = transform(input);
+
+    expect(out).toContain('<summary>Details</summary>');
+    expect(out).toContain('<p>正文</p>');
+  });
+
+  it('handles nested expand macros from inside out', () => {
+    const input = [
+      '<div class="expand-container">',
+      '<div class="expand-control"><span class="expand-control-text">外层</span></div>',
+      '<div class="expand-content">',
+      '<p>外层正文</p>',
+      '<div class="expand-container">',
+      '<div class="expand-control"><span class="expand-control-text">内层</span></div>',
+      '<div class="expand-content"><p>内层正文</p></div>',
+      '</div>',
+      '</div>',
+      '</div>',
+    ].join('');
+
+    const out = transform(input);
+
+    // 两个 expand 都转成了 details,且内层正文保留
+    expect(out.match(/<details/g)).toHaveLength(2);
+    expect(out).toContain('<summary>外层</summary>');
+    expect(out).toContain('<summary>内层</summary>');
+    expect(out).toContain('<p>外层正文</p>');
+    expect(out).toContain('<p>内层正文</p>');
+    expect(out).not.toContain('expand-container');
+  });
+
+  it('leaves html without expand macros unchanged in structure', () => {
+    const input = '<p>普通段落</p>';
+    const out = transform(input);
+    expect(out).toContain('<p>普通段落</p>');
+    expect(out).not.toContain('details');
+  });
+});
+
+describe('ConfluenceImportService transformInfoMacros', () => {
+  const transform = (html: string): string =>
+    (createHarness().service as any).transformInfoMacros(html);
+
+  it.each([
+    { suffix: 'tip', type: 'success' },
+    { suffix: 'information', type: 'info' },
+    { suffix: 'note', type: 'warning' },
+    { suffix: 'warning', type: 'danger' },
+  ])(
+    'maps confluence-information-macro-$suffix to callout type $type',
+    ({ suffix, type }) => {
+      const input = [
+        `<div class="confluence-information-macro confluence-information-macro-${suffix}">`,
+        '<span class="aui-icon aui-icon-small"></span>',
+        '<div class="confluence-information-macro-body"><p>正文内容</p></div>',
+        '</div>',
+      ].join('');
+
+      const out = transform(input);
+
+      expect(out).toContain('data-type="callout"');
+      expect(out).toContain(`data-callout-type="${type}"`);
+      expect(out).toContain('<p>正文内容</p>');
+      // 原始 Confluence 结构与图标已被替换掉
+      expect(out).not.toContain('confluence-information-macro');
+      expect(out).not.toContain('aui-icon');
+    },
+  );
+
+  it('unknown macro suffix falls back to info type', () => {
+    const input = [
+      '<div class="confluence-information-macro confluence-information-macro-unknown">',
+      '<div class="confluence-information-macro-body"><p>正文</p></div>',
+      '</div>',
+    ].join('');
+
+    const out = transform(input);
+
+    expect(out).toContain('data-callout-type="info"');
+    expect(out).toContain('<p>正文</p>');
+  });
+
+  it('converts the title parameter into a bold first paragraph', () => {
+    const input = [
+      '<div class="confluence-information-macro confluence-information-macro-note">',
+      '<span class="aui-icon"></span>',
+      '<p class="title">重要提醒</p>',
+      '<div class="confluence-information-macro-body"><p>正文</p></div>',
+      '</div>',
+    ].join('');
+
+    const out = transform(input);
+
+    expect(out).toContain('data-callout-type="warning"');
+    expect(out).toContain('<strong>重要提醒</strong>');
+    expect(out).toContain('<p>正文</p>');
+    // 加粗标题排在正文前面
+    expect(out.indexOf('重要提醒')).toBeLessThan(out.indexOf('正文'));
+    // title 元素本身不残留(已转成 strong)
+    expect(out).not.toContain('class="title"');
+  });
+
+  it('handles a macro without an explicit body wrapper', () => {
+    const input = [
+      '<div class="confluence-information-macro confluence-information-macro-tip">',
+      '<span class="aui-icon"></span>',
+      '<p>裸正文</p>',
+      '</div>',
+    ].join('');
+
+    const out = transform(input);
+
+    expect(out).toContain('data-callout-type="success"');
+    expect(out).toContain('<p>裸正文</p>');
+    expect(out).not.toContain('aui-icon');
+  });
+
+  it('leaves html without info macros unchanged in structure', () => {
+    const input = '<p>普通段落</p>';
+    const out = transform(input);
+    expect(out).toContain('<p>普通段落</p>');
+    expect(out).not.toContain('callout');
+  });
+});
+
+describe('ConfluenceImportService transformStatusMacros', () => {
+  const transform = (html: string): string =>
+    (createHarness().service as any).transformStatusMacros(html);
+
+  it.each([
+    { aui: 'aui-lozenge-success', color: 'green' },
+    { aui: 'aui-lozenge-error', color: 'red' },
+    { aui: 'aui-lozenge-current', color: 'blue' },
+    { aui: 'aui-lozenge-moved', color: 'yellow' },
+    { aui: 'aui-lozenge-complete', color: 'gray' },
+  ])('maps $aui to data-color $color', ({ aui, color }) => {
+    const input = `<p>状态:<span class="status-macro aui-lozenge ${aui}">已完成</span></p>`;
+
+    const out = transform(input);
+
+    expect(out).toContain('data-type="status"');
+    expect(out).toContain(`data-color="${color}"`);
+    expect(out).toContain('>已完成</span>');
+    // 原始 AUI lozenge class 已被替换掉
+    expect(out).not.toContain('aui-lozenge');
+    expect(out).not.toContain('status-macro');
+  });
+
+  it('defaults to gray when no type modifier class is present', () => {
+    const input = '<span class="status-macro aui-lozenge">草稿</span>';
+
+    const out = transform(input);
+
+    expect(out).toContain('data-type="status"');
+    expect(out).toContain('data-color="gray"');
+    expect(out).toContain('>草稿</span>');
+  });
+
+  it('keeps the status inline within surrounding text', () => {
+    const input =
+      '<p>前 <span class="aui-lozenge aui-lozenge-success">OK</span> 后</p>';
+
+    const out = transform(input);
+
+    expect(out).toContain('data-type="status"');
+    expect(out).toContain('前 ');
+    expect(out).toContain(' 后');
+    expect(out).toContain('>OK</span>');
+  });
+
+  it('converts multiple status macros in one document', () => {
+    const input = [
+      '<span class="aui-lozenge aui-lozenge-success">完成</span>',
+      '<span class="aui-lozenge aui-lozenge-error">失败</span>',
+    ].join('');
+
+    const out = transform(input);
+
+    expect(out.match(/data-type="status"/g)).toHaveLength(2);
+    expect(out).toContain('data-color="green"');
+    expect(out).toContain('data-color="red"');
+    expect(out).not.toContain('aui-lozenge');
+  });
+
+  it('leaves html without status macros unchanged in structure', () => {
+    const input = '<p>普通段落</p>';
+    const out = transform(input);
+    expect(out).toContain('<p>普通段落</p>');
+    expect(out).not.toContain('data-type="status"');
+  });
+});
+
 function createHarness({ failMetadataUpdate = false } = {}) {
   const insertedPages: Record<string, any>[] = [];
   const insertedLegacyMappings: Record<string, any>[] = [];
