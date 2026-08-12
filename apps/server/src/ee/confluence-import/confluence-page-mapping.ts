@@ -4,6 +4,8 @@ export type ConfluencePageMapping = {
   confluencePageId: string;
   akashaPageId: string;
   title: string;
+  spaceKey?: string;
+  targetUrl?: string;
 };
 
 export function parseConfluencePageId(filePath: string): string | null {
@@ -11,9 +13,7 @@ export function parseConfluencePageId(filePath: string): string | null {
   if (!value || value.includes('\\')) return null;
   const segments = value.split('/');
   if (
-    segments.some(
-      (segment) => !segment || segment === '.' || segment === '..',
-    )
+    segments.some((segment) => !segment || segment === '.' || segment === '..')
   ) {
     return null;
   }
@@ -40,10 +40,14 @@ export function mergeConfluencePageMappings(
     const confluencePageId = String(mapping?.confluencePageId || '').trim();
     const akashaPageId = String(mapping?.akashaPageId || '').trim();
     if (!/^[1-9]\d*$/.test(confluencePageId)) {
-      throw new Error(`Invalid Confluence page ID: ${confluencePageId || '(empty)'}`);
+      throw new Error(
+        `Invalid Confluence page ID: ${confluencePageId || '(empty)'}`,
+      );
     }
     if (!akashaPageId) {
-      throw new Error(`Missing Akasha page ID for Confluence page ${confluencePageId}`);
+      throw new Error(
+        `Missing Akasha page ID for Confluence page ${confluencePageId}`,
+      );
     }
     if (sourceIds.has(confluencePageId)) {
       throw new Error(`Duplicate Confluence page ID: ${confluencePageId}`);
@@ -57,12 +61,13 @@ export function mergeConfluencePageMappings(
       confluencePageId,
       akashaPageId,
       title: String(mapping?.title || '').trim(),
+      spaceKey: String(mapping?.spaceKey || '').trim() || undefined,
+      targetUrl: String(mapping?.targetUrl || '').trim() || undefined,
     };
   });
 
-  const baseMetadata: JsonObject = metadata === null
-    ? {}
-    : (metadata as JsonObject);
+  const baseMetadata: JsonObject =
+    metadata === null ? {} : (metadata as JsonObject);
   return {
     ...baseMetadata,
     pageMappings,

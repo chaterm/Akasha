@@ -25,6 +25,7 @@ import { FavoriteModule } from './favorite/favorite.module';
 import { SessionModule } from './session/session.module';
 import { ClsMiddleware } from 'nestjs-cls';
 import { McpModule } from './mcp/mcp.module';
+import { LegacyLinkModule } from './legacy-link/legacy-link.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { McpModule } from './mcp/mcp.module';
     WatcherModule,
     SessionModule,
     McpModule,
+    LegacyLinkModule,
   ],
 })
 export class CoreModule implements NestModule {
