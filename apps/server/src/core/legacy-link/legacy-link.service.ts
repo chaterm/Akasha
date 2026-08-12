@@ -4,7 +4,6 @@ import { KyselyDB } from '@akasha/db/types/kysely.types';
 import { LegacyLinkResolveResult } from './legacy-link.types';
 
 type LegacyLinkLookup = {
-  workspaceId: string;
   source: string;
   path: string;
   pageId?: string;
@@ -18,20 +17,16 @@ export class LegacyLinkService {
   constructor(@InjectKysely() private readonly db: KyselyDB) {}
 
   async resolve(input: LegacyLinkLookup): Promise<LegacyLinkResolveResult> {
-    if (!input.workspaceId) {
-      return { hit: false };
-    }
-
+    const parsedPath = parseConfluencePath(input.path);
     const pageId = normalizeText(input.pageId);
-    const spaceKey = normalizeText(input.spaceKey);
-    const title = normalizeTitle(input.title);
+    const spaceKey = normalizeText(input.spaceKey) ?? parsedPath?.spaceKey;
+    const title = normalizeTitle(input.title) ?? parsedPath?.title;
     const anchor = normalizeText(input.anchor);
 
     if (pageId) {
       const row = await this.db
         .selectFrom('legacyLinkMappings')
         .select(['targetUrl'])
-        .where('workspaceId', '=', input.workspaceId)
         .where('source', '=', input.source)
         .where('legacyPageId', '=', pageId)
         .executeTakeFirst();
@@ -44,7 +39,6 @@ export class LegacyLinkService {
       const row = await this.db
         .selectFrom('legacyLinkMappings')
         .select(['targetUrl'])
-        .where('workspaceId', '=', input.workspaceId)
         .where('source', '=', input.source)
         .where('legacySpaceKey', '=', spaceKey)
         .where('legacyTitle', '=', title)
@@ -54,11 +48,31 @@ export class LegacyLinkService {
       }
     }
 
+    if (parsedPath?.title) {
+      const rows = await this.db
+        .selectFrom('legacyLinkMappings')
+        .select(['targetUrl', 'legacySpaceKey'])
+        .where('source', '=', input.source)
+        .where('legacyTitle', '=', parsedPath.title)
+        .execute();
+
+      const exactSpaceRows = rows.filter((row) => {
+        const rowSpaceKey = normalizeText(row.legacySpaceKey);
+        return rowSpaceKey === parsedPath.spaceKey || rowSpaceKey === undefined;
+      });
+
+      const targetRows = exactSpaceRows.length > 0 ? exactSpaceRows : rows;
+      const targetUrl =
+        targetRows.length === 1 ? targetRows[0]?.targetUrl : undefined;
+      if (targetUrl) {
+        return { hit: true, location: appendAnchor(targetUrl, anchor) };
+      }
+    }
+
     if (input.path) {
       const row = await this.db
         .selectFrom('legacyLinkMappings')
         .select(['targetUrl'])
-        .where('workspaceId', '=', input.workspaceId)
         .where('source', '=', input.source)
         .where('legacyPath', '=', input.path)
         .executeTakeFirst();
@@ -87,4 +101,36 @@ function appendAnchor(url: string, anchor?: string): string {
   const clean = anchor.replace(/^#/, '');
   if (!clean) return url;
   return url.includes('#') ? url : `${url}#${clean}`;
+}
+
+function parseConfluencePath(
+  rawPath?: string,
+): { spaceKey: string; title: string } | undefined {
+  const path = normalizeText(rawPath);
+  if (!path) return undefined;
+
+  const withoutQuery = path.split('?')[0];
+  const parts = withoutQuery.split('/').filter(Boolean);
+  if (parts.length < 3 || parts[0] !== 'display') return undefined;
+
+  const spaceKey = decodeConfluencePart(parts[1]);
+  const title = decodeConfluencePart(parts.slice(2).join('/'));
+  if (!spaceKey || !title) return undefined;
+
+  return {
+    spaceKey,
+    title: normalizeTitle(title)!,
+  };
+}
+
+function decodeConfluencePart(value: string): string | undefined {
+  const text = String(value ?? '').trim();
+  if (!text) return undefined;
+
+  const plusAsSpace = text.replace(/\+/g, ' ');
+  try {
+    return decodeURIComponent(plusAsSpace);
+  } catch {
+    return plusAsSpace;
+  }
 }
