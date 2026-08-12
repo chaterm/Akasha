@@ -251,6 +251,72 @@ describe('ConfluenceImportService page mapping persistence', () => {
   });
 });
 
+describe('ConfluenceImportService transformNoformatMacros', () => {
+  const transform = (html: string): string =>
+    (createHarness().service as any).transformNoformatMacros(html);
+
+  it('converts a paneled noformat macro into a plaintext code block', () => {
+    const input = [
+      '<div class="preformatted panel" style="border-width: 1px;">',
+      '<div class="preformattedContent panelContent">',
+      '<pre>line1\nline2</pre>',
+      '</div></div>',
+    ].join('');
+
+    const out = transform(input);
+
+    // 标注 language-plaintext:避免 codeBlock 自动语法高亮把纯文本误着色
+    expect(out).toContain('<code class="language-plaintext">');
+    expect(out).toContain('line1\nline2');
+    // 面板容器已被替换掉
+    expect(out).not.toContain('preformatted');
+    expect(out).not.toContain('panelContent');
+  });
+
+  it('converts a bare (nopanel) pre into a plaintext code block', () => {
+    const input = '<pre>raw\ntext</pre>';
+
+    const out = transform(input);
+
+    expect(out).toContain('<code class="language-plaintext">');
+    expect(out).toContain('raw\ntext');
+  });
+
+  it('does not touch a pre that already has a code child (code macro output)', () => {
+    const input = '<pre><code class="language-java">int a = 1;</code></pre>';
+
+    const out = transform(input);
+
+    // 语言标识必须保留,不能被剥成无语言代码块
+    expect(out).toContain('language-java');
+    expect(out).toContain('int a = 1;');
+    // 只有一个 code 元素,没有被重复包裹
+    expect(out.match(/<code/g)).toHaveLength(1);
+  });
+
+  it('handles both paneled and bare noformat in one document', () => {
+    const input = [
+      '<div class="preformatted panel"><div class="preformattedContent panelContent">',
+      '<pre>paneled</pre></div></div>',
+      '<pre>bare</pre>',
+    ].join('');
+
+    const out = transform(input);
+
+    expect(out.match(/<code class="language-plaintext">/g)).toHaveLength(2);
+    expect(out).toContain('paneled');
+    expect(out).toContain('bare');
+    expect(out).not.toContain('preformatted');
+  });
+
+  it('leaves html without noformat unchanged in structure', () => {
+    const input = '<p>普通段落</p>';
+    const out = transform(input);
+    expect(out).toContain('<p>普通段落</p>');
+    expect(out).not.toContain('<pre>');
+  });
+});
+
 describe('ConfluenceImportService transformExpandMacros', () => {
   const transform = (html: string): string =>
     (createHarness().service as any).transformExpandMacros(html);
