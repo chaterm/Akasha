@@ -184,8 +184,11 @@ export class ConfluenceImportService {
           // 转换代码块
           const htmlWithCode = this.transformCodeBlocks(cleanedHtml);
 
+          // 转换 noformat 预格式化宏（必须在 transformCodeBlocks 之后）
+          const htmlWithNoformat = this.transformNoformatMacros(htmlWithCode);
+
           // 转换 expand 折叠宏
-          const htmlWithExpand = this.transformExpandMacros(htmlWithCode);
+          const htmlWithExpand = this.transformExpandMacros(htmlWithNoformat);
 
           // 转换 info/tip/note/warning 告警框宏
           const htmlWithCallout = this.transformInfoMacros(htmlWithExpand);
@@ -635,6 +638,59 @@ export class ConfluenceImportService {
     return $.root().html() ?? html;
   }
 
+  // ─── Step 3c2: noformat 预格式化宏转换 ───────────────────────────────────
+  //
+  // Confluence noformat 宏导出成 HTML 有两种形式:
+  //   有面板(默认):
+  //     <div class="preformatted panel"><div class="preformattedContent panelContent">
+  //       <pre>预格式化文本</pre>
+  //     </div></div>
+  //   无面板(nopanel=true):
+  //     <pre>预格式化文本</pre>
+  // noformat 语义是"保留空白+等宽字体、但不做语法高亮的预格式化文本"
+  // (内容未必是代码,可能是日志/ASCII 表格/纯文本)。编辑器没有独立的
+  // preformatted 节点,唯一能保留多行+空白+等宽的块是 codeBlock。但 codeBlock
+  // 在 language 为空/未注册时会走 highlightAuto 自动探测语言并着色 —— 这会把
+  // 纯文本误着色,与 noformat 语义相悖。因此显式标注 language-plaintext:
+  // plaintext 已在 lowlight(common 集)注册且高亮规则为"零着色",高亮插件会
+  // 走"已注册语言"分支而非 highlightAuto,得到纯等宽、无语法色的预格式化文本。
+  // 两种形式统一转成:
+  //   <pre><code class="language-plaintext">预格式化文本</code></pre>
+  //
+  // 重要:必须在 transformCodeBlocks 之后调用。code 宏产出的 <pre> 已被
+  // transformCodeBlocks 转成 <pre><code class="language-x">(含 code 子节点),
+  // 这里用"无 code 子节点"作判别跳过它们,避免误伤代码块 / 覆盖其语言。
+  private transformNoformatMacros(html: string): string {
+    if (!html) return html;
+
+    const $ = cheerioLoad(html);
+
+    const toCodeBlock = (text: string) => {
+      const $newPre = $('<pre>');
+      const $code = $('<code>').addClass('language-plaintext').text(text);
+      $newPre.append($code);
+      return $newPre;
+    };
+
+    // 形式一(有面板):替换整个 preformatted panel 容器
+    $('div.preformatted').each((_, el) => {
+      const $panel = $(el);
+      const $pre = $panel.find('pre').first();
+      if (!$pre.length) return;
+      $panel.replaceWith(toCodeBlock($pre.text()));
+    });
+
+    // 形式二(无面板)+ 兜底:裸 <pre>,无 <code> 子节点者包成标准代码块。
+    // (上一步新建的 <pre><code> 与 code 宏产物都含 code 子节点,自动跳过)
+    $('pre').each((_, el) => {
+      const $pre = $(el);
+      if ($pre.find('code').length) return;
+      $pre.replaceWith(toCodeBlock($pre.text()));
+    });
+
+    return $.root().html() ?? html;
+  }
+
   // ─── Step 3d: expand 折叠宏转换 ──────────────────────────────────────────
   //
   // Confluence expand 宏导出成 HTML 后是:
@@ -848,7 +904,8 @@ export class ConfluenceImportService {
           title: confluenceTitle,
         } = this.extractAndClean(rawHtml);
         const htmlWithCode = this.transformCodeBlocks(cleanedHtml);
-        const htmlWithExpand = this.transformExpandMacros(htmlWithCode);
+        const htmlWithNoformat = this.transformNoformatMacros(htmlWithCode);
+        const htmlWithExpand = this.transformExpandMacros(htmlWithNoformat);
         const htmlWithCallout = this.transformInfoMacros(htmlWithExpand);
         const htmlWithStatus = this.transformStatusMacros(htmlWithCallout);
 
