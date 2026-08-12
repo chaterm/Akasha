@@ -184,10 +184,19 @@ export class ConfluenceImportService {
           // 转换代码块
           const htmlWithCode = this.transformCodeBlocks(cleanedHtml);
 
+          // 转换 expand 折叠宏
+          const htmlWithExpand = this.transformExpandMacros(htmlWithCode);
+
+          // 转换 info/tip/note/warning 告警框宏
+          const htmlWithCallout = this.transformInfoMacros(htmlWithExpand);
+
+          // 转换 status 状态标签宏
+          const htmlWithStatus = this.transformStatusMacros(htmlWithCallout);
+
           // 调用现有附件处理（上传图片/附件，替换路径）
           const htmlWithAttachments =
             await this.importAttachmentService.processAttachments({
-              html: htmlWithCode,
+              html: htmlWithStatus,
               pageRelativePath: page.filePath,
               extractDir,
               pageId: page.id,
@@ -626,6 +635,174 @@ export class ConfluenceImportService {
     return $.root().html() ?? html;
   }
 
+  // ─── Step 3d: expand 折叠宏转换 ──────────────────────────────────────────
+  //
+  // Confluence expand 宏导出成 HTML 后是:
+  //   <div class="expand-container">
+  //     <div class="expand-control"><span class="expand-control-text">标题</span></div>
+  //     <div class="expand-content ...">正文...</div>
+  //   </div>
+  // 目标编辑器折叠块(details 节点,来自 @docmost/editor-ext)内容模型严格要求
+  // 恰好是 <summary> + <div data-type="detailsContent">,顺序固定:
+  //   <details open>
+  //     <summary>标题</summary>
+  //     <div data-type="detailsContent">正文...</div>
+  //   </details>
+  private transformExpandMacros(html: string): string {
+    if (!html) return html;
+
+    const $ = cheerioLoad(html);
+
+    // 逆序处理,保证嵌套 expand 由内向外转换:内层先变成 details,外层再把
+    // 已转好的节点整体搬入 detailsContent(移动实际节点而非序列化字符串,
+    // 避免内层已转换结果丢失)。
+    const containers = $('div.expand-container').toArray().reverse();
+
+    for (const el of containers) {
+      const $container = $(el);
+
+      // 标题:expand-control-text,取不到时用兜底文案(summary 不可为空)
+      const titleText =
+        $container.find('.expand-control-text').first().text().trim() ||
+        'Details';
+
+      // 正文:expand-content(本容器对应的第一个;嵌套的内层此时已被替换掉)
+      const $content = $container.find('div.expand-content').first();
+
+      const $details = $('<details>').attr('open', '');
+      const $summary = $('<summary>').text(titleText);
+      const $detailsContent = $('<div>').attr('data-type', 'detailsContent');
+
+      // 移动实际子节点(含已转换的内层 details),而非用 .html() 序列化重建
+      if ($content.length) {
+        $detailsContent.append($content.contents());
+      }
+
+      $details.append($summary).append($detailsContent);
+      $container.replaceWith($details);
+    }
+
+    return $.root().html() ?? html;
+  }
+
+  // ─── Step 3e: info/tip/note/warning 告警框宏转换 ─────────────────────────
+  //
+  // Confluence 的 4 个告警框宏导出成 HTML 后是带 class 的 div:
+  //   <div class="confluence-information-macro confluence-information-macro-tip">
+  //     <span class="aui-icon ..."></span>
+  //     <p class="title">可选标题</p>            (title 参数,不一定有)
+  //     <div class="confluence-information-macro-body"><p>正文</p></div>
+  //   </div>
+  // 目标 callout 节点(@docmost/editor-ext)只认 data-type/data-callout-type 属性,
+  // 不认 Confluence class,内容模型是纯 block+、无 title 字段。因此:
+  //   1. class 关键字 → data-callout-type 映射(见下表)
+  //   2. title 参数无处安放 → 转成 callout 内容里的加粗首行 <p><strong>title</strong></p>
+  // 产出:
+  //   <div data-type="callout" data-callout-type="success">
+  //     <p><strong>可选标题</strong></p>
+  //     <p>正文</p>
+  //   </div>
+  private transformInfoMacros(html: string): string {
+    if (!html) return html;
+
+    const $ = cheerioLoad(html);
+
+    // Confluence class 关键字 → callout type
+    // tip(绿)→success, info(蓝)→info, note(黄)→warning, warning(红)→danger
+    const classToType = (className: string): string => {
+      if (/confluence-information-macro-tip\b/.test(className)) return 'success';
+      if (/confluence-information-macro-note\b/.test(className))
+        return 'warning';
+      if (/confluence-information-macro-warning\b/.test(className))
+        return 'danger';
+      // -information 及无后缀的 info 宏都归 info(蓝)
+      return 'info';
+    };
+
+    // 逆序处理,保证嵌套告警框由内向外转换(移动实际节点,避免内层结果丢失)
+    const macros = $('div.confluence-information-macro').toArray().reverse();
+
+    for (const el of macros) {
+      const $macro = $(el);
+      const calloutType = classToType($macro.attr('class') ?? '');
+
+      const $callout = $('<div>')
+        .attr('data-type', 'callout')
+        .attr('data-callout-type', calloutType);
+
+      // 标题:title 参数导出成 .title(不同版本可能是 p.title / b.title 等)。
+      // 取第一个非空,转成加粗首行塞进 callout(callout 无 title 字段)。
+      const titleText = $macro.find('.title').first().text().trim();
+      if (titleText) {
+        const $titleP = $('<p>');
+        $titleP.append($('<strong>').text(titleText));
+        $callout.append($titleP);
+      }
+
+      // 正文:优先 macro-body;取不到时兜底用整个 macro 内容(排除 icon/title)
+      const $body = $macro
+        .find('div.confluence-information-macro-body')
+        .first();
+      if ($body.length) {
+        $callout.append($body.contents());
+      } else {
+        // 无 body 包裹:移除图标和 title 后,把剩余内容搬进去
+        $macro.find('span.aui-icon, .title').remove();
+        $callout.append($macro.contents());
+      }
+
+      $macro.replaceWith($callout);
+    }
+
+    return $.root().html() ?? html;
+  }
+
+  // ─── Step 3f: status 状态标签宏转换 ──────────────────────────────────────
+  //
+  // Confluence status 宏(使用量最高)导出成 HTML 后是 AUI lozenge 内联标签:
+  //   <span class="status-macro aui-lozenge aui-lozenge-success ...">已完成</span>
+  // 目标 status 节点(@docmost/editor-ext)是 inline atom,只认 span[data-type="status"],
+  // 文本放 textContent、颜色放 data-color(gray/blue/green/yellow/red/purple)。
+  // 产出:
+  //   <span data-type="status" data-color="green">已完成</span>
+  //
+  // 颜色映射:AUI lozenge 用语义 class(success/error/current/moved/complete),
+  // 非颜色词。按 AUI 色彩语义映射:
+  //   success→green, error→red, current→blue, moved→yellow, complete→gray,
+  //   无类型修饰(default lozenge)→gray。
+  // 注:Confluence 各版本 Yellow/Blue 落到 current 还是 moved 存在差异,
+  //     若真实导出与预期不符,调整下方映射表即可。
+  private transformStatusMacros(html: string): string {
+    if (!html) return html;
+
+    const $ = cheerioLoad(html);
+
+    const auiClassToColor = (className: string): string => {
+      if (/\baui-lozenge-success\b/.test(className)) return 'green';
+      if (/\baui-lozenge-error\b/.test(className)) return 'red';
+      if (/\baui-lozenge-current\b/.test(className)) return 'blue';
+      if (/\baui-lozenge-moved\b/.test(className)) return 'yellow';
+      if (/\baui-lozenge-complete\b/.test(className)) return 'gray';
+      // 无类型修饰(subtle 是变体不是类型)= default grey
+      return 'gray';
+    };
+
+    $('span.aui-lozenge').each((_, el) => {
+      const $span = $(el);
+      const color = auiClassToColor($span.attr('class') ?? '');
+      const text = $span.text().trim();
+
+      const $status = $('<span>')
+        .attr('data-type', 'status')
+        .attr('data-color', color)
+        .text(text);
+
+      $span.replaceWith($status);
+    });
+
+    return $.root().html() ?? html;
+  }
+
   // ─── 降级：无 index.html 时平铺导入 ─────────────────────────────────────
 
   private async fallbackFlatImport(
@@ -671,14 +848,17 @@ export class ConfluenceImportService {
           title: confluenceTitle,
         } = this.extractAndClean(rawHtml);
         const htmlWithCode = this.transformCodeBlocks(cleanedHtml);
+        const htmlWithExpand = this.transformExpandMacros(htmlWithCode);
+        const htmlWithCallout = this.transformInfoMacros(htmlWithExpand);
+        const htmlWithStatus = this.transformStatusMacros(htmlWithCallout);
 
         // fallback 路径无层级映射，移除内部链接 href 避免被误转成 embed
-        const $ = cheerioLoad(htmlWithCode);
+        const $ = cheerioLoad(htmlWithStatus);
         $('a[href]').each((_, el) => {
           const href = $(el).attr('href') ?? '';
           if (/^\d+\.html$/.test(href)) $(el).removeAttr('href');
         });
-        const htmlWithLinks = $.root().html() ?? htmlWithCode;
+        const htmlWithLinks = $.root().html() ?? htmlWithStatus;
 
         const pageId = v7();
         const htmlWithAttachments =
