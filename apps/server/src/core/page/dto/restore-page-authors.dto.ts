@@ -3,6 +3,7 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsISO8601,
   IsOptional,
   IsString,
   IsUUID,
@@ -34,6 +35,14 @@ export class RestorePageAuthorItemDto {
   @IsString()
   @MaxLength(255)
   lastUpdatedByName?: string;
+
+  @IsOptional()
+  @IsISO8601({ strict: true })
+  createdAt?: string;
+
+  @IsOptional()
+  @IsISO8601({ strict: true })
+  updatedAt?: string;
 }
 
 export class RestorePageAuthorsDto {

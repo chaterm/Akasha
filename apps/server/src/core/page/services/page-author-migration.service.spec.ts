@@ -43,6 +43,8 @@ const page = {
   lastUpdatedById: 'importer',
   sourceCreatorName: '旧创建者',
   sourceLastUpdatedByName: null,
+  createdAt: new Date('2026-07-01T00:00:00.000Z'),
+  updatedAt: new Date('2026-07-02T00:00:00.000Z'),
 };
 
 const task = {
@@ -74,7 +76,9 @@ describe('PageAuthorMigrationService', () => {
           pageId: 'page-1',
           importTaskId: 'task-1',
           creatorUserId: 'active-user',
-          lastUpdatedByName: '  吴静  ',
+          lastUpdatedByName: '  Snapshot User  ',
+          createdAt: '2020-01-02T03:04:05.000Z',
+          updatedAt: '2020-02-03T04:05:06.000Z',
         },
       ],
       'workspace-1',
@@ -87,10 +91,11 @@ describe('PageAuthorMigrationService', () => {
       {
         creatorId: 'active-user',
         sourceCreatorName: null,
-        sourceLastUpdatedByName: '吴静',
+        sourceLastUpdatedByName: 'Snapshot User',
+        createdAt: new Date('2020-01-02T03:04:05.000Z'),
+        updatedAt: new Date('2020-02-03T04:05:06.000Z'),
       },
     ]);
-    expect(updateSets[0]).not.toHaveProperty('updatedAt');
     expect(updateSets[0]).not.toHaveProperty('content');
     expect(updateSets[0]).not.toHaveProperty(
       'contributorIds',
