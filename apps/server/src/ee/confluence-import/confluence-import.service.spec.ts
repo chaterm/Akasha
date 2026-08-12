@@ -118,6 +118,53 @@ describe('ConfluenceImportService page mapping persistence', () => {
     }
   });
 
+  it('falls back to zip index.html space key when metadata is missing', async () => {
+    const extractDir = await mkdtemp(path.join(tmpdir(), 'confluence-import-'));
+    try {
+      await writeFile(
+        path.join(extractDir, 'index.html'),
+        [
+          '<html><body>',
+          '<table>',
+          '<tr><th>Key</th><td>~xuhong_yao@intsig.net</td></tr>',
+          '<tr><th>Name</th><td>姚旭红</td></tr>',
+          '</table>',
+          '<ul><li><a href="385483223.html">姚旭红的主页</a></li></ul>',
+          '</body></html>',
+        ].join(''),
+        'utf8',
+      );
+      await writeFile(
+        path.join(extractDir, '385483223.html'),
+        '<h1 id="title-heading">姚旭红 : 姚旭红的主页</h1><div id="main-content"><p>正文</p></div>',
+        'utf8',
+      );
+
+      const harness = createHarness();
+      await harness.service.processConfluenceImport({
+        extractDir,
+        fileTask: {
+          id: 'task-1',
+          source: 'confluence',
+          status: 'processing',
+          creatorId: 'user-1',
+          spaceId: 'space-1',
+          workspaceId: 'workspace-1',
+          metadata: null,
+        } as never,
+      });
+
+      expect(harness.insertedLegacyMappings).toEqual([
+        expect.objectContaining({
+          legacySpaceKey: '~xuhong_yao@intsig.net',
+          legacyPageId: '385483223',
+        }),
+      ]);
+    } finally {
+      await rm(extractDir, { recursive: true, force: true });
+    }
+  });
+
   it('rolls back the import when task metadata persistence fails', async () => {
     const extractDir = await mkdtemp(path.join(tmpdir(), 'confluence-import-'));
     try {

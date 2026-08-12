@@ -150,7 +150,10 @@ export class ConfluenceImportService {
       .where('id', '=', fileTask.spaceId)
       .executeTakeFirst();
     const appUrl = this.environmentService.getAppUrl();
-    const confluenceSpaceKey = getConfluenceSpaceKey(fileTask.metadata);
+    const confluenceSpaceKey = await resolveConfluenceSpaceKey(
+      extractDir,
+      fileTask.metadata,
+    );
 
     const validPageIds = new Set<string>();
     const allBacklinks: any[] = [];
@@ -647,7 +650,10 @@ export class ConfluenceImportService {
       .where('id', '=', fileTask.spaceId)
       .executeTakeFirst();
     const appUrl = this.environmentService.getAppUrl();
-    const confluenceSpaceKey = getConfluenceSpaceKey(fileTask.metadata);
+    const confluenceSpaceKey = await resolveConfluenceSpaceKey(
+      extractDir,
+      fileTask.metadata,
+    );
     const validPageIds = new Set<string>();
     const pageMappings: ConfluencePageMapping[] = [];
 
@@ -835,6 +841,39 @@ function buildPageUrl(
   return spaceSlug
     ? `${prefix}/s/${spaceSlug}/p/${pageSlugId}`
     : `${prefix}/p/${pageSlugId}`;
+}
+
+async function resolveConfluenceSpaceKey(
+  extractDir: string,
+  metadata: FileTask['metadata'],
+): Promise<string | undefined> {
+  const metadataSpaceKey = getConfluenceSpaceKey(metadata);
+  if (metadataSpaceKey) return metadataSpaceKey;
+
+  const indexPath = path.join(extractDir, 'index.html');
+  try {
+    await fs.access(indexPath);
+  } catch {
+    return undefined;
+  }
+
+  const html = await fs.readFile(indexPath, 'utf-8');
+  const $ = cheerioLoad(html);
+  const hiddenSpaceKey = $('input[name="spaceKey"]').first().attr('value');
+  const fromHidden = String(hiddenSpaceKey ?? '').trim();
+  if (fromHidden) return fromHidden;
+
+  let tableSpaceKey: string | undefined;
+  $('table tr').each((_, tr) => {
+    if (tableSpaceKey) return;
+    const $tr = $(tr);
+    const label = $tr.children('th').first().text().trim().toLowerCase();
+    if (label !== 'key') return;
+    const value = $tr.children('td').first().text().trim();
+    if (value) tableSpaceKey = value;
+  });
+
+  return tableSpaceKey;
 }
 
 function getConfluenceSpaceKey(
