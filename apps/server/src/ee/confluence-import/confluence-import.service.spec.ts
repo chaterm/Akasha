@@ -314,6 +314,77 @@ describe('ConfluenceImportService extractAndClean script/style removal', () => {
   });
 });
 
+describe('ConfluenceImportService materializeDataUriImages', () => {
+  // 1x1 透明 PNG 的 base64
+  const PNG_1X1 =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+  it('writes a data-uri image to disk and rewrites src to a relative path', async () => {
+    const extractDir = await mkdtemp(path.join(tmpdir(), 'confluence-datauri-'));
+    try {
+      const candidates = new Map<string, string>();
+      const input = `<p><img src="data:image/png;base64,${PNG_1X1}"/></p>`;
+      const svc = createHarness().service as any;
+
+      const out = await svc.materializeDataUriImages(
+        input,
+        extractDir,
+        candidates,
+      );
+
+      expect(out).toMatch(/src="inline-images\/[0-9a-f-]+\.png"/);
+      expect(out).not.toContain('data:image');
+      expect(candidates.size).toBe(1);
+      const [rel, abs] = [...candidates.entries()][0];
+      expect(rel).toMatch(/^inline-images\//);
+      const stat = await import('node:fs/promises').then((m) => m.stat(abs));
+      expect(stat.size).toBeGreaterThan(0);
+    } finally {
+      await rm(extractDir, { recursive: true, force: true });
+    }
+  });
+
+  it('unwraps the roadmap-macro-view container around the image', async () => {
+    const extractDir = await mkdtemp(path.join(tmpdir(), 'confluence-datauri-'));
+    try {
+      const candidates = new Map<string, string>();
+      const input = `<div class="roadmap-macro-view"><img src="data:image/png;base64,${PNG_1X1}"/></div>`;
+      const svc = createHarness().service as any;
+
+      const out = await svc.materializeDataUriImages(
+        input,
+        extractDir,
+        candidates,
+      );
+
+      expect(out).not.toContain('roadmap-macro-view');
+      expect(out).toMatch(/<img src="inline-images\//);
+    } finally {
+      await rm(extractDir, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves html without data-uri images untouched', async () => {
+    const extractDir = await mkdtemp(path.join(tmpdir(), 'confluence-datauri-'));
+    try {
+      const candidates = new Map<string, string>();
+      const input = '<p>普通段落</p><img src="attachments/x.png"/>';
+      const svc = createHarness().service as any;
+
+      const out = await svc.materializeDataUriImages(
+        input,
+        extractDir,
+        candidates,
+      );
+
+      expect(out).toBe(input);
+      expect(candidates.size).toBe(0);
+    } finally {
+      await rm(extractDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('ConfluenceImportService transformMermaidMacros', () => {
   const transform = (html: string): string =>
     (createHarness().service as any).transformMermaidMacros(html);

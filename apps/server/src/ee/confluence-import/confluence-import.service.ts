@@ -199,10 +199,17 @@ export class ConfluenceImportService {
           // 转换 status 状态标签宏
           const htmlWithStatus = this.transformStatusMacros(htmlWithCallout);
 
+          // 内联 base64 图片(如 roadmap 宏)落地成真实附件,避免被 image 节点丢弃
+          const htmlWithInlineImages = await this.materializeDataUriImages(
+            htmlWithStatus,
+            extractDir,
+            attachmentCandidates,
+          );
+
           // 调用现有附件处理（上传图片/附件，替换路径）
           const htmlWithAttachments =
             await this.importAttachmentService.processAttachments({
-              html: htmlWithStatus,
+              html: htmlWithInlineImages,
               pageRelativePath: page.filePath,
               extractDir,
               pageId: page.id,
@@ -911,6 +918,67 @@ export class ConfluenceImportService {
     return $.root().html() ?? html;
   }
 
+  // ─── Step 3g: 内联 base64 图片落地 ───────────────────────────────────────
+  //
+  // 某些宏(如 roadmap 路线图)导出成 HTML 时,数据已丢失,只剩一张渲染好的
+  // 内联 base64 图片:<div class="roadmap-macro-view"><img src="data:image/png;base64,..."/></div>
+  // 编辑器 image 节点默认 allowBase64=false,parseHTML 规则是
+  // img[src]:not([src^="data:"]),会直接丢弃 data-URI 图片 —— 导致图片丢失。
+  //
+  // 这里把 data-URI 图片解码写成 extractDir 下的真实文件,登记进
+  // attachmentCandidates,并把 img 的 src 改成相对路径。后续 processAttachments
+  // 的 img 分支就能像普通附件图片一样上传它、替换成 /api/files 路径,得到
+  // 正常 image 节点(避免 150KB base64 内联进文档 JSON)。
+  private async materializeDataUriImages(
+    html: string,
+    extractDir: string,
+    attachmentCandidates: Map<string, string>,
+  ): Promise<string> {
+    if (!html || !html.includes('src="data:image')) return html;
+
+    const $ = cheerioLoad(html);
+    const imgs = $('img[src^="data:image"]').toArray();
+    if (imgs.length === 0) return html;
+
+    // 落地目录:extractDir/inline-images/
+    const dirName = 'inline-images';
+    const absDir = path.join(extractDir, dirName);
+    await fs.mkdir(absDir, { recursive: true });
+
+    for (const el of imgs) {
+      const $img = $(el);
+      const src = $img.attr('src') ?? '';
+      const match = src.match(/^data:image\/([a-z0-9.+-]+);base64,(.+)$/i);
+      if (!match) continue;
+
+      const ext = match[1].toLowerCase().replace('jpeg', 'jpg');
+      const data = match[2];
+      let buf: Buffer;
+      try {
+        buf = Buffer.from(data, 'base64');
+      } catch {
+        continue;
+      }
+      if (buf.length === 0) continue;
+
+      const fileName = `${v7()}.${ext}`;
+      const absPath = path.join(absDir, fileName);
+      await fs.writeFile(absPath, buf);
+
+      const relPath = `${dirName}/${fileName}`;
+      attachmentCandidates.set(relPath, absPath);
+      $img.attr('src', relPath);
+
+      // 拆掉 roadmap 宏的外壳 div(仅剥壳,保留已改写的 img)
+      const $wrapper = $img.closest('div.roadmap-macro-view');
+      if ($wrapper.length) {
+        $wrapper.replaceWith($img);
+      }
+    }
+
+    return $.root().html() ?? html;
+  }
+
   // ─── 降级：无 index.html 时平铺导入 ─────────────────────────────────────
 
   private async fallbackFlatImport(
@@ -961,14 +1029,19 @@ export class ConfluenceImportService {
         const htmlWithExpand = this.transformExpandMacros(htmlWithNoformat);
         const htmlWithCallout = this.transformInfoMacros(htmlWithExpand);
         const htmlWithStatus = this.transformStatusMacros(htmlWithCallout);
+        const htmlWithInlineImages = await this.materializeDataUriImages(
+          htmlWithStatus,
+          extractDir,
+          attachmentCandidates,
+        );
 
         // fallback 路径无层级映射，移除内部链接 href 避免被误转成 embed
-        const $ = cheerioLoad(htmlWithStatus);
+        const $ = cheerioLoad(htmlWithInlineImages);
         $('a[href]').each((_, el) => {
           const href = $(el).attr('href') ?? '';
           if (/^\d+\.html$/.test(href)) $(el).removeAttr('href');
         });
-        const htmlWithLinks = $.root().html() ?? htmlWithStatus;
+        const htmlWithLinks = $.root().html() ?? htmlWithInlineImages;
 
         const pageId = v7();
         const htmlWithAttachments =
