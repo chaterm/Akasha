@@ -509,6 +509,21 @@ export class ConfluenceImportService {
     const title =
       rawTitle.length > 0 ? stripConfluenceSpacePrefix(rawTitle) : undefined;
 
+    // 移除脚本/样式:markdown 等宏在导出 HTML 里会注入 <script>(如 hljs
+    // 高亮)和 <style>,若原样透传进编辑器会造成显示异常/解析混乱。宏正文
+    // 本身已被 Confluence 渲染成正常 HTML(h1/p 等),删掉这些标签即可。
+    $('script').remove();
+    $('style').remove();
+
+    // 拆除标题里的自引用锚点:Confluence 给每个标题自动包一个指向自身的
+    // 锚点 <h1 id="x"><a href="#x">标题</a></h1>(用于"复制链接到此标题")。
+    // 透传进编辑器后 <a> 会被当成真实链接,标题带上链接图标。这里把标题内
+    // 以 # 开头(页内锚点)的 <a> 替换成其纯文本,保留标题文字、去掉链接。
+    $('h1, h2, h3, h4, h5, h6').find('a[href^="#"]').each((_, el) => {
+      const $a = $(el);
+      $a.replaceWith($a.text());
+    });
+
     // 移除 Confluence UI 噪音
     $('#breadcrumb-section').remove();
     $('#title-heading').remove();
