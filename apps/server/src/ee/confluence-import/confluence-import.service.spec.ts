@@ -385,6 +385,113 @@ describe('ConfluenceImportService materializeDataUriImages', () => {
   });
 });
 
+describe('ConfluenceImportService stripDynamicMacros', () => {
+  const strip = (html: string): string =>
+    (createHarness().service as any).stripDynamicMacros(html);
+
+  it('removes the popular-labels list and heatmap views', () => {
+    const input = [
+      '<p>正文前</p>',
+      '<div class="heatmap"><ul><li><a class="label" href="/label/x">x</a></li></ul></div>',
+      '<ul class="popularlabels-list"><li class="popularlabel"><a class="label" href="/labels/viewlabel.action?ids=1">周报</a></li></ul>',
+      '<p>正文后</p>',
+    ].join('');
+
+    const out = strip(input);
+
+    expect(out).not.toContain('popularlabels-list');
+    expect(out).not.toContain('heatmap');
+    expect(out).not.toContain('viewlabel.action');
+    // 周围正文保留
+    expect(out).toContain('<p>正文前</p>');
+    expect(out).toContain('<p>正文后</p>');
+  });
+
+  it('removes the toc-macro container but keeps sibling body content', () => {
+    // 真实结构:toc 目录是自闭合容器,正文是它【外部】的兄弟节点
+    const input = [
+      '<div class="toc-macro rbtoc123"><ul class="toc-indentation"></ul></div>',
+      '<p>大方阿凡达发</p>',
+      '<p>adfaf</p>',
+    ].join('');
+
+    const out = strip(input);
+
+    expect(out).not.toContain('toc-macro');
+    expect(out).not.toContain('toc-indentation');
+    // 目录外部的正文必须完整保留
+    expect(out).toContain('<p>大方阿凡达发</p>');
+    expect(out).toContain('<p>adfaf</p>');
+  });
+
+  it('removes the livesearch search-macro form', () => {
+    const input = [
+      '<p>前</p>',
+      '<div class="search-macro search-macro-medium">',
+      '<form name="livesearchForm" method="POST" action="/dosearchsite.action">',
+      '<input class="text" type="text" name="queryString"/>',
+      '<button type="submit" class="search-macro-button">搜索</button>',
+      '</form></div>',
+      '<p>后</p>',
+    ].join('');
+
+    const out = strip(input);
+
+    expect(out).not.toContain('search-macro');
+    expect(out).not.toContain('livesearchForm');
+    expect(out).not.toContain('dosearchsite.action');
+    // 周围正文保留
+    expect(out).toContain('<p>前</p>');
+    expect(out).toContain('<p>后</p>');
+  });
+
+  it('leaves html without dynamic macros unchanged', () => {
+    const input = '<p>普通段落</p>';
+    const out = strip(input);
+    expect(out).toBe(input);
+  });
+});
+
+describe('ConfluenceImportService transformSectionMacros', () => {
+  const transform = (html: string): string =>
+    (createHarness().service as any).transformSectionMacros(html);
+
+  it('unwraps a single-column section macro, keeping the content', () => {
+    const input =
+      '<div class="sectionMacro"><div class="sectionMacroRow"><p>挨打发放</p></div></div>';
+
+    const out = transform(input);
+
+    expect(out).toContain('<p>挨打发放</p>');
+    expect(out).not.toContain('sectionMacro');
+    expect(out).not.toContain('sectionMacroRow');
+  });
+
+  it('unwraps a multi-column section, flattening columns into ordered blocks', () => {
+    const input = [
+      '<div class="sectionMacro"><div class="sectionMacroRow">',
+      '<div class="columnMacro"><p>左栏</p></div>',
+      '<div class="columnMacro"><p>右栏</p></div>',
+      '</div></div>',
+    ].join('');
+
+    const out = transform(input);
+
+    expect(out).toContain('<p>左栏</p>');
+    expect(out).toContain('<p>右栏</p>');
+    expect(out).not.toContain('sectionMacro');
+    expect(out).not.toContain('columnMacro');
+    // 顺序:左栏在右栏之前
+    expect(out.indexOf('左栏')).toBeLessThan(out.indexOf('右栏'));
+  });
+
+  it('leaves html without section macros unchanged', () => {
+    const input = '<p>普通段落</p>';
+    const out = transform(input);
+    expect(out).toBe(input);
+  });
+});
+
 describe('ConfluenceImportService transformMermaidMacros', () => {
   const transform = (html: string): string =>
     (createHarness().service as any).transformMermaidMacros(html);
