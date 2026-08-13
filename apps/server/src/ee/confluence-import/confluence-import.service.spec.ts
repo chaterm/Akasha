@@ -314,6 +314,52 @@ describe('ConfluenceImportService extractAndClean script/style removal', () => {
   });
 });
 
+describe('ConfluenceImportService transformMermaidMacros', () => {
+  const transform = (html: string): string =>
+    (createHarness().service as any).transformMermaidMacros(html);
+
+  it('converts a mermaid div into a language-mermaid code block', () => {
+    const input =
+      '<div class="mermaid" style="overflow-x: auto; width: 100%">\nflowchart TD\n    A[开始] --> B[结束]\n</div>';
+
+    const out = transform(input);
+
+    expect(out).toContain('<code class="language-mermaid">');
+    expect(out).toContain('flowchart TD');
+    // cheerio 序列化时 > 会转义成 &gt;(下游解析会还原),故匹配转义形式
+    expect(out).toContain('A[开始] --&gt; B[结束]');
+    // 原始 mermaid div 已被替换掉
+    expect(out).not.toContain('class="mermaid"');
+  });
+
+  it('preserves multi-line mermaid source and strips leading newline', () => {
+    const input =
+      '<div class="mermaid">\n%%{init: {\'theme\':\'default\'}}%%\nflowchart TD\n    A --> B\n    B --> C\n</div>';
+
+    const out = transform(input);
+
+    // 首行 init 指令保留,且不以换行开头(> 被转义为 &gt;,下游解析还原)
+    expect(out).toContain("%%{init: {'theme':'default'}}%%");
+    expect(out).toContain('A --&gt; B');
+    expect(out).toContain('B --&gt; C');
+    expect(out).toMatch(/<code class="language-mermaid">%%\{init/);
+  });
+
+  it('removes an empty mermaid div', () => {
+    const input = '<div class="mermaid">\n   \n</div>';
+    const out = transform(input);
+    expect(out).not.toContain('class="mermaid"');
+    expect(out).not.toContain('language-mermaid');
+  });
+
+  it('leaves html without mermaid unchanged in structure', () => {
+    const input = '<p>普通段落</p>';
+    const out = transform(input);
+    expect(out).toContain('<p>普通段落</p>');
+    expect(out).not.toContain('mermaid');
+  });
+});
+
 describe('ConfluenceImportService transformNoformatMacros', () => {
   const transform = (html: string): string =>
     (createHarness().service as any).transformNoformatMacros(html);
