@@ -199,9 +199,15 @@ export class ConfluenceImportService {
           // 转换 status 状态标签宏
           const htmlWithStatus = this.transformStatusMacros(htmlWithCallout);
 
+          // 拆除 section/column 布局宏外壳
+          const htmlWithSection = this.transformSectionMacros(htmlWithStatus);
+
+          // 清理动态宏残留(popular-labels 等)
+          const htmlWithoutDynamic = this.stripDynamicMacros(htmlWithSection);
+
           // 内联 base64 图片(如 roadmap 宏)落地成真实附件,避免被 image 节点丢弃
           const htmlWithInlineImages = await this.materializeDataUriImages(
-            htmlWithStatus,
+            htmlWithoutDynamic,
             extractDir,
             attachmentCandidates,
           );
@@ -918,6 +924,82 @@ export class ConfluenceImportService {
     return $.root().html() ?? html;
   }
 
+  // ─── Step 3f1: 动态宏残留清理 ────────────────────────────────────────────
+  //
+  // 动态查询/聚合类宏(popular-labels 热门标签、recently-updated、pagetree 等)
+  // 的内容是 Confluence 服务端实时算出来的,没有页面自身的内容可还原。导出成
+  // 静态 HTML 后只是一份旧快照,且内部链接(如 /labels/viewlabel.action?ids=...)
+  // 导入 Akasha 后全是断链。这类宏应当直接删除,而非转换,否则会在页面里残留
+  // 一堆断链/空壳污染正文。
+  //
+  // 已清理(均有真实样例验证):
+  //   - popular-labels:heatmap 标签云 + popularlabels-list 列表
+  //   - toc(普通目录宏):div.toc-macro —— 真实样例确认目录本身是空/自闭合容器,
+  //     正文是它【外部】的兄弟节点,删除目录不影响正文。import-formatter 另删了
+  //     nav.table_of_contents,这里补充 toc-macro 等其它导出形式。
+  //   - livesearch:div.search-macro —— 搜索框表单,action 指向 Confluence 的
+  //     /dosearchsite.action,导入 Akasha 后失效(Akasha 有原生搜索),纯组件删除。
+  //
+  // ⚠️ 不在此删除 toc-zone(区域目录宏):它会【包裹一段正文】,直接 remove 会连
+  //    正文一起删。若要处理 toc-zone,必须先拿到真实导出样例确认其 class 与包裹
+  //    结构,再用 unwrap 拆壳(保留内容),不能放进上面的删除列表。
+  private stripDynamicMacros(html: string): string {
+    if (!html) return html;
+
+    // 注意:这里只放【自身即目录、不包裹正文】的容器,可安全 remove。
+    // toc-zone(区域目录)会【包裹一段正文内容】,绝不能 remove(会连正文一起
+    // 删掉),需要用 unwrap 拆壳 —— 见下方 stripTocZone,且必须有真实样例验证
+    // 其 class 后才启用,避免误删。
+    const selectors = [
+      'ul.popularlabels-list', // popular-labels:列表视图
+      'div.heatmap', // popular-labels:热力图(标签云)视图
+      'div.toc-macro', // toc 目录宏:目录本身,正文在其【外部】兄弟节点,可安全删除
+      'nav.toc-macro', // toc 的另一种导出容器
+      'div.search-macro', // livesearch 搜索框:纯交互组件(form action 指向 Confluence),导入后失效,删除
+    ];
+    if (!selectors.some((sel) => html.includes(sel.split('.')[1]))) {
+      return html;
+    }
+
+    const $ = cheerioLoad(html);
+    for (const sel of selectors) {
+      $(sel).remove();
+    }
+    return $.root().html() ?? html;
+  }
+
+  // ─── Step 3f2: section 布局宏拆壳 ────────────────────────────────────────
+  //
+  // Confluence section 宏(布局容器,多栏时配 column 宏)导出成 HTML 后是嵌套
+  // 的布局容器 div:
+  //   <div class="sectionMacro"><div class="sectionMacroRow"><p>正文</p></div></div>
+  // 编辑器没有对应的 section 布局节点,且这类外壳只是包裹作用。若原样透传,
+  // 这些 div 会被 schema 丢弃(内容 <p> 虽保留,但依赖丢弃行为不稳妥)。
+  // 这里主动把 sectionMacro / sectionMacroRow 两层外壳 unwrap,把内部块内容
+  // 直接提升到正文层。
+  //
+  // 注:本项目样例为单栏 section(无 column),故直接拆壳即可。若日后遇到
+  //     多栏(div.columnMacro),内容同样会被提升成顺序块 —— 丢失分栏排版
+  //     但不丢内容,这对导入是可接受的降级。
+  private transformSectionMacros(html: string): string {
+    if (!html) return html;
+    if (!/sectionMacro|columnMacro/.test(html)) return html;
+
+    const $ = cheerioLoad(html);
+
+    // 由内向外拆:先拆行/列,再拆 section 外层
+    $('div.sectionMacroRow, div.columnMacro').each((_, el) => {
+      const $el = $(el);
+      $el.replaceWith($el.contents());
+    });
+    $('div.sectionMacro').each((_, el) => {
+      const $el = $(el);
+      $el.replaceWith($el.contents());
+    });
+
+    return $.root().html() ?? html;
+  }
+
   // ─── Step 3g: 内联 base64 图片落地 ───────────────────────────────────────
   //
   // 某些宏(如 roadmap 路线图)导出成 HTML 时,数据已丢失,只剩一张渲染好的
@@ -1029,8 +1111,10 @@ export class ConfluenceImportService {
         const htmlWithExpand = this.transformExpandMacros(htmlWithNoformat);
         const htmlWithCallout = this.transformInfoMacros(htmlWithExpand);
         const htmlWithStatus = this.transformStatusMacros(htmlWithCallout);
+        const htmlWithSection = this.transformSectionMacros(htmlWithStatus);
+        const htmlWithoutDynamic = this.stripDynamicMacros(htmlWithSection);
         const htmlWithInlineImages = await this.materializeDataUriImages(
-          htmlWithStatus,
+          htmlWithoutDynamic,
           extractDir,
           attachmentCandidates,
         );
