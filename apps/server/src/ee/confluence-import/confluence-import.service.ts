@@ -184,8 +184,11 @@ export class ConfluenceImportService {
           // 转换代码块
           const htmlWithCode = this.transformCodeBlocks(cleanedHtml);
 
+          // 转换 mermaid 图表宏（产出带 code 子节点的 pre，不与 noformat 冲突）
+          const htmlWithMermaid = this.transformMermaidMacros(htmlWithCode);
+
           // 转换 noformat 预格式化宏（必须在 transformCodeBlocks 之后）
-          const htmlWithNoformat = this.transformNoformatMacros(htmlWithCode);
+          const htmlWithNoformat = this.transformNoformatMacros(htmlWithMermaid);
 
           // 转换 expand 折叠宏
           const htmlWithExpand = this.transformExpandMacros(htmlWithNoformat);
@@ -653,6 +656,40 @@ export class ConfluenceImportService {
     return $.root().html() ?? html;
   }
 
+  // ─── Step 3c1: mermaid 图表宏转换 ────────────────────────────────────────
+  //
+  // Confluence mermaid 宏(第三方插件)导出成 HTML 后,图表源码以纯文本形式
+  // 保留在一个 div 里:
+  //   <div class="mermaid" style="...">
+  //   %%{init: ...}%%
+  //   flowchart TD ...
+  //   </div>
+  // 若原样透传,div 被编辑器 schema 丢弃、里面的源码变成一大段普通文本(乱码观感)。
+  // Akasha 的 mermaid 是 codeBlock 的一种 language(language-mermaid),前端
+  // NodeView 会把源码渲染成 SVG 图。因此转成:
+  //   <pre><code class="language-mermaid">图表源码</code></pre>
+  private transformMermaidMacros(html: string): string {
+    if (!html) return html;
+
+    const $ = cheerioLoad(html);
+
+    $('div.mermaid').each((_, el) => {
+      const $div = $(el);
+      // 源码是 div 的纯文本内容;去掉首尾空白(导出时常有前导换行)
+      const code = $div.text().replace(/^\n+/, '').replace(/\s+$/, '');
+      if (!code) {
+        $div.remove();
+        return;
+      }
+      const $pre = $('<pre>');
+      const $code = $('<code>').addClass('language-mermaid').text(code);
+      $pre.append($code);
+      $div.replaceWith($pre);
+    });
+
+    return $.root().html() ?? html;
+  }
+
   // ─── Step 3c2: noformat 预格式化宏转换 ───────────────────────────────────
   //
   // Confluence noformat 宏导出成 HTML 有两种形式:
@@ -919,7 +956,8 @@ export class ConfluenceImportService {
           title: confluenceTitle,
         } = this.extractAndClean(rawHtml);
         const htmlWithCode = this.transformCodeBlocks(cleanedHtml);
-        const htmlWithNoformat = this.transformNoformatMacros(htmlWithCode);
+        const htmlWithMermaid = this.transformMermaidMacros(htmlWithCode);
+        const htmlWithNoformat = this.transformNoformatMacros(htmlWithMermaid);
         const htmlWithExpand = this.transformExpandMacros(htmlWithNoformat);
         const htmlWithCallout = this.transformInfoMacros(htmlWithExpand);
         const htmlWithStatus = this.transformStatusMacros(htmlWithCallout);
