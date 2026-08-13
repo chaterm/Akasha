@@ -251,6 +251,69 @@ describe('ConfluenceImportService page mapping persistence', () => {
   });
 });
 
+describe('ConfluenceImportService extractAndClean script/style removal', () => {
+  const clean = (html: string): string =>
+    (createHarness().service as any).extractAndClean(html).cleanedHtml;
+
+  it('unwraps self-referencing anchor links inside headings', () => {
+    const raw = [
+      '<html><body><div id="main-content" class="wiki-content">',
+      '<h1 id="fdfadf"><a href="#fdfadf">fdfadf</a></h1>',
+      '<h2 id="sec"><a href="#sec">章节</a></h2>',
+      '<p>正文</p>',
+      '</div></body></html>',
+    ].join('');
+
+    const out = clean(raw);
+
+    // 标题内的自引用锚点被拆掉,只留纯文本
+    expect(out).toContain('<h1 id="fdfadf">fdfadf</h1>');
+    expect(out).toContain('<h2 id="sec">章节</h2>');
+    expect(out).not.toContain('href="#fdfadf"');
+    expect(out).not.toContain('href="#sec"');
+  });
+
+  it('keeps real (non-anchor) links inside headings', () => {
+    const raw = [
+      '<html><body><div id="main-content" class="wiki-content">',
+      '<h1><a href="https://example.com">外链标题</a></h1>',
+      '</div></body></html>',
+    ].join('');
+
+    const out = clean(raw);
+
+    // 指向外部的真实链接保留,不误伤
+    expect(out).toContain('href="https://example.com"');
+    expect(out).toContain('外链标题');
+  });
+
+  it('strips markdown-macro injected script/style but keeps rendered content', () => {
+    const raw = [
+      '<html><body><div id="main-content" class="wiki-content">',
+      '<h1 id="adfafa"><a href="#adfafa">adfafa</a></h1>',
+      '<script>',
+      'AJS.$(\'[data-macro-name="markdown"] code\').each(function(i, block) {',
+      '  hljs.highlightBlock(block);',
+      '});',
+      '</script>',
+      '<style>.hljs {display: inline;} pre > code {display: block !important;}</style>',
+      '<p>正文内容</p>',
+      '</div></body></html>',
+    ].join('');
+
+    const out = clean(raw);
+
+    // script/style 被清掉
+    expect(out).not.toContain('<script');
+    expect(out).not.toContain('<style');
+    expect(out).not.toContain('hljs.highlightBlock');
+    expect(out).not.toContain('display: inline');
+    // markdown 渲染出的正文内容保留
+    expect(out).toContain('adfafa');
+    expect(out).toContain('<p>正文内容</p>');
+  });
+});
+
 describe('ConfluenceImportService transformNoformatMacros', () => {
   const transform = (html: string): string =>
     (createHarness().service as any).transformNoformatMacros(html);
