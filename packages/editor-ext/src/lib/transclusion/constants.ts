@@ -23,6 +23,7 @@ export const TRANSCLUSION_SOURCE_ALLOWED_NODE_TYPES = [
   'audio',
   'attachment',
   'callout',
+  'panel',
   'details',
   'embed',
   'mathBlock',

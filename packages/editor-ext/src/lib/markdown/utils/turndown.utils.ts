@@ -1,6 +1,7 @@
 import * as _TurndownService from '@joplin/turndown';
 import * as TurndownPluginGfm from '@joplin/turndown-plugin-gfm';
 import { getBasename } from './basename';
+import { macroTurndownRules } from '../../macros/turndown-rules';
 
 // CJS/ESM interop: .default exists in Vite, not in NestJS
 const TurndownService = (_TurndownService as any).default || _TurndownService;
@@ -34,6 +35,9 @@ export function htmlToMarkdown(html: string): string {
     iframeEmbed,
     image,
     video,
+    // Akasha-local Confluence-parity macros. Single touchpoint — see
+    // lib/macros/turndown-rules.ts
+    ...macroTurndownRules,
   ]);
   return turndownService.turndown(html).replaceAll('<br>', ' ');
 }

@@ -26,6 +26,7 @@ import {
   parseConfluencePageId,
 } from './confluence-page-mapping';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
+import { transformConfluencePanels } from './confluence-panel.utils';
 
 interface ConfluencePageNode {
   id: string;
@@ -205,9 +206,12 @@ export class ConfluenceImportService {
           // 清理动态宏残留(popular-labels 等)
           const htmlWithoutDynamic = this.stripDynamicMacros(htmlWithSection);
 
+          // 转换 Confluence Panel 宏（必须在 noformat 之后，避免误识别 preformatted.panel）
+          const htmlWithPanels = transformConfluencePanels(htmlWithoutDynamic);
+
           // 内联 base64 图片(如 roadmap 宏)落地成真实附件,避免被 image 节点丢弃
           const htmlWithInlineImages = await this.materializeDataUriImages(
-            htmlWithoutDynamic,
+            htmlWithPanels,
             extractDir,
             attachmentCandidates,
           );
@@ -1113,8 +1117,9 @@ export class ConfluenceImportService {
         const htmlWithStatus = this.transformStatusMacros(htmlWithCallout);
         const htmlWithSection = this.transformSectionMacros(htmlWithStatus);
         const htmlWithoutDynamic = this.stripDynamicMacros(htmlWithSection);
+        const htmlWithPanels = transformConfluencePanels(htmlWithoutDynamic);
         const htmlWithInlineImages = await this.materializeDataUriImages(
-          htmlWithoutDynamic,
+          htmlWithPanels,
           extractDir,
           attachmentCandidates,
         );

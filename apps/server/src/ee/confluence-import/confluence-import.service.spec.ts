@@ -249,6 +249,50 @@ describe('ConfluenceImportService page mapping persistence', () => {
       await rm(extractDir, { recursive: true, force: true });
     }
   });
+
+  it('normalizes Confluence panels before HTML parsing', async () => {
+    const extractDir = await mkdtemp(path.join(tmpdir(), 'confluence-import-'));
+    try {
+      await writeFile(
+        path.join(extractDir, 'index.html'),
+        '<div id="content"><ul><li><a href="50.html">Panel page</a></li></ul></div>',
+        'utf8',
+      );
+      await writeFile(
+        path.join(extractDir, '50.html'),
+        [
+          '<h1 id="title-heading">Space : Panel page</h1>',
+          '<div id="main-content" class="wiki-content">',
+          '<div class="panel" style="border-style: dashed; border-color: red">',
+          '<div class="panelHeader"><b>测试</b></div>',
+          '<div class="panelContent"><p>正文</p></div>',
+          '</div>',
+          '</div>',
+        ].join(''),
+        'utf8',
+      );
+
+      const harness = createHarness();
+      await harness.service.processConfluenceImport({
+        extractDir,
+        fileTask: {
+          id: 'task-1',
+          source: 'confluence',
+          status: 'processing',
+          creatorId: 'user-1',
+          spaceId: 'space-1',
+          workspaceId: 'workspace-1',
+          metadata: null,
+        } as never,
+      });
+
+      expect(harness.processedHtml).toContain('data-type="panel"');
+      expect(harness.processedHtml).toContain('data-panel-title="测试"');
+      expect(harness.processedHtml).not.toContain('class="panelHeader"');
+    } finally {
+      await rm(extractDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('ConfluenceImportService extractAndClean script/style removal', () => {
@@ -833,6 +877,7 @@ function createHarness({ failMetadataUpdate = false } = {}) {
   const emitted: unknown[] = [];
   const events: string[] = [];
   let taskMetadata: unknown;
+  let processedHtml = '';
 
   const trx = {
     insertInto(table: string) {
@@ -904,7 +949,8 @@ function createHarness({ failMetadataUpdate = false } = {}) {
   };
 
   const importService = {
-    async processHTML() {
+    async processHTML(html: string) {
+      processedHtml = html;
       return { type: 'doc', content: [{ type: 'paragraph', content: [] }] };
     },
     extractTitleAndRemoveHeading(value: any) {
@@ -932,6 +978,9 @@ function createHarness({ failMetadataUpdate = false } = {}) {
     events,
     get taskMetadata() {
       return taskMetadata;
+    },
+    get processedHtml() {
+      return processedHtml;
     },
   };
 }
