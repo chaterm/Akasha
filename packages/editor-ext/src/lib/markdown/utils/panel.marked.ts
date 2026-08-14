@@ -50,11 +50,17 @@ export const panelExtension = {
 
 function parseAttributes(value: string): Record<string, string> {
   const attributes: Record<string, string> = {};
-  const pattern = /(\w+)=(?:"([^"]*)"|'([^']*)'|(\S+))/g;
+  const pattern = /(\w+)=(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|(\S+))/g;
   let match: RegExpExecArray | null;
 
   while ((match = pattern.exec(value))) {
-    attributes[match[1]] = match[2] ?? match[3] ?? match[4] ?? '';
+    const attributeValue = match[2] ?? match[3] ?? match[4] ?? '';
+    attributes[match[1]] =
+      match[2] !== undefined
+        ? attributeValue.replace(/\\(["\\])/g, '$1')
+        : match[3] !== undefined
+          ? attributeValue.replace(/\\(['\\])/g, '$1')
+          : attributeValue;
   }
 
   return attributes;

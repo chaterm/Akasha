@@ -24,6 +24,10 @@ function toc(turndownService: _TurndownService) {
   });
 }
 
+function escapePanelAttribute(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 function panel(turndownService: _TurndownService) {
   turndownService.addRule('panel', {
     filter: function (node: HTMLInputElement) {
@@ -42,7 +46,7 @@ function panel(turndownService: _TurndownService) {
         ['titleColor', node.getAttribute('data-panel-title-color')],
       ]
         .filter(([, value]) => value)
-        .map(([key, value]) => `${key}="${value!.replace(/"/g, '\\"')}"`)
+        .map(([key, value]) => `${key}="${escapePanelAttribute(value!)}"`)
         .join(' ');
       return `\n\n:::panel${attrs ? ` ${attrs}` : ''}\n${content.trim()}\n:::\n\n`;
     },
