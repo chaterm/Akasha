@@ -56,6 +56,7 @@ import {
   VimeoIcon,
   YoutubeIcon,
 } from "@/components/icons";
+import { macroMenuItems } from "@/features/editor/macros/menu-items";
 
 const CommandGroups: SlashMenuGroupedItemsType = {
   basic: [
@@ -741,6 +742,9 @@ const CommandGroups: SlashMenuGroupedItemsType = {
           .run();
       },
     },
+    // Akasha-local Confluence-parity macros. Single touchpoint — see
+    // apps/client/src/features/editor/macros/menu-items.ts
+    ...macroMenuItems,
   ],
 };
 

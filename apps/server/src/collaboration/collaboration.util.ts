@@ -40,6 +40,7 @@ import {
   Columns,
   Column,
   Status,
+  macroNodes,
   addUniqueIdsToDoc,
   htmlToMarkdown,
   TransclusionSource,
@@ -109,6 +110,9 @@ export const tiptapExtensions = [
   Status,
   TransclusionSource,
   TransclusionReference,
+  // Akasha-local Confluence-parity macros. Single touchpoint — see
+  // packages/editor-ext/src/lib/macros/index.ts
+  ...macroNodes,
 ] as any;
 
 export function jsonToHtml(tiptapJson: any) {
