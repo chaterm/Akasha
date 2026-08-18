@@ -173,7 +173,7 @@ Akasha 不是一个更好的 wiki，而是一套记忆系统。知识库在等�
 ### 安装
 
 ```bash
-git clone https://github.com/jarvishappy/Akasha.git
+git clone https://github.com/chaterm/Akasha.git
 cd Akasha
 pnpm install
 ```
@@ -308,9 +308,3 @@ Akasha 建立在优秀的开源项目之上，在此致谢：
 
 感谢每一位贡献者！
 更多信息请参阅<a href="./CONTRIBUTING_zh.md">贡献指南</a>。
-
-<div align=center style="margin-top: 30px;">
-  <a href="https://github.com/jarvishappy/Akasha/graphs/contributors">
-    <img src="https://contrib.rocks/image?repo=jarvishappy/Akasha&refresh=true" />
-  </a>
-</div>

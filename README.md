@@ -173,7 +173,7 @@ Migrations run `CREATE EXTENSION IF NOT EXISTS vector` themselves, so you don't 
 ### Install
 
 ```bash
-git clone https://github.com/jarvishappy/Akasha.git
+git clone https://github.com/chaterm/Akasha.git
 cd Akasha
 pnpm install
 ```
