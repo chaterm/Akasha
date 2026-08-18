@@ -26,8 +26,6 @@
     - [Context Graph](#context-graph)
     - [Living Knowledge](#living-knowledge)
     - [Cognitive Compounding](#cognitive-compounding)
-  - [Design Philosophy](#design-philosophy)
-  - [Technology Stack](#technology-stack)
   - [Development Guide](#development-guide)
     - [Prerequisites](#prerequisites)
     - [Install](#install)
@@ -52,7 +50,6 @@ It solves three problems:
 
 3. **Give agents domain experience.** Skills and progressive disclosure hand agents the domain knowledge and operating experience they need.
 
-> "Without memory, intelligence is just algorithm. With memory, intelligence becomes a species."
 
 ![Preview image](resources/hero1.webp)
 
@@ -139,25 +136,6 @@ Knowledge is born, verified, used, strengthened, challenged, outdated, and retir
 
 One agent's insight propagates to all of them at zero marginal learning cost. Every execution generates training signal, patterns emerge from accumulated action memory, and Skills improve through feedback loops. The organization gets smarter without anyone "doing knowledge management."
 
-## Design Philosophy
-
-1. **Memory, not storage.** A knowledge base waits. Memory participates.
-2. **Emergence, not imposition.** If maintaining the system is separate from doing the work, the system dies.
-3. **Participation, not retrieval.** Zero-search is the goal: memory shows up when context changes.
-4. **Judgment, not just action.** Knowing when *not* to act matters as much as acting.
-5. **Provenance, not just content.** In an enterprise, a plausible answer without provenance is dangerous.
-6. **Compounding, not accumulation.** Every execution is training; every interaction is a Bayesian update.
-7. **Human as meaning.** AI handles the infinite "how"; people define "why."
-
-## Technology Stack
-
-| Layer | Choice |
-|-------|--------|
-| Frontend | React, ProseMirror / TipTap |
-| Backend | NestJS, pnpm workspace monorepo (Nx) |
-| Storage | PostgreSQL 18 + pgvector, Redis |
-| Knowledge | Entity extraction, semantic relation engine, vector search with freshness and confidence weighting |
-| Agent | MCP memory APIs, Skills with progressive disclosure, guardrail-aware execution |
 
 ## Development Guide
 
