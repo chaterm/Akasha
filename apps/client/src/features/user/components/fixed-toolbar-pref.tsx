@@ -1,6 +1,6 @@
 import { userAtom } from "@/features/user/atoms/current-user-atom";
 import { updateUser } from "@/features/user/services/user-service";
-import { Badge, Group, Switch, Text } from "@mantine/core";
+import { Switch, Text } from "@mantine/core";
 import { useAtom } from "jotai";
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -14,7 +14,7 @@ export default function FixedToolbarPref() {
   const { t } = useTranslation();
   const [user, setUser] = useAtom(userAtom);
   const [checked, setChecked] = useState(
-    user.settings?.preferences?.editorToolbar ?? false,
+    user.settings?.preferences?.editorToolbar ?? true,
   );
 
   const handleChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -31,12 +31,7 @@ export default function FixedToolbarPref() {
   return (
     <ResponsiveSettingsRow>
       <ResponsiveSettingsContent>
-        <Group gap="xs">
-          <Text size="md">{t("Fixed editor toolbar")}</Text>
-          <Badge size="xs" color="gray" variant="light">
-            {t("Experimental")}
-          </Badge>
-        </Group>
+        <Text size="md">{t("Fixed editor toolbar")}</Text>
         <Text size="sm" c="dimmed">
           {t(
             "Show a formatting toolbar above the editor with quick access to common actions.",
