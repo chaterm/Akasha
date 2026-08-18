@@ -1,3 +1,8 @@
+<div align="center">
+  English / <a href="./README_zh.md">中文</a>
+</div>
+<br>
+
 <p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-AGPL_v3-blue?style=for-the-badge" alt="License"></a>
   <img src="https://img.shields.io/badge/Self--Hosted-First-0086FF?style=for-the-badge&logo=docker&logoColor=white" alt="Self-Hosted">
