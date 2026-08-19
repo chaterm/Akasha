@@ -48,9 +48,10 @@ import { KnowledgeRunReaperService } from './services/knowledge-run-reaper.servi
 import { KnowledgeImageReaperService } from './services/knowledge-image-reaper.service';
 import { KnowledgeQualityService } from './services/knowledge-quality.service';
 import { AiModelConfigModule } from './services/ai-model-config.module';
+import { ApiKeyModule } from '../api-key/api-key.module';
 
 @Module({
-  imports: [NoopAuditModule, AiModelConfigModule, ReviewModule],
+  imports: [NoopAuditModule, AiModelConfigModule, ReviewModule, ApiKeyModule],
   controllers: [LlmWikiController],
   providers: [
     SpaceAuthorizationService,

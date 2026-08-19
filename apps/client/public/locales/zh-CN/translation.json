@@ -662,6 +662,8 @@
   "Image removed successfully": "图片删除成功",
   "API key": "API密钥",
   "API keys": "API密钥",
+  "Personal API keys": "个人 API 密钥",
+  "Public API keys": "公共检索密钥",
   "API management": "API管理",
   "Custom expiration date": "自定义到期日期",
   "Enter a descriptive token name": "输入描述性令牌名称",

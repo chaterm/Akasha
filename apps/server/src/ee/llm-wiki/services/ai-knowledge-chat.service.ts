@@ -20,6 +20,7 @@ import {
 import type { KnowledgeCitation } from './knowledge-context-pack.service';
 import {
   KnowledgeRetrievalDiagnostics,
+  KnowledgeRetrievalScope,
   KnowledgeRetrievalService,
 } from './knowledge-retrieval.service';
 import { KnowledgeSourceAuthorizationService } from './knowledge-source-authorization.service';
@@ -121,6 +122,7 @@ export type AiKnowledgeChatResult = {
         : never
       : never;
   };
+  retrievalScope?: KnowledgeRetrievalScope;
 };
 
 @Injectable()
@@ -265,6 +267,7 @@ export class AiKnowledgeChatService {
       mode: retrieval.mode,
       ...retrieval.diagnostics,
     };
+    const retrievalScope = retrieval.scope;
     const hasKnowledgeEvidence =
       explicit.context.trim().length > 0 ||
       pack.primary.some((entry) => entry.sourceWindows.length > 0);
@@ -290,6 +293,7 @@ export class AiKnowledgeChatService {
           ? { retrievalQuery: contextualRetrievalQuery }
           : {}),
         retrievalDiagnostics,
+        ...(retrievalScope ? { retrievalScope } : {}),
       };
     }
 
@@ -362,6 +366,7 @@ export class AiKnowledgeChatService {
           ? { retrievalQuery: contextualRetrievalQuery }
           : {}),
         retrievalDiagnostics,
+        ...(retrievalScope ? { retrievalScope } : {}),
       };
     }
     let cleanAnswer = stripCitationMarkers(generatedAnswer.content);
@@ -403,6 +408,7 @@ export class AiKnowledgeChatService {
       budget: pack.budget,
       completenessNotice: pack.completenessNotice,
       retrievalDiagnostics,
+      ...(retrievalScope ? { retrievalScope } : {}),
     };
   }
 
