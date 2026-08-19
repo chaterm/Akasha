@@ -45,6 +45,10 @@ describe('KnowledgeRetrievalService', () => {
     });
 
     expect(result.chunks).toEqual([]);
+    expect(result.scope).toEqual({
+      requestedSpaceIds: ['space-1'],
+      effectiveSpaceIds: [],
+    });
     expect(userRepo.findById).not.toHaveBeenCalled();
     expect(spaceAuthorization.filterReadableSpaceIds).not.toHaveBeenCalled();
     expect(embeddingProvider.embedQuery).not.toHaveBeenCalled();
@@ -145,6 +149,10 @@ describe('KnowledgeRetrievalService', () => {
       capsules: [],
       completenessNotice:
         'Some knowledge may be unavailable because access is permission-scoped.',
+      scope: {
+        requestedSpaceIds: ['space-1', 'space-2'],
+        effectiveSpaceIds: ['space-1'],
+      },
       diagnostics: {
         queryEmbeddingAvailable: true,
         candidateSourceCount: 2,
@@ -219,6 +227,10 @@ describe('KnowledgeRetrievalService', () => {
       capsules: [],
       completenessNotice:
         'Some knowledge may be unavailable because access is permission-scoped.',
+      scope: {
+        requestedSpaceIds: ['space-1'],
+        effectiveSpaceIds: [],
+      },
       diagnostics: {
         queryEmbeddingAvailable: false,
         candidateSourceCount: 0,
@@ -349,6 +361,10 @@ describe('KnowledgeRetrievalService', () => {
       capsules: [],
       completenessNotice:
         'Some knowledge may be unavailable because access is permission-scoped.',
+      scope: {
+        requestedSpaceIds: ['space-1'],
+        effectiveSpaceIds: ['space-1'],
+      },
       diagnostics: {
         queryEmbeddingAvailable: false,
         candidateSourceCount: 1,

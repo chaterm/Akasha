@@ -5,6 +5,7 @@ export enum JwtType {
   ATTACHMENT = 'attachment',
   MFA_TOKEN = 'mfa_token',
   API_KEY = 'api_key',
+  PUBLIC_API_KEY = 'public_api_key',
   PDF_RENDER = 'pdf_render',
   PDF_EXPORT_DOWNLOAD = 'pdf_export_download',
 }
@@ -46,6 +47,12 @@ export type JwtApiKeyPayload = {
   workspaceId: string;
   apiKeyId: string;
   type: 'api_key';
+};
+
+export type JwtPublicApiKeyPayload = {
+  workspaceId: string;
+  apiKeyId: string;
+  type: 'public_api_key';
 };
 
 export type JwtPdfRenderPayload = {

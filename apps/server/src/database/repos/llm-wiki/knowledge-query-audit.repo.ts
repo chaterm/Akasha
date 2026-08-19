@@ -5,10 +5,16 @@ import { KyselyDB } from '@akasha/db/types/kysely.types';
 
 export type KnowledgeQueryAuditMetadata = {
   origin?: 'knowledge_query' | 'ai_qa';
+  type?: 'user' | 'robot';
+  personalApiKeyId?: string;
+  publicApiKeyId?: string;
   answerMode?: 'knowledge' | 'no_match' | 'general';
   citationCount?: number;
   retrievedSourceCount?: number;
   spaceIds: string[];
+  requestedSpaceIds?: string[];
+  effectiveSpaceIds?: string[];
+  publicScopeValidated?: boolean;
   queryEmbeddingAvailable: boolean;
   candidateSourceCount: number;
   policyCandidateSourceCount: number;

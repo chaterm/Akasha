@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { User, Workspace } from '@akasha/db/types/entity.types';
 import { AuditEvent, AuditResource } from '../../common/events/audit-events';
@@ -23,6 +24,9 @@ import { KnowledgeSpaceResetService } from './services/knowledge-space-reset.ser
 import { AiModelConfigService } from './services/ai-model-config.service';
 import { SpaceAuthorizationService } from '../../core/space/services/space-authorization.service';
 import { PageAccessService } from '../../core/page/page-access/page-access.service';
+import { ApiKeyService } from '../api-key/api-key.service';
+import { withApiKeyAccess } from '../../common/auth/api-key-access';
+import { KnowledgeQueryType } from './dto/query-knowledge.dto';
 
 describe('LlmWikiController', () => {
   it('rejects queries when workspace AI knowledge chat is disabled', async () => {
@@ -65,6 +69,10 @@ describe('LlmWikiController', () => {
           authorizedChunkCount: 1,
           filteredChunkCount: 2,
         },
+        retrievalScope: {
+          requestedSpaceIds: ['space-1'],
+          effectiveSpaceIds: ['space-1'],
+        },
       }),
     };
     const auditService = {
@@ -105,6 +113,9 @@ describe('LlmWikiController', () => {
       metadata: {
         queryHash: expect.stringMatching(/^sha256:/),
         spaceIds: ['space-1'],
+        requestedSpaceIds: ['space-1'],
+        effectiveSpaceIds: ['space-1'],
+        publicScopeValidated: false,
         citationCount: 1,
       },
     });
@@ -120,6 +131,9 @@ describe('LlmWikiController', () => {
       metadata: {
         origin: 'knowledge_query',
         spaceIds: ['space-1'],
+        requestedSpaceIds: ['space-1'],
+        effectiveSpaceIds: ['space-1'],
+        publicScopeValidated: false,
         queryEmbeddingAvailable: false,
         candidateSourceCount: 4,
         policyCandidateSourceCount: 2,
@@ -182,11 +196,166 @@ describe('LlmWikiController', () => {
         retrievalMode: 'high_completeness',
         authorizedCapsuleCount: 0,
         metadata: expect.objectContaining({
+          requestedSpaceIds: ['space-1'],
+          effectiveSpaceIds: ['space-1'],
+          publicScopeValidated: false,
           finalAuthorizedSourceCount: 0,
           authorizedChunkCount: 0,
         }),
       }),
     );
+  });
+
+  it('requires and scopes both keys for robot queries', async () => {
+    const chatService = {
+      isEnabledForWorkspace: jest.fn().mockReturnValue(true),
+      chat: jest.fn().mockResolvedValue({
+        answer: 'Scoped answer',
+        citations: [],
+        retrievalDiagnostics: {
+          mode: 'high_completeness',
+          queryEmbeddingAvailable: false,
+          candidateSourceCount: 0,
+          policyCandidateSourceCount: 0,
+          fallbackCandidateSourceCount: 0,
+          finalAuthorizedSourceCount: 0,
+          accessPolicyFallbackUsed: false,
+          candidateChunkCount: 0,
+          rankedCandidateCount: 0,
+          authorizedChunkCount: 0,
+          filteredChunkCount: 0,
+        },
+        retrievalScope: {
+          requestedSpaceIds: ['space-1'],
+          effectiveSpaceIds: [],
+        },
+      }),
+    };
+    const apiKeyService = {
+      validatePublicApiKey: jest.fn().mockResolvedValue({
+        apiKeyId: 'public-1',
+        spaceIds: ['space-1'],
+      }),
+    };
+    const queryAuditRepo = {
+      recordQuery: jest.fn().mockResolvedValue(undefined),
+    };
+    const controller = createController({
+      chatService,
+      apiKeyService,
+      queryAuditRepo,
+    });
+    const personalUser = withApiKeyAccess(user(), {
+      apiKeyId: 'personal-1',
+      personalSpaceId: null,
+    });
+
+    await expect(
+      controller.queryKnowledge(
+        {
+          type: KnowledgeQueryType.ROBOT,
+          query: 'Scoped query',
+          spaceIds: ['space-1'],
+        },
+        personalUser,
+        workspace(),
+        'public-token',
+      ),
+    ).resolves.toEqual(expect.objectContaining({ answer: 'Scoped answer' }));
+
+    expect(apiKeyService.validatePublicApiKey).toHaveBeenCalledWith(
+      'public-token',
+      'workspace-1',
+    );
+    expect(chatService.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        spaceIds: ['space-1'],
+      }),
+    );
+    expect(queryAuditRepo.recordQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          requestedSpaceIds: ['space-1'],
+          effectiveSpaceIds: [],
+          publicScopeValidated: true,
+        }),
+      }),
+    );
+  });
+
+  it('rejects robot queries when a requested Space is outside the public key', async () => {
+    const apiKeyService = {
+      validatePublicApiKey: jest.fn().mockResolvedValue({
+        apiKeyId: 'public-1',
+        spaceIds: ['space-1'],
+      }),
+    };
+    const chatService = {
+      isEnabledForWorkspace: jest.fn().mockReturnValue(true),
+      chat: jest.fn(),
+    };
+    const controller = createController({ chatService, apiKeyService });
+
+    await expect(
+      controller.queryKnowledge(
+        {
+          type: KnowledgeQueryType.ROBOT,
+          query: 'Out of scope',
+          spaceIds: ['space-2'],
+        },
+        withApiKeyAccess(user(), {
+          apiKeyId: 'personal-1',
+          personalSpaceId: null,
+        }),
+        workspace(),
+        'public-token',
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(chatService.chat).not.toHaveBeenCalled();
+  });
+
+  it('rejects robot queries authenticated only by a session', async () => {
+    const controller = createController({
+      apiKeyService: {
+        validatePublicApiKey: jest.fn(),
+      },
+    });
+
+    await expect(
+      controller.queryKnowledge(
+        {
+          type: KnowledgeQueryType.ROBOT,
+          query: 'Session only',
+          spaceIds: ['space-1'],
+        },
+        user(),
+        workspace(),
+        'public-token',
+      ),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('rejects an empty Public API key header for user queries', async () => {
+    const chatService = {
+      isEnabledForWorkspace: jest.fn().mockReturnValue(true),
+      chat: jest.fn(),
+    };
+    const controller = createController({ chatService });
+
+    await expect(
+      controller.queryKnowledge(
+        {
+          type: KnowledgeQueryType.USER,
+          query: 'User query',
+          spaceIds: ['space-1'],
+        },
+        user(),
+        workspace(),
+        '',
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(chatService.chat).not.toHaveBeenCalled();
   });
 
   it('reads the complete ACL-authorized shared Page by its internal URL', async () => {
@@ -1391,6 +1560,7 @@ function createController(
     spaceAuthorization?: Partial<SpaceAuthorizationService>;
     pageAccessService?: Partial<PageAccessService>;
     aiModelConfigService?: Partial<AiModelConfigService>;
+    apiKeyService?: Partial<ApiKeyService>;
   } = {},
 ) {
   return new LlmWikiController(
@@ -1468,6 +1638,10 @@ function createController(
       updateConfig: jest.fn(),
       ...overrides.aiModelConfigService,
     } as unknown as AiModelConfigService,
+    {
+      validatePublicApiKey: jest.fn(),
+      ...overrides.apiKeyService,
+    } as unknown as ApiKeyService,
   );
 }
 

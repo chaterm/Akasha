@@ -674,6 +674,8 @@
   "Image removed successfully": "Image removed successfully",
   "API key": "API key",
   "API keys": "API keys",
+  "Personal API keys": "Personal API keys",
+  "Public API keys": "Public API keys",
   "API management": "API management",
   "Custom expiration date": "Custom expiration date",
   "Enter a descriptive token name": "Enter a descriptive token name",

@@ -15,6 +15,7 @@ import {
   JwtPayload,
   JwtPdfExportDownloadPayload,
   JwtPdfRenderPayload,
+  JwtPublicApiKeyPayload,
   JwtType,
 } from '../dto/jwt-payload';
 import { User } from '@akasha/db/types/entity.types';
@@ -115,6 +116,23 @@ export class TokenService {
     };
 
     return this.jwtService.sign(payload, expiresIn ? { expiresIn } : {});
+  }
+
+  async generatePublicApiToken(opts: {
+    apiKeyId: string;
+    workspaceId: string;
+    expiresIn?: StringValue | number;
+  }): Promise<string> {
+    const payload: JwtPublicApiKeyPayload = {
+      apiKeyId: opts.apiKeyId,
+      workspaceId: opts.workspaceId,
+      type: JwtType.PUBLIC_API_KEY,
+    };
+
+    return this.jwtService.sign(
+      payload,
+      opts.expiresIn ? { expiresIn: opts.expiresIn } : {},
+    );
   }
 
   async generatePdfRenderToken(

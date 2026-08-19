@@ -73,10 +73,17 @@ export interface ApiKeys {
   deletedAt: Timestamp | null;
   expiresAt: Timestamp | null;
   id: Generated<string>;
+  keyType: Generated<string>;
   lastUsedAt: Timestamp | null;
   name: string | null;
   updatedAt: Generated<Timestamp>;
   workspaceId: string;
+}
+
+export interface ApiKeySpaces {
+  apiKeyId: string;
+  createdAt: Generated<Timestamp>;
+  spaceId: string;
 }
 
 export interface Attachments {
@@ -1154,6 +1161,7 @@ export interface DB {
   aiChats: AiChats;
   aiModelConfigs: AiModelConfigs;
   apiKeys: ApiKeys;
+  apiKeySpaces: ApiKeySpaces;
   attachments: Attachments;
   audit: Audit;
   authAccounts: AuthAccounts;

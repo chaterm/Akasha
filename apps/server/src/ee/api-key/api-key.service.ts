@@ -16,6 +16,9 @@ import { PaginationOptions } from '@akasha/db/pagination/pagination-options';
 import { SpaceRepo } from '@akasha/db/repos/space/space.repo';
 import { withApiKeyAccess } from '../../common/auth/api-key-access';
 import type { User, Workspace } from '@akasha/db/types/entity.types';
+import { ApiKeyType } from '../../common/auth/api-key-type';
+import { JwtType } from '../../core/auth/dto/jwt-payload';
+import { isUserDisabled } from '../../common/helpers';
 
 @Injectable()
 export class ApiKeyService {
@@ -65,6 +68,7 @@ export class ApiKeyService {
       name,
       creatorId,
       workspaceId,
+      keyType: ApiKeyType.PERSONAL,
       expiresAt: expiresDate,
     });
 
@@ -100,6 +104,98 @@ export class ApiKeyService {
     pagination: PaginationOptions,
   ) {
     return this.apiKeyRepo.findWorkspaceKeys(workspaceId, pagination);
+  }
+
+  async createPublicApiKey(opts: {
+    name: string;
+    spaceIds: string[];
+    expiresAt?: string;
+    creatorId: string;
+    workspaceId: string;
+  }) {
+    const { name, creatorId, workspaceId } = opts;
+    const user = await this.requireWorkspaceAdmin(creatorId, workspaceId);
+    const spaceIds = [...new Set(opts.spaceIds)];
+    const bindableSpaceIds = await this.apiKeyRepo.findBindableSpaceIds(
+      workspaceId,
+      spaceIds,
+    );
+    if (bindableSpaceIds.length !== spaceIds.length) {
+      throw new BadRequestException(
+        'Public API keys can only bind active shared Spaces in this workspace',
+      );
+    }
+
+    const expiresDate = opts.expiresAt ? new Date(opts.expiresAt) : null;
+    if (expiresDate && expiresDate <= new Date()) {
+      throw new BadRequestException('Expiration date must be in the future');
+    }
+
+    const apiKey = await this.apiKeyRepo.createWithSpaces(
+      {
+        name,
+        creatorId,
+        workspaceId,
+        keyType: ApiKeyType.PUBLIC_RETRIEVAL,
+        expiresAt: expiresDate,
+      },
+      spaceIds,
+    );
+    const expiresIn = expiresDate
+      ? Math.floor((expiresDate.getTime() - Date.now()) / 1000)
+      : undefined;
+    const token = await this.tokenService.generatePublicApiToken({
+      apiKeyId: apiKey.id,
+      workspaceId,
+      expiresIn,
+    });
+
+    return {
+      ...apiKey,
+      token,
+      spaces: spaceIds.map((id) => ({ id })),
+      creator: { id: user.id, name: user.name, email: user.email },
+    };
+  }
+
+  async getPublicApiKeys(workspaceId: string, pagination: PaginationOptions) {
+    return this.apiKeyRepo.findPublicKeys(workspaceId, pagination);
+  }
+
+  async getBindablePublicKeySpaces(userId: string, workspaceId: string) {
+    await this.requireWorkspaceAdmin(userId, workspaceId);
+    return this.apiKeyRepo.findBindableSpaces(workspaceId);
+  }
+
+  async updatePublicApiKey(opts: {
+    apiKeyId: string;
+    name: string;
+    spaceIds: string[];
+    userId: string;
+    workspaceId: string;
+  }) {
+    await this.requireWorkspaceAdmin(opts.userId, opts.workspaceId);
+    const key = await this.apiKeyRepo.findById(opts.apiKeyId, opts.workspaceId);
+    if (!key || key.keyType !== ApiKeyType.PUBLIC_RETRIEVAL) {
+      throw new NotFoundException('Public API key not found');
+    }
+    const spaceIds = [...new Set(opts.spaceIds)];
+    const bindableSpaceIds = await this.apiKeyRepo.findBindableSpaceIds(
+      opts.workspaceId,
+      spaceIds,
+    );
+    if (bindableSpaceIds.length !== spaceIds.length) {
+      throw new BadRequestException(
+        'Public API keys can only bind active shared Spaces in this workspace',
+      );
+    }
+
+    return this.apiKeyRepo.updatePublicKey(
+      opts.apiKeyId,
+      opts.workspaceId,
+      opts.name,
+      spaceIds,
+    );
   }
 
   async updateApiKey(opts: {
@@ -152,6 +248,12 @@ export class ApiKeyService {
     );
     if (!key) throw new UnauthorizedException('API key not found or revoked');
 
+    // Treat pre-migration rows without a key type as personal during rolling
+    // deployments. The migration backfills all persisted rows to this value.
+    if (key.keyType && key.keyType !== ApiKeyType.PERSONAL) {
+      throw new UnauthorizedException('A personal API key is required');
+    }
+
     if (key.expiresAt && key.expiresAt <= new Date()) {
       throw new UnauthorizedException('API key has expired');
     }
@@ -160,7 +262,7 @@ export class ApiKeyService {
     if (!workspace) throw new UnauthorizedException();
 
     const user = await this.userRepo.findById(payload.sub, payload.workspaceId);
-    if (!user) throw new UnauthorizedException();
+    if (!user || isUserDisabled(user)) throw new UnauthorizedException();
 
     const personalSpace = await this.spaceRepo.findPersonalSpaceForUser({
       userId: user.id,
@@ -180,5 +282,53 @@ export class ApiKeyService {
       );
 
     return { user: authenticatedUser, workspace };
+  }
+
+  async validatePublicApiKey(token: string, workspaceId: string) {
+    let payload: {
+      apiKeyId: string;
+      workspaceId: string;
+      type: string;
+    };
+    try {
+      payload = await this.tokenService.verifyJwt(
+        token,
+        JwtType.PUBLIC_API_KEY,
+      );
+    } catch {
+      throw new UnauthorizedException('Invalid Public API key');
+    }
+    if (payload.workspaceId !== workspaceId) {
+      throw new UnauthorizedException('API key workspace does not match');
+    }
+
+    const key = await this.apiKeyRepo.findById(payload.apiKeyId, workspaceId);
+    if (!key || key.keyType !== ApiKeyType.PUBLIC_RETRIEVAL) {
+      throw new UnauthorizedException('Public API key not found or revoked');
+    }
+    if (key.expiresAt && key.expiresAt <= new Date()) {
+      throw new UnauthorizedException('Public API key has expired');
+    }
+
+    const spaceIds = await this.apiKeyRepo.findSpaceIdsByApiKeyId(key.id);
+    this.apiKeyRepo
+      .updateLastUsed(key.id)
+      .catch((err) =>
+        this.logger.warn(
+          `Failed to update lastUsedAt for API key ${key.id}: ${err?.message}`,
+        ),
+      );
+    return { apiKeyId: key.id, workspaceId, spaceIds };
+  }
+
+  private async requireWorkspaceAdmin(userId: string, workspaceId: string) {
+    const user = await this.userRepo.findById(userId, workspaceId);
+    if (
+      !user ||
+      (user.role !== UserRole.OWNER && user.role !== UserRole.ADMIN)
+    ) {
+      throw new ForbiddenException('Workspace administrator access required');
+    }
+    return user;
   }
 }
