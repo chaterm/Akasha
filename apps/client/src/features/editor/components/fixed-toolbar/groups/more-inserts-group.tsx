@@ -7,6 +7,8 @@ import {
   IconCaretRightFilled,
   IconChevronDown,
   IconInfoCircle,
+  IconLayoutGrid,
+  IconList,
   IconMath,
   IconMathFunction,
   IconRotate2,
@@ -66,6 +68,18 @@ export const MoreInsertsGroup: FC<Props> = ({ editor, templateMode }) => {
       </Menu.Target>
       <Menu.Dropdown mah={400} style={{ overflowY: "auto" }}>
         <Menu.Label>{t("Advanced")}</Menu.Label>
+        <Menu.Item
+          leftSection={<IconList size={16} />}
+          onClick={() => editor.chain().focus().insertToc().run()}
+        >
+          {t("Table of contents")}
+        </Menu.Item>
+        <Menu.Item
+          leftSection={<IconLayoutGrid size={16} />}
+          onClick={() => editor.chain().focus().insertPanel().run()}
+        >
+          {t("Panel")}
+        </Menu.Item>
         <Menu.Item
           leftSection={<IconInfoCircle size={16} />}
           onClick={() => editor.chain().focus().toggleCallout().run()}
