@@ -14,6 +14,7 @@ import {
   cancelKnowledgeCompilationRun,
   forceRebuildKnowledgeSpace,
   getKnowledgeDelayedPageDiagnostics,
+  getKnowledgePageCompilationLog,
   getKnowledgeQualityDiagnostics,
   getKnowledgeQuarantineDiagnostics,
   getKnowledgeRetrievalDiagnostics,
@@ -56,6 +57,7 @@ vi.mock("@/hooks/use-user-role", () => ({
 vi.mock("../services/knowledge-service", () => ({
   cancelKnowledgeCompilationRun: vi.fn(),
   getKnowledgeDelayedPageDiagnostics: vi.fn(),
+  getKnowledgePageCompilationLog: vi.fn(),
   getKnowledgeRunDiagnosticsSummary: vi.fn(),
   getKnowledgeRunDiagnostics: vi.fn(),
   getKnowledgeRunPageDiagnostics: vi.fn(),
@@ -145,6 +147,39 @@ describe("KnowledgeAdminPage", () => {
           remainingWaitMs: 30 * 60 * 1000,
           createdAt: "2026-08-05T09:30:00.000Z",
           updatedAt: "2026-08-05T09:30:00.000Z",
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 50,
+    });
+    vi.mocked(getKnowledgePageCompilationLog).mockResolvedValue({
+      items: [
+        {
+          runPageId: "run-page-log-1",
+          runId: "run-log-1",
+          sourcePageId: "page-log-1",
+          spaceId: "space-1",
+          spaceName: "AIM",
+          title: "Compiled page",
+          slugId: "compiled-page",
+          status: "succeeded",
+          imageStatus: "succeeded",
+          mergeStatus: "succeeded",
+          expectedImageCount: 0,
+          succeededImageCount: 0,
+          failedImageCount: 0,
+          skippedImageCount: 0,
+          errorCode: null,
+          errorCategory: null,
+          errorSummary: null,
+          queuedAt: "2026-08-05T09:30:00.000Z",
+          startedAt: "2026-08-05T09:30:01.000Z",
+          finishedAt: "2026-08-05T09:30:02.000Z",
+          durationMs: 1_000,
+          lastCompiledAt: "2026-08-05T09:30:02.000Z",
+          updatedAt: "2026-08-05T09:30:02.000Z",
+          imageFailures: { retryableExhausted: 0, permanent: 0 },
         },
       ],
       total: 1,
@@ -521,6 +556,23 @@ describe("KnowledgeAdminPage", () => {
     await waitFor(() =>
       expect(retryKnowledgePages).toHaveBeenCalledWith(
         { pageIds: ["page-1"] },
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("allows retrying a successfully compiled page from the compilation log", async () => {
+    renderPage();
+    await screen.findByText("Space compilation runs");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Compilation log" }));
+    expect(await screen.findByText("Compiled page")).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "Merge" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() =>
+      expect(retryKnowledgePages).toHaveBeenCalledWith(
+        { pageIds: ["page-log-1"] },
         expect.anything(),
       ),
     );

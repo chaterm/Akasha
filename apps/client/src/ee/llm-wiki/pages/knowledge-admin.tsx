@@ -814,10 +814,6 @@ export default function KnowledgeAdminPage() {
                         <Table.Tr key={page.runPageId}>
                           <Table.Td>
                             <Checkbox
-                              disabled={
-                                page.status !== "failed" &&
-                                page.mergeStatus !== "failed"
-                              }
                               checked={selectedPageIds.includes(
                                 page.sourcePageId,
                               )}
@@ -1658,6 +1654,7 @@ function PageCompilationLog({
                   <Table.Th>{t("Space")}</Table.Th>
                   <Table.Th>{t("Status")}</Table.Th>
                   <Table.Th>{t("Images")}</Table.Th>
+                  <Table.Th>{t("Merge")}</Table.Th>
                   <Table.Th>{t("Last compiled")}</Table.Th>
                   <Table.Th>{t("Duration")}</Table.Th>
                   <Table.Th>{t("Error")}</Table.Th>
@@ -1746,6 +1743,9 @@ function PageLogRow({
           {imageSummary}
         </Text>
       </Table.Td>
+            <Table.Td>
+        <StateBadge value={item.mergeStatus} />
+      </Table.Td>
       <Table.Td>
         <Text size="sm">{formatDate(item.lastCompiledAt)}</Text>
       </Table.Td>
@@ -1765,21 +1765,15 @@ function PageLogRow({
       </Table.Td>
       {isAdmin && (
         <Table.Td>
-          {item.status === "failed" ? (
-            <Button
-              size="xs"
-              variant="light"
-              leftSection={<IconRefresh size={14} />}
-              loading={retrying}
-              onClick={() => onRetry(item.sourcePageId)}
-            >
-              {t("Retry")}
-            </Button>
-          ) : (
-            <Text size="xs" c="dimmed">
-              -
-            </Text>
-          )}
+          <Button
+            size="xs"
+            variant="light"
+            leftSection={<IconRefresh size={14} />}
+            loading={retrying}
+            onClick={() => onRetry(item.sourcePageId)}
+          >
+            {t("Retry")}
+          </Button>
         </Table.Td>
       )}
     </Table.Tr>

@@ -1030,7 +1030,7 @@ export class KnowledgeDiagnosticsService {
     };
   }
 
-  async findRetryableFailedPageIds(input: {
+  async findCompiledPageIds(input: {
     workspaceId: string;
     sourcePageIds: string[];
   }): Promise<string[]> {
@@ -1050,15 +1050,17 @@ export class KnowledgeDiagnosticsService {
     const rows = await this.db
       .selectFrom(latest.as('latest'))
       .select('latest.sourcePageId')
-      .where((eb) =>
-        eb.or([
-          eb('latest.status', '=', 'failed'),
-          eb('latest.mergeStatus', '=', 'failed'),
-        ]),
-      )
       .execute();
 
     return [...new Set(rows.map((row) => row.sourcePageId))];
+  }
+
+  /** @deprecated Use findCompiledPageIds; successful pages are retryable too. */
+  async findRetryableFailedPageIds(input: {
+    workspaceId: string;
+    sourcePageIds: string[];
+  }): Promise<string[]> {
+    return this.findCompiledPageIds(input);
   }
 
   async findWorkspaceSpaceIds(input: {

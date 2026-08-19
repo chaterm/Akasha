@@ -831,17 +831,25 @@ export class LlmWikiController {
       pages.push(page);
       pagesBySpace.set(page.spaceId, pages);
     }
-    const retryablePageIds = new Set(
-      await this.diagnosticsService.findRetryableFailedPageIds({
+    const compiledPageIds = new Set(
+      await this.diagnosticsService.findCompiledPageIds({
         workspaceId: workspace.id,
         sourcePageIds: pageIds,
       }),
     );
-    if (pageIds.some((pageId) => !retryablePageIds.has(pageId))) {
+    if (pageIds.some((pageId) => !compiledPageIds.has(pageId))) {
       throw new BadRequestException(
-        'Only currently failed knowledge pages can be retried',
+        'Only pages that have already been compiled can be retried',
       );
     }
+
+    // A page retry is an explicit new generation round. Clear the durable
+    // source-content budget before queuing the Run so the Worker cannot reject
+    // it immediately based on attempts consumed by an earlier Run.
+    await this.spaceCompilation.resetGenerationAttemptBudget({
+      workspaceId: workspace.id,
+      sourcePageIds: pageIds,
+    });
 
     const requests = await this.spaceCompilation.requestRuns(
       [...pagesBySpace.entries()].map(([spaceId, spacePages]) => ({

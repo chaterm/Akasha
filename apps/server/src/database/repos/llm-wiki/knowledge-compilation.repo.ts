@@ -60,6 +60,31 @@ export type KnowledgeCompilerCandidateStage = 'analysis' | 'generation';
 export class KnowledgeCompilationRepo {
   constructor(@InjectKysely() private readonly db: KyselyDB) {}
 
+  /**
+   * Starts a fresh generation budget for explicitly retried source pages.
+   * This is intentionally scoped by workspace and page, because the budget
+   * is carried across page-scoped Run rows for the same source content.
+   */
+  async resetGenerationAttemptBudget(input: {
+    workspaceId: string;
+    sourcePageIds: string[];
+  }): Promise<number> {
+    const sourcePageIds = [...new Set(input.sourcePageIds)];
+    if (sourcePageIds.length === 0) return 0;
+    const result = await this.db
+      .updateTable('knowledgeCompilationAttempts')
+      .set({
+        generationAttemptCount: 0,
+        generationAttemptSourceHash: null,
+        updatedAt: new Date(),
+      })
+      .where('workspaceId', '=', input.workspaceId)
+      .where('sourcePageId', 'in', sourcePageIds)
+      .returning('id')
+      .execute();
+    return result.length;
+  }
+
   async queueAttempt(
     input: CompilationAttemptInput,
     trx?: KyselyTransaction,
