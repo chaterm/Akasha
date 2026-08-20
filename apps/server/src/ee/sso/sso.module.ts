@@ -4,6 +4,12 @@ import { HoidcService } from './hoidc.service';
 import { UserModule } from '../../core/user/user.module';
 import { SpaceModule } from '../../core/space/space.module';
 import { WorkspaceModule } from '../../core/workspace/workspace.module';
+import { GroupModule } from '../../core/group/group.module';
+import { SsoArchAuthGuard } from './guards/sso-arch-auth.guard';
+import { SsoGroupController } from './sso-group.controller';
+import { SsoGroupService } from './sso-group.service';
+import { SsoUserLifecycleController } from './sso-user-lifecycle.controller';
+import { SsoUserLifecycleService } from './sso-user-lifecycle.service';
 
 /**
  * SSO Module - 处理 HOIDC 单点登录
@@ -16,9 +22,14 @@ import { WorkspaceModule } from '../../core/workspace/workspace.module';
  * - GroupUserRepo 在 DatabaseModule(@Global) 中 export，无需 import
  */
 @Module({
-  imports: [UserModule, SpaceModule, WorkspaceModule],
-  controllers: [HoidcController],
-  providers: [HoidcService],
+  imports: [UserModule, SpaceModule, WorkspaceModule, GroupModule],
+  controllers: [HoidcController, SsoGroupController, SsoUserLifecycleController],
+  providers: [
+    HoidcService,
+    SsoArchAuthGuard,
+    SsoGroupService,
+    SsoUserLifecycleService,
+  ],
   exports: [HoidcService],
 })
 export class SsoModule {}

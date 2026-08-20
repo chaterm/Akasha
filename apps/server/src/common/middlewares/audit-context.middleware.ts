@@ -5,7 +5,7 @@ import { ClsService } from 'nestjs-cls';
 export interface AuditContext {
   workspaceId: string | null;
   actorId: string | null;
-  actorType: 'user' | 'system' | 'api_key';
+  actorType: 'user' | 'system' | 'api_key' | 'arch';
   ipAddress: string | null;
   userAgent: string | null;
 }

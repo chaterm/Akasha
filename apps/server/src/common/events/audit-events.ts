@@ -148,7 +148,7 @@ export const AuditResource = {
 export type AuditResourceType =
   (typeof AuditResource)[keyof typeof AuditResource];
 
-export type ActorType = 'user' | 'system' | 'api_key';
+export type ActorType = 'user' | 'system' | 'api_key' | 'arch';
 
 export interface AuditLogPayload {
   event: AuditEventType;
