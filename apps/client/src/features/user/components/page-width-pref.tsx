@@ -34,7 +34,7 @@ export function PageWidthToggle({ size, label }: PageWidthToggleProps) {
   const { t } = useTranslation();
   const [user, setUser] = useAtom(userAtom);
   const [checked, setChecked] = useState(
-    user.settings?.preferences?.fullPageWidth,
+    user.settings?.preferences?.fullPageWidth ?? true,
   );
 
   const handleChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
