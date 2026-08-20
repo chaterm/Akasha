@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -846,6 +847,25 @@ export class WorkspaceService {
       throw new BadRequestException('You cannot delete a user with owner role');
     }
 
+    await this.deleteUserInternal(user, userId, workspaceId);
+  }
+
+  async deleteUserBySso(userId: string, workspaceId: string): Promise<void> {
+    const user = await this.userRepo.findById(userId, workspaceId);
+
+    if (!user || user.deletedAt) return;
+    if (user.role === UserRole.OWNER) {
+      throw new ConflictException('SSO cannot delete a workspace owner');
+    }
+
+    await this.deleteUserInternal(user, userId, workspaceId);
+  }
+
+  private async deleteUserInternal(
+    user: User,
+    userId: string,
+    workspaceId: string,
+  ): Promise<void> {
     await executeTx(this.db, async (trx) => {
       await this.userRepo.updateUser(
         {

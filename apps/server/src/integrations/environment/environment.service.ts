@@ -468,6 +468,10 @@ export class EnvironmentService {
     return this.configService.get<string>('SSO_USER_LIST_SECRET', '');
   }
 
+  getSsoArchToken(): string {
+    return this.configService.get<string>('SSO_ARCH_TOKEN', '');
+  }
+
   isIframeEmbedAllowed(): boolean {
     const allowed = this.configService
       .get<string>('IFRAME_EMBED_ALLOWED', 'false')
