@@ -15,11 +15,9 @@ export class LegacyLinkController {
     @Query('spaceKey') spaceKey: string,
     @Query('title') title: string,
     @Query('anchor') anchor: string,
-    @Query('workspaceId') workspaceId: string,
-    @Req() req: FastifyRequest,
+    @Req() _req: FastifyRequest,
   ) {
     return this.legacyLinkService.resolve({
-      workspaceId: workspaceId || req.raw?.['workspace']?.id,
       source: 'confluence',
       path,
       pageId,

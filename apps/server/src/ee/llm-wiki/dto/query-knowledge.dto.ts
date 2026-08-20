@@ -4,13 +4,23 @@ import {
   ArrayUnique,
   IsArray,
   IsOptional,
+  IsEnum,
   IsString,
   IsUUID,
   MaxLength,
   MinLength,
 } from 'class-validator';
 
+export enum KnowledgeQueryType {
+  USER = 'user',
+  ROBOT = 'robot',
+}
+
 export class QueryKnowledgeDto {
+  @IsOptional()
+  @IsEnum(KnowledgeQueryType)
+  type?: KnowledgeQueryType;
+
   @IsString()
   @MinLength(1)
   @MaxLength(4000)

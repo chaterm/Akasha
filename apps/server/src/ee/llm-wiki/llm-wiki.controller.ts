@@ -5,6 +5,7 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Inject,
@@ -14,6 +15,7 @@ import {
   Post,
   Put,
   Query,
+  UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -56,6 +58,7 @@ import { ImportCompileResultDto } from './dto/import-compile-result.dto';
 import { KnowledgeGraphDto } from './dto/knowledge-graph.dto';
 import { KnowledgeSpaceOperationDto } from './dto/knowledge-space-operation.dto';
 import { QueryKnowledgeDto } from './dto/query-knowledge.dto';
+import { KnowledgeQueryType } from './dto/query-knowledge.dto';
 import { CitationPageDto } from './dto/citation-page.dto';
 import { AiKnowledgeChatService } from './services/ai-knowledge-chat.service';
 import { KnowledgeDiagnosticsService } from './services/knowledge-diagnostics.service';
@@ -74,6 +77,8 @@ import {
 import { KnowledgeAdminSpaceAction } from './types/knowledge-queue.types';
 import { getPageTitle } from '../../common/helpers';
 import { jsonToMarkdown } from '../../collaboration/collaboration.util';
+import { ApiKeyService } from '../api-key/api-key.service';
+import { getApiKeyAccess } from '../../common/auth/api-key-access';
 
 @UseGuards(JwtAuthGuard)
 @Controller('llm-wiki')
@@ -94,6 +99,7 @@ export class LlmWikiController {
     private readonly spaceAuthorization: SpaceAuthorizationService,
     private readonly pageAccessService: PageAccessService,
     private readonly aiModelConfigService: AiModelConfigService,
+    private readonly apiKeyService: ApiKeyService,
   ) {}
 
   @HttpCode(HttpStatus.OK)
@@ -102,11 +108,45 @@ export class LlmWikiController {
     @Body() dto: QueryKnowledgeDto,
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
+    @Headers('x-akasha-public-key') publicApiKey?: string,
   ) {
     if (!this.chatService.isEnabledForWorkspace(workspace)) {
       throw new ForbiddenException('AI knowledge chat is disabled');
     }
 
+    const queryType = dto.type ?? KnowledgeQueryType.USER;
+    let publicApiKeyId: string | undefined;
+    if (queryType === KnowledgeQueryType.ROBOT) {
+      const personalApiKeyAccess = getApiKeyAccess(user);
+      if (!personalApiKeyAccess) {
+        throw new UnauthorizedException(
+          'Robot queries require a personal API key',
+        );
+      }
+      if (!publicApiKey) {
+        throw new UnauthorizedException(
+          'Robot queries require a Public API key',
+        );
+      }
+
+      const publicAccess = await this.apiKeyService.validatePublicApiKey(
+        publicApiKey,
+        workspace.id,
+      );
+      const allowedSpaceIds = new Set(publicAccess.spaceIds);
+      if (dto.spaceIds.some((spaceId) => !allowedSpaceIds.has(spaceId))) {
+        throw new ForbiddenException(
+          'Requested Spaces are outside the Public API key scope',
+        );
+      }
+      publicApiKeyId = publicAccess.apiKeyId;
+    } else if (publicApiKey !== undefined) {
+      throw new BadRequestException(
+        'Public API keys are only valid for robot queries',
+      );
+    }
+
+    const personalApiKeyId = getApiKeyAccess(user)?.apiKeyId;
     const result = await this.chatService.chat({
       workspaceId: workspace.id,
       userId: user.id,
@@ -116,7 +156,13 @@ export class LlmWikiController {
       workspace,
     });
     const queryHash = hashQuery(dto.query);
-    const { retrievalDiagnostics, ...response } = result;
+    const { retrievalDiagnostics, retrievalScope, ...response } = result;
+    // The knowledge path always returns a scope. Keep audit recording
+    // defensive for the legacy pure-general path and older service mocks.
+    const requestedSpaceIds = retrievalScope?.requestedSpaceIds ?? dto.spaceIds;
+    const effectiveSpaceIds =
+      retrievalScope?.effectiveSpaceIds ?? requestedSpaceIds;
+    const publicScopeValidated = queryType === KnowledgeQueryType.ROBOT;
 
     this.auditService.log({
       event: AuditEvent.KNOWLEDGE_QUERY,
@@ -124,7 +170,13 @@ export class LlmWikiController {
       resourceId: workspace.id,
       metadata: {
         queryHash,
+        ...(queryType === KnowledgeQueryType.ROBOT ? { type: queryType } : {}),
         spaceIds: dto.spaceIds,
+        requestedSpaceIds,
+        effectiveSpaceIds,
+        publicScopeValidated,
+        ...(personalApiKeyId ? { personalApiKeyId } : {}),
+        ...(publicApiKeyId ? { publicApiKeyId } : {}),
         citationCount: response.citations.length,
       },
     });
@@ -137,7 +189,13 @@ export class LlmWikiController {
       authorizedCapsuleCount: retrievalDiagnostics.authorizedChunkCount,
       metadata: {
         origin: 'knowledge_query',
+        ...(queryType === KnowledgeQueryType.ROBOT ? { type: queryType } : {}),
         spaceIds: dto.spaceIds,
+        requestedSpaceIds,
+        effectiveSpaceIds,
+        publicScopeValidated,
+        ...(personalApiKeyId ? { personalApiKeyId } : {}),
+        ...(publicApiKeyId ? { publicApiKeyId } : {}),
         queryEmbeddingAvailable: retrievalDiagnostics.queryEmbeddingAvailable,
         candidateSourceCount: retrievalDiagnostics.candidateSourceCount,
         policyCandidateSourceCount:
@@ -233,11 +291,7 @@ export class LlmWikiController {
     }
 
     const page = await this.pageRepo.findById(pageId);
-    if (
-      !page ||
-      page.workspaceId !== workspace.id ||
-      page.deletedAt !== null
-    ) {
+    if (!page || page.workspaceId !== workspace.id || page.deletedAt !== null) {
       throw new NotFoundException('Page not found');
     }
 
@@ -583,6 +637,7 @@ export class LlmWikiController {
       spaceIds,
       enforceSpaceScope: true,
       statuses: dto.statuses,
+      mergeStatuses: dto.mergeStatuses,
       search: dto.search,
       from: dto.from,
       to: dto.to,
@@ -777,17 +832,25 @@ export class LlmWikiController {
       pages.push(page);
       pagesBySpace.set(page.spaceId, pages);
     }
-    const retryablePageIds = new Set(
-      await this.diagnosticsService.findRetryableFailedPageIds({
+    const compiledPageIds = new Set(
+      await this.diagnosticsService.findCompiledPageIds({
         workspaceId: workspace.id,
         sourcePageIds: pageIds,
       }),
     );
-    if (pageIds.some((pageId) => !retryablePageIds.has(pageId))) {
+    if (pageIds.some((pageId) => !compiledPageIds.has(pageId))) {
       throw new BadRequestException(
-        'Only currently failed knowledge pages can be retried',
+        'Only pages that have already been compiled can be retried',
       );
     }
+
+    // A page retry is an explicit new generation round. Clear the durable
+    // source-content budget before queuing the Run so the Worker cannot reject
+    // it immediately based on attempts consumed by an earlier Run.
+    await this.spaceCompilation.resetGenerationAttemptBudget({
+      workspaceId: workspace.id,
+      sourcePageIds: pageIds,
+    });
 
     const requests = await this.spaceCompilation.requestRuns(
       [...pagesBySpace.entries()].map(([spaceId, spacePages]) => ({

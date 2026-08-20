@@ -158,13 +158,13 @@ describePostgres(
       expect(emptyScope).toMatchObject({ items: [], total: 0 });
     });
 
-    it('retries pages whose latest text or merge phase is failed', async () => {
+    it('allows retrying every page with a durable compilation record', async () => {
       await expect(
-        service.findRetryableFailedPageIds({
+        service.findCompiledPageIds({
           workspaceId: 'workspace-1',
           sourcePageIds: ['page-a-1', 'page-a-2', 'page-a-3', 'page-a-3'],
         }),
-      ).resolves.toEqual(['page-a-2', 'page-a-3']);
+      ).resolves.toEqual(['page-a-1', 'page-a-2', 'page-a-3']);
     });
 
     it('lists the independent delayed page queue with scope and due state', async () => {

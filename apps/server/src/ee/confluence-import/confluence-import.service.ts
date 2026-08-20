@@ -26,6 +26,7 @@ import {
   parseConfluencePageId,
 } from './confluence-page-mapping';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
+import { transformConfluencePanels } from './confluence-panel.utils';
 
 interface ConfluencePageNode {
   id: string;
@@ -150,7 +151,10 @@ export class ConfluenceImportService {
       .where('id', '=', fileTask.spaceId)
       .executeTakeFirst();
     const appUrl = this.environmentService.getAppUrl();
-    const confluenceSpaceKey = getConfluenceSpaceKey(fileTask.metadata);
+    const confluenceSpaceKey = await resolveConfluenceSpaceKey(
+      extractDir,
+      fileTask.metadata,
+    );
 
     const validPageIds = new Set<string>();
     const allBacklinks: any[] = [];
@@ -181,10 +185,41 @@ export class ConfluenceImportService {
           // 转换代码块
           const htmlWithCode = this.transformCodeBlocks(cleanedHtml);
 
+          // 转换 mermaid 图表宏（产出带 code 子节点的 pre，不与 noformat 冲突）
+          const htmlWithMermaid = this.transformMermaidMacros(htmlWithCode);
+
+          // 转换 noformat 预格式化宏（必须在 transformCodeBlocks 之后）
+          const htmlWithNoformat = this.transformNoformatMacros(htmlWithMermaid);
+
+          // 转换 expand 折叠宏
+          const htmlWithExpand = this.transformExpandMacros(htmlWithNoformat);
+
+          // 转换 info/tip/note/warning 告警框宏
+          const htmlWithCallout = this.transformInfoMacros(htmlWithExpand);
+
+          // 转换 status 状态标签宏
+          const htmlWithStatus = this.transformStatusMacros(htmlWithCallout);
+
+          // 拆除 section/column 布局宏外壳
+          const htmlWithSection = this.transformSectionMacros(htmlWithStatus);
+
+          // 清理动态宏残留(popular-labels 等)
+          const htmlWithoutDynamic = this.stripDynamicMacros(htmlWithSection);
+
+          // 转换 Confluence Panel 宏（必须在 noformat 之后，避免误识别 preformatted.panel）
+          const htmlWithPanels = transformConfluencePanels(htmlWithoutDynamic);
+
+          // 内联 base64 图片(如 roadmap 宏)落地成真实附件,避免被 image 节点丢弃
+          const htmlWithInlineImages = await this.materializeDataUriImages(
+            htmlWithPanels,
+            extractDir,
+            attachmentCandidates,
+          );
+
           // 调用现有附件处理（上传图片/附件，替换路径）
           const htmlWithAttachments =
             await this.importAttachmentService.processAttachments({
-              html: htmlWithCode,
+              html: htmlWithInlineImages,
               pageRelativePath: page.filePath,
               extractDir,
               pageId: page.id,
@@ -494,6 +529,21 @@ export class ConfluenceImportService {
     const title =
       rawTitle.length > 0 ? stripConfluenceSpacePrefix(rawTitle) : undefined;
 
+    // 移除脚本/样式:markdown 等宏在导出 HTML 里会注入 <script>(如 hljs
+    // 高亮)和 <style>,若原样透传进编辑器会造成显示异常/解析混乱。宏正文
+    // 本身已被 Confluence 渲染成正常 HTML(h1/p 等),删掉这些标签即可。
+    $('script').remove();
+    $('style').remove();
+
+    // 拆除标题里的自引用锚点:Confluence 给每个标题自动包一个指向自身的
+    // 锚点 <h1 id="x"><a href="#x">标题</a></h1>(用于"复制链接到此标题")。
+    // 透传进编辑器后 <a> 会被当成真实链接,标题带上链接图标。这里把标题内
+    // 以 # 开头(页内锚点)的 <a> 替换成其纯文本,保留标题文字、去掉链接。
+    $('h1, h2, h3, h4, h5, h6').find('a[href^="#"]').each((_, el) => {
+      const $a = $(el);
+      $a.replaceWith($a.text());
+    });
+
     // 移除 Confluence UI 噪音
     $('#breadcrumb-section').remove();
     $('#title-heading').remove();
@@ -623,6 +673,398 @@ export class ConfluenceImportService {
     return $.root().html() ?? html;
   }
 
+  // ─── Step 3c1: mermaid 图表宏转换 ────────────────────────────────────────
+  //
+  // Confluence mermaid 宏(第三方插件)导出成 HTML 后,图表源码以纯文本形式
+  // 保留在一个 div 里:
+  //   <div class="mermaid" style="...">
+  //   %%{init: ...}%%
+  //   flowchart TD ...
+  //   </div>
+  // 若原样透传,div 被编辑器 schema 丢弃、里面的源码变成一大段普通文本(乱码观感)。
+  // Akasha 的 mermaid 是 codeBlock 的一种 language(language-mermaid),前端
+  // NodeView 会把源码渲染成 SVG 图。因此转成:
+  //   <pre><code class="language-mermaid">图表源码</code></pre>
+  private transformMermaidMacros(html: string): string {
+    if (!html) return html;
+
+    const $ = cheerioLoad(html);
+
+    $('div.mermaid').each((_, el) => {
+      const $div = $(el);
+      // 源码是 div 的纯文本内容;去掉首尾空白(导出时常有前导换行)
+      const code = $div.text().replace(/^\n+/, '').replace(/\s+$/, '');
+      if (!code) {
+        $div.remove();
+        return;
+      }
+      const $pre = $('<pre>');
+      const $code = $('<code>').addClass('language-mermaid').text(code);
+      $pre.append($code);
+      $div.replaceWith($pre);
+    });
+
+    return $.root().html() ?? html;
+  }
+
+  // ─── Step 3c2: noformat 预格式化宏转换 ───────────────────────────────────
+  //
+  // Confluence noformat 宏导出成 HTML 有两种形式:
+  //   有面板(默认):
+  //     <div class="preformatted panel"><div class="preformattedContent panelContent">
+  //       <pre>预格式化文本</pre>
+  //     </div></div>
+  //   无面板(nopanel=true):
+  //     <pre>预格式化文本</pre>
+  // noformat 语义是"保留空白+等宽字体、但不做语法高亮的预格式化文本"
+  // (内容未必是代码,可能是日志/ASCII 表格/纯文本)。编辑器没有独立的
+  // preformatted 节点,唯一能保留多行+空白+等宽的块是 codeBlock。但 codeBlock
+  // 在 language 为空/未注册时会走 highlightAuto 自动探测语言并着色 —— 这会把
+  // 纯文本误着色,与 noformat 语义相悖。因此显式标注 language-plaintext:
+  // plaintext 已在 lowlight(common 集)注册且高亮规则为"零着色",高亮插件会
+  // 走"已注册语言"分支而非 highlightAuto,得到纯等宽、无语法色的预格式化文本。
+  // 两种形式统一转成:
+  //   <pre><code class="language-plaintext">预格式化文本</code></pre>
+  //
+  // 重要:必须在 transformCodeBlocks 之后调用。code 宏产出的 <pre> 已被
+  // transformCodeBlocks 转成 <pre><code class="language-x">(含 code 子节点),
+  // 这里用"无 code 子节点"作判别跳过它们,避免误伤代码块 / 覆盖其语言。
+  private transformNoformatMacros(html: string): string {
+    if (!html) return html;
+
+    const $ = cheerioLoad(html);
+
+    const toCodeBlock = (text: string) => {
+      const $newPre = $('<pre>');
+      const $code = $('<code>').addClass('language-plaintext').text(text);
+      $newPre.append($code);
+      return $newPre;
+    };
+
+    // 形式一(有面板):替换整个 preformatted panel 容器
+    $('div.preformatted').each((_, el) => {
+      const $panel = $(el);
+      const $pre = $panel.find('pre').first();
+      if (!$pre.length) return;
+      $panel.replaceWith(toCodeBlock($pre.text()));
+    });
+
+    // 形式二(无面板)+ 兜底:裸 <pre>,无 <code> 子节点者包成标准代码块。
+    // (上一步新建的 <pre><code> 与 code 宏产物都含 code 子节点,自动跳过)
+    $('pre').each((_, el) => {
+      const $pre = $(el);
+      if ($pre.find('code').length) return;
+      $pre.replaceWith(toCodeBlock($pre.text()));
+    });
+
+    return $.root().html() ?? html;
+  }
+
+  // ─── Step 3d: expand 折叠宏转换 ──────────────────────────────────────────
+  //
+  // Confluence expand 宏导出成 HTML 后是:
+  //   <div class="expand-container">
+  //     <div class="expand-control"><span class="expand-control-text">标题</span></div>
+  //     <div class="expand-content ...">正文...</div>
+  //   </div>
+  // 目标编辑器折叠块(details 节点,来自 @docmost/editor-ext)内容模型严格要求
+  // 恰好是 <summary> + <div data-type="detailsContent">,顺序固定:
+  //   <details open>
+  //     <summary>标题</summary>
+  //     <div data-type="detailsContent">正文...</div>
+  //   </details>
+  private transformExpandMacros(html: string): string {
+    if (!html) return html;
+
+    const $ = cheerioLoad(html);
+
+    // 逆序处理,保证嵌套 expand 由内向外转换:内层先变成 details,外层再把
+    // 已转好的节点整体搬入 detailsContent(移动实际节点而非序列化字符串,
+    // 避免内层已转换结果丢失)。
+    const containers = $('div.expand-container').toArray().reverse();
+
+    for (const el of containers) {
+      const $container = $(el);
+
+      // 标题:expand-control-text,取不到时用兜底文案(summary 不可为空)
+      const titleText =
+        $container.find('.expand-control-text').first().text().trim() ||
+        'Details';
+
+      // 正文:expand-content(本容器对应的第一个;嵌套的内层此时已被替换掉)
+      const $content = $container.find('div.expand-content').first();
+
+      const $details = $('<details>').attr('open', '');
+      const $summary = $('<summary>').text(titleText);
+      const $detailsContent = $('<div>').attr('data-type', 'detailsContent');
+
+      // 移动实际子节点(含已转换的内层 details),而非用 .html() 序列化重建
+      if ($content.length) {
+        $detailsContent.append($content.contents());
+      }
+
+      $details.append($summary).append($detailsContent);
+      $container.replaceWith($details);
+    }
+
+    return $.root().html() ?? html;
+  }
+
+  // ─── Step 3e: info/tip/note/warning 告警框宏转换 ─────────────────────────
+  //
+  // Confluence 的 4 个告警框宏导出成 HTML 后是带 class 的 div:
+  //   <div class="confluence-information-macro confluence-information-macro-tip">
+  //     <span class="aui-icon ..."></span>
+  //     <p class="title">可选标题</p>            (title 参数,不一定有)
+  //     <div class="confluence-information-macro-body"><p>正文</p></div>
+  //   </div>
+  // 目标 callout 节点(@docmost/editor-ext)只认 data-type/data-callout-type 属性,
+  // 不认 Confluence class,内容模型是纯 block+、无 title 字段。因此:
+  //   1. class 关键字 → data-callout-type 映射(见下表)
+  //   2. title 参数无处安放 → 转成 callout 内容里的加粗首行 <p><strong>title</strong></p>
+  // 产出:
+  //   <div data-type="callout" data-callout-type="success">
+  //     <p><strong>可选标题</strong></p>
+  //     <p>正文</p>
+  //   </div>
+  private transformInfoMacros(html: string): string {
+    if (!html) return html;
+
+    const $ = cheerioLoad(html);
+
+    // Confluence class 关键字 → callout type
+    // tip(绿)→success, info(蓝)→info, note(黄)→warning, warning(红)→danger
+    const classToType = (className: string): string => {
+      if (/confluence-information-macro-tip\b/.test(className)) return 'success';
+      if (/confluence-information-macro-note\b/.test(className))
+        return 'warning';
+      if (/confluence-information-macro-warning\b/.test(className))
+        return 'danger';
+      // -information 及无后缀的 info 宏都归 info(蓝)
+      return 'info';
+    };
+
+    // 逆序处理,保证嵌套告警框由内向外转换(移动实际节点,避免内层结果丢失)
+    const macros = $('div.confluence-information-macro').toArray().reverse();
+
+    for (const el of macros) {
+      const $macro = $(el);
+      const calloutType = classToType($macro.attr('class') ?? '');
+
+      const $callout = $('<div>')
+        .attr('data-type', 'callout')
+        .attr('data-callout-type', calloutType);
+
+      // 标题:title 参数导出成 .title(不同版本可能是 p.title / b.title 等)。
+      // 取第一个非空,转成加粗首行塞进 callout(callout 无 title 字段)。
+      const titleText = $macro.find('.title').first().text().trim();
+      if (titleText) {
+        const $titleP = $('<p>');
+        $titleP.append($('<strong>').text(titleText));
+        $callout.append($titleP);
+      }
+
+      // 正文:优先 macro-body;取不到时兜底用整个 macro 内容(排除 icon/title)
+      const $body = $macro
+        .find('div.confluence-information-macro-body')
+        .first();
+      if ($body.length) {
+        $callout.append($body.contents());
+      } else {
+        // 无 body 包裹:移除图标和 title 后,把剩余内容搬进去
+        $macro.find('span.aui-icon, .title').remove();
+        $callout.append($macro.contents());
+      }
+
+      $macro.replaceWith($callout);
+    }
+
+    return $.root().html() ?? html;
+  }
+
+  // ─── Step 3f: status 状态标签宏转换 ──────────────────────────────────────
+  //
+  // Confluence status 宏(使用量最高)导出成 HTML 后是 AUI lozenge 内联标签:
+  //   <span class="status-macro aui-lozenge aui-lozenge-success ...">已完成</span>
+  // 目标 status 节点(@docmost/editor-ext)是 inline atom,只认 span[data-type="status"],
+  // 文本放 textContent、颜色放 data-color(gray/blue/green/yellow/red/purple)。
+  // 产出:
+  //   <span data-type="status" data-color="green">已完成</span>
+  //
+  // 颜色映射:AUI lozenge 用语义 class(success/error/current/moved/complete),
+  // 非颜色词。按 AUI 色彩语义映射:
+  //   success→green, error→red, current→blue, moved→yellow, complete→gray,
+  //   无类型修饰(default lozenge)→gray。
+  // 注:Confluence 各版本 Yellow/Blue 落到 current 还是 moved 存在差异,
+  //     若真实导出与预期不符,调整下方映射表即可。
+  private transformStatusMacros(html: string): string {
+    if (!html) return html;
+
+    const $ = cheerioLoad(html);
+
+    const auiClassToColor = (className: string): string => {
+      if (/\baui-lozenge-success\b/.test(className)) return 'green';
+      if (/\baui-lozenge-error\b/.test(className)) return 'red';
+      if (/\baui-lozenge-current\b/.test(className)) return 'blue';
+      if (/\baui-lozenge-moved\b/.test(className)) return 'yellow';
+      if (/\baui-lozenge-complete\b/.test(className)) return 'gray';
+      // 无类型修饰(subtle 是变体不是类型)= default grey
+      return 'gray';
+    };
+
+    $('span.aui-lozenge').each((_, el) => {
+      const $span = $(el);
+      const color = auiClassToColor($span.attr('class') ?? '');
+      const text = $span.text().trim();
+
+      const $status = $('<span>')
+        .attr('data-type', 'status')
+        .attr('data-color', color)
+        .text(text);
+
+      $span.replaceWith($status);
+    });
+
+    return $.root().html() ?? html;
+  }
+
+  // ─── Step 3f1: 动态宏残留清理 ────────────────────────────────────────────
+  //
+  // 动态查询/聚合类宏(popular-labels 热门标签、recently-updated、pagetree 等)
+  // 的内容是 Confluence 服务端实时算出来的,没有页面自身的内容可还原。导出成
+  // 静态 HTML 后只是一份旧快照,且内部链接(如 /labels/viewlabel.action?ids=...)
+  // 导入 Akasha 后全是断链。这类宏应当直接删除,而非转换,否则会在页面里残留
+  // 一堆断链/空壳污染正文。
+  //
+  // 已清理(均有真实样例验证):
+  //   - popular-labels:heatmap 标签云 + popularlabels-list 列表
+  //   - toc(普通目录宏):div.toc-macro —— 真实样例确认目录本身是空/自闭合容器,
+  //     正文是它【外部】的兄弟节点,删除目录不影响正文。import-formatter 另删了
+  //     nav.table_of_contents,这里补充 toc-macro 等其它导出形式。
+  //   - livesearch:div.search-macro —— 搜索框表单,action 指向 Confluence 的
+  //     /dosearchsite.action,导入 Akasha 后失效(Akasha 有原生搜索),纯组件删除。
+  //
+  // ⚠️ 不在此删除 toc-zone(区域目录宏):它会【包裹一段正文】,直接 remove 会连
+  //    正文一起删。若要处理 toc-zone,必须先拿到真实导出样例确认其 class 与包裹
+  //    结构,再用 unwrap 拆壳(保留内容),不能放进上面的删除列表。
+  private stripDynamicMacros(html: string): string {
+    if (!html) return html;
+
+    // 注意:这里只放【自身即目录、不包裹正文】的容器,可安全 remove。
+    // toc-zone(区域目录)会【包裹一段正文内容】,绝不能 remove(会连正文一起
+    // 删掉),需要用 unwrap 拆壳 —— 见下方 stripTocZone,且必须有真实样例验证
+    // 其 class 后才启用,避免误删。
+    const selectors = [
+      'ul.popularlabels-list', // popular-labels:列表视图
+      'div.heatmap', // popular-labels:热力图(标签云)视图
+      'div.toc-macro', // toc 目录宏:目录本身,正文在其【外部】兄弟节点,可安全删除
+      'nav.toc-macro', // toc 的另一种导出容器
+      'div.search-macro', // livesearch 搜索框:纯交互组件(form action 指向 Confluence),导入后失效,删除
+    ];
+    if (!selectors.some((sel) => html.includes(sel.split('.')[1]))) {
+      return html;
+    }
+
+    const $ = cheerioLoad(html);
+    for (const sel of selectors) {
+      $(sel).remove();
+    }
+    return $.root().html() ?? html;
+  }
+
+  // ─── Step 3f2: section 布局宏拆壳 ────────────────────────────────────────
+  //
+  // Confluence section 宏(布局容器,多栏时配 column 宏)导出成 HTML 后是嵌套
+  // 的布局容器 div:
+  //   <div class="sectionMacro"><div class="sectionMacroRow"><p>正文</p></div></div>
+  // 编辑器没有对应的 section 布局节点,且这类外壳只是包裹作用。若原样透传,
+  // 这些 div 会被 schema 丢弃(内容 <p> 虽保留,但依赖丢弃行为不稳妥)。
+  // 这里主动把 sectionMacro / sectionMacroRow 两层外壳 unwrap,把内部块内容
+  // 直接提升到正文层。
+  //
+  // 注:本项目样例为单栏 section(无 column),故直接拆壳即可。若日后遇到
+  //     多栏(div.columnMacro),内容同样会被提升成顺序块 —— 丢失分栏排版
+  //     但不丢内容,这对导入是可接受的降级。
+  private transformSectionMacros(html: string): string {
+    if (!html) return html;
+    if (!/sectionMacro|columnMacro/.test(html)) return html;
+
+    const $ = cheerioLoad(html);
+
+    // 由内向外拆:先拆行/列,再拆 section 外层
+    $('div.sectionMacroRow, div.columnMacro').each((_, el) => {
+      const $el = $(el);
+      $el.replaceWith($el.contents());
+    });
+    $('div.sectionMacro').each((_, el) => {
+      const $el = $(el);
+      $el.replaceWith($el.contents());
+    });
+
+    return $.root().html() ?? html;
+  }
+
+  // ─── Step 3g: 内联 base64 图片落地 ───────────────────────────────────────
+  //
+  // 某些宏(如 roadmap 路线图)导出成 HTML 时,数据已丢失,只剩一张渲染好的
+  // 内联 base64 图片:<div class="roadmap-macro-view"><img src="data:image/png;base64,..."/></div>
+  // 编辑器 image 节点默认 allowBase64=false,parseHTML 规则是
+  // img[src]:not([src^="data:"]),会直接丢弃 data-URI 图片 —— 导致图片丢失。
+  //
+  // 这里把 data-URI 图片解码写成 extractDir 下的真实文件,登记进
+  // attachmentCandidates,并把 img 的 src 改成相对路径。后续 processAttachments
+  // 的 img 分支就能像普通附件图片一样上传它、替换成 /api/files 路径,得到
+  // 正常 image 节点(避免 150KB base64 内联进文档 JSON)。
+  private async materializeDataUriImages(
+    html: string,
+    extractDir: string,
+    attachmentCandidates: Map<string, string>,
+  ): Promise<string> {
+    if (!html || !html.includes('src="data:image')) return html;
+
+    const $ = cheerioLoad(html);
+    const imgs = $('img[src^="data:image"]').toArray();
+    if (imgs.length === 0) return html;
+
+    // 落地目录:extractDir/inline-images/
+    const dirName = 'inline-images';
+    const absDir = path.join(extractDir, dirName);
+    await fs.mkdir(absDir, { recursive: true });
+
+    for (const el of imgs) {
+      const $img = $(el);
+      const src = $img.attr('src') ?? '';
+      const match = src.match(/^data:image\/([a-z0-9.+-]+);base64,(.+)$/i);
+      if (!match) continue;
+
+      const ext = match[1].toLowerCase().replace('jpeg', 'jpg');
+      const data = match[2];
+      let buf: Buffer;
+      try {
+        buf = Buffer.from(data, 'base64');
+      } catch {
+        continue;
+      }
+      if (buf.length === 0) continue;
+
+      const fileName = `${v7()}.${ext}`;
+      const absPath = path.join(absDir, fileName);
+      await fs.writeFile(absPath, buf);
+
+      const relPath = `${dirName}/${fileName}`;
+      attachmentCandidates.set(relPath, absPath);
+      $img.attr('src', relPath);
+
+      // 拆掉 roadmap 宏的外壳 div(仅剥壳,保留已改写的 img)
+      const $wrapper = $img.closest('div.roadmap-macro-view');
+      if ($wrapper.length) {
+        $wrapper.replaceWith($img);
+      }
+    }
+
+    return $.root().html() ?? html;
+  }
+
   // ─── 降级：无 index.html 时平铺导入 ─────────────────────────────────────
 
   private async fallbackFlatImport(
@@ -647,7 +1089,10 @@ export class ConfluenceImportService {
       .where('id', '=', fileTask.spaceId)
       .executeTakeFirst();
     const appUrl = this.environmentService.getAppUrl();
-    const confluenceSpaceKey = getConfluenceSpaceKey(fileTask.metadata);
+    const confluenceSpaceKey = await resolveConfluenceSpaceKey(
+      extractDir,
+      fileTask.metadata,
+    );
     const validPageIds = new Set<string>();
     const pageMappings: ConfluencePageMapping[] = [];
 
@@ -665,14 +1110,27 @@ export class ConfluenceImportService {
           title: confluenceTitle,
         } = this.extractAndClean(rawHtml);
         const htmlWithCode = this.transformCodeBlocks(cleanedHtml);
+        const htmlWithMermaid = this.transformMermaidMacros(htmlWithCode);
+        const htmlWithNoformat = this.transformNoformatMacros(htmlWithMermaid);
+        const htmlWithExpand = this.transformExpandMacros(htmlWithNoformat);
+        const htmlWithCallout = this.transformInfoMacros(htmlWithExpand);
+        const htmlWithStatus = this.transformStatusMacros(htmlWithCallout);
+        const htmlWithSection = this.transformSectionMacros(htmlWithStatus);
+        const htmlWithoutDynamic = this.stripDynamicMacros(htmlWithSection);
+        const htmlWithPanels = transformConfluencePanels(htmlWithoutDynamic);
+        const htmlWithInlineImages = await this.materializeDataUriImages(
+          htmlWithPanels,
+          extractDir,
+          attachmentCandidates,
+        );
 
         // fallback 路径无层级映射，移除内部链接 href 避免被误转成 embed
-        const $ = cheerioLoad(htmlWithCode);
+        const $ = cheerioLoad(htmlWithInlineImages);
         $('a[href]').each((_, el) => {
           const href = $(el).attr('href') ?? '';
           if (/^\d+\.html$/.test(href)) $(el).removeAttr('href');
         });
-        const htmlWithLinks = $.root().html() ?? htmlWithCode;
+        const htmlWithLinks = $.root().html() ?? htmlWithInlineImages;
 
         const pageId = v7();
         const htmlWithAttachments =
@@ -835,6 +1293,39 @@ function buildPageUrl(
   return spaceSlug
     ? `${prefix}/s/${spaceSlug}/p/${pageSlugId}`
     : `${prefix}/p/${pageSlugId}`;
+}
+
+async function resolveConfluenceSpaceKey(
+  extractDir: string,
+  metadata: FileTask['metadata'],
+): Promise<string | undefined> {
+  const metadataSpaceKey = getConfluenceSpaceKey(metadata);
+  if (metadataSpaceKey) return metadataSpaceKey;
+
+  const indexPath = path.join(extractDir, 'index.html');
+  try {
+    await fs.access(indexPath);
+  } catch {
+    return undefined;
+  }
+
+  const html = await fs.readFile(indexPath, 'utf-8');
+  const $ = cheerioLoad(html);
+  const hiddenSpaceKey = $('input[name="spaceKey"]').first().attr('value');
+  const fromHidden = String(hiddenSpaceKey ?? '').trim();
+  if (fromHidden) return fromHidden;
+
+  let tableSpaceKey: string | undefined;
+  $('table tr').each((_, tr) => {
+    if (tableSpaceKey) return;
+    const $tr = $(tr);
+    const label = $tr.children('th').first().text().trim().toLowerCase();
+    if (label !== 'key') return;
+    const value = $tr.children('td').first().text().trim();
+    if (value) tableSpaceKey = value;
+  });
+
+  return tableSpaceKey;
 }
 
 function getConfluenceSpaceKey(

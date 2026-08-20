@@ -64,9 +64,9 @@ export function FullEditor({
   canComment,
 }: FullEditorProps) {
   const [user] = useAtom(userAtom);
-  const fullPageWidth = user.settings?.preferences?.fullPageWidth;
+  const fullPageWidth = user.settings?.preferences?.fullPageWidth ?? true;
   const editorToolbarEnabled =
-    user.settings?.preferences?.editorToolbar ?? false;
+    user.settings?.preferences?.editorToolbar ?? true;
   const { pageEditMode } = usePageEditMode();
   const isEditMode = pageEditMode === PageEditMode.Edit;
 

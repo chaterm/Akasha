@@ -307,6 +307,7 @@ export async function getKnowledgeRunPageDiagnostics(params: {
 export async function getKnowledgePageCompilationLog(params: {
   spaceIds?: string[];
   statuses?: string[];
+  mergeStatuses?: string[];
   search?: string;
   from?: string;
   to?: string;

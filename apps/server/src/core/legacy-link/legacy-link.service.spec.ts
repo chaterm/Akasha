@@ -10,10 +10,27 @@ describe('LegacyLinkService', () => {
 
     await expect(
       service.resolve({
-        workspaceId: 'workspace-1',
         source: 'confluence',
         path: '/pages/viewpage.action',
         pageId: '907870364',
+      }),
+    ).resolves.toEqual({
+      hit: true,
+      location: 'https://akasha.example.test/s/cf7569422/p/-9YMlDdeMSE',
+    });
+  });
+
+  it('resolves Confluence display paths to Akasha URLs', async () => {
+    const service = new LegacyLinkService(
+      createDb({
+        targetUrl: 'https://akasha.example.test/s/cf7569422/p/-9YMlDdeMSE',
+      }) as never,
+    );
+
+    await expect(
+      service.resolve({
+        source: 'confluence',
+        path: '/display/OPEN/Page+Title',
       }),
     ).resolves.toEqual({
       hit: true,
@@ -26,7 +43,6 @@ describe('LegacyLinkService', () => {
 
     await expect(
       service.resolve({
-        workspaceId: 'workspace-1',
         source: 'confluence',
         path: '/pages/viewpage.action',
         pageId: '907870364',

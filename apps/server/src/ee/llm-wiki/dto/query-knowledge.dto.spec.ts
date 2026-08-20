@@ -1,5 +1,6 @@
 import { validate } from 'class-validator';
 import { QueryKnowledgeDto } from './query-knowledge.dto';
+import { KnowledgeQueryType } from './query-knowledge.dto';
 
 describe('QueryKnowledgeDto', () => {
   it('accepts more than one hundred unique space UUIDs', async () => {
@@ -33,6 +34,18 @@ describe('QueryKnowledgeDto', () => {
     const dto = createDto({ chatContext: Array(30).fill('x'.repeat(4000)) });
 
     await expect(validate(dto)).resolves.toEqual([]);
+  });
+
+  it.each([KnowledgeQueryType.USER, KnowledgeQueryType.ROBOT])(
+    'accepts the %s query type',
+    async (type) => {
+      await expect(validate(createDto({ type }))).resolves.toEqual([]);
+    },
+  );
+
+  it('rejects an unknown query type', async () => {
+    const errors = await validate(createDto({ type: 'service' as never }));
+    expect(errors).not.toEqual([]);
   });
 
   it.each([

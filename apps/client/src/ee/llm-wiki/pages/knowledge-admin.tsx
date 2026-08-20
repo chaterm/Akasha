@@ -127,6 +127,17 @@ const PAGE_LOG_STATUS_OPTIONS = [
   "skipped",
 ].map((value) => ({ value, label: humanizeState(value) }));
 
+const PAGE_LOG_MERGE_STATUS_OPTIONS = [
+  "not_required",
+  "waiting_images",
+  "pending",
+  "queued",
+  "running",
+  "succeeded",
+  "skipped",
+  "failed",
+].map((value) => ({ value, label: humanizeState(value) }));
+
 // Quick relative time windows for the compilation log, in hours.
 const PAGE_LOG_RANGE_HOURS: Record<string, number> = {
   "1h": 1,
@@ -182,6 +193,7 @@ export default function KnowledgeAdminPage() {
   const [quarantinePage, setQuarantinePage] = useState(1);
   const [logRange, setLogRange] = useState<PageLogRange>("24h");
   const [logStatus, setLogStatus] = useState<string | null>(null);
+  const [logMergeStatus, setLogMergeStatus] = useState<string | null>(null);
   const [logSearch, setLogSearch] = useState("");
   const [logPage, setLogPage] = useState(1);
   const [selectedPageIds, setSelectedPageIds] = useState<string[]>([]);
@@ -312,6 +324,7 @@ export default function KnowledgeAdminPage() {
       selectedSpaceIds,
       logRange,
       logStatus,
+      logMergeStatus,
       logSearch,
       logPage,
     ],
@@ -324,6 +337,7 @@ export default function KnowledgeAdminPage() {
         ...diagnosticsScope,
         ...(from ? { from } : {}),
         ...(logStatus ? { statuses: [logStatus] } : {}),
+        ...(logMergeStatus ? { mergeStatuses: [logMergeStatus] } : {}),
         ...(logSearch.trim() ? { search: logSearch.trim() } : {}),
         page: logPage,
         limit: PAGE_SIZE,
@@ -814,10 +828,6 @@ export default function KnowledgeAdminPage() {
                         <Table.Tr key={page.runPageId}>
                           <Table.Td>
                             <Checkbox
-                              disabled={
-                                page.status !== "failed" &&
-                                page.mergeStatus !== "failed"
-                              }
                               checked={selectedPageIds.includes(
                                 page.sourcePageId,
                               )}
@@ -978,6 +988,11 @@ export default function KnowledgeAdminPage() {
               status={logStatus}
               setStatus={(value) => {
                 setLogStatus(value);
+                setLogPage(1);
+              }}
+              mergeStatus={logMergeStatus}
+              setMergeStatus={(value) => {
+                setLogMergeStatus(value);
                 setLogPage(1);
               }}
               search={logSearch}
@@ -1561,6 +1576,8 @@ function PageCompilationLog({
   setRange,
   status,
   setStatus,
+  mergeStatus,
+  setMergeStatus,
   search,
   setSearch,
   page,
@@ -1578,6 +1595,8 @@ function PageCompilationLog({
   setRange: (value: PageLogRange) => void;
   status: string | null;
   setStatus: (value: string | null) => void;
+  mergeStatus: string | null;
+  setMergeStatus: (value: string | null) => void;
   search: string;
   setSearch: (value: string) => void;
   page: number;
@@ -1629,6 +1648,15 @@ function PageCompilationLog({
           clearable
           w={160}
         />
+        <Select
+          label={t("Merge status")}
+          data={PAGE_LOG_MERGE_STATUS_OPTIONS}
+          value={mergeStatus}
+          onChange={setMergeStatus}
+          placeholder={t("All statuses")}
+          clearable
+          w={160}
+        />
         <TextInput
           label={t("Search page")}
           value={search}
@@ -1658,6 +1686,7 @@ function PageCompilationLog({
                   <Table.Th>{t("Space")}</Table.Th>
                   <Table.Th>{t("Status")}</Table.Th>
                   <Table.Th>{t("Images")}</Table.Th>
+                  <Table.Th>{t("Merge")}</Table.Th>
                   <Table.Th>{t("Last compiled")}</Table.Th>
                   <Table.Th>{t("Duration")}</Table.Th>
                   <Table.Th>{t("Error")}</Table.Th>
@@ -1746,6 +1775,9 @@ function PageLogRow({
           {imageSummary}
         </Text>
       </Table.Td>
+            <Table.Td>
+        <StateBadge value={item.mergeStatus} />
+      </Table.Td>
       <Table.Td>
         <Text size="sm">{formatDate(item.lastCompiledAt)}</Text>
       </Table.Td>
@@ -1765,21 +1797,15 @@ function PageLogRow({
       </Table.Td>
       {isAdmin && (
         <Table.Td>
-          {item.status === "failed" ? (
-            <Button
-              size="xs"
-              variant="light"
-              leftSection={<IconRefresh size={14} />}
-              loading={retrying}
-              onClick={() => onRetry(item.sourcePageId)}
-            >
-              {t("Retry")}
-            </Button>
-          ) : (
-            <Text size="xs" c="dimmed">
-              -
-            </Text>
-          )}
+          <Button
+            size="xs"
+            variant="light"
+            leftSection={<IconRefresh size={14} />}
+            loading={retrying}
+            onClick={() => onRetry(item.sourcePageId)}
+          >
+            {t("Retry")}
+          </Button>
         </Table.Td>
       )}
     </Table.Tr>

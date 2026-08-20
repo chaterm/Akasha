@@ -21,6 +21,8 @@ import WorkspaceAbilityFactory from '../../core/casl/abilities/workspace-ability
 import { CreateApiKeyDto } from './dto/create-api-key.dto';
 import { UpdateApiKeyDto } from './dto/update-api-key.dto';
 import { RevokeApiKeyDto } from './dto/revoke-api-key.dto';
+import { CreatePublicApiKeyDto } from './dto/create-public-api-key.dto';
+import { UpdatePublicApiKeyDto } from './dto/update-public-api-key.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('api-keys')
@@ -48,10 +50,33 @@ export class ApiKeyController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     const ability = this.workspaceAbility.createForUser(user, workspace);
-    if (ability.cannot(WorkspaceCaslAction.Manage, WorkspaceCaslSubject.Settings)) {
+    if (
+      ability.cannot(WorkspaceCaslAction.Manage, WorkspaceCaslSubject.Settings)
+    ) {
       throw new ForbiddenException();
     }
     return this.apiKeyService.getWorkspaceApiKeys(workspace.id, pagination);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('public')
+  async listPublicApiKeys(
+    @Body() pagination: PaginationOptions,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertCanManageApiKeys(user, workspace);
+    return this.apiKeyService.getPublicApiKeys(workspace.id, pagination);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('public/spaces')
+  async listPublicApiKeySpaces(
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertCanManageApiKeys(user, workspace);
+    return this.apiKeyService.getBindablePublicKeySpaces(user.id, workspace.id);
   }
 
   @HttpCode(HttpStatus.OK)
@@ -65,6 +90,40 @@ export class ApiKeyController {
       name: dto.name,
       expiresAt: dto.expiresAt,
       creatorId: user.id,
+      workspaceId: workspace.id,
+    });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('public/create')
+  async createPublicApiKey(
+    @Body() dto: CreatePublicApiKeyDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertCanManageApiKeys(user, workspace);
+    return this.apiKeyService.createPublicApiKey({
+      name: dto.name,
+      spaceIds: dto.spaceIds,
+      expiresAt: dto.expiresAt,
+      creatorId: user.id,
+      workspaceId: workspace.id,
+    });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('public/update')
+  async updatePublicApiKey(
+    @Body() dto: UpdatePublicApiKeyDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertCanManageApiKeys(user, workspace);
+    return this.apiKeyService.updatePublicApiKey({
+      apiKeyId: dto.apiKeyId,
+      name: dto.name,
+      spaceIds: dto.spaceIds,
+      userId: user.id,
       workspaceId: workspace.id,
     });
   }
@@ -96,5 +155,12 @@ export class ApiKeyController {
       userId: user.id,
       workspaceId: workspace.id,
     });
+  }
+
+  private assertCanManageApiKeys(user: User, workspace: Workspace) {
+    const ability = this.workspaceAbility.createForUser(user, workspace);
+    if (ability.cannot(WorkspaceCaslAction.Manage, WorkspaceCaslSubject.API)) {
+      throw new ForbiddenException();
+    }
   }
 }

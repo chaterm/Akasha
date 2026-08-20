@@ -36,7 +36,13 @@ export type KnowledgeRetrievalResult = {
   }>;
   capsules: KnowledgePage[];
   completenessNotice: typeof KNOWLEDGE_COMPLETENESS_NOTICE;
+  scope: KnowledgeRetrievalScope;
   diagnostics: KnowledgeRetrievalDiagnostics;
+};
+
+export type KnowledgeRetrievalScope = {
+  requestedSpaceIds: string[];
+  effectiveSpaceIds: string[];
 };
 
 export type KnowledgeRetrievalDiagnostics = {
@@ -80,6 +86,11 @@ export class KnowledgeRetrievalService {
     debugTiming?: AiChatDebugTiming;
   }): Promise<KnowledgeRetrievalResult> {
     const candidateLimit = input.candidateLimit ?? 20;
+    const requestedSpaceIds = unique(input.spaceIds);
+    const emptyScope: KnowledgeRetrievalScope = {
+      requestedSpaceIds,
+      effectiveSpaceIds: [],
+    };
     const authCache =
       input.authCache ??
       new KnowledgeAuthorizationCache({
@@ -91,7 +102,7 @@ export class KnowledgeRetrievalService {
     try {
       authCache.assertScope(input.workspaceId, input.userId);
     } catch {
-      return emptyResult();
+      return emptyResult({ scope: emptyScope });
     }
 
     const user = await measureAiChatPhase(
@@ -104,10 +115,9 @@ export class KnowledgeRetrievalService {
       (result) => ({ userFound: Boolean(result) }),
     );
     if (!user) {
-      return emptyResult();
+      return emptyResult({ scope: emptyScope });
     }
 
-    const requestedSpaceIds = unique(input.spaceIds);
     const readableSpaceIds = await measureAiChatPhase(
       input.debugTiming,
       'retrieval.authorize_spaces',
@@ -125,7 +135,12 @@ export class KnowledgeRetrievalService {
     // later in this request instead of re-querying the same spaces.
     authCache.recordSpaces(requestedSpaceIds, new Set(readableSpaceIds));
     if (readableSpaceIds.length === 0) {
-      return emptyResult();
+      return emptyResult({
+        scope: {
+          requestedSpaceIds,
+          effectiveSpaceIds: [],
+        },
+      });
     }
 
     const queryEmbedding = await measureAiChatPhase(
@@ -273,8 +288,12 @@ export class KnowledgeRetrievalService {
       ? candidateSourceIds(fallbackRecall)
       : [];
     if (rankedCandidates.length === 0) {
-      return emptyResult(
-        {
+      return emptyResult({
+        scope: {
+          requestedSpaceIds,
+          effectiveSpaceIds: readableSpaceIds,
+        },
+        diagnostics: {
           queryEmbeddingAvailable,
           candidateSourceCount: candidateSourcePageIds.length,
           policyCandidateSourceCount: policyCandidateSourcePageIds.length,
@@ -288,8 +307,8 @@ export class KnowledgeRetrievalService {
           memoryCandidateCount,
           rankedCandidateCount: 0,
         },
-        'high_completeness_fallback',
-      );
+        mode: 'high_completeness_fallback',
+      });
     }
 
     const sourceRows = await measureAiChatPhase(
@@ -382,6 +401,10 @@ export class KnowledgeRetrievalService {
       chunks: selectedChunks,
       capsules: [],
       completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+      scope: {
+        requestedSpaceIds,
+        effectiveSpaceIds: readableSpaceIds,
+      },
       diagnostics: {
         queryEmbeddingAvailable,
         candidateSourceCount: candidateSourcePageIds.length,
@@ -529,15 +552,17 @@ type GraphExpansionResult = {
   candidateCount: number;
 };
 
-function emptyResult(
-  diagnostics?: Partial<KnowledgeRetrievalDiagnostics>,
-  mode: KnowledgeRetrievalResult['mode'] = 'high_completeness',
-): KnowledgeRetrievalResult {
+function emptyResult(input: {
+  scope: KnowledgeRetrievalScope;
+  diagnostics?: Partial<KnowledgeRetrievalDiagnostics>;
+  mode?: KnowledgeRetrievalResult['mode'];
+}): KnowledgeRetrievalResult {
   return {
-    mode,
+    mode: input.mode ?? 'high_completeness',
     chunks: [],
     capsules: [],
     completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
+    scope: input.scope,
     diagnostics: {
       queryEmbeddingAvailable: false,
       candidateSourceCount: 0,
@@ -554,7 +579,7 @@ function emptyResult(
       rankedCandidateCount: 0,
       authorizedChunkCount: 0,
       filteredChunkCount: 0,
-      ...diagnostics,
+      ...input.diagnostics,
     },
   };
 }
