@@ -863,6 +863,7 @@ export class KnowledgeDiagnosticsService {
     spaceIds: string[];
     enforceSpaceScope: boolean;
     statuses?: string[];
+    mergeStatuses?: string[];
     search?: string;
     from?: string;
     to?: string;
@@ -939,6 +940,9 @@ export class KnowledgeDiagnosticsService {
     let current = this.db.selectFrom(latest.as('latest'));
     if (input.statuses?.length) {
       current = current.where('latest.status', 'in', input.statuses);
+    }
+    if (input.mergeStatuses?.length) {
+      current = current.where('latest.mergeStatus', 'in', input.mergeStatuses);
     }
 
     const [countRow, rows] = await Promise.all([

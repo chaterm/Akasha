@@ -127,6 +127,17 @@ const PAGE_LOG_STATUS_OPTIONS = [
   "skipped",
 ].map((value) => ({ value, label: humanizeState(value) }));
 
+const PAGE_LOG_MERGE_STATUS_OPTIONS = [
+  "not_required",
+  "waiting_images",
+  "pending",
+  "queued",
+  "running",
+  "succeeded",
+  "skipped",
+  "failed",
+].map((value) => ({ value, label: humanizeState(value) }));
+
 // Quick relative time windows for the compilation log, in hours.
 const PAGE_LOG_RANGE_HOURS: Record<string, number> = {
   "1h": 1,
@@ -182,6 +193,7 @@ export default function KnowledgeAdminPage() {
   const [quarantinePage, setQuarantinePage] = useState(1);
   const [logRange, setLogRange] = useState<PageLogRange>("24h");
   const [logStatus, setLogStatus] = useState<string | null>(null);
+  const [logMergeStatus, setLogMergeStatus] = useState<string | null>(null);
   const [logSearch, setLogSearch] = useState("");
   const [logPage, setLogPage] = useState(1);
   const [selectedPageIds, setSelectedPageIds] = useState<string[]>([]);
@@ -312,6 +324,7 @@ export default function KnowledgeAdminPage() {
       selectedSpaceIds,
       logRange,
       logStatus,
+      logMergeStatus,
       logSearch,
       logPage,
     ],
@@ -324,6 +337,7 @@ export default function KnowledgeAdminPage() {
         ...diagnosticsScope,
         ...(from ? { from } : {}),
         ...(logStatus ? { statuses: [logStatus] } : {}),
+        ...(logMergeStatus ? { mergeStatuses: [logMergeStatus] } : {}),
         ...(logSearch.trim() ? { search: logSearch.trim() } : {}),
         page: logPage,
         limit: PAGE_SIZE,
@@ -976,6 +990,11 @@ export default function KnowledgeAdminPage() {
                 setLogStatus(value);
                 setLogPage(1);
               }}
+              mergeStatus={logMergeStatus}
+              setMergeStatus={(value) => {
+                setLogMergeStatus(value);
+                setLogPage(1);
+              }}
               search={logSearch}
               setSearch={(value) => {
                 setLogSearch(value);
@@ -1557,6 +1576,8 @@ function PageCompilationLog({
   setRange,
   status,
   setStatus,
+  mergeStatus,
+  setMergeStatus,
   search,
   setSearch,
   page,
@@ -1574,6 +1595,8 @@ function PageCompilationLog({
   setRange: (value: PageLogRange) => void;
   status: string | null;
   setStatus: (value: string | null) => void;
+  mergeStatus: string | null;
+  setMergeStatus: (value: string | null) => void;
   search: string;
   setSearch: (value: string) => void;
   page: number;
@@ -1621,6 +1644,15 @@ function PageCompilationLog({
           data={PAGE_LOG_STATUS_OPTIONS}
           value={status}
           onChange={setStatus}
+          placeholder={t("All statuses")}
+          clearable
+          w={160}
+        />
+        <Select
+          label={t("Merge status")}
+          data={PAGE_LOG_MERGE_STATUS_OPTIONS}
+          value={mergeStatus}
+          onChange={setMergeStatus}
           placeholder={t("All statuses")}
           clearable
           w={160}

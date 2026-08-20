@@ -637,6 +637,7 @@ export class LlmWikiController {
       spaceIds,
       enforceSpaceScope: true,
       statuses: dto.statuses,
+      mergeStatuses: dto.mergeStatuses,
       search: dto.search,
       from: dto.from,
       to: dto.to,
