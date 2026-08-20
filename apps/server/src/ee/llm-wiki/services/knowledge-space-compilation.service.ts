@@ -104,6 +104,13 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     return results;
   }
 
+  async resetGenerationAttemptBudget(input: {
+    workspaceId: string;
+    sourcePageIds: string[];
+  }): Promise<number> {
+    return this.compilationRepo.resetGenerationAttemptBudget(input);
+  }
+
   async requestImmediatePagePublish(input: {
     workspaceId: string;
     spaceId: string;

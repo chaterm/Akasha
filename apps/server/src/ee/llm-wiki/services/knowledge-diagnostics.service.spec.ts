@@ -145,7 +145,7 @@ describe('scalable Knowledge Run diagnostics', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('derives retryability from the latest durable RunPage', async () => {
+  it('derives compiled-page eligibility from the latest durable RunPage', async () => {
     const latestAlias = { alias: 'latest' };
     const latestQuery: Record<string, jest.Mock> = {};
     for (const method of ['select', 'where', 'distinctOn', 'orderBy']) {
@@ -178,7 +178,7 @@ describe('scalable Knowledge Run diagnostics', () => {
     );
 
     await expect(
-      service.findRetryableFailedPageIds({
+      service.findCompiledPageIds({
         workspaceId: 'workspace-1',
         sourcePageIds: ['page-failed', 'page-succeeded', 'page-failed'],
       }),
@@ -193,7 +193,7 @@ describe('scalable Knowledge Run diagnostics', () => {
       ['page-failed', 'page-succeeded'],
     );
     expect(latestQuery.distinctOn).toHaveBeenCalledWith('runPage.sourcePageId');
-    expect(currentQuery.where).toHaveBeenCalledWith(expect.any(Function));
+    expect(currentQuery.where).not.toHaveBeenCalled();
   });
 
   it('loads quality, quarantine, and retrieval only through independent diagnostics calls', async () => {

@@ -48,27 +48,6 @@ export class LegacyLinkService {
       }
     }
 
-    if (parsedPath?.title) {
-      const rows = await this.db
-        .selectFrom('legacyLinkMappings')
-        .select(['targetUrl', 'legacySpaceKey'])
-        .where('source', '=', input.source)
-        .where('legacyTitle', '=', parsedPath.title)
-        .execute();
-
-      const exactSpaceRows = rows.filter((row) => {
-        const rowSpaceKey = normalizeText(row.legacySpaceKey);
-        return rowSpaceKey === parsedPath.spaceKey || rowSpaceKey === undefined;
-      });
-
-      const targetRows = exactSpaceRows.length > 0 ? exactSpaceRows : rows;
-      const targetUrl =
-        targetRows.length === 1 ? targetRows[0]?.targetUrl : undefined;
-      if (targetUrl) {
-        return { hit: true, location: appendAnchor(targetUrl, anchor) };
-      }
-    }
-
     if (input.path) {
       const row = await this.db
         .selectFrom('legacyLinkMappings')

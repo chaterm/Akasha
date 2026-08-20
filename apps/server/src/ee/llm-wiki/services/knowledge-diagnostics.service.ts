@@ -863,6 +863,7 @@ export class KnowledgeDiagnosticsService {
     spaceIds: string[];
     enforceSpaceScope: boolean;
     statuses?: string[];
+    mergeStatuses?: string[];
     search?: string;
     from?: string;
     to?: string;
@@ -939,6 +940,9 @@ export class KnowledgeDiagnosticsService {
     let current = this.db.selectFrom(latest.as('latest'));
     if (input.statuses?.length) {
       current = current.where('latest.status', 'in', input.statuses);
+    }
+    if (input.mergeStatuses?.length) {
+      current = current.where('latest.mergeStatus', 'in', input.mergeStatuses);
     }
 
     const [countRow, rows] = await Promise.all([
@@ -1030,7 +1034,7 @@ export class KnowledgeDiagnosticsService {
     };
   }
 
-  async findRetryableFailedPageIds(input: {
+  async findCompiledPageIds(input: {
     workspaceId: string;
     sourcePageIds: string[];
   }): Promise<string[]> {
@@ -1050,15 +1054,17 @@ export class KnowledgeDiagnosticsService {
     const rows = await this.db
       .selectFrom(latest.as('latest'))
       .select('latest.sourcePageId')
-      .where((eb) =>
-        eb.or([
-          eb('latest.status', '=', 'failed'),
-          eb('latest.mergeStatus', '=', 'failed'),
-        ]),
-      )
       .execute();
 
     return [...new Set(rows.map((row) => row.sourcePageId))];
+  }
+
+  /** @deprecated Use findCompiledPageIds; successful pages are retryable too. */
+  async findRetryableFailedPageIds(input: {
+    workspaceId: string;
+    sourcePageIds: string[];
+  }): Promise<string[]> {
+    return this.findCompiledPageIds(input);
   }
 
   async findWorkspaceSpaceIds(input: {

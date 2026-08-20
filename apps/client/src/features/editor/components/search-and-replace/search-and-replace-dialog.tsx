@@ -36,6 +36,11 @@ function SearchAndReplaceDialog({ editor, editable = true }: PageFindDialogDialo
   const [replaceText, setReplaceText] = useState("");
   const [pageFindState, setPageFindState] = useAtom(searchAndReplaceStateAtom);
   const inputRef = useRef(null);
+  // The extension mutates `editor.storage.searchAndReplace.results` in place
+  // inside its ProseMirror plugin, which does not trigger a React re-render.
+  // Mirror the counts into React state via the editor's transaction event so
+  // the result counter stays in sync with the highlighted matches.
+  const [resultState, setResultState] = useState({ index: 0, total: 0 });
 
   const [replaceButton, replaceButtonToggle] = useToggle([
     { isReplaceShow: false, color: "gray" },
@@ -116,6 +121,27 @@ function SearchAndReplaceDialog({ editor, editable = true }: PageFindDialogDialo
     editor.commands.selectCurrentItem();
   }, [searchText]);
 
+  // Keep the result counter in sync with the extension's storage, which is
+  // recomputed inside a ProseMirror transaction after the search term changes.
+  useEffect(() => {
+    if (!editor) return;
+
+    const syncResults = () => {
+      const storage = editor.storage?.searchAndReplace;
+      setResultState({
+        index: storage?.resultIndex ?? 0,
+        total: storage?.results?.length ?? 0,
+      });
+    };
+
+    syncResults();
+    editor.on("transaction", syncResults);
+
+    return () => {
+      editor.off("transaction", syncResults);
+    };
+  }, [editor]);
+
   const handleOpenEvent = (e) => {
     setPageFindState({ isOpen: true });
     const selectedText = editor.state.doc.textBetween(
@@ -158,17 +184,10 @@ function SearchAndReplaceDialog({ editor, editable = true }: PageFindDialogDialo
     () =>
       searchText.trim() === ""
         ? ""
-        : editor?.storage?.searchAndReplace?.results.length > 0
-        ? editor?.storage?.searchAndReplace?.resultIndex +
-          1 +
-          "/" +
-          editor?.storage?.searchAndReplace?.results.length
+        : resultState.total > 0
+        ? resultState.index + 1 + "/" + resultState.total
         : t("Not found"),
-    [
-      searchText,
-      editor?.storage?.searchAndReplace?.resultIndex,
-      editor?.storage?.searchAndReplace?.results.length,
-    ],
+    [searchText, resultState.index, resultState.total, t],
   );
 
   const location = useLocation();

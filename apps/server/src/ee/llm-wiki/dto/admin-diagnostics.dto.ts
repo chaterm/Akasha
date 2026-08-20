@@ -36,6 +36,19 @@ const PAGE_LOG_STATUSES = [
   'skipped',
 ] as const;
 
+// Per-page merge statuses recorded on knowledge_space_compile_run_pages
+// (matches chk_knowledge_space_compile_run_pages_merge_status).
+const PAGE_LOG_MERGE_STATUSES = [
+  'not_required',
+  'waiting_images',
+  'pending',
+  'queued',
+  'running',
+  'succeeded',
+  'skipped',
+  'failed',
+] as const;
+
 const DELAYED_PAGE_STATUSES = ['waiting', 'due'] as const;
 
 const RUN_PHASES = [
@@ -159,6 +172,11 @@ export class AdminKnowledgePageLogDto extends AdminKnowledgeRunSummaryDto {
   @IsArray()
   @IsIn(PAGE_LOG_STATUSES, { each: true })
   statuses?: (typeof PAGE_LOG_STATUSES)[number][];
+
+  @IsOptional()
+  @IsArray()
+  @IsIn(PAGE_LOG_MERGE_STATUSES, { each: true })
+  mergeStatuses?: (typeof PAGE_LOG_MERGE_STATUSES)[number][];
 
   @IsOptional()
   @IsString()

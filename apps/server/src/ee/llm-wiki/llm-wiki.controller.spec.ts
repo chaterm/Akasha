@@ -1232,12 +1232,13 @@ describe('LlmWikiController', () => {
         { disposition: 'created', run: { id: 'run-space-1' } },
         { disposition: 'coalesced', run: { id: 'run-space-2' } },
       ]),
+      resetGenerationAttemptBudget: jest.fn().mockResolvedValue(2),
     };
     const controller = createController({
       pageRepo,
       spaceCompilation,
       diagnosticsService: {
-        findRetryableFailedPageIds: jest
+        findCompiledPageIds: jest
           .fn()
           .mockResolvedValue(['page-1', 'page-2']),
       },
@@ -1268,9 +1269,13 @@ describe('LlmWikiController', () => {
         targetSourcePageIds: ['page-2'],
       },
     ]);
+    expect(spaceCompilation.resetGenerationAttemptBudget).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-1', 'page-2'],
+    });
   });
 
-  it('rejects the complete retry selection before export when any page is not currently failed', async () => {
+  it('rejects a retry selection when a page has never been compiled', async () => {
     const pageRepo = {
       findExistingPageRefs: jest.fn().mockResolvedValue([
         {
@@ -1290,13 +1295,14 @@ describe('LlmWikiController', () => {
     const sourceExporter = { exportPageSources: jest.fn() };
     const spaceCompilation = {
       requestRuns: jest.fn(),
+      resetGenerationAttemptBudget: jest.fn(),
     };
     const controller = createController({
       pageRepo,
       sourceExporter,
       spaceCompilation,
       diagnosticsService: {
-        findRetryableFailedPageIds: jest
+        findCompiledPageIds: jest
           .fn()
           .mockResolvedValue(['page-failed']),
       },
@@ -1333,7 +1339,7 @@ describe('LlmWikiController', () => {
     };
     const sourceExporter = { exportPageSources: jest.fn() };
     const diagnosticsService = {
-      findRetryableFailedPageIds: jest
+      findCompiledPageIds: jest
         .fn()
         .mockResolvedValue(['page-1', 'page-2']),
     };
@@ -1342,6 +1348,7 @@ describe('LlmWikiController', () => {
         { disposition: 'coalesced', run: { id: 'run-1' } },
         { disposition: 'rerun_requested', run: { id: 'run-2' } },
       ]),
+      resetGenerationAttemptBudget: jest.fn().mockResolvedValue(2),
     };
     const controller = createController({
       pageRepo,
@@ -1361,17 +1368,18 @@ describe('LlmWikiController', () => {
       jobIds: ['run-1', 'run-2'],
     });
 
-    expect(diagnosticsService.findRetryableFailedPageIds).toHaveBeenCalled();
+    expect(diagnosticsService.findCompiledPageIds).toHaveBeenCalled();
     expect(sourceExporter.exportPageSources).not.toHaveBeenCalled();
     expect(spaceCompilation.requestRuns).toHaveBeenCalledTimes(1);
   });
 
   it('rejects page retries from workspace members before reading or queueing pages', async () => {
     const pageRepo = { findExistingPageRefs: jest.fn() };
-    const diagnosticsService = { findRetryableFailedPageIds: jest.fn() };
+    const diagnosticsService = { findCompiledPageIds: jest.fn() };
     const sourceExporter = { exportPageSources: jest.fn() };
     const spaceCompilation = {
       requestRuns: jest.fn(),
+      resetGenerationAttemptBudget: jest.fn(),
     };
     const controller = createController({
       pageRepo,
@@ -1386,7 +1394,7 @@ describe('LlmWikiController', () => {
 
     expect(pageRepo.findExistingPageRefs).not.toHaveBeenCalled();
     expect(
-      diagnosticsService.findRetryableFailedPageIds,
+      diagnosticsService.findCompiledPageIds,
     ).not.toHaveBeenCalled();
     expect(sourceExporter.exportPageSources).not.toHaveBeenCalled();
     expect(spaceCompilation.requestRuns).not.toHaveBeenCalled();
@@ -1588,7 +1596,7 @@ function createController(
       getQualityDiagnostics: jest.fn(),
       listQuarantineDiagnostics: jest.fn(),
       getRetrievalDiagnostics: jest.fn(),
-      findRetryableFailedPageIds: jest
+      findCompiledPageIds: jest
         .fn()
         .mockImplementation(({ sourcePageIds }) => sourcePageIds),
       ...overrides.diagnosticsService,
@@ -1616,6 +1624,7 @@ function createController(
     {
       requestRuns: jest.fn(),
       requestImmediatePagePublish: jest.fn(),
+      resetGenerationAttemptBudget: jest.fn().mockResolvedValue(0),
       ...overrides.spaceCompilation,
     } as unknown as KnowledgeSpaceCompilationService,
     {
