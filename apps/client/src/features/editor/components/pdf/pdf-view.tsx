@@ -1,13 +1,15 @@
 import { NodeViewProps, NodeViewWrapper } from "@tiptap/react";
-import { ActionIcon, Group, Loader, Text, Tooltip } from "@mantine/core";
+import { ActionIcon, Group, Loader, Paper, Text, Tooltip } from "@mantine/core";
 import { useCallback, useMemo, useState } from "react";
 import { getFileUrl } from "@/lib/config.ts";
+import { formatBytes } from "@/lib";
 import { ResizableWrapper } from "../common/resizable-wrapper";
 import clsx from "clsx";
 import classes from "./pdf-view.module.css";
 import { useTranslation } from "react-i18next";
 import { isInternalFileUrl } from "@docmost/editor-ext";
 import {
+  IconDownload,
   IconFileTypePdf,
   IconPaperclip,
   IconTrash,
@@ -111,6 +113,51 @@ export default function PdfView(props: NodeViewProps) {
             {t("Failed to load PDF")}
           </Text>
         </div>
+      </NodeViewWrapper>
+    );
+  }
+
+  // In read (non-editable) mode, don't embed the PDF preview. Show it as a
+  // plain attachment card (icon + name + size + download) instead.
+  if (!editor.isEditable) {
+    const { name, size } = node.attrs;
+    return (
+      <NodeViewWrapper>
+        <Paper withBorder p="4px">
+          <Group
+            justify="space-between"
+            gap="xl"
+            wrap="nowrap"
+            h={25}
+          >
+            <Group wrap="nowrap" gap="sm" style={{ minWidth: 0, flex: 1 }}>
+              <IconPaperclip size={20} style={{ flexShrink: 0 }} />
+              <Text
+                component="span"
+                size="md"
+                truncate="end"
+                style={{ minWidth: 0 }}
+              >
+                {name}
+              </Text>
+              {size ? (
+                <Text
+                  component="span"
+                  size="sm"
+                  c="dimmed"
+                  style={{ flexShrink: 0 }}
+                >
+                  {formatBytes(Number(size))}
+                </Text>
+              ) : null}
+            </Group>
+            <a href={safeSrc} target="_blank" rel="noopener noreferrer">
+              <ActionIcon variant="default" aria-label={t("download file")}>
+                <IconDownload size={18} />
+              </ActionIcon>
+            </a>
+          </Group>
+        </Paper>
       </NodeViewWrapper>
     );
   }
