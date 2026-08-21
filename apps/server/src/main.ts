@@ -119,6 +119,8 @@ async function bootstrap() {
         '/api/workspace/check-hostname',
         '/api/sso/google',
         '/api/sso/hoidc',
+        '/api/sso/groups',
+        '/api/sso/users/delete',
         '/api/workspace/create',
         '/api/workspace/joined',
         '/api/workspace/find-by-email',
