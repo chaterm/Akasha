@@ -14,6 +14,8 @@ import { KnowledgeCitationResolverService } from './services/knowledge-citation-
 import { KnowledgeDiagnosticsService } from './services/knowledge-diagnostics.service';
 import { KnowledgeGraphService } from './services/knowledge-graph.service';
 import { AiKnowledgeChatService } from './services/ai-knowledge-chat.service';
+import { KnowledgeCitationImageResolverService } from './services/knowledge-citation-image-resolver.service';
+import { KnowledgeCitationImageRepo } from '../../database/repos/llm-wiki/knowledge-citation-image.repo';
 import { ConfiguredKnowledgeAnswerProvider } from './services/knowledge-answer-provider.service';
 import { KnowledgeTextProcessor } from './processors/knowledge-text.processor';
 import { KnowledgeImageProcessor } from './processors/knowledge-image.processor';
@@ -49,9 +51,16 @@ import { KnowledgeImageReaperService } from './services/knowledge-image-reaper.s
 import { KnowledgeQualityService } from './services/knowledge-quality.service';
 import { AiModelConfigModule } from './services/ai-model-config.module';
 import { ApiKeyModule } from '../api-key/api-key.module';
+import { TokenModule } from '../../core/auth/token.module';
 
 @Module({
-  imports: [NoopAuditModule, AiModelConfigModule, ReviewModule, ApiKeyModule],
+  imports: [
+    NoopAuditModule,
+    AiModelConfigModule,
+    ReviewModule,
+    ApiKeyModule,
+    TokenModule,
+  ],
   controllers: [LlmWikiController],
   providers: [
     SpaceAuthorizationService,
@@ -69,6 +78,8 @@ import { ApiKeyModule } from '../api-key/api-key.module';
     KnowledgeQualityService,
     KnowledgeGraphService,
     AiKnowledgeChatService,
+    KnowledgeCitationImageResolverService,
+    KnowledgeCitationImageRepo,
     ConfiguredKnowledgeEmbeddingProvider,
     KnowledgeVectorIndexService,
     ConfiguredKnowledgeAnswerProvider,

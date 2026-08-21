@@ -14,6 +14,29 @@ export type KnowledgeCitation = {
   url: string;
 };
 
+/**
+ * Image attached to a query-API citation. Only produced at the
+ * `/api/llm-wiki/query` response boundary; never part of the shared
+ * `KnowledgeCitation` / `KnowledgeSourceWindow` / evidence types.
+ */
+export type KnowledgeQueryCitationImage = {
+  attachmentId: string;
+  fileName: string;
+  mimeType: string;
+  url: string;
+  description: string;
+};
+
+/**
+ * Citation shape returned exclusively by `/api/llm-wiki/query`. Derives from
+ * the base `KnowledgeCitation` and always carries an `images` array (possibly
+ * empty). Kept separate so adding images never leaks into `sourceWindows`,
+ * `retrievedSources` or `citationEvidence`.
+ */
+export type KnowledgeQueryCitation = KnowledgeCitation & {
+  images: KnowledgeQueryCitationImage[];
+};
+
 export type KnowledgeSourceWindow = KnowledgeCitation & {
   text: string;
   sourceRange: KnowledgeSourceRange;

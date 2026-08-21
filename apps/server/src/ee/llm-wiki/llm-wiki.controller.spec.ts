@@ -12,6 +12,7 @@ import { IAuditService } from '../../integrations/audit/audit.service';
 import { QueueJob } from '../../integrations/queue/constants';
 import { KNOWLEDGE_COMPLETENESS_NOTICE } from './services/knowledge-retrieval.service';
 import { AiKnowledgeChatService } from './services/ai-knowledge-chat.service';
+import { KnowledgeCitationImageResolverService } from './services/knowledge-citation-image-resolver.service';
 import { KnowledgeImportService } from './services/knowledge-import.service';
 import { LlmWikiController } from './llm-wiki.controller';
 import { KnowledgeDiagnosticsService } from './services/knowledge-diagnostics.service';
@@ -95,7 +96,9 @@ describe('LlmWikiController', () => {
       ),
     ).resolves.toEqual({
       answer: 'Use Kafka for async events.',
-      citations: [{ sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1' }],
+      citations: [
+        { sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1', images: [] },
+      ],
       completenessNotice: KNOWLEDGE_COMPLETENESS_NOTICE,
     });
 
@@ -1557,6 +1560,7 @@ function createController(
     chatService?: Partial<AiKnowledgeChatService>;
     auditService?: Partial<IAuditService>;
     importService?: Partial<KnowledgeImportService>;
+    citationImageResolver?: Partial<KnowledgeCitationImageResolverService>;
     diagnosticsService?: Partial<KnowledgeDiagnosticsService>;
     graphService?: Partial<KnowledgeGraphService>;
     queryAuditRepo?: Partial<KnowledgeQueryAuditRepo>;
@@ -1577,6 +1581,13 @@ function createController(
       chat: jest.fn(),
       ...overrides.chatService,
     } as unknown as AiKnowledgeChatService,
+    {
+      resolveImagesForCitations: jest.fn(
+        async ({ citations }: { citations: Array<Record<string, unknown>> }) =>
+          citations.map((citation) => ({ ...citation, images: [] })),
+      ),
+      ...overrides.citationImageResolver,
+    } as unknown as KnowledgeCitationImageResolverService,
     {
       log: jest.fn(),
       ...overrides.auditService,

@@ -4,6 +4,7 @@ import {
   KnowledgeChunkCandidate,
   KnowledgeRetrievalSignal,
 } from '@akasha/db/repos/llm-wiki/knowledge-capsule.repo';
+import { hasInformativeTextOverlap } from './knowledge-text-matching.util';
 
 type RankableChunk = {
   chunk: KnowledgeChunk;
@@ -209,51 +210,6 @@ function candidateSignalScores(
   );
 }
 
-function hasInformativeTextOverlap(query: string, text: string): boolean {
-  const queryTerms = informativeTerms(query);
-  if (queryTerms.length === 0) return false;
-  const normalizedText = normalizeSearchText(text);
-  return queryTerms.some((term) => normalizedText.includes(term));
-}
-
-function informativeTerms(value: string): string[] {
-  const normalized = normalizeSearchText(value);
-  const asciiStopWords = new Set([
-    'and',
-    'are',
-    'for',
-    'how',
-    'the',
-    'what',
-    'when',
-    'where',
-    'which',
-    'who',
-    'why',
-  ]);
-  const ascii = (normalized.match(/[a-z0-9_./:-]{2,}/g) ?? []).filter(
-    (term) => !asciiStopWords.has(term),
-  );
-  const hanStopWords = new Set([
-    '什么',
-    '如何',
-    '多少',
-    '时候',
-    '的是',
-    '一下',
-  ]);
-  const han = (normalized.match(/[\p{Script=Han}]{2,}/gu) ?? []).flatMap(
-    (segment) =>
-      Array.from({ length: Math.max(0, segment.length - 1) }, (_, index) =>
-        segment.slice(index, index + 2),
-      ).filter((term) => !hanStopWords.has(term)),
-  );
-  return [...new Set([...ascii, ...han])];
-}
-
-function normalizeSearchText(value: string): string {
-  return value.normalize('NFKC').toLocaleLowerCase('en-US');
-}
 
 function rankSemanticCandidates(input: {
   query: string;

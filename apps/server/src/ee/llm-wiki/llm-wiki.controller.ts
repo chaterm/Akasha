@@ -9,6 +9,7 @@ import {
   HttpCode,
   HttpStatus,
   Inject,
+  Logger,
   NotFoundException,
   Param,
   ParseUUIDPipe,
@@ -60,7 +61,12 @@ import { KnowledgeSpaceOperationDto } from './dto/knowledge-space-operation.dto'
 import { QueryKnowledgeDto } from './dto/query-knowledge.dto';
 import { KnowledgeQueryType } from './dto/query-knowledge.dto';
 import { CitationPageDto } from './dto/citation-page.dto';
-import { AiKnowledgeChatService } from './services/ai-knowledge-chat.service';
+import {
+  AiKnowledgeChatService,
+  AiKnowledgeChatResult,
+} from './services/ai-knowledge-chat.service';
+import { KnowledgeCitationImageResolverService } from './services/knowledge-citation-image-resolver.service';
+import { KnowledgeQueryCitation } from './services/knowledge-context-pack.service';
 import { KnowledgeDiagnosticsService } from './services/knowledge-diagnostics.service';
 import { KnowledgeGraphService } from './services/knowledge-graph.service';
 import { KnowledgeImportService } from './services/knowledge-import.service';
@@ -83,8 +89,11 @@ import { getApiKeyAccess } from '../../common/auth/api-key-access';
 @UseGuards(JwtAuthGuard)
 @Controller('llm-wiki')
 export class LlmWikiController {
+  private readonly logger = new Logger(LlmWikiController.name);
+
   constructor(
     private readonly chatService: AiKnowledgeChatService,
+    private readonly citationImageResolver: KnowledgeCitationImageResolverService,
     @Inject(AUDIT_SERVICE) private readonly auditService: IAuditService,
     private readonly importService: KnowledgeImportService,
     private readonly diagnosticsService: KnowledgeDiagnosticsService,
@@ -212,7 +221,44 @@ export class LlmWikiController {
       },
     });
 
-    return response;
+    // Image enrichment is a non-critical add-on: it must never change the
+    // availability of the answer text or the base citations. On any resolver
+    // failure we degrade every citation to `images: []` and still return the
+    // original response (§4.3 整体 fail-open 边界).
+    const citationsWithImages = await this.resolveCitationImages({
+      workspaceId: workspace.id,
+      answer: response.answer,
+      citations: response.citations,
+      citationEvidence: response.citationEvidence,
+    });
+
+    return { ...response, citations: citationsWithImages };
+  }
+
+  private async resolveCitationImages(input: {
+    workspaceId: string;
+    answer: string;
+    citations: AiKnowledgeChatResult['citations'];
+    citationEvidence: AiKnowledgeChatResult['citationEvidence'];
+  }): Promise<KnowledgeQueryCitation[]> {
+    const emptyImages = (): KnowledgeQueryCitation[] =>
+      input.citations.map((citation) => ({ ...citation, images: [] }));
+
+    try {
+      return await this.citationImageResolver.resolveImagesForCitations({
+        workspaceId: input.workspaceId,
+        citations: input.citations,
+        citationEvidence: input.citationEvidence,
+        answerText: input.answer,
+      });
+    } catch (err) {
+      this.logger.error(
+        `Citation image resolution failed for workspace ${input.workspaceId}; ` +
+          `degrading ${input.citations.length} citation(s) to images: []`,
+        err instanceof Error ? err.stack : undefined,
+      );
+      return emptyImages();
+    }
   }
 
   @HttpCode(HttpStatus.OK)
