@@ -31,6 +31,7 @@ import {
   YoutubeIcon,
 } from "@/components/icons";
 import { useTranslation } from "react-i18next";
+import { insertDateAction } from "@/features/editor/components/date/insert-date-action.tsx";
 
 interface Props {
   editor: Editor;
@@ -38,19 +39,12 @@ interface Props {
 }
 
 export const MoreInsertsGroup: FC<Props> = ({ editor, templateMode }) => {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
 
   const setEmbed = (provider: string) =>
     editor.chain().focus().setEmbed({ provider }).run();
 
-  const insertDate = () => {
-    const currentDate = new Date().toLocaleDateString(i18n.language, {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-    editor.chain().focus().insertContent(currentDate).run();
-  };
+  const insertDate = () => insertDateAction(editor);
 
   return (
     <Menu shadow="md" position="bottom-start" withArrow={false} width={240}>

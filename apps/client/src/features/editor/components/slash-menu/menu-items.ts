@@ -43,7 +43,7 @@ import IconMermaid from "@/components/icons/icon-mermaid";
 import IconDrawio from "@/components/icons/icon-drawio";
 import { IconColumns4 } from "@/components/icons/icon-columns-4";
 import { IconColumns5 } from "@/components/icons/icon-columns-5";
-import i18n from "@/i18n.ts";
+import { insertDateAction } from "@/features/editor/components/date/insert-date-action.tsx";
 import {
   AirtableIcon,
   FigmaIcon,
@@ -457,22 +457,12 @@ const CommandGroups: SlashMenuGroupedItemsType = {
     },
     {
       title: "Date",
-      description: "Insert current date",
+      description: "Insert a date",
       searchTerms: ["date", "today"],
       icon: IconCalendar,
       command: ({ editor, range }: CommandProps) => {
-        const currentDate = new Date().toLocaleDateString(i18n.language, {
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-        });
-
-        editor
-          .chain()
-          .focus()
-          .deleteRange(range)
-          .insertContent(currentDate)
-          .run();
+        editor.chain().focus().deleteRange(range).run();
+        insertDateAction(editor);
       },
     },
     {
