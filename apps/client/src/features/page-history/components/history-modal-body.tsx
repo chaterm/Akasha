@@ -51,7 +51,7 @@ export default function HistoryModalBody({ pageId }: Props) {
 
       <div style={{ position: "relative", flex: 1 }}>
         <ScrollArea
-          h={650}
+          h="min(650px, calc(100dvh - 120px))"
           w="100%"
           scrollbarSize={5}
           viewportRef={scrollViewportRef}
