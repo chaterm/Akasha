@@ -18,6 +18,57 @@
   }
 
   .tableWrapper {
-    overflow: hidden !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow: visible !important;
+  }
+
+  .tableWrapper table {
+    width: calc(100% - 2px) !important;
+    min-width: 0 !important;
+    max-width: calc(100% - 2px) !important;
+    border-collapse: collapse !important;
+    box-sizing: border-box !important;
+    height: auto !important;
+  }
+
+  .tableWrapper tbody,
+  .tableWrapper tr,
+  .tableWrapper th,
+  .tableWrapper td {
+    box-sizing: border-box !important;
+    height: auto !important;
+  }
+
+  .tableWrapper table tr:first-child {
+    display: table-row !important;
+    position: static !important;
+    inset: auto !important;
+    top: auto !important;
+    right: auto !important;
+    bottom: auto !important;
+    left: auto !important;
+    transform: none !important;
+    z-index: auto !important;
+  }
+
+  .tableWrapper table tr:first-child th {
+    display: table-cell !important;
+    position: static !important;
+    inset: auto !important;
+    transform: none !important;
+    z-index: auto !important;
+    vertical-align: top !important;
+  }
+
+  .tableWrapper th,
+  .tableWrapper td {
+    border: 1px solid #adb5bd !important;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .tableWrapper th {
+    background: #f1f3f5 !important;
   }
 }
