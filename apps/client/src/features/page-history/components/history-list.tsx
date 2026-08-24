@@ -128,7 +128,12 @@ function HistoryList({ pageId }: Props) {
 
   return (
     <div>
-      <ScrollArea h={620} w="100%" type="scroll" scrollbarSize={5}>
+      <ScrollArea
+        h="min(620px, calc(100dvh - 180px))"
+        w="100%"
+        type="scroll"
+        scrollbarSize={5}
+      >
         {historyItems.map((historyItem, index) => (
           <HistoryItem
             key={historyItem.id}
