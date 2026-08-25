@@ -62,6 +62,95 @@ describe("useChatStream message editing", () => {
     expect(result.current.messages[0].id).not.toMatch(/^temp-/);
   });
 
+  it("keeps the old stream running without leaking it into the new chat", async () => {
+    const controllers: AbortController[] = [];
+    const streamEvents: Array<
+      (event: Record<string, unknown>) => void
+    > = [];
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    serviceMocks.sendChatMessage.mockImplementation(
+      (
+        _params,
+        onEvent: (event: Record<string, unknown>) => void,
+      ) => {
+        streamEvents.push(onEvent);
+        onEvent({ type: "content", text: "partial answer" });
+        onEvent({ type: "progress", stage: "retrieval" });
+        onEvent({
+          type: "tool_call",
+          id: "tool-1",
+          name: "search",
+          args: {},
+        });
+        const controller = new AbortController();
+        controllers.push(controller);
+        return controller;
+      },
+    );
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>{children}</MemoryRouter>
+      </QueryClientProvider>
+    );
+    const { result, rerender } = renderHook(
+      ({ chatId }: { chatId: string | undefined }) => useChatStream(chatId),
+      { initialProps: { chatId: "chat-1" }, wrapper },
+    );
+
+    act(() => {
+      result.current.sendMessage("question");
+    });
+
+    expect(result.current.isStreaming).toBe(true);
+    expect(result.current.streamingContent).toBe("partial answer");
+
+    rerender({ chatId: undefined });
+
+    await waitFor(() => {
+      expect(result.current.isStreaming).toBe(false);
+      expect(result.current.messages).toEqual([]);
+      expect(result.current.streamingContent).toBe("");
+      expect(result.current.streamingToolCalls).toEqual([]);
+      expect(result.current.progressStage).toBeNull();
+      expect(result.current.thinkingSteps).toEqual([]);
+    });
+
+    act(() => {
+      result.current.sendMessage("new question");
+    });
+
+    expect(streamEvents).toHaveLength(2);
+    expect(controllers).toHaveLength(2);
+    expect(result.current.isStreaming).toBe(true);
+    expect(result.current.streamingContent).toBe("partial answer");
+
+    act(() => {
+      streamEvents[0]({ type: "content", text: "late answer" });
+      streamEvents[0]({
+        type: "done",
+        messageId: "assistant-1",
+        userMessageId: "user-1",
+      });
+    });
+
+    expect(controllers[0].signal.aborted).toBe(false);
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].content).toBe("new question");
+    expect(result.current.streamingContent).toBe("partial answer");
+    await waitFor(() => {
+      expect(serviceMocks.getChatInfo).toHaveBeenCalledWith("chat-1");
+    });
+
+    rerender({ chatId: "chat-1" });
+    await waitFor(() => {
+      expect(result.current.messages.map((message) => message.content)).toEqual(
+        ["question", "partial answerlate answer"],
+      );
+    });
+  });
+
   it("replaces the edited question, truncates its tail, and appends the regenerated answer", async () => {
     serviceMocks.editChatMessage.mockImplementation(
       (_params, onEvent: (event: Record<string, unknown>) => void) => {

@@ -20,6 +20,46 @@ type ChatStreamOptions = {
   onChatCreated?: (chatId: string) => void;
 };
 
+type ChatStreamSession = {
+  chatId: string | undefined;
+  messages: AiChatMessage[];
+  streamingContent: string;
+  streamingToolCalls: AiChatToolCall[];
+  isStreaming: boolean;
+  progressStage: AiQaProgressStage | null;
+  thinkingSteps: AiChatThinkingItem[];
+  error: string | null;
+  errorCode: string | null;
+  isRetryable: boolean;
+  hydrated: boolean;
+  abortController: AbortController | null;
+};
+
+const NEW_CHAT_SESSION_KEY = "__new__";
+
+function chatSessionKey(chatId: string | undefined): string {
+  return chatId || NEW_CHAT_SESSION_KEY;
+}
+
+function createChatStreamSession(
+  chatId: string | undefined,
+): ChatStreamSession {
+  return {
+    chatId,
+    messages: [],
+    streamingContent: "",
+    streamingToolCalls: [],
+    isStreaming: false,
+    progressStage: null,
+    thinkingSteps: [],
+    error: null,
+    errorCode: null,
+    isRetryable: false,
+    hydrated: false,
+    abortController: null,
+  };
+}
+
 export function useChatStream(
   chatId: string | undefined,
   options?: ChatStreamOptions,
@@ -44,168 +84,194 @@ export function useChatStream(
   currentChatIdRef.current = chatId;
   const onChatCreatedRef = useRef(options?.onChatCreated);
   onChatCreatedRef.current = options?.onChatCreated;
-  // Tracks which chatId the local `messages` state currently represents.
-  // Set when we seed from a server fetch AND when we optimistically own a
-  // freshly-created chat after `chat_created`. This is the single authority
-  // marker that keeps server-state effects from clobbering in-flight streams.
-  const hydratedChatIdRef = useRef<string | undefined>(undefined);
+  const sessionsRef = useRef(new Map<string, ChatStreamSession>());
+  const activeSessionRef = useRef<ChatStreamSession | null>(null);
 
-  // Reset local state when the consumer switches to a different chat.
-  // Skip the reset if the new chatId is one the hook itself already claimed
-  // during a new-chat flow — in that case our optimistic state is the truth.
+  const syncActiveSession = useCallback((session: ChatStreamSession) => {
+    if (activeSessionRef.current !== session) return;
+    setMessages(session.messages);
+    setStreamingContent(session.streamingContent);
+    setStreamingToolCalls(session.streamingToolCalls);
+    setIsStreaming(session.isStreaming);
+    setProgressStage(session.progressStage);
+    setThinkingSteps(session.thinkingSteps);
+    setError(session.error);
+    setErrorCode(session.errorCode);
+    setIsRetryable(session.isRetryable);
+  }, []);
+
+  // Switch the visible transcript without cancelling streams belonging to
+  // other chats. Each session keeps its own optimistic and streaming state.
   useEffect(() => {
-    if (chatId && chatId === hydratedChatIdRef.current) return;
-    hydratedChatIdRef.current = undefined;
-    setMessages([]);
-    setThinkingSteps([]);
-    setError(null);
-    setErrorCode(null);
-    setIsRetryable(false);
-  }, [chatId]);
+    const key = chatSessionKey(chatId);
+    let session = sessionsRef.current.get(key);
+    if (!session) {
+      session = createChatStreamSession(chatId);
+      sessionsRef.current.set(key, session);
+    }
+    activeSessionRef.current = session;
+    abortRef.current = session.abortController;
+    syncActiveSession(session);
+  }, [chatId, syncActiveSession]);
 
   const hydrateFromServer = useCallback((msgs: AiChatMessage[]) => {
     const forId = currentChatIdRef.current;
     if (!forId) return;
-    if (hydratedChatIdRef.current === forId) return;
-    hydratedChatIdRef.current = forId;
-    setMessages(msgs);
-  }, []);
+    const session = sessionsRef.current.get(chatSessionKey(forId));
+    if (!session || session.hydrated || session.isStreaming) return;
+    session.hydrated = true;
+    session.messages = msgs;
+    syncActiveSession(session);
+  }, [syncActiveSession]);
 
   const reconcileFromServer = useCallback(
     async (targetChatId: string) => {
-      hydratedChatIdRef.current = undefined;
       try {
         const info = await getChatInfo(targetChatId);
         queryClient.setQueryData(["ai-chat", targetChatId], info);
-        if (currentChatIdRef.current !== targetChatId) return;
-        hydratedChatIdRef.current = targetChatId;
-        setMessages(info.messages);
+        const session = sessionsRef.current.get(chatSessionKey(targetChatId));
+        if (!session || session.isStreaming) return;
+        session.hydrated = true;
+        session.messages = info.messages;
+        syncActiveSession(session);
       } catch {
         queryClient.invalidateQueries({
           queryKey: ["ai-chat", targetChatId],
         });
       }
     },
-    [queryClient],
+    [queryClient, syncActiveSession],
   );
 
   const handleStreamEvent = useCallback(
-    (event: AiChatStreamEvent) => {
+    (event: AiChatStreamEvent, session: ChatStreamSession) => {
       switch (event.type) {
         case "chat_created":
-          currentChatIdRef.current = event.chatId;
-          hydratedChatIdRef.current = event.chatId;
-          if (onChatCreatedRef.current) {
-            onChatCreatedRef.current(event.chatId);
-          } else {
-            navigate(`/ai/chat/${event.chatId}`, { replace: true });
+          sessionsRef.current.delete(chatSessionKey(session.chatId));
+          session.chatId = event.chatId;
+          session.hydrated = true;
+          sessionsRef.current.set(chatSessionKey(session.chatId), session);
+          if (activeSessionRef.current === session) {
+            currentChatIdRef.current = event.chatId;
+            if (onChatCreatedRef.current) {
+              onChatCreatedRef.current(event.chatId);
+            } else {
+              navigate(`/ai/chat/${event.chatId}`, { replace: true });
+            }
           }
           queryClient.invalidateQueries({ queryKey: ["ai-chats"] });
           break;
         case "message_edited":
-          setMessages((previous) => {
-            const messageIndex = previous.findIndex(
-              (message) => message.id === event.messageId,
+          const messageIndex = session.messages.findIndex(
+            (message) => message.id === event.messageId,
+          );
+          if (messageIndex < 0) break;
+          session.messages = session.messages
+            .slice(0, messageIndex + 1)
+            .map((message) =>
+              message.id === event.messageId
+                ? { ...message, content: event.content }
+                : message,
             );
-            if (messageIndex < 0) return previous;
-            return previous
-              .slice(0, messageIndex + 1)
-              .map((message, index) =>
-                index === messageIndex
-                  ? { ...message, content: event.content }
-                  : message,
-              );
-          });
+          syncActiveSession(session);
           break;
         case "content":
-          setStreamingContent((previous) => previous + event.text);
+          session.streamingContent += event.text;
+          syncActiveSession(session);
           break;
         case "progress":
-          setProgressStage(event.stage);
+          session.progressStage = event.stage;
+          syncActiveSession(session);
           break;
         case "thinking":
-          setThinkingSteps((previous) =>
-            upsertThinkingStep(previous, {
-              step: event.step,
-              status: event.status,
-              durationMs: event.durationMs,
-              stats: event.stats,
-              outcome: event.outcome,
-              ...(event.status === "started" ? { startedAt: Date.now() } : {}),
-            }),
-          );
+          session.thinkingSteps = upsertThinkingStep(session.thinkingSteps, {
+            step: event.step,
+            status: event.status,
+            durationMs: event.durationMs,
+            stats: event.stats,
+            outcome: event.outcome,
+            ...(event.status === "started" ? { startedAt: Date.now() } : {}),
+          });
+          syncActiveSession(session);
           break;
         case "tool_call":
-          setStreamingToolCalls((previous) => [
-            ...previous,
+          session.streamingToolCalls = [
+            ...session.streamingToolCalls,
             {
               id: event.id,
               name: event.name,
               args: event.args,
             },
-          ]);
+          ];
+          syncActiveSession(session);
           break;
         case "tool_result":
-          setStreamingToolCalls((previous) =>
-            previous.map((toolCall) =>
+          session.streamingToolCalls = session.streamingToolCalls.map(
+            (toolCall) =>
               toolCall.id === event.id
                 ? { ...toolCall, result: event.result }
                 : toolCall,
-            ),
           );
+          syncActiveSession(session);
           break;
         case "done": {
-          setStreamingContent((currentContent) => {
-            setStreamingToolCalls((currentToolCalls) => {
-              const assistantMessage: AiChatMessage = {
-                id: event.messageId,
-                chatId: currentChatIdRef.current || "",
-                role: "assistant",
-                content: currentContent || null,
-                toolCalls: currentToolCalls.length ? currentToolCalls : null,
-                metadata: buildAssistantMetadata(event),
-                createdAt: new Date().toISOString(),
-              };
-
-              setMessages((previous) => [
-                ...replaceOptimisticUserMessage(
-                  previous,
-                  event.userMessageId,
-                  currentChatIdRef.current || "",
-                ),
-                assistantMessage,
-              ]);
-              return [];
-            });
-            return "";
-          });
-          setIsStreaming(false);
-          setProgressStage(null);
-          setThinkingSteps([]);
+          const targetChatId = session.chatId || "";
+          const wasActive = activeSessionRef.current === session;
+          const assistantMessage: AiChatMessage = {
+            id: event.messageId,
+            chatId: targetChatId,
+            role: "assistant",
+            content: session.streamingContent || null,
+            toolCalls: session.streamingToolCalls.length
+              ? session.streamingToolCalls
+              : null,
+            metadata: buildAssistantMetadata(event),
+            createdAt: new Date().toISOString(),
+          };
+          session.messages = [
+            ...replaceOptimisticUserMessage(
+              session.messages,
+              event.userMessageId,
+              targetChatId,
+            ),
+            assistantMessage,
+          ];
+          session.streamingContent = "";
+          session.streamingToolCalls = [];
+          session.isStreaming = false;
+          session.progressStage = null;
+          session.thinkingSteps = [];
+          syncActiveSession(session);
           queryClient.invalidateQueries({
-            queryKey: ["ai-chat", currentChatIdRef.current],
+            queryKey: ["ai-chat", targetChatId],
           });
+          queryClient.invalidateQueries({ queryKey: ["ai-chats"] });
+          if (!wasActive && targetChatId) {
+            void reconcileFromServer(targetChatId);
+          }
           break;
         }
         case "superseded":
-          setStreamingContent("");
-          setStreamingToolCalls([]);
-          setIsStreaming(false);
-          setProgressStage(null);
-          setThinkingSteps([]);
+          session.streamingContent = "";
+          session.streamingToolCalls = [];
+          session.isStreaming = false;
+          session.progressStage = null;
+          session.thinkingSteps = [];
+          syncActiveSession(session);
           void reconcileFromServer(event.chatId);
           break;
         case "error":
-          setError(event.message);
-          setErrorCode(event.code || null);
-          setIsRetryable(event.retryable || false);
-          setIsStreaming(false);
-          setProgressStage(null);
-          setThinkingSteps([]);
+          session.error = event.message;
+          session.errorCode = event.code || null;
+          session.isRetryable = event.retryable || false;
+          session.isStreaming = false;
+          session.progressStage = null;
+          session.thinkingSteps = [];
+          syncActiveSession(session);
           break;
       }
     },
-    [navigate, queryClient, reconcileFromServer],
+    [navigate, queryClient, reconcileFromServer, syncActiveSession],
   );
 
   const sendMessage = useCallback(
@@ -219,20 +285,23 @@ export function useChatStream(
     ) => {
       if (isStreaming || (!content.trim() && attachments.length === 0)) return;
 
-      setError(null);
-      setErrorCode(null);
-      setIsRetryable(false);
-      setIsStreaming(true);
-      setProgressStage("permissions");
-      setThinkingSteps([
+      const session = activeSessionRef.current;
+      if (!session) return;
+      session.error = null;
+      session.errorCode = null;
+      session.isRetryable = false;
+      session.hydrated = true;
+      session.isStreaming = true;
+      session.progressStage = "permissions";
+      session.thinkingSteps = [
         {
           step: responseMode === "general" ? "preparing" : "understanding",
           status: "started",
           startedAt: Date.now(),
         },
-      ]);
-      setStreamingContent("");
-      setStreamingToolCalls([]);
+      ];
+      session.streamingContent = "";
+      session.streamingToolCalls = [];
 
       const metadata: Record<string, unknown> = {};
       if (mentions.length) {
@@ -251,7 +320,7 @@ export function useChatStream(
 
       const userMessage: AiChatMessage = {
         id: `temp-${Date.now()}`,
-        chatId: currentChatIdRef.current || "",
+        chatId: session.chatId || "",
         role: "user",
         content,
         toolCalls: null,
@@ -259,13 +328,14 @@ export function useChatStream(
         createdAt: new Date().toISOString(),
       };
 
-      setMessages((prev) => [...prev, userMessage]);
+      session.messages = [...session.messages, userMessage];
+      syncActiveSession(session);
 
       const attachmentIds = attachments.map((a) => a.id);
 
       const abortController = sendChatMessage(
         {
-          chatId: currentChatIdRef.current,
+          chatId: session.chatId,
           content,
           mentionedPageIds: mentions.map((m) => m.id),
           ...(contextPageId && { contextPageId }),
@@ -273,20 +343,28 @@ export function useChatStream(
           ...(spaceIds && { spaceIds }),
           ...(responseMode && { responseMode }),
         },
-        handleStreamEvent,
+        (event) => handleStreamEvent(event, session),
         (errorMsg) => {
-          setError(errorMsg);
-          setIsStreaming(false);
-          setProgressStage(null);
+          session.error = errorMsg;
+          session.isStreaming = false;
+          session.progressStage = null;
+          session.thinkingSteps = [];
+          session.abortController = null;
+          syncActiveSession(session);
         },
         () => {
-          setIsStreaming(false);
+          session.isStreaming = false;
+          session.abortController = null;
+          syncActiveSession(session);
         },
       );
 
-      abortRef.current = abortController;
+      session.abortController = abortController;
+      if (activeSessionRef.current === session) {
+        abortRef.current = abortController;
+      }
     },
-    [handleStreamEvent, isStreaming],
+    [handleStreamEvent, isStreaming, syncActiveSession],
   );
 
   const editMessage = useCallback(
@@ -295,83 +373,93 @@ export function useChatStream(
       const currentChatId = currentChatIdRef.current;
       if (isStreaming || !currentChatId || !content) return;
 
-      const messageIndex = messages.findIndex(
+      const session = activeSessionRef.current;
+      if (!session) return;
+      const messageIndex = session.messages.findIndex(
         (message) => message.id === messageId && message.role === "user",
       );
       if (messageIndex < 0) return;
-      setMessages(
-        messages
-          .slice(0, messageIndex + 1)
-          .map((message, index) =>
-            index === messageIndex ? { ...message, content } : message,
-          ),
-      );
-
-      setError(null);
-      setErrorCode(null);
-      setIsRetryable(false);
-      setIsStreaming(true);
-      setProgressStage("permissions");
-      setThinkingSteps([
+      session.messages = session.messages
+        .slice(0, messageIndex + 1)
+        .map((message, index) =>
+          index === messageIndex ? { ...message, content } : message,
+        );
+      session.error = null;
+      session.errorCode = null;
+      session.isRetryable = false;
+      session.hydrated = true;
+      session.isStreaming = true;
+      session.progressStage = "permissions";
+      session.thinkingSteps = [
         {
           step: "understanding",
           status: "started",
           startedAt: Date.now(),
         },
-      ]);
-      setStreamingContent("");
-      setStreamingToolCalls([]);
+      ];
+      session.streamingContent = "";
+      session.streamingToolCalls = [];
+      syncActiveSession(session);
 
       const reconcile = () => {
         void reconcileFromServer(currentChatId);
       };
-      abortRef.current = editChatMessage(
+      const abortController = editChatMessage(
         { chatId: currentChatId, messageId, content },
         (event) => {
-          handleStreamEvent(event);
+          handleStreamEvent(event, session);
           if (event.type === "error") reconcile();
         },
         (errorMessage) => {
-          setError(errorMessage);
-          setIsStreaming(false);
-          setProgressStage(null);
+          session.error = errorMessage;
+          session.isStreaming = false;
+          session.progressStage = null;
+          session.thinkingSteps = [];
+          session.abortController = null;
+          syncActiveSession(session);
           reconcile();
         },
         () => {
-          setIsStreaming(false);
+          session.isStreaming = false;
+          session.abortController = null;
+          syncActiveSession(session);
         },
       );
+      session.abortController = abortController;
+      abortRef.current = abortController;
     },
-    [handleStreamEvent, isStreaming, messages, reconcileFromServer],
+    [handleStreamEvent, isStreaming, reconcileFromServer, syncActiveSession],
   );
 
   const stopGeneration = useCallback(() => {
-    abortRef.current?.abort();
+    const session = activeSessionRef.current;
+    if (!session) return;
+    session.abortController?.abort();
+    session.abortController = null;
     abortRef.current = null;
-
-    setStreamingContent((currentContent) => {
-      setStreamingToolCalls((currentToolCalls) => {
-        if (currentContent || currentToolCalls.length > 0) {
-          const partialMessage: AiChatMessage = {
-            id: `stopped-${Date.now()}`,
-            chatId: currentChatIdRef.current || "",
-            role: "assistant",
-            content: currentContent || null,
-            toolCalls: currentToolCalls.length ? currentToolCalls : null,
-            metadata: null,
-            createdAt: new Date().toISOString(),
-          };
-          setMessages((prev) => [...prev, partialMessage]);
-        }
-        return [];
-      });
-      return "";
-    });
-
-    setIsStreaming(false);
-    setProgressStage(null);
-    setThinkingSteps([]);
-  }, []);
+    if (session.streamingContent || session.streamingToolCalls.length > 0) {
+      session.messages = [
+        ...session.messages,
+        {
+          id: `stopped-${Date.now()}`,
+          chatId: session.chatId || currentChatIdRef.current || "",
+          role: "assistant",
+          content: session.streamingContent || null,
+          toolCalls: session.streamingToolCalls.length
+            ? session.streamingToolCalls
+            : null,
+          metadata: null,
+          createdAt: new Date().toISOString(),
+        },
+      ];
+    }
+    session.streamingContent = "";
+    session.streamingToolCalls = [];
+    session.isStreaming = false;
+    session.progressStage = null;
+    session.thinkingSteps = [];
+    syncActiveSession(session);
+  }, [syncActiveSession]);
 
   return {
     messages,

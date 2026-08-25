@@ -339,6 +339,10 @@ describe('AiChatRepo', () => {
         },
       ]),
     );
+    expect(db.calls).not.toContainEqual({
+      method: 'updateTable',
+      args: ['aiChats'],
+    });
   });
 
   it('persists the current edited answer without a second tail scan or delete', async () => {
