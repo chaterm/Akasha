@@ -15,6 +15,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 import akasha  # noqa: E402
 from api_client import (  # noqa: E402
     AkashaApiClient,
+    ApiConfigurationError,
     PermissionDeniedError,
 )
 from credentials import Credentials, save_credentials  # noqa: E402
@@ -341,6 +342,307 @@ class PermissionScopedPageClientTests(unittest.TestCase):
                 )
             ],
         )
+
+
+class PageAttachmentClientTests(unittest.TestCase):
+    def test_upload_image_sends_page_id_and_multipart_file(self) -> None:
+        requests = []
+
+        def transport(request, timeout):
+            requests.append(request)
+            return RecordingResponse(
+                _wrap(
+                    {
+                        "id": "attachment-1",
+                        "fileName": "diagram.png",
+                        "mimeType": "image/png",
+                        "fileSize": 4,
+                    }
+                )
+            )
+
+        client = AkashaApiClient(
+            base_url="http://localhost:3000",
+            api_key="test-key",
+            transport=transport,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "diagram.png"
+            image_path.write_bytes(b"PNG!")
+            result = client.upload_image(
+                page_id="page-1",
+                file_path=str(image_path),
+            )
+
+        self.assertEqual(result["attachmentId"], "attachment-1")
+        self.assertEqual(
+            result["markdown"],
+            "![diagram.png](/api/files/attachment-1/diagram.png)",
+        )
+        self.assertEqual(requests[0].get_method(), "POST")
+        headers = {key.lower(): value for key, value in requests[0].header_items()}
+        self.assertTrue(headers["content-type"].startswith("multipart/form-data;"))
+        self.assertIn(b'name="pageId"', requests[0].data)
+        self.assertIn(b"page-1", requests[0].data)
+        self.assertIn(b'filename="diagram.png"', requests[0].data)
+        self.assertIn(b"PNG!", requests[0].data)
+
+    def test_upload_image_rejects_non_image_files_before_network(self) -> None:
+        requests = []
+        client = AkashaApiClient(
+            base_url="http://localhost:3000",
+            api_key="test-key",
+            transport=lambda request, timeout: requests.append(request),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "notes.txt"
+            file_path.write_text("not an image", encoding="utf-8")
+            with self.assertRaises(ApiConfigurationError):
+                client.upload_image(page_id="page-1", file_path=str(file_path))
+
+        self.assertEqual(requests, [])
+
+    def test_upload_file_accepts_non_image_attachments_and_uses_link_markdown(
+        self,
+    ) -> None:
+        requests = []
+
+        def transport(request, timeout):
+            requests.append(request)
+            return RecordingResponse(
+                _wrap(
+                    {
+                        "id": "attachment-pdf",
+                        "fileName": "guide.pdf",
+                        "mimeType": "application/pdf",
+                        "fileSize": 4,
+                    }
+                )
+            )
+
+        client = AkashaApiClient(
+            base_url="http://localhost:3000",
+            api_key="test-key",
+            transport=transport,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "guide.pdf"
+            file_path.write_bytes(b"PDF!")
+            result = client.upload_file(page_id="page-1", file_path=str(file_path))
+
+        self.assertFalse(result["replaced"])
+        self.assertEqual(
+            result["markdown"],
+            "[guide.pdf](/api/files/attachment-pdf/guide.pdf)",
+        )
+        self.assertIn(b'filename="guide.pdf"', requests[0].data)
+
+    def test_replace_image_reuses_attachment_id_and_original_file_name(self) -> None:
+        requests = []
+
+        def transport(request, timeout):
+            requests.append(request)
+            path = request.full_url.split("http://localhost:3000")[-1]
+            if path == "/api/files/info":
+                return RecordingResponse(
+                    _wrap(
+                        {
+                            "id": "attachment-1",
+                            "fileName": "diagram.png",
+                            "mimeType": "image/png",
+                        }
+                    )
+                )
+            self.assertEqual(path, "/api/files/upload")
+            return RecordingResponse(
+                _wrap(
+                    {
+                        "id": "attachment-1",
+                        "fileName": "diagram.png",
+                        "mimeType": "image/png",
+                        "fileSize": 5,
+                    }
+                )
+            )
+
+        client = AkashaApiClient(
+            base_url="http://localhost:3000",
+            api_key="test-key",
+            transport=transport,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "replacement.png"
+            image_path.write_bytes(b"NEW!!")
+            result = client.replace_image(
+                page_id="page-1",
+                attachment_id="attachment-1",
+                file_path=str(image_path),
+            )
+
+        self.assertTrue(result["replaced"])
+        self.assertEqual(result["url"], "/api/files/attachment-1/diagram.png")
+        self.assertEqual([request.get_method() for request in requests], ["POST", "POST"])
+        self.assertIn(b'name="attachmentId"', requests[1].data)
+        self.assertIn(b"attachment-1", requests[1].data)
+        self.assertIn(b'filename="diagram.png"', requests[1].data)
+        self.assertNotIn(b'filename="replacement.png"', requests[1].data)
+
+    def test_download_attachment_reads_info_then_writes_binary_file(self) -> None:
+        requests = []
+
+        def transport(request, timeout):
+            requests.append(request)
+            path = request.full_url.split("http://localhost:3000")[-1]
+            if path == "/api/files/info":
+                return RecordingResponse(
+                    _wrap(
+                        {
+                            "id": "attachment-1",
+                            "fileName": "diagram.png",
+                            "mimeType": "image/png",
+                        }
+                    )
+                )
+            self.assertEqual(path, "/api/files/attachment-1/diagram.png")
+            return RecordingResponse(b"PNG!")
+
+        client = AkashaApiClient(
+            base_url="http://localhost:3000",
+            api_key="test-key",
+            transport=transport,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "nested" / "diagram.png"
+            result = client.download_attachment(
+                attachment_id="attachment-1",
+                output_path=str(output_path),
+            )
+            self.assertEqual(output_path.read_bytes(), b"PNG!")
+
+        self.assertEqual(result["fileName"], "diagram.png")
+        self.assertEqual(result["fileSize"], 4)
+        self.assertEqual(
+            [request.get_method() for request in requests],
+            ["POST", "GET"],
+        )
+
+
+class PageAttachmentCliTests(unittest.TestCase):
+    def test_upload_command_passes_page_and_file_and_returns_markdown(self) -> None:
+        calls = []
+
+        class FakeClient:
+            def get_current_user(self):
+                calls.append("me")
+                return {}
+
+            def upload_file(self, *, page_id, file_path):
+                calls.append(("upload", page_id, file_path))
+                return {
+                    "attachmentId": "attachment-1",
+                    "pageId": page_id,
+                    "fileName": "diagram.png",
+                    "url": "/api/files/attachment-1/diagram.png",
+                    "markdown": "![diagram.png](/api/files/attachment-1/diagram.png)",
+                }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "diagram.png"
+            image_path.write_bytes(b"PNG!")
+            exit_code, output, error = _run_cli(
+                [
+                    "page",
+                    "attachment",
+                    "upload",
+                    "page-1",
+                    "--file",
+                    str(image_path),
+                ],
+                FakeClient(),
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(error.getvalue(), "")
+        self.assertEqual(calls, ["me", ("upload", "page-1", str(image_path))])
+        self.assertIn("![diagram.png]", output.getvalue())
+
+    def test_download_command_passes_attachment_and_output_path(self) -> None:
+        calls = []
+
+        class FakeClient:
+            def get_current_user(self):
+                calls.append("me")
+                return {}
+
+            def download_attachment(self, *, attachment_id, output_path):
+                calls.append(("download", attachment_id, output_path))
+                return {
+                    "attachmentId": attachment_id,
+                    "outputPath": output_path,
+                    "fileSize": 4,
+                }
+
+        exit_code, output, error = _run_cli(
+            [
+                "page",
+                "attachment",
+                "download",
+                "attachment-1",
+                "--output",
+                "/tmp/diagram.png",
+            ],
+            FakeClient(),
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(error.getvalue(), "")
+        self.assertEqual(
+            calls,
+            ["me", ("download", "attachment-1", "/tmp/diagram.png")],
+        )
+        self.assertEqual(json.loads(output.getvalue())["fileSize"], 4)
+
+    def test_replace_command_passes_page_attachment_and_file(self) -> None:
+        calls = []
+
+        class FakeClient:
+            def get_current_user(self):
+                calls.append("me")
+                return {}
+
+            def replace_file(self, *, page_id, attachment_id, file_path):
+                calls.append(("replace", page_id, attachment_id, file_path))
+                return {
+                    "attachmentId": attachment_id,
+                    "pageId": page_id,
+                    "replaced": True,
+                }
+
+        exit_code, output, error = _run_cli(
+            [
+                "page",
+                "attachment",
+                "replace",
+                "page-1",
+                "attachment-1",
+                "--file",
+                "/tmp/replacement.png",
+            ],
+            FakeClient(),
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(error.getvalue(), "")
+        self.assertEqual(
+            calls,
+            ["me", ("replace", "page-1", "attachment-1", "/tmp/replacement.png")],
+        )
+        self.assertTrue(json.loads(output.getvalue())["replaced"])
 
 
 class NewCommandCliTests(unittest.TestCase):

@@ -53,6 +53,14 @@ class SkillCurrentCapabilitiesInstructionTests(unittest.TestCase):
         self.assertIn("`citation get` 返回 403 时立即停止", instructions)
         self.assertIn("服务端按 API Key 所属用户的空间和 Page 权限校验", instructions)
 
+    def test_skill_documents_page_attachment_commands(self) -> None:
+        instructions = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("page attachment upload <PAGE_ID>", instructions)
+        self.assertIn("page attachment replace", instructions)
+        self.assertIn("page attachment download <ATTACHMENT_ID>", instructions)
+        self.assertIn("支持常规 Page 附件", instructions)
+
     def test_api_reference_documents_the_citation_page_contract(self) -> None:
         api_reference = (SKILL_DIR / "references" / "api.md").read_text(
             encoding="utf-8"
@@ -99,7 +107,7 @@ class SkillVersionHeaderTests(unittest.TestCase):
         client.get_current_user()
 
         headers = {key.lower(): value for key, value in requests[0].header_items()}
-        self.assertEqual(headers["x-akasha-skill-version"], "1.2.0")
+        self.assertEqual(headers["x-akasha-skill-version"], "1.3.0")
 
     def test_current_user_request_is_cached_for_one_command(self) -> None:
         requests = []
@@ -129,7 +137,7 @@ class SkillVersionHeaderTests(unittest.TestCase):
                     "pageId": "page-1",
                     "spaceId": "space-1",
                     "title": "Kafka Guide",
-                    "url": "/p/kafka-guide",
+                    "url": "/p/abcdefghij",
                     "content": "# Kafka Guide",
                 }
             )
@@ -140,7 +148,7 @@ class SkillVersionHeaderTests(unittest.TestCase):
             transport=transport,
         )
 
-        result = client.get_citation_page("/p/kafka-guide")
+        result = client.get_citation_page("/p/abcdefghij")
 
         self.assertEqual(result["pageId"], "page-1")
         self.assertEqual(
@@ -149,7 +157,7 @@ class SkillVersionHeaderTests(unittest.TestCase):
         )
         self.assertEqual(
             json.loads(requests[0].data.decode("utf-8")),
-            {"pageUrl": "/p/kafka-guide"},
+            {"pageUrl": "/p/abcdefghij"},
         )
 
     def test_citation_page_client_rejects_non_internal_page_urls_locally(self) -> None:

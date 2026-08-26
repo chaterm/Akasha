@@ -1,13 +1,13 @@
 ---
 name: akasha
-description: Use when a user asks to query Akasha or 已编译 Wiki knowledge (optionally limited to specific spaces), list readable spaces, read an ACL-authorized Page from an internal /p/slug URL, create/search/read/update Pages according to the user's Akasha permissions, or delete, restore, list recent, and list trashed personal Pages.
+description: Use when a user asks to query Akasha or 已编译 Wiki knowledge (optionally limited to specific spaces), list readable spaces, read an ACL-authorized Page from an internal /p/slug URL, create/search/read/update Pages or upload/replace/download Page attachments according to the user's Akasha permissions, or delete, restore, list recent, and list trashed personal Pages.
 ---
 
 # Akasha
 
 ## 核心原则
 
-通过随包 Python CLI 使用 Akasha。知识问答只查询已编译 Wiki；可以按用户提供或 Akasha 返回的准确站内 Page 地址读取当前用户有权限访问的 Page 原文。Page 搜索、读取、创建和更新遵循 API Key 所属用户在 Akasha 中已有的空间和页面权限；公共/共享空间只要该用户有编辑权限即可写入。页面写入走 Akasha 正常版本历史，写错可在页面中回滚，最终权限始终由 Akasha API 决定。
+通过随包 Python CLI 使用 Akasha。知识问答只查询已编译 Wiki；可以按用户提供或 Akasha 返回的准确站内 Page 地址读取当前用户有权限访问的 Page 原文。Page 搜索、读取、创建、更新以及 Page 附件上传、替换和下载遵循 API Key 所属用户在 Akasha 中已有的空间和页面权限；公共/共享空间只要该用户有编辑权限即可写入。页面写入走 Akasha 正常版本历史，写错可在页面中回滚，最终权限始终由 Akasha API 决定。
 
 从当前 `SKILL.md` 的实际路径解析本 Skill 所在目录，并记为 <AKASHA_SKILL_DIR>。不要假设它位于固定的全局目录，也不要让用户查找或猜测 Skill 目录。执行：
 
@@ -116,6 +116,44 @@ macOS 凭据保存在 `~/.akasha/credentials.env`，Linux 保存在 `~/.config/a
 
 不要发送 space ID，不要移动 Page，不要推断缺失的原文。公共/共享空间 Page 只有在 API Key 所属用户具备编辑权限时才会成功；否则服务端返回 403。
 
+## 上传、替换和下载 Page 附件
+
+支持常规 Page 附件。图片会生成可直接渲染的 Markdown 图片语法，PDF、DOCX、ZIP 等普通文件会生成可下载的 Markdown 链接；具体文件大小和类型限制由服务端决定。仅当用户明确要求把本地文件放进某个 Page 时，才执行上传；上传不会自动修改 Page 正文。
+
+已有 Page 时，先取得可信 `pageId`，再执行：
+
+    python3 <AKASHA_SKILL_DIR>/scripts/akasha.py page attachment upload <PAGE_ID> \
+      --file <FILE>
+
+上传结果包含 `attachmentId`、受 ACL 保护的 `url` 和可直接插入正文的 `markdown` 字段。图片示例：
+
+    ![diagram.png](/api/files/<attachment-id>/diagram.png)
+
+普通文件示例：
+
+    [guide.pdf](/api/files/<attachment-id>/guide.pdf)
+
+把返回的 `markdown` 原样放入 Markdown 内容文件，再使用 `page update` 提交。不要猜测或手写附件 URL。
+
+新建带附件的 Page 时，先创建 Page，再用返回的 `pageId` 上传文件，最后用 `page update` 把返回的 `markdown` 插入指定位置；不要尝试在没有 `pageId` 时上传。
+
+替换已有附件时，使用原附件的 `attachmentId`：
+
+    python3 <AKASHA_SKILL_DIR>/scripts/akasha.py page attachment replace \
+      <PAGE_ID> <ATTACHMENT_ID> \
+      --file <NEW_FILE>
+
+替换要求新旧文件使用相同扩展名。服务端会复用原附件 ID，Skill 会保留原文件名，因此原正文中的 Markdown 地址无需修改；成功结果中的 `replaced` 为 `true`。不要把普通 `upload` 当作替换操作，也不要猜测 `attachmentId`。
+
+下载已授权附件时执行：
+
+    python3 <AKASHA_SKILL_DIR>/scripts/akasha.py page attachment download <ATTACHMENT_ID> \
+      --output <OUTPUT_FILE>
+
+下载命令会先读取附件元数据，再使用当前 API Key 下载文件并写入本地路径。`attachmentId` 必须来自 Akasha API 或之前的上传结果；遇到 403/404 时停止，不要改用其他页面或猜测文件名。
+
+附件上传和下载只处理附件本身；不要把 Base64 内容塞进 Markdown，也不要让服务端抓取任意外部 URL。
+
 ## 删除和恢复个人空间 Page
 
 仅在用户明确要求删除个人 Page 时执行；删除只做软删除（移入回收站），可恢复：
@@ -150,6 +188,8 @@ macOS 凭据保存在 `~/.akasha/credentials.env`，Linux 保存在 `~/.config/a
 | 拼接或猜测 Page 地址 | 使用用户提供或 Akasha 返回的准确 `/p/<slug>` 地址 |
 | 每次 query 后读取所有完整 Page | 仅在用户要求或确需更多上下文时调用 `citation get` |
 | 绕过权限写公共空间 Page | 只使用 `page get/search/create/update`，由服务端按 API Key 所属用户的空间和 Page 权限校验 |
+| 手写 `/api/files/...` 附件地址 | 只使用 `page attachment upload` 或 `replace` 返回的 `markdown` 字段 |
+| 未绑定 Page 直接上传附件 | 先创建或读取目标 Page，使用可信 `pageId` |
 
 ## 权限与错误处理
 

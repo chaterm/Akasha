@@ -6,15 +6,18 @@
 - 可见空间与已编译 Wiki 查询
 - 有权限的共享 Page 读取
 - Page 搜索、读取、创建、更新
+- Page 附件上传、替换与下载
 - 个人 Page 删除和恢复
 - 个人 Page 最近列表与回收站
 - 错误处理
 
-所有请求均为 JSON POST，并携带：
+JSON 请求均为 POST，并携带：
 
     Authorization: Bearer <API_KEY>
     Content-Type: application/json
-    X-Akasha-Skill-Version: 1.2.0
+    X-Akasha-Skill-Version: 1.3.0
+
+附件上传使用同一 `Authorization` 和 `X-Akasha-Skill-Version`，但请求体为受限的 multipart/form-data；附件下载使用带认证的 GET。
 
 Akasha 服务的成功响应使用统一包装，Skill 会自动取出 `data`；下文描述的响应字段均指 `data` 内部字段：
 
@@ -45,7 +48,7 @@ POST /api/users/me
       },
       "skillUpdateNotice": {
         "currentVersion": "1.0.0",
-        "latestVersion": "1.2.0",
+        "latestVersion": "1.3.0",
         "message": "当前 Skill 版本较旧，建议提示用户升级。",
         "upgradeUrl": "https://example.com/akasha-skill"
       }
@@ -168,6 +171,61 @@ POST /api/pages/update
     }
 
 operation 支持 replace、append 和 prepend。不要发送 spaceId。精准改写既有内容时，应先读取 Page 的完整原文、保留未要求修改的部分，再以 replace 提交完整修改稿。API 必须根据 pageId 按当前用户空间和 Page 编辑权限校验。
+
+## Page 附件上传与替换
+
+POST /api/files/upload
+
+请求体是 `multipart/form-data`，包含：
+
+- `pageId`：目标 Page ID，必填。
+- `file`：单个附件文件，必填；图片、PDF、DOCX、ZIP 等类型由服务端按配置限制。
+- `attachmentId`：可选；传入时覆盖同一 Page 上的已有附件。
+
+服务端按当前 API Key 的 Page 编辑权限校验 `pageId`。上传接口返回的附件记录至少包含 `id`、`fileName`、`mimeType` 和 `fileSize`：
+
+    {
+      "id": "attachment-1",
+      "fileName": "guide.pdf",
+      "mimeType": "application/pdf",
+      "fileSize": 123456
+    }
+
+Skill CLI 将响应整理为：
+
+    {
+      "attachmentId": "attachment-1",
+      "pageId": "page-1",
+      "fileName": "guide.pdf",
+      "mimeType": "application/pdf",
+      "fileSize": 123456,
+      "url": "/api/files/attachment-1/guide.pdf",
+      "markdown": "[guide.pdf](/api/files/attachment-1/guide.pdf)"
+    }
+
+`markdown` 必须原样插入 Page 的 Markdown 正文。图片使用 `![fileName](url)`，普通附件使用 `[fileName](url)`。上传本身不修改正文；新建 Page 时必须先创建 Page 取得 `pageId`，再上传文件，最后调用 `/api/pages/update`。
+
+替换已有附件时，仍调用 `POST /api/files/upload`，同时传入原 `attachmentId`。服务端要求新旧附件属于同一 Page 且扩展名一致；Skill 会先读取原附件文件名并使用该文件名上传，避免服务端保留旧路径时导致原 Markdown 地址失效。成功结果包含 `replaced: true`，原 `attachmentId`、`url` 和 `markdown` 保持不变。
+
+## Page 附件元数据与下载
+
+POST /api/files/info
+
+    {
+      "attachmentId": "attachment-1"
+    }
+
+接口按当前用户的 Page 查看权限返回附件元数据。Skill 下载前会先调用此接口，以取得服务端保存的 `fileName`，不接受用户猜测的文件名。
+
+GET /api/files/<attachmentId>/<fileName>
+
+下载请求必须携带：
+
+    Authorization: Bearer <API_KEY>
+    Accept: application/octet-stream
+    X-Akasha-Skill-Version: 1.3.0
+
+服务端再次按 workspace 和 Page ACL 校验访问权限。CLI 会把响应写入 `--output` 指定的本地文件，不把二进制内容打印到终端。
 
 ## 删除个人空间 Page
 
