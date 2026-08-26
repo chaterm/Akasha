@@ -15,6 +15,8 @@ import {
   KyselyDB,
   KyselyTransaction,
 } from '../../../database/types/kysely.types';
+import { jsonToText } from '../../../collaboration/collaboration.util';
+import { hasTableNode } from '../../../common/helpers/prosemirror/table-text';
 
 const KNOWLEDGE_EXPORT_PAGE_SIZE = 200;
 
@@ -101,7 +103,9 @@ export class KnowledgeSourceExporterService {
     );
 
     return pages.map((page) => {
-      const text = page.textContent ?? '';
+      const text = hasTableNode(page.content)
+        ? jsonToText(page.content as Parameters<typeof jsonToText>[0])
+        : (page.textContent ?? '');
       const title = page.title ?? '';
       const images = (imageRefsByPageId.get(page.id) ?? []).flatMap(
         (reference): KnowledgeSourceImage[] => {

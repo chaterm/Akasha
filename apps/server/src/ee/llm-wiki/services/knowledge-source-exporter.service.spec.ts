@@ -167,6 +167,69 @@ describe('KnowledgeSourceExporterService', () => {
     ).resolves.toMatchObject([{ text: '' }]);
   });
 
+  it('rebuilds table text from structured content instead of stale flattened text', async () => {
+    const pageRepo = {
+      findPagesByIdsForKnowledgeExport: jest.fn().mockResolvedValue([
+        {
+          id: 'page-1',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          title: 'Example inventory',
+          textContent:
+            'Service Version Primary IP Contact service-alpha 5.7-test 192.0.2.8 owner-a',
+          content: {
+            type: 'doc',
+            content: [
+              {
+                type: 'table',
+                content: [
+                  {
+                    type: 'tableRow',
+                    content: [
+                      cell('tableHeader', 'Service'),
+                      cell('tableHeader', 'Version'),
+                      cell('tableHeader', 'Primary IP'),
+                      cell('tableHeader', 'Contact'),
+                    ],
+                  },
+                  {
+                    type: 'tableRow',
+                    content: [
+                      cell('tableCell', 'service-alpha'),
+                      cell('tableCell', '5.7-test'),
+                      cell('tableCell', '192.0.2.8'),
+                      cell('tableCell', 'owner-a'),
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          updatedAt: new Date('2026-08-25T00:00:00.000Z'),
+        },
+      ]),
+    };
+    const backlinkRepo = {
+      findOutgoingPageReferences: jest.fn().mockResolvedValue([]),
+    };
+    const service = new KnowledgeSourceExporterService(
+      pageRepo as unknown as PageRepo,
+      backlinkRepo as unknown as BacklinkRepo,
+      createEmptyAttachmentRepo(),
+    );
+
+    const [snapshot] = await service.exportPageSources({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageIds: ['page-1'],
+    });
+
+    expect(snapshot.text).toContain(
+      'Service=service-alpha；Version=5.7-test；Primary IP=192.0.2.8；Contact=owner-a',
+    );
+    expect(snapshot.text).not.toContain('Service Version Primary IP Contact');
+  });
+
   it('exports only the requested pages for incremental compilation', async () => {
     const pageRepo = {
       findPagesByIdsForKnowledgeExport: jest.fn().mockResolvedValue([
@@ -215,7 +278,7 @@ describe('KnowledgeSourceExporterService', () => {
         {
           type: 'image',
           attrs: {
-            src: '/api/files/019eaf5b-5e81-744c-8438-f8c53ef34658/diagram-from-src.png',
+            src: '/api/files/00000000-0000-4000-8000-000000000001/diagram-from-src.png',
             alt: 'Imported diagram',
           },
         },
@@ -255,7 +318,7 @@ describe('KnowledgeSourceExporterService', () => {
           deletedAt: null,
         },
         {
-          id: '019eaf5b-5e81-744c-8438-f8c53ef34658',
+          id: '00000000-0000-4000-8000-000000000001',
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
           pageId: 'page-1',
@@ -296,7 +359,7 @@ describe('KnowledgeSourceExporterService', () => {
 
     expect(attachmentRepo.findByIds).toHaveBeenCalledWith([
       'image-1',
-      '019eaf5b-5e81-744c-8438-f8c53ef34658',
+      '00000000-0000-4000-8000-000000000001',
       'foreign-image',
     ]);
     expect(snapshot.images).toEqual([
@@ -309,7 +372,7 @@ describe('KnowledgeSourceExporterService', () => {
         altText: 'System diagram',
       },
       {
-        attachmentId: '019eaf5b-5e81-744c-8438-f8c53ef34658',
+        attachmentId: '00000000-0000-4000-8000-000000000001',
         fileName: 'diagram-from-src.png',
         mimeType: 'image/png',
         fileSize: 4096,
@@ -524,4 +587,16 @@ function createEmptyAttachmentRepo(): AttachmentRepo {
   return {
     findByIds: jest.fn().mockResolvedValue([]),
   } as unknown as AttachmentRepo;
+}
+
+function cell(type: string, text: string) {
+  return {
+    type,
+    content: [
+      {
+        type: 'paragraph',
+        content: [{ type: 'text', text }],
+      },
+    ],
+  };
 }

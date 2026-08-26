@@ -129,6 +129,38 @@ describe('SemanticKnowledgeCompilerRunner', () => {
     expect(compilationRepo.saveAnalysis).toHaveBeenCalledTimes(2);
   });
 
+  it('adds deterministic table-row evidence to the source summary', async () => {
+    const provider = createProvider();
+    const runner = new TestSemanticKnowledgeCompilerRunner(
+      provider,
+      createCompilationRepo(),
+    );
+    const input = compileInput();
+    input.sources[0].content = tableContent();
+    input.sources[0].text =
+      '表头：Service；Version；Primary IP；Contact\nService=service-alpha；Version=5.7-test；Primary IP=192.0.2.8；Contact=owner-a';
+
+    const result = await runner.compileSpace(input);
+    const summary = result.artifacts.find(
+      (artifact) => artifact.artifactKind === 'source_summary',
+    );
+    const rowChunk = summary?.chunks?.find((chunk) =>
+      chunk.text.includes('Primary IP=192.0.2.8'),
+    );
+
+    expect(rowChunk).toEqual(
+      expect.objectContaining({
+        chunkRole: 'standalone',
+        retrievalChannel: 'evidence',
+        embeddingText: expect.stringContaining('Primary IP=192.0.2.8'),
+      }),
+    );
+    expect(rowChunk?.inputSourceRefs?.[0]?.sourceRange).toEqual({
+      startOffset: input.sources[0].text.indexOf('Service=service-alpha'),
+      endOffset: input.sources[0].text.length,
+    });
+  });
+
   it('reuses an exact cached analysis and skips the Stage 1 call', async () => {
     const provider = createProvider();
     const compilationRepo = createCompilationRepo(analysis);
@@ -839,6 +871,46 @@ function compileInput(): CompileSpaceInput {
         title: 'Architecture notes',
         text: 'Event sourcing records changes as an append-only log.',
         references: [],
+      },
+    ],
+  };
+}
+
+function tableContent() {
+  const cell = (type: string, text: string) => ({
+    type,
+    content: [
+      {
+        type: 'paragraph',
+        content: [{ type: 'text', text }],
+      },
+    ],
+  });
+  return {
+    type: 'doc',
+    content: [
+      {
+        type: 'table',
+        content: [
+          {
+            type: 'tableRow',
+            content: [
+              cell('tableHeader', 'Service'),
+              cell('tableHeader', 'Version'),
+              cell('tableHeader', 'Primary IP'),
+              cell('tableHeader', 'Contact'),
+            ],
+          },
+          {
+            type: 'tableRow',
+            content: [
+              cell('tableCell', 'service-alpha'),
+              cell('tableCell', '5.7-test'),
+              cell('tableCell', '192.0.2.8'),
+              cell('tableCell', 'owner-a'),
+            ],
+          },
+        ],
       },
     ],
   };

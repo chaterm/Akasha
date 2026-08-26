@@ -29,6 +29,7 @@ import { chunkKnowledgeSource } from '../chunking/knowledge-structural-chunker';
 import { buildEffectiveKnowledgeHash } from '../services/knowledge-effective-hash';
 import { KnowledgeOperationBudget } from '../services/knowledge-operation-budget';
 import { SEMANTIC_COMPILER_LIMITS } from '../compiler/semantic-compiler.limits';
+import { extractKnowledgeTableRows } from '../../../common/helpers/prosemirror/table-text';
 import {
   CompilerCatalogSelection,
   KnowledgeArtifactCatalogService,
@@ -525,7 +526,7 @@ function toCompiledArtifact(input: {
     endOffset: parent.endOffset,
     inputSourceRefs: [sourceRef],
   }));
-  const chunks = structuralParents.flatMap((parent) =>
+  const structuralChunks = structuralParents.flatMap((parent) =>
     parent.children.map((child) => ({
       text: child.text,
       claimIndex: null,
@@ -541,6 +542,18 @@ function toCompiledArtifact(input: {
       embeddingText: child.embeddingText,
     })),
   );
+  const chunks = [
+    ...structuralChunks,
+    ...(input.artifact.kind === 'source_summary'
+      ? [
+          ...tableRowEvidenceChunks(
+            input.source,
+            input.artifact.title,
+            sourceRef,
+          ),
+        ]
+      : []),
+  ];
   const links = input.artifact.links.map((link) => {
     const lookupKey = artifactLookupKey(
       link.targetKind,
@@ -584,6 +597,43 @@ function toCompiledArtifact(input: {
     graphEdges: [],
     rawArtifactKey: `${input.artifact.kind}:${input.artifact.canonicalKey}`,
   };
+}
+
+function tableRowEvidenceChunks(
+  source: KnowledgeSourceSnapshot,
+  artifactTitle: string,
+  sourceRef: KnowledgeSourceRef,
+) {
+  let sourceCursor = 0;
+  return extractKnowledgeTableRows(source.content).map((row) => {
+    const startOffset = source.text.indexOf(row.text, sourceCursor);
+    const endOffset =
+      startOffset >= 0 ? startOffset + row.text.length : undefined;
+    if (startOffset >= 0) sourceCursor = endOffset!;
+    const rowSourceRef =
+      startOffset >= 0
+        ? {
+            ...sourceRef,
+            sourceRange: { startOffset, endOffset: endOffset! },
+            quoteHash: `sha256:${sha256(row.text)}`,
+          }
+        : sourceRef;
+    const text = `${artifactTitle} 表格第${row.rowIndex + 1}行：${row.text}`;
+    return {
+      text,
+      claimIndex: null,
+      inputSourceRefs: [rowSourceRef],
+      contentHash: `sha256:${sha256(row.text)}`,
+      stableKey: `table-row:${row.tableIndex}:${row.rowIndex}`,
+      parentStableKey: null,
+      chunkRole: 'standalone' as const,
+      retrievalChannel: 'evidence' as const,
+      headingPath: [],
+      startOffset,
+      endOffset,
+      embeddingText: `${source.title}\n${text}`,
+    };
+  });
 }
 
 type RelationshipTarget = {
