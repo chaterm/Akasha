@@ -92,6 +92,36 @@ def _build_parser() -> argparse.ArgumentParser:
         default="replace",
     )
 
+    attachment = page_commands.add_parser(
+        "attachment",
+        help="Upload, replace, or download Page attachments",
+    )
+    attachment_commands = attachment.add_subparsers(
+        dest="attachment_command",
+        required=True,
+    )
+    upload_attachment = attachment_commands.add_parser(
+        "upload",
+        help="Upload a file to a Page",
+    )
+    upload_attachment.add_argument("page_id")
+    upload_attachment.add_argument("--file", required=True)
+
+    replace_attachment = attachment_commands.add_parser(
+        "replace",
+        help="Replace an existing Page attachment without changing its URL",
+    )
+    replace_attachment.add_argument("page_id")
+    replace_attachment.add_argument("attachment_id")
+    replace_attachment.add_argument("--file", required=True)
+
+    download_attachment = attachment_commands.add_parser(
+        "download",
+        help="Download an ACL-authorized Page attachment",
+    )
+    download_attachment.add_argument("attachment_id")
+    download_attachment.add_argument("--output", required=True)
+
     search_page = page_commands.add_parser(
         "search",
         help="Search page source in the personal space or a specified space",
@@ -444,6 +474,64 @@ def main(
             _write_json(
                 output,
                 _with_skill_update_notice(_page_write_result(result), identity),
+            )
+            return 0
+
+        if (
+            args.command == "page"
+            and args.page_command == "attachment"
+            and args.attachment_command == "upload"
+        ):
+            client, identity = _create_client(
+                factory,
+                credential_file=credential_file,
+            )
+            result = client.upload_file(
+                page_id=args.page_id,
+                file_path=args.file,
+            )
+            _write_json(
+                output,
+                _with_skill_update_notice(result, identity),
+            )
+            return 0
+
+        if (
+            args.command == "page"
+            and args.page_command == "attachment"
+            and args.attachment_command == "replace"
+        ):
+            client, identity = _create_client(
+                factory,
+                credential_file=credential_file,
+            )
+            result = client.replace_file(
+                page_id=args.page_id,
+                attachment_id=args.attachment_id,
+                file_path=args.file,
+            )
+            _write_json(
+                output,
+                _with_skill_update_notice(result, identity),
+            )
+            return 0
+
+        if (
+            args.command == "page"
+            and args.page_command == "attachment"
+            and args.attachment_command == "download"
+        ):
+            client, identity = _create_client(
+                factory,
+                credential_file=credential_file,
+            )
+            result = client.download_attachment(
+                attachment_id=args.attachment_id,
+                output_path=args.output,
+            )
+            _write_json(
+                output,
+                _with_skill_update_notice(result, identity),
             )
             return 0
 
