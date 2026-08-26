@@ -136,12 +136,14 @@ export class AiChatRepo {
       .returningAll()
       .executeTakeFirst();
 
-    await this.db
-      .updateTable('aiChats')
-      .set({ updatedAt: new Date() })
-      .where('id', '=', input.chatId)
-      .where('workspaceId', '=', input.workspaceId)
-      .execute();
+    if (input.role === 'user') {
+      await this.db
+        .updateTable('aiChats')
+        .set({ updatedAt: new Date() })
+        .where('id', '=', input.chatId)
+        .where('workspaceId', '=', input.workspaceId)
+        .execute();
+    }
 
     return stripTsv(message as AiChatMessage & { tsv?: string });
   }
@@ -293,15 +295,6 @@ export class AiChatRepo {
         })
         .returningAll()
         .executeTakeFirst();
-
-      await trx
-        .updateTable('aiChats')
-        .set({ updatedAt: new Date() })
-        .where('workspaceId', '=', input.workspaceId)
-        .where('creatorId', '=', input.userId)
-        .where('id', '=', input.chatId)
-        .where('deletedAt', 'is', null)
-        .execute();
 
       return stripTsv(message);
     });

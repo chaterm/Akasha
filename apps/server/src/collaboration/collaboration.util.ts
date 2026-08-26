@@ -55,6 +55,10 @@ import { generateHTML, generateJSON } from '../common/helpers/prosemirror/html';
 import { Node, Schema } from '@tiptap/pm/model';
 import * as Y from 'yjs';
 import { Logger } from '@nestjs/common';
+import {
+  hasTableNode,
+  serializeTableNode,
+} from '../common/helpers/prosemirror/table-text';
 
 export const tiptapExtensions = [
   StarterKit.configure({
@@ -131,6 +135,20 @@ export function htmlToJson(html: string) {
 }
 
 export function jsonToText(tiptapJson: JSONContent) {
+  if (hasTableNode(tiptapJson)) {
+    const blocks = (tiptapJson.content ?? [])
+      .filter((node) => node && typeof node === 'object')
+      .map((node) =>
+        node.type === 'table'
+          ? serializeTableNode(node).join('\n')
+          : generateText(
+              { type: 'doc', content: [node] },
+              tiptapExtensions,
+            ).trim(),
+      )
+      .filter(Boolean);
+    return blocks.join('\n\n');
+  }
   return generateText(tiptapJson, tiptapExtensions);
 }
 
