@@ -3,15 +3,23 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import re
+from pathlib import Path
 from typing import Any, Callable, Sequence
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+from uuid import uuid4
 
 
 Transport = Callable[[Request, float], Any]
-SKILL_VERSION = "1.2.0"
+SKILL_VERSION = "1.3.0"
+IMAGE_EXTENSIONS = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+}
 INTERNAL_CITATION_PAGE_URL = re.compile(r"/p/[A-Za-z0-9_-]+")
 # Matches the ".../p/<pageSlug>" segment inside a full browser URL or path.
 _CITATION_PAGE_SEGMENT = re.compile(r"/p/([^/?#\s]+)")
@@ -104,6 +112,44 @@ def _normalize_base_url(base_url: str) -> str:
     return value
 
 
+def _encode_multipart(
+    boundary: str,
+    *,
+    fields: dict[str, str],
+    file_field: str,
+    file_name: str,
+    file_content: bytes,
+    file_type: str,
+) -> bytes:
+    """Encode the one-file multipart contract used by /api/files/upload."""
+    chunks: list[bytes] = []
+    boundary_bytes = boundary.encode("ascii")
+    for name, value in fields.items():
+        chunks.extend(
+            [
+                b"--" + boundary_bytes + b"\r\n",
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode(
+                    "utf-8"
+                ),
+                value.encode("utf-8"),
+                b"\r\n",
+            ]
+        )
+    chunks.extend(
+        [
+            b"--" + boundary_bytes + b"\r\n",
+            (
+                f'Content-Disposition: form-data; name="{file_field}"; '
+                f'filename="{file_name}"\r\n'
+            ).encode("utf-8"),
+            f"Content-Type: {file_type}\r\n\r\n".encode("ascii"),
+            file_content,
+            b"\r\n--" + boundary_bytes + b"--\r\n",
+        ]
+    )
+    return b"".join(chunks)
+
+
 class AkashaApiClient:
     """Call the small set of Akasha APIs exposed by this Skill."""
 
@@ -129,30 +175,16 @@ class AkashaApiClient:
             self._transport = transport
         self._current_user: dict[str, Any] | None = None
 
-    def request_json(self, path: str, body: dict[str, Any]) -> Any:
-        """POST JSON and return decoded JSON without exposing secrets in errors."""
+    @staticmethod
+    def _validate_api_path(path: str) -> None:
         if not path.startswith("/") or path.startswith("//") or "://" in path:
             raise ApiConfigurationError("Akasha API path must be relative.")
 
-        request = Request(
-            f"{self.base_url}{path}",
-            data=json.dumps(
-                body,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "X-Akasha-Skill-Version": SKILL_VERSION,
-            },
-            method="POST",
-        )
-
+    def _request_bytes(self, request: Request) -> bytes:
+        """Send an authenticated request and return its raw response bytes."""
         try:
             with self._transport(request, self.timeout) as response:
-                payload = response.read()
+                return response.read()
         except HTTPError as error:
             status = error.code
             error.close()
@@ -170,14 +202,14 @@ class AkashaApiClient:
         except (URLError, TimeoutError, OSError):
             raise ApiRequestError("Unable to reach the Akasha API.") from None
 
+    @staticmethod
+    def _decode_json(payload: bytes) -> Any:
         if not payload.strip():
             return None
-
         try:
             result = json.loads(payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             raise ApiContractError("Akasha API returned invalid JSON.") from None
-
         if (
             isinstance(result, dict)
             and result.get("success") is True
@@ -186,6 +218,228 @@ class AkashaApiClient:
         ):
             return result["data"]
         return result
+
+    def request_json(self, path: str, body: dict[str, Any]) -> Any:
+        """POST JSON and return decoded JSON without exposing secrets in errors."""
+        self._validate_api_path(path)
+
+        request = Request(
+            f"{self.base_url}{path}",
+            data=json.dumps(
+                body,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "X-Akasha-Skill-Version": SKILL_VERSION,
+            },
+            method="POST",
+        )
+
+        return self._decode_json(self._request_bytes(request))
+
+    def upload_file(
+        self,
+        *,
+        page_id: str,
+        file_path: str,
+        attachment_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Upload any local file, optionally overwriting a Page attachment."""
+        if not page_id:
+            raise ApiConfigurationError("Page ID is required.")
+        if attachment_id is not None and not attachment_id:
+            raise ApiConfigurationError("Attachment ID is required for replacement.")
+        replaced = bool(attachment_id)
+
+        source = Path(file_path)
+        if not source.is_file():
+            raise ApiConfigurationError("Attachment file does not exist.")
+        mime_type = (
+            mimetypes.guess_type(source.name)[0] or "application/octet-stream"
+        )
+
+        upload_name = (
+            source.name.replace("\\", "_")
+            .replace('"', "_")
+            .replace("\r", "_")
+            .replace("\n", "_")
+        )
+        if attachment_id:
+            existing = self.get_attachment_info(attachment_id)
+            existing_name = existing["fileName"]
+            if Path(existing_name).suffix.lower() != source.suffix.lower():
+                raise ApiConfigurationError(
+                    "Replacement file must keep the existing file extension."
+                )
+            # The server keeps the existing attachment file path on update;
+            # preserve its filename so the existing Markdown URL remains valid.
+            upload_name = existing_name
+
+        boundary = f"----AkashaSkill{uuid4().hex}"
+        try:
+            file_content = source.read_bytes()
+        except OSError:
+            raise ApiConfigurationError(
+                f"Unable to read attachment file: {source}"
+            ) from None
+
+        fields = {"pageId": page_id}
+        if attachment_id:
+            fields["attachmentId"] = attachment_id
+        body = _encode_multipart(
+            boundary,
+            fields=fields,
+            file_field="file",
+            file_name=upload_name,
+            file_content=file_content,
+            file_type=mime_type,
+        )
+        request = Request(
+            f"{self.base_url}/api/files/upload",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "Accept": "application/json",
+                "X-Akasha-Skill-Version": SKILL_VERSION,
+            },
+            method="POST",
+        )
+        result = self._decode_json(self._request_bytes(request))
+        if not isinstance(result, dict):
+            raise ApiContractError("Akasha attachment upload response is invalid.")
+
+        attachment_id = result.get("id")
+        file_name = result.get("fileName")
+        if not isinstance(attachment_id, str) or not attachment_id:
+            raise ApiContractError("Akasha attachment upload response is missing id.")
+        if not isinstance(file_name, str) or not file_name:
+            raise ApiContractError(
+                "Akasha attachment upload response is missing fileName."
+            )
+
+        encoded_name = quote(file_name, safe="")
+        url = f"/api/files/{attachment_id}/{encoded_name}"
+        actual_mime_type = result.get("mimeType") or mime_type
+        markdown = (
+            f"![{file_name}]({url})"
+            if isinstance(actual_mime_type, str)
+            and actual_mime_type.startswith("image/")
+            else f"[{file_name}]({url})"
+        )
+        return {
+            "attachmentId": attachment_id,
+            "pageId": page_id,
+            "fileName": file_name,
+            "mimeType": actual_mime_type,
+            "fileSize": result.get("fileSize"),
+            "url": url,
+            "markdown": markdown,
+            "replaced": replaced,
+        }
+
+    def upload_image(
+        self,
+        *,
+        page_id: str,
+        file_path: str,
+        attachment_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Compatibility wrapper for callers that explicitly upload images."""
+        if Path(file_path).suffix.lower() not in IMAGE_EXTENSIONS:
+            raise ApiConfigurationError(
+                "Only .png, .jpg, and .jpeg images are supported."
+            )
+        return self.upload_file(
+            page_id=page_id,
+            file_path=file_path,
+            attachment_id=attachment_id,
+        )
+
+    def replace_file(
+        self,
+        *,
+        page_id: str,
+        attachment_id: str,
+        file_path: str,
+    ) -> dict[str, Any]:
+        """Replace any Page attachment while preserving its URL."""
+        return self.upload_file(
+            page_id=page_id,
+            file_path=file_path,
+            attachment_id=attachment_id,
+        )
+
+    def replace_image(
+        self,
+        *,
+        page_id: str,
+        attachment_id: str,
+        file_path: str,
+    ) -> dict[str, Any]:
+        """Replace a Page image while preserving its attachment URL."""
+        return self.upload_image(
+            page_id=page_id,
+            file_path=file_path,
+            attachment_id=attachment_id,
+        )
+
+    def get_attachment_info(self, attachment_id: str) -> dict[str, Any]:
+        if not attachment_id:
+            raise ApiConfigurationError("Attachment ID is required.")
+        result = self.request_json(
+            "/api/files/info",
+            {"attachmentId": attachment_id},
+        )
+        if not isinstance(result, dict):
+            raise ApiContractError("Akasha attachment response is invalid.")
+        file_name = result.get("fileName")
+        if not isinstance(file_name, str) or not file_name:
+            raise ApiContractError(
+                "Akasha attachment response is missing fileName."
+            )
+        return result
+
+    def download_attachment(
+        self,
+        *,
+        attachment_id: str,
+        output_path: str,
+    ) -> dict[str, Any]:
+        """Download an ACL-authorized attachment to a local file."""
+        info = self.get_attachment_info(attachment_id)
+        file_name = info["fileName"]
+        url = f"/api/files/{attachment_id}/{quote(file_name, safe='')}"
+        request = Request(
+            f"{self.base_url}{url}",
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Accept": "application/octet-stream",
+                "X-Akasha-Skill-Version": SKILL_VERSION,
+            },
+            method="GET",
+        )
+        payload = self._request_bytes(request)
+        target = Path(output_path)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(payload)
+        except OSError:
+            raise ApiConfigurationError(
+                "Unable to write the downloaded attachment."
+            ) from None
+        return {
+            "attachmentId": attachment_id,
+            "fileName": file_name,
+            "mimeType": info.get("mimeType"),
+            "fileSize": len(payload),
+            "outputPath": str(target),
+            "url": url,
+        }
 
     def get_current_user(self) -> dict[str, Any]:
         if self._current_user is not None:
