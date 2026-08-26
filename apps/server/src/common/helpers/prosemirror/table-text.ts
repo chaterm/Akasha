@@ -44,13 +44,13 @@ export function serializeTableNode(value: unknown): string[] {
   );
   const headers = hasHeader ? headerLabels(normalized[0]) : [];
   const dataRows = hasHeader ? normalized.slice(1) : normalized;
-  const lines = hasHeader ? [`表头：${headers.join('；')}`] : [];
+  const lines = hasHeader ? [`Headers: ${headers.join('; ')}`] : [];
 
   for (const row of dataRows) {
     const values = row.map((cell) => cellText(cell ?? {}));
     const labels = headers.length
       ? headers
-      : values.map((_, index) => `第${index + 1}列`);
+      : values.map((_, index) => `Column ${index + 1}`);
     lines.push(formatRow(labels, values));
   }
 
@@ -73,7 +73,7 @@ function serializeTableRows(
     const values = row.map((cell) => cellText(cell ?? {}));
     const labels = headers.length
       ? headers
-      : values.map((_, valueIndex) => `第${valueIndex + 1}列`);
+      : values.map((_, valueIndex) => `Column ${valueIndex + 1}`);
     return {
       tableIndex,
       rowIndex: hasHeader ? index + 1 : index,
@@ -120,7 +120,9 @@ function normalizeTableRows(
 }
 
 function headerLabels(row: Array<TableCell | undefined>): string[] {
-  return row.map((cell, index) => cellText(cell ?? {}) || `第${index + 1}列`);
+  return row.map(
+    (cell, index) => cellText(cell ?? {}) || `Column ${index + 1}`,
+  );
 }
 
 function positiveSpan(value: unknown): number {
@@ -131,10 +133,10 @@ function positiveSpan(value: unknown): number {
 function formatRow(labels: string[], values: string[]): string {
   const width = Math.max(labels.length, values.length);
   return Array.from({ length: width }, (_, index) => {
-    const label = labels[index] || `第${index + 1}列`;
+    const label = labels[index] || `Column ${index + 1}`;
     const value = values[index] ?? '';
     return `${escapeText(label)}=${escapeText(value)}`;
-  }).join('；');
+  }).join('; ');
 }
 
 function rowCells(row: Record<string, unknown>): Record<string, unknown>[] {

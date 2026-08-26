@@ -138,7 +138,7 @@ describe('SemanticKnowledgeCompilerRunner', () => {
     const input = compileInput();
     input.sources[0].content = tableContent();
     input.sources[0].text =
-      '表头：Service；Version；Primary IP；Contact\nService=service-alpha；Version=5.7-test；Primary IP=192.0.2.8；Contact=owner-a';
+      'Headers: Service; Version; Primary IP; Contact\nService=service-alpha; Version=5.7-test; Primary IP=192.0.2.8; Contact=owner-a';
 
     const result = await runner.compileSpace(input);
     const summary = result.artifacts.find(

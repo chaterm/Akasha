@@ -27,8 +27,8 @@ const table = {
 describe('table text serialization', () => {
   it('keeps headers paired with values in each data row', () => {
     expect(serializeTableNode(table)).toEqual([
-      '表头：Service；Version；Primary IP；Contact',
-      'Service=service-alpha；Version=5.7-test；Primary IP=192.0.2.8；Contact=owner-a',
+      'Headers: Service; Version; Primary IP; Contact',
+      'Service=service-alpha; Version=5.7-test; Primary IP=192.0.2.8; Contact=owner-a',
     ]);
     expect(
       extractKnowledgeTableRows({ type: 'doc', content: [table] }),
@@ -36,7 +36,7 @@ describe('table text serialization', () => {
       {
         tableIndex: 0,
         rowIndex: 1,
-        text: 'Service=service-alpha；Version=5.7-test；Primary IP=192.0.2.8；Contact=owner-a',
+        text: 'Service=service-alpha; Version=5.7-test; Primary IP=192.0.2.8; Contact=owner-a',
       },
     ]);
   });
@@ -71,9 +71,9 @@ describe('table text serialization', () => {
     };
 
     expect(serializeTableNode(mergedTable)).toEqual([
-      '表头：Index；Owner；Component；IP',
-      'Index=1；Owner=owner-a；Component=component-alpha；IP=192.0.2.134',
-      'Index=1；Owner=owner-a；Component=component-alpha；IP=192.0.2.135',
+      'Headers: Index; Owner; Component; IP',
+      'Index=1; Owner=owner-a; Component=component-alpha; IP=192.0.2.134',
+      'Index=1; Owner=owner-a; Component=component-alpha; IP=192.0.2.135',
     ]);
 
     expect(
@@ -98,8 +98,8 @@ describe('table text serialization', () => {
         ],
       }),
     ).toEqual([
-      '表头：Node；Node；IP',
-      'Node=component-alpha；Node=primary；IP=192.0.2.134',
+      'Headers: Node; Node; IP',
+      'Node=component-alpha; Node=primary; IP=192.0.2.134',
     ]);
   });
 });

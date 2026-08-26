@@ -225,7 +225,7 @@ describe('KnowledgeSourceExporterService', () => {
     });
 
     expect(snapshot.text).toContain(
-      'Service=service-alpha；Version=5.7-test；Primary IP=192.0.2.8；Contact=owner-a',
+      'Service=service-alpha; Version=5.7-test; Primary IP=192.0.2.8; Contact=owner-a',
     );
     expect(snapshot.text).not.toContain('Service Version Primary IP Contact');
   });

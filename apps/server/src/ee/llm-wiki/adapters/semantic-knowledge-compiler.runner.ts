@@ -618,7 +618,7 @@ function tableRowEvidenceChunks(
             quoteHash: `sha256:${sha256(row.text)}`,
           }
         : sourceRef;
-    const text = `${artifactTitle} 表格第${row.rowIndex + 1}行：${row.text}`;
+    const text = `${artifactTitle} Table row ${row.rowIndex + 1}: ${row.text}`;
     return {
       text,
       claimIndex: null,
