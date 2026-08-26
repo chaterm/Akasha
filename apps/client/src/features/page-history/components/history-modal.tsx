@@ -53,7 +53,12 @@ export default function HistoryModal({ pageId, pageTitle }: Props) {
       aria-label={t("Page history")}
     >
       <Modal.Overlay />
-      <Modal.Content style={{ overflow: "hidden" }}>
+      <Modal.Content
+        style={{
+          overflow: "hidden",
+          maxHeight: "calc(100dvh - 16px)",
+        }}
+      >
         <Modal.Header>
           <Modal.Title>
             <Text size="md" fw={500}>
