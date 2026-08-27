@@ -4,7 +4,7 @@ import {
   Injectable,
   Optional,
 } from '@nestjs/common';
-import { Workspace } from '@akasha/db/types/entity.types';
+import { User, Workspace } from '@akasha/db/types/entity.types';
 import { PageRepo } from '@akasha/db/repos/page/page.repo';
 import { AttachmentRepo } from '@akasha/db/repos/attachment/attachment.repo';
 import { KNOWLEDGE_ANSWER_PROVIDER } from '../llm-wiki.constants';
@@ -50,6 +50,8 @@ type AiKnowledgeChatInput = {
   contextPageId?: string;
   attachmentIds?: string[];
   responseMode?: 'knowledge' | 'general';
+  /** Whether an empty/insufficient knowledge retrieval may fall back to general AI. */
+  generalKnowledgeEnabled?: boolean;
   onToken?: (token: string) => void;
   onStage?: (stage: 'understanding' | 'retrieval' | 'generation') => void;
   onThinking?: (event: AiChatThinkingEvent) => void;
@@ -282,6 +284,21 @@ export class AiKnowledgeChatService {
     );
 
     if (!hasKnowledgeEvidence) {
+      if (input.generalKnowledgeEnabled === false) {
+        return {
+          ...this.buildNoMatchResult(
+            input.query,
+            thinking,
+            input.onToken,
+            input.onStage,
+          ),
+          ...(contextualRetrievalQuery
+            ? { retrievalQuery: contextualRetrievalQuery }
+            : {}),
+          retrievalDiagnostics,
+          ...(retrievalScope ? { retrievalScope } : {}),
+        };
+      }
       const generalAnswer = await this.answerFromGeneralKnowledge(
         input,
         thinking,
@@ -352,6 +369,21 @@ export class AiKnowledgeChatService {
       generatedAnswer.mode === 'general'
     ) {
       thinking.complete('preparing', undefined, 'insufficient');
+      if (input.generalKnowledgeEnabled === false) {
+        return {
+          ...this.buildNoMatchResult(
+            input.query,
+            thinking,
+            input.onToken,
+            input.onStage,
+          ),
+          ...(contextualRetrievalQuery
+            ? { retrievalQuery: contextualRetrievalQuery }
+            : {}),
+          retrievalDiagnostics,
+          ...(retrievalScope ? { retrievalScope } : {}),
+        };
+      }
       const generalAnswer = await this.answerFromGeneralKnowledge(
         {
           ...input,
@@ -490,6 +522,32 @@ export class AiKnowledgeChatService {
     return {
       answer: `${buildGeneralKnowledgeDisclaimer(query)}${cleanAnswer}`,
       answerMode: 'general',
+      citations: [],
+      citationEvidence: [],
+      retrievedSources: [],
+      snippets: [],
+      warnings: pack.warnings,
+      retrievalReasons: [],
+      budget: pack.budget,
+      completenessNotice: pack.completenessNotice,
+    };
+  }
+
+  private buildNoMatchResult(
+    query: string,
+    thinking: AiChatThinkingProgress,
+    onToken?: (token: string) => void,
+    onStage?: (stage: 'understanding' | 'retrieval' | 'generation') => void,
+  ): AiKnowledgeChatResult {
+    const pack = this.contextPack.buildContextPack({});
+    const answer = buildKnowledgeNoMatchAnswer(query);
+    onStage?.('generation');
+    thinking.start('fallback');
+    onToken?.(answer);
+    thinking.complete('fallback', undefined, 'insufficient');
+    return {
+      answer,
+      answerMode: 'no_match',
       citations: [],
       citationEvidence: [],
       retrievedSources: [],
@@ -651,6 +709,23 @@ export function isKnowledgeAiEnabledForWorkspace(
   }
 
   return (aiSettings as Record<string, unknown>).chat === true;
+}
+
+/** User preference defaults to enabled for backwards compatibility. */
+export function isGeneralKnowledgeEnabledForUser(user: User): boolean {
+  const settings = user.settings;
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    return true;
+  }
+  const preferences = (settings as Record<string, unknown>).preferences;
+  if (
+    !preferences ||
+    typeof preferences !== 'object' ||
+    Array.isArray(preferences)
+  ) {
+    return true;
+  }
+  return (preferences as Record<string, unknown>).generalKnowledge !== false;
 }
 
 class AiChatThinkingProgress {
@@ -879,6 +954,14 @@ function buildGenerationUnavailableAnswer(query: string): string {
   }
 
   return 'Relevant knowledge was retrieved, but the answer model did not produce a response. Try again later or ask an administrator to check the AI model configuration.';
+}
+
+function buildKnowledgeNoMatchAnswer(query: string): string {
+  if (/\p{Script=Han}/u.test(query)) {
+    return '未检索到可用的知识库内容。请调整问题描述、补充更多上下文、选择其他知识空间，或开启通用知识模式后重试。';
+  }
+
+  return 'No usable knowledge was found. Try rephrasing the question, adding more context, choosing another knowledge space, or enabling general knowledge mode.';
 }
 
 class CitationStreamSanitizer {

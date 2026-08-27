@@ -477,6 +477,11 @@ function normalizeKnowledgeQueryResult(value: unknown): KnowledgeQueryResult {
 
   return {
     answer: typeof record.answer === "string" ? record.answer : "",
+    ...(record.answerMode === "knowledge" ||
+    record.answerMode === "no_match" ||
+    record.answerMode === "general"
+      ? { answerMode: record.answerMode }
+      : {}),
     citations: citations
       .filter(isRecord)
       .map(normalizeCitation)

@@ -233,7 +233,7 @@ describe("ChatMessage knowledge evidence", () => {
     ).toBeTruthy();
   });
 
-  it("clearly marks deterministic no-match answers", () => {
+  it("does not show an empty evidence card for no-match answers", () => {
     render(
       <MantineProvider>
         <MemoryRouter>
@@ -252,7 +252,8 @@ describe("ChatMessage knowledge evidence", () => {
       </MantineProvider>,
     );
 
-    expect(screen.getByText("No matching knowledge found")).toBeTruthy();
+    expect(screen.getByText("No evidence")).toBeTruthy();
+    expect(screen.queryByText("No matching knowledge found")).toBeNull();
   });
 
   it("uses only the inline disclaimer for a general-knowledge answer", () => {
