@@ -303,7 +303,8 @@ export default function ChatMessage({
         {!isStreaming &&
           !isUser &&
           qaMetadata.hasQaMetadata &&
-          qaMetadata.answerMode !== "general" && (
+          qaMetadata.answerMode !== "general" &&
+          qaMetadata.answerMode !== "no_match" && (
             <KnowledgeEvidence
               citations={qaMetadata.citations}
               citationEvidence={qaMetadata.citationEvidence}

@@ -64,6 +64,7 @@ import { CitationPageDto } from './dto/citation-page.dto';
 import {
   AiKnowledgeChatService,
   AiKnowledgeChatResult,
+  isGeneralKnowledgeEnabledForUser,
 } from './services/ai-knowledge-chat.service';
 import { KnowledgeCitationImageResolverService } from './services/knowledge-citation-image-resolver.service';
 import { KnowledgeQueryCitation } from './services/knowledge-context-pack.service';
@@ -163,6 +164,9 @@ export class LlmWikiController {
       spaceIds: dto.spaceIds,
       chatContext: dto.chatContext,
       workspace,
+      ...(isGeneralKnowledgeEnabledForUser(user)
+        ? {}
+        : { generalKnowledgeEnabled: false }),
     });
     const queryHash = hashQuery(dto.query);
     const { retrievalDiagnostics, retrievalScope, ...response } = result;

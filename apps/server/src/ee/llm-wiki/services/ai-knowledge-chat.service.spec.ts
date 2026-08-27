@@ -364,6 +364,30 @@ describe('AiKnowledgeChatService', () => {
     );
   });
 
+  it('returns a no-match guidance message when general knowledge fallback is disabled', async () => {
+    const answer = jest.fn();
+    const onToken = jest.fn();
+    const service = createService({ answerProvider: { answer } });
+
+    const result = await service.chat({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: '如何配置未知功能？',
+      spaceIds: ['space-1'],
+      generalKnowledgeEnabled: false,
+      onToken,
+    });
+
+    expect(answer).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      answer:
+        '未检索到可用的知识库内容。请调整问题描述、补充更多上下文、选择其他知识空间，或开启通用知识模式后重试。',
+      answerMode: 'no_match',
+      citations: [],
+    });
+    expect(onToken).toHaveBeenCalledWith(result.answer);
+  });
+
   it('regenerates a clean streaming general answer without knowledge context', async () => {
     const onToken = jest.fn();
     const onThinking = jest.fn();

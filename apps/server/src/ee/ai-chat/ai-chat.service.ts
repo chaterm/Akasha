@@ -19,6 +19,7 @@ import { UserRole } from '../../common/helpers/types/permission';
 import {
   AiKnowledgeChatService,
   type AiChatThinkingEvent,
+  isGeneralKnowledgeEnabledForUser,
 } from '../llm-wiki/services/ai-knowledge-chat.service';
 import { AttachmentRepo } from '@akasha/db/repos/attachment/attachment.repo';
 import { KnowledgeQueryAuditRepo } from '@akasha/db/repos/llm-wiki/knowledge-query-audit.repo';
@@ -382,6 +383,9 @@ export class AiChatService {
           contextPageId: input.contextPageId,
           attachmentIds: input.attachmentIds,
           responseMode: input.responseMode,
+          ...(isGeneralKnowledgeEnabledForUser(input.user)
+            ? {}
+            : { generalKnowledgeEnabled: false }),
           onToken: (text) => {
             if (text) {
               input.debugTiming?.markFirstContent({ source: 'answer' });
