@@ -11,6 +11,7 @@ import {
   Inject,
   Logger,
   NotFoundException,
+  Optional,
   Param,
   ParseUUIDPipe,
   Post,
@@ -86,6 +87,7 @@ import { getPageTitle } from '../../common/helpers';
 import { jsonToMarkdown } from '../../collaboration/collaboration.util';
 import { ApiKeyService } from '../api-key/api-key.service';
 import { getApiKeyAccess } from '../../common/auth/api-key-access';
+import { EnvironmentService } from '../../integrations/environment/environment.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('llm-wiki')
@@ -110,6 +112,7 @@ export class LlmWikiController {
     private readonly pageAccessService: PageAccessService,
     private readonly aiModelConfigService: AiModelConfigService,
     private readonly apiKeyService: ApiKeyService,
+    @Optional() private readonly environmentService?: EnvironmentService,
   ) {}
 
   @HttpCode(HttpStatus.OK)
@@ -235,8 +238,43 @@ export class LlmWikiController {
       citations: response.citations,
       citationEvidence: response.citationEvidence,
     });
+    const appUrl = this.environmentService?.getAppUrl();
 
-    return { ...response, citations: citationsWithImages };
+    return {
+      ...response,
+      citations: mapCitationUrls(citationsWithImages, appUrl),
+      ...(Array.isArray(response.citationEvidence)
+        ? {
+            citationEvidence: mapCitationUrls(
+              response.citationEvidence,
+              appUrl,
+            ),
+          }
+        : {}),
+      ...(Array.isArray(response.retrievedSources)
+        ? {
+            retrievedSources: mapCitationUrls(
+              response.retrievedSources,
+              appUrl,
+            ),
+          }
+        : {}),
+      ...(Array.isArray(response.snippets)
+        ? {
+            snippets: response.snippets.map((snippet) => ({
+              ...snippet,
+              ...(Array.isArray(snippet.sourceWindows)
+                ? {
+                    sourceWindows: mapCitationUrls(
+                      snippet.sourceWindows,
+                      appUrl,
+                    ),
+                  }
+                : {}),
+            })),
+          }
+        : {}),
+    };
   }
 
   private async resolveCitationImages(input: {
@@ -305,7 +343,10 @@ export class LlmWikiController {
       pageId: page.id,
       spaceId: page.spaceId,
       title: getPageTitle(page.title),
-      url: `/p/${page.slugId}`,
+      url: toAppCitationUrl(
+        `/p/${page.slugId}`,
+        this.environmentService?.getAppUrl(),
+      ),
       content: page.content ? jsonToMarkdown(page.content) : '',
       updatedAt: page.updatedAt,
     };
@@ -1137,4 +1178,25 @@ function isModelConfigFeature(value: string): value is AiModelConfigFeature {
     value === 'image' ||
     value === 'embedding'
   );
+}
+
+/**
+ * Citation records are also consumed by external Skills. Keep internal
+ * citation construction path-relative, but expose links using the configured
+ * browser-facing APP_URL at the HTTP boundary. This avoids callers resolving
+ * `/p/...` against the API listener (which may be a private backend port).
+ */
+function mapCitationUrls<T extends { url: string }>(
+  citations: readonly T[],
+  appUrl?: string,
+): T[] {
+  return citations.map((citation) => ({
+    ...citation,
+    url: toAppCitationUrl(citation.url, appUrl),
+  }));
+}
+
+function toAppCitationUrl(url: string, appUrl?: string): string {
+  if (!appUrl || !url.startsWith('/')) return url;
+  return `${appUrl.replace(/\/+$/, '')}${url}`;
 }
