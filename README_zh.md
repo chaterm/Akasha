@@ -258,17 +258,15 @@ brew reinstall postgresql@18
 
 **`DATABASE_URL` 指向了不存在的数据库。** `.env` 里的库名必须和你实际创建的数据库一致。从上游项目继承下来的旧 `.env` 可能还写着 `docmost` 而不是 `akasha`；要么改连接串并重新执行迁移，要么按已配置的名字建库。
 
-## Agent Skill
+## Agent Plugin
 
-Akasha Agent Skill 可让编码 Agent 查询带可信论据的 Wiki 知识、按站内地址读取有权限访问的共享 Page，以及在个人空间中创建、读取、更新、删除和恢复 Page。
+Akasha 是当前宿主配置的本地知识库，Agent 集成由 Skill 使用策略和完整的 Akasha MCP Tool 组成。请使用目标 Agent
+官方机制安装 Skill/Plugin，并用真实绝对 URL 注册 HTTP MCP Server。MCP 地址为 `/mcp`，
+认证在 Agent 宿主中配置一次实际 Bearer Key。对于 Codex，通用 Plugin 安装 Skill 后，需在
+`~/.codex/config.toml` 中写入静态 `http_headers.Authorization` 配置。
 
-```bash
-npx skills add chaterm/Akasha --skill akasha --agent codex --global --yes
-```
-
-安装完成后请新建一个会话，以便 Agent 发现并加载 Skill。去掉 `--agent codex` 可以在交互提示中选择其他目标 Agent。首次使用时，在自己的本地终端执行 Agent 提供的认证命令，并在隐藏提示中输入 API Key — 不要把密钥放进命令参数、源代码、日志或聊天消息里。
-
-详细说明见 [`skills/README.md`](./skills/README.md)，完整行为和权限约束见 [`skills/akasha/SKILL.md`](./skills/akasha/SKILL.md)。
+安装说明见 [`akasha-plugin/README.md`](./akasha-plugin/README.md)，自动检索和错误处理策略见
+[`akasha-plugin/skills/akasha/SKILL.md`](./akasha-plugin/skills/akasha/SKILL.md)。
 
 ## 私有化部署优先
 

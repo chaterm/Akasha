@@ -4,7 +4,7 @@ import { JsonValue } from '@akasha/db/types/db';
 import { KyselyDB } from '@akasha/db/types/kysely.types';
 
 export type KnowledgeQueryAuditMetadata = {
-  origin?: 'knowledge_query' | 'ai_qa';
+  origin?: 'knowledge_query' | 'ai_qa' | 'mcp_query_knowledge';
   type?: 'user' | 'robot';
   personalApiKeyId?: string;
   publicApiKeyId?: string;

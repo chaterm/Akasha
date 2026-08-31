@@ -258,17 +258,18 @@ brew reinstall postgresql@18
 
 **`DATABASE_URL` points at a database that does not exist.** The name in your `.env` must match the database you created. Older local `.env` files inherited from the upstream project may still reference `docmost` rather than `akasha`; either update the connection string and re-run the migrations, or create the database under the name already configured.
 
-## Agent Skill
+## Agent Plugin
 
-The Akasha Agent Skill lets coding agents query wiki knowledge with citations, read shared pages they have permission to see, and create, read, update, delete, and restore pages in a personal space.
+The Akasha integration connects agents to the locally configured Akasha knowledge base through Skill
+instructions and the complete Akasha MCP Tool set. Install
+the Skill/Plugin with the target agent's official mechanism and register the HTTP MCP server with
+an explicit absolute URL. The endpoint is `/mcp`; configure the actual Bearer Key directly in the
+host's MCP settings. For Codex, the generic Plugin installs the Skill and the MCP server is added
+by writing a static `http_headers.Authorization` entry in `~/.codex/config.toml`.
 
-```bash
-npx skills add chaterm/Akasha --skill akasha --agent codex --global --yes
-```
-
-Start a new agent session afterwards so the Skill is discovered. Drop `--agent codex` to pick a different target agent interactively. On first use, run the authentication command the agent gives you in your own terminal and enter the API key at the hidden prompt — never paste the key into command arguments, source files, logs, or chat messages.
-
-See [`skills/README.md`](./skills/README.md) for details and [`skills/akasha/SKILL.md`](./skills/akasha/SKILL.md) for the full behavior and permission constraints.
+See [`akasha-plugin/README.md`](./akasha-plugin/README.md) for installation details and
+[`akasha-plugin/skills/akasha/SKILL.md`](./akasha-plugin/skills/akasha/SKILL.md) for the
+automatic retrieval and error-handling policy.
 
 ## Self-hosted First
 

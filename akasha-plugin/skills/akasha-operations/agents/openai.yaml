@@ -1,0 +1,4 @@
+interface:
+  display_name: "Akasha Operations"
+  short_description: "操作 Akasha Page、Comment 和附件"
+  default_prompt: "使用 $akasha-operations 完成用户明确要求的 Akasha 对象操作。"

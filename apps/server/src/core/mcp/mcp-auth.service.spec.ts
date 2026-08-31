@@ -1,6 +1,7 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { McpAuthService } from './mcp-auth.service';
 import { JwtType } from '../auth/dto/jwt-payload';
+import { getApiKeyAccess } from '../../common/auth/api-key-access';
 
 describe('McpAuthService', () => {
   const apiKeyRepo = {
@@ -16,12 +17,16 @@ describe('McpAuthService', () => {
   const workspaceRepo = {
     findById: jest.fn(),
   };
+  const spaceRepo = {
+    findPersonalSpaceForUser: jest.fn(),
+  };
 
   const service = new McpAuthService(
     apiKeyRepo as any,
     tokenService as any,
     userRepo as any,
     workspaceRepo as any,
+    spaceRepo as any,
   );
 
   beforeEach(() => {
@@ -51,14 +56,19 @@ describe('McpAuthService', () => {
     });
     workspaceRepo.findById.mockResolvedValue(workspace);
     userRepo.findById.mockResolvedValue(user);
+    spaceRepo.findPersonalSpaceForUser.mockResolvedValue({
+      id: 'personal-space-1',
+    });
 
-    await expect(
-      service.authenticate({
-        headers: { authorization: 'Bearer token' },
-        raw: { workspaceId: workspace.id },
-      } as any),
-    ).resolves.toEqual({ user, workspace });
-
+    const result = await service.authenticate({
+      headers: { authorization: 'Bearer token' },
+      raw: { workspaceId: workspace.id },
+    } as any);
+    expect(result).toEqual({ user, workspace });
+    expect(getApiKeyAccess(result.user)).toEqual({
+      apiKeyId: 'key-1',
+      personalSpaceId: 'personal-space-1',
+    });
     expect(tokenService.verifyJwt).toHaveBeenCalledWith(
       'token',
       JwtType.API_KEY,

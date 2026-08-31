@@ -52,6 +52,9 @@ import { KnowledgeQualityService } from './services/knowledge-quality.service';
 import { AiModelConfigModule } from './services/ai-model-config.module';
 import { ApiKeyModule } from '../api-key/api-key.module';
 import { TokenModule } from '../../core/auth/token.module';
+import { McpModule } from '../../core/mcp/mcp.module';
+import { SpaceModule } from '../../core/space/space.module';
+import { KnowledgeMcpToolExtension } from './services/knowledge-mcp-tool.extension';
 
 @Module({
   imports: [
@@ -60,6 +63,8 @@ import { TokenModule } from '../../core/auth/token.module';
     ReviewModule,
     ApiKeyModule,
     TokenModule,
+    McpModule,
+    SpaceModule,
   ],
   controllers: [LlmWikiController],
   providers: [
@@ -123,6 +128,7 @@ import { TokenModule } from '../../core/auth/token.module';
     KnowledgeTextProcessor,
     KnowledgeImageProcessor,
     KnowledgeSpaceProcessor,
+    KnowledgeMcpToolExtension,
   ],
   exports: [
     KnowledgeSourceAuthorizationService,

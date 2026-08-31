@@ -6,6 +6,7 @@ import {
 import { ApiKeyRepo } from '@akasha/db/repos/api-key/api-key.repo';
 import { UserRepo } from '@akasha/db/repos/user/user.repo';
 import { WorkspaceRepo } from '@akasha/db/repos/workspace/workspace.repo';
+import { SpaceRepo } from '@akasha/db/repos/space/space.repo';
 import { User, Workspace } from '@akasha/db/types/entity.types';
 import { TokenService } from '../auth/services/token.service';
 import { JwtApiKeyPayload, JwtType } from '../auth/dto/jwt-payload';
@@ -13,6 +14,7 @@ import {
   extractBearerTokenFromHeader,
   isUserDisabled,
 } from '../../common/helpers';
+import { withApiKeyAccess } from '../../common/auth/api-key-access';
 import { FastifyRequest } from 'fastify';
 
 export type McpAuthContext = {
@@ -29,6 +31,7 @@ export class McpAuthService {
     private readonly tokenService: TokenService,
     private readonly userRepo: UserRepo,
     private readonly workspaceRepo: WorkspaceRepo,
+    private readonly spaceRepo: SpaceRepo,
   ) {}
 
   async authenticate(request: FastifyRequest): Promise<McpAuthContext> {
@@ -71,6 +74,15 @@ export class McpAuthService {
       throw new UnauthorizedException('User not found');
     }
 
+    const personalSpace = await this.spaceRepo.findPersonalSpaceForUser({
+      userId: user.id,
+      workspaceId: workspace.id,
+    });
+    const authenticatedUser = withApiKeyAccess(user, {
+      apiKeyId: key.id,
+      personalSpaceId: personalSpace?.id ?? null,
+    });
+
     this.apiKeyRepo
       .updateLastUsed(key.id)
       .catch((err) =>
@@ -79,6 +91,6 @@ export class McpAuthService {
         ),
       );
 
-    return { user, workspace };
+    return { user: authenticatedUser, workspace };
   }
 }

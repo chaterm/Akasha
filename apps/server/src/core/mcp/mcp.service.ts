@@ -40,17 +40,19 @@ import { UpdateCommentDto } from '../comment/dto/update-comment.dto';
 import { CreatePageDto, ContentFormat } from '../page/dto/create-page.dto';
 import { UpdatePageDto } from '../page/dto/update-page.dto';
 import { MovePageDto } from '../page/dto/move-page.dto';
-import { CreateSpaceDto } from '../space/dto/create-space.dto';
-import { UpdateSpaceDto } from '../space/dto/update-space.dto';
 import {
   jsonToHtml,
   jsonToMarkdown,
 } from '../../collaboration/collaboration.util';
+import { McpToolContext, McpToolRegistry } from './mcp-tool-registry';
+import { McpDisabledException } from './mcp.errors';
+import { getApiKeyAccess } from '../../common/auth/api-key-access';
+import { getPageTitle } from '../../common/helpers';
+import { AttachmentService } from '../attachment/services/attachment.service';
+import { AttachmentRepo } from '@akasha/db/repos/attachment/attachment.repo';
+import { Readable } from 'stream';
 
-type ToolContext = {
-  user: User;
-  workspace: Workspace;
-};
+type ToolContext = McpToolContext;
 
 type ToolResult = {
   content: Array<{ type: 'text'; text: string }>;
@@ -58,12 +60,31 @@ type ToolResult = {
 };
 
 const paginationSchema = {
-  limit: z.number().int().min(1).max(100).optional(),
-  cursor: z.string().optional(),
-  beforeCursor: z.string().optional(),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe('Items per page; defaults to 20.'),
+  cursor: z
+    .string()
+    .optional()
+    .describe('Use meta.nextCursor from the previous page to continue.'),
+  beforeCursor: z.string().optional().describe('Cursor for paging backwards.'),
 };
 
-const contentFormatSchema = z.enum(['json', 'markdown', 'html']).optional();
+const contentFormatSchema = z
+  .enum(['json', 'markdown', 'html'])
+  .optional()
+  .describe(
+    'Content representation. Omitted content is returned or parsed as JSON.',
+  );
+
+const citationPageSegment = /\/p\/([^\/?#\s]+)/;
+const citationSlugId = /^[0-9A-Za-z]{10}$/;
+const citationUuid =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 @Injectable()
 export class McpService {
@@ -81,18 +102,21 @@ export class McpService {
     private readonly workspaceService: WorkspaceService,
     private readonly spaceAbility: SpaceAbilityFactory,
     private readonly workspaceAbility: WorkspaceAbilityFactory,
+    private readonly toolRegistry: McpToolRegistry,
+    private readonly attachmentService: AttachmentService,
+    private readonly attachmentRepo: AttachmentRepo,
     @InjectKysely() private readonly db: KyselyDB,
   ) {}
 
   assertEnabled(workspace: Workspace) {
     const settings = (workspace.settings ?? {}) as Record<string, any>;
     if (settings?.ai?.mcp !== true) {
-      throw new ForbiddenException('MCP is disabled for this workspace');
+      throw new McpDisabledException();
     }
   }
 
   async handleRequest(
-    ctx: ToolContext,
+    ctx: McpToolContext,
     req: any,
     res: any,
     parsedBody: unknown,
@@ -112,11 +136,17 @@ export class McpService {
     }
   }
 
-  private createServer(ctx: ToolContext): McpServer {
-    const server = new McpServer({
-      name: 'akasha-mcp',
-      version: '0.1.0',
-    });
+  private createServer(ctx: McpToolContext): McpServer {
+    const server = new McpServer(
+      {
+        name: 'akasha-mcp',
+        version: '0.1.0',
+      },
+      {
+        instructions:
+          'Akasha is a company and personal knowledge base. Use the query_knowledge tool when the answer may require information outside general model knowledge, including information that may exist in this knowledge base. Clearly stable general knowledge and simple calculations do not require a search. Base knowledge-base facts on returned citations and evidence.',
+      },
+    );
 
     server.registerTool(
       'search_pages',
@@ -124,10 +154,26 @@ export class McpService {
         title: 'Search pages',
         description: 'Search workspace pages the current API key can access.',
         inputSchema: {
-          query: z.string().min(1),
-          spaceId: z.string().optional(),
-          limit: z.number().int().min(1).max(100).optional(),
-          offset: z.number().int().min(0).optional(),
+          query: z.string().min(1).describe('Full-text or title search query.'),
+          spaceId: z
+            .string()
+            .optional()
+            .describe('Restrict results to this accessible space.'),
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(100)
+            .optional()
+            .describe('Maximum results; defaults to the service default.'),
+          offset: z
+            .number()
+            .int()
+            .min(0)
+            .optional()
+            .describe(
+              'Zero-based offset; search_pages uses offset, not cursor pagination.',
+            ),
         },
       },
       (args) => this.runTool(() => this.searchPages(ctx, args)),
@@ -139,7 +185,10 @@ export class McpService {
         title: 'Get page',
         description: 'Get a page by id or slug id.',
         inputSchema: {
-          pageId: z.string().min(1),
+          pageId: z
+            .string()
+            .min(1)
+            .describe('Page UUID or slug id obtained from another Tool.'),
           format: contentFormatSchema,
         },
       },
@@ -152,11 +201,25 @@ export class McpService {
         title: 'Create page',
         description: 'Create a page in a space or below a parent page.',
         inputSchema: {
-          spaceId: z.string().min(1),
-          title: z.string().optional(),
-          icon: z.string().optional(),
-          parentPageId: z.string().optional(),
-          content: z.any().optional(),
+          spaceId: z
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              'Target accessible space; omitted uses the current user personal space.',
+            ),
+          title: z.string().optional().describe('Page title.'),
+          icon: z.string().optional().describe('Optional page icon.'),
+          parentPageId: z
+            .string()
+            .optional()
+            .describe('Optional accessible parent page in the same space.'),
+          content: z
+            .any()
+            .optional()
+            .describe(
+              'JSON document, or content matching the selected format.',
+            ),
           format: contentFormatSchema,
         },
       },
@@ -167,13 +230,23 @@ export class McpService {
       'update_page',
       {
         title: 'Update page',
-        description: 'Update page metadata and optionally append, prepend, or replace content.',
+        description:
+          'Update page metadata and optionally append, prepend, or replace content.',
         inputSchema: {
-          pageId: z.string().min(1),
-          title: z.string().optional(),
-          icon: z.string().optional(),
-          content: z.any().optional(),
-          operation: z.enum(['append', 'prepend', 'replace']).optional(),
+          pageId: z
+            .string()
+            .min(1)
+            .describe('Page UUID obtained from another Tool.'),
+          title: z.string().optional().describe('New page title.'),
+          icon: z.string().optional().describe('New page icon.'),
+          content: z
+            .any()
+            .optional()
+            .describe('Content to apply; requires operation.'),
+          operation: z
+            .enum(['append', 'prepend', 'replace'])
+            .optional()
+            .describe('Required with content: append, prepend, or replace.'),
           format: contentFormatSchema,
         },
       },
@@ -186,7 +259,7 @@ export class McpService {
         title: 'List root pages',
         description: 'List root pages in a space.',
         inputSchema: {
-          spaceId: z.string().min(1),
+          spaceId: z.string().min(1).describe('Accessible space UUID.'),
           ...paginationSchema,
         },
       },
@@ -199,7 +272,7 @@ export class McpService {
         title: 'List child pages',
         description: 'List child pages below a parent page.',
         inputSchema: {
-          pageId: z.string().min(1),
+          pageId: z.string().min(1).describe('Parent page UUID.'),
           ...paginationSchema,
         },
       },
@@ -211,7 +284,9 @@ export class McpService {
       {
         title: 'Duplicate page',
         description: 'Duplicate a page in its current space.',
-        inputSchema: { pageId: z.string().min(1) },
+        inputSchema: {
+          pageId: z.string().min(1).describe('Page UUID to duplicate.'),
+        },
       },
       (args) => this.runTool(() => this.duplicatePage(ctx, args)),
     );
@@ -222,8 +297,11 @@ export class McpService {
         title: 'Copy page to space',
         description: 'Copy a page and accessible descendants to another space.',
         inputSchema: {
-          pageId: z.string().min(1),
-          spaceId: z.string().min(1),
+          pageId: z.string().min(1).describe('Page UUID to copy.'),
+          spaceId: z
+            .string()
+            .min(1)
+            .describe('Destination accessible space UUID.'),
         },
       },
       (args) => this.runTool(() => this.copyPageToSpace(ctx, args)),
@@ -235,9 +313,22 @@ export class McpService {
         title: 'Move page',
         description: 'Move or reorder a page within its current space.',
         inputSchema: {
-          pageId: z.string().min(1),
-          position: z.string().min(5).max(12),
-          parentPageId: z.string().nullable().optional(),
+          pageId: z
+            .string()
+            .min(1)
+            .describe('Page UUID obtained from another Tool.'),
+          position: z
+            .string()
+            .min(5)
+            .max(12)
+            .describe(
+              'Valid 5-12 character page ordering key, not natural-language text.',
+            ),
+          parentPageId: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('New parent page UUID, or null for a root page.'),
         },
       },
       (args) => this.runTool(() => this.movePage(ctx, args)),
@@ -249,8 +340,11 @@ export class McpService {
         title: 'Move page to space',
         description: 'Move a page and accessible descendants to another space.',
         inputSchema: {
-          pageId: z.string().min(1),
-          spaceId: z.string().min(1),
+          pageId: z.string().min(1).describe('Page UUID to move.'),
+          spaceId: z
+            .string()
+            .min(1)
+            .describe('Destination accessible space UUID.'),
         },
       },
       (args) => this.runTool(() => this.movePageToSpace(ctx, args)),
@@ -261,7 +355,9 @@ export class McpService {
       {
         title: 'Get space',
         description: 'Get a space by id.',
-        inputSchema: { spaceId: z.string().min(1) },
+        inputSchema: {
+          spaceId: z.string().min(1).describe('Accessible space UUID.'),
+        },
       },
       (args) => this.runTool(() => this.getSpace(ctx, args)),
     );
@@ -277,41 +373,12 @@ export class McpService {
     );
 
     server.registerTool(
-      'create_space',
-      {
-        title: 'Create space',
-        description: 'Create a workspace space.',
-        inputSchema: {
-          name: z.string().min(1),
-          slug: z.string().min(1),
-          description: z.string().optional(),
-        },
-      },
-      (args) => this.runTool(() => this.createSpace(ctx, args)),
-    );
-
-    server.registerTool(
-      'update_space',
-      {
-        title: 'Update space',
-        description: 'Update space name, slug, or description.',
-        inputSchema: {
-          spaceId: z.string().min(1),
-          name: z.string().optional(),
-          slug: z.string().optional(),
-          description: z.string().optional(),
-        },
-      },
-      (args) => this.runTool(() => this.updateSpace(ctx, args)),
-    );
-
-    server.registerTool(
       'get_comments',
       {
         title: 'Get comments',
         description: 'List comments on a page.',
         inputSchema: {
-          pageId: z.string().min(1),
+          pageId: z.string().min(1).describe('Page UUID.'),
           ...paginationSchema,
         },
       },
@@ -324,11 +391,27 @@ export class McpService {
         title: 'Create comment',
         description: 'Create a page or inline comment.',
         inputSchema: {
-          pageId: z.string().min(1),
-          content: z.any(),
-          selection: z.string().optional(),
-          type: z.enum(['inline', 'page']).optional(),
-          parentCommentId: z.string().optional(),
+          pageId: z
+            .string()
+            .min(1)
+            .describe('Page UUID obtained from another Tool.'),
+          content: z
+            .any()
+            .describe(
+              'JSON object/array or JSON-encoded string; do not send unencoded plain text.',
+            ),
+          selection: z
+            .string()
+            .optional()
+            .describe('Selection payload required for inline comments.'),
+          type: z
+            .enum(['inline', 'page'])
+            .optional()
+            .describe('Comment kind; defaults to the service default.'),
+          parentCommentId: z
+            .string()
+            .optional()
+            .describe('Existing comment UUID when replying.'),
         },
       },
       (args) => this.runTool(() => this.createComment(ctx, args)),
@@ -340,8 +423,15 @@ export class McpService {
         title: 'Update comment',
         description: 'Update a comment owned by the current API key user.',
         inputSchema: {
-          commentId: z.string().min(1),
-          content: z.any(),
+          commentId: z
+            .string()
+            .min(1)
+            .describe('Comment UUID obtained from get_comments.'),
+          content: z
+            .any()
+            .describe(
+              'JSON object/array or JSON-encoded string; do not send unencoded plain text.',
+            ),
         },
       },
       (args) => this.runTool(() => this.updateComment(ctx, args)),
@@ -353,9 +443,21 @@ export class McpService {
         title: 'Search attachments',
         description: 'Search page attachments by filename or indexed text.',
         inputSchema: {
-          query: z.string().min(1),
-          spaceId: z.string().optional(),
-          limit: z.number().int().min(1).max(100).optional(),
+          query: z
+            .string()
+            .min(1)
+            .describe('Filename or indexed-text search query.'),
+          spaceId: z
+            .string()
+            .optional()
+            .describe('Restrict results to this accessible space.'),
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(100)
+            .optional()
+            .describe('Maximum results; defaults to 25.'),
         },
       },
       (args) => this.runTool(() => this.searchAttachments(ctx, args)),
@@ -365,9 +467,13 @@ export class McpService {
       'list_workspace_members',
       {
         title: 'List workspace members',
-        description: 'List workspace members visible to the current API key user.',
+        description:
+          'List workspace members visible to the current API key user.',
         inputSchema: {
-          query: z.string().optional(),
+          query: z
+            .string()
+            .optional()
+            .describe('Optional member name or email filter.'),
           ...paginationSchema,
         },
       },
@@ -383,7 +489,320 @@ export class McpService {
       () => this.runTool(() => this.getCurrentUser(ctx)),
     );
 
+    server.registerTool(
+      'get_citation_page',
+      {
+        title: 'Get citation page',
+        description:
+          'Read an ACL-authorized Page from an Akasha /p/<slug> URL.',
+        inputSchema: {
+          pageUrl: z
+            .string()
+            .min(1)
+            .describe('Akasha /p/<slug> path or full page URL.'),
+        },
+      },
+      (args) => this.runTool(() => this.getCitationPage(ctx, args)),
+    );
+    server.registerTool(
+      'delete_page',
+      {
+        title: 'Move personal page to trash',
+        description: 'Soft-delete a Page in the current user personal space.',
+        inputSchema: {
+          pageId: z.string().min(1).describe('Personal-space page UUID.'),
+        },
+      },
+      (args) => this.runTool(() => this.deletePersonalPage(ctx, args)),
+    );
+    server.registerTool(
+      'restore_page',
+      {
+        title: 'Restore personal page',
+        description:
+          'Restore a Page from the current user personal-space trash.',
+        inputSchema: {
+          pageId: z
+            .string()
+            .min(1)
+            .describe('Deleted personal-space page UUID.'),
+        },
+      },
+      (args) => this.runTool(() => this.restorePersonalPage(ctx, args)),
+    );
+    server.registerTool(
+      'list_recent_pages',
+      {
+        title: 'List recent personal pages',
+        description:
+          'List recently updated Pages in the current user personal space.',
+        inputSchema: paginationSchema,
+      },
+      (args) => this.runTool(() => this.listRecentPersonalPages(ctx, args)),
+    );
+    server.registerTool(
+      'list_trash_pages',
+      {
+        title: 'List personal page trash',
+        description: 'List deleted Pages in the current user personal space.',
+        inputSchema: paginationSchema,
+      },
+      (args) => this.runTool(() => this.listTrashPersonalPages(ctx, args)),
+    );
+    server.registerTool(
+      'get_attachment_info',
+      {
+        title: 'Get attachment info',
+        description:
+          'Get metadata and an ACL-authorized download URL for a Page attachment. The Agent fetches the bytes locally from the URL.',
+        inputSchema: {
+          attachmentId: z.string().min(1).describe('Attachment UUID.'),
+        },
+      },
+      (args) => this.runTool(() => this.getAttachmentInfo(ctx, args)),
+    );
+    server.registerTool(
+      'download_attachment',
+      {
+        title: 'Download Page attachment',
+        description:
+          'Resolve an ACL-authorized Page attachment download URL. The Agent fetches the bytes locally from the returned URL.',
+        inputSchema: {
+          attachmentId: z.string().min(1).describe('Attachment UUID.'),
+        },
+      },
+      (args) => this.runTool(() => this.downloadAttachment(ctx, args)),
+    );
+    server.registerTool(
+      'upload_attachment',
+      {
+        title: 'Upload Page attachment',
+        description: 'Upload a bounded Base64 file to an ACL-authorized Page.',
+        inputSchema: {
+          pageId: z
+            .string()
+            .min(1)
+            .describe('Page UUID obtained from another Tool.'),
+          fileName: z
+            .string()
+            .min(1)
+            .max(255)
+            .describe('File name including extension.'),
+          contentBase64: z
+            .string()
+            .min(1)
+            .max(14_000_000)
+            .describe('Non-empty Base64 file content.'),
+          attachmentId: z
+            .string()
+            .optional()
+            .describe(
+              'Existing attachment UUID to replace; omit to upload a new attachment.',
+            ),
+        },
+      },
+      (args) => this.runTool(() => this.uploadAttachment(ctx, args)),
+    );
+    this.toolRegistry.registerAll(server, ctx, (fn) => this.runTool(fn));
+
     return server;
+  }
+
+  private async getCitationPage(ctx: ToolContext, args: { pageUrl: string }) {
+    const candidate = args.pageUrl.trim();
+    const match = citationPageSegment.exec(candidate);
+    const pageSlug = match?.[1] ?? candidate;
+    const slugId = citationUuid.test(pageSlug)
+      ? pageSlug
+      : pageSlug.split('-').slice(-1)[0];
+    if (
+      !slugId ||
+      (!citationUuid.test(slugId) && !citationSlugId.test(slugId))
+    ) {
+      throw new BadRequestException('Invalid Akasha shared Page URL');
+    }
+    const page = await this.pageRepo.findById(slugId, {
+      includeContent: true,
+    });
+    if (
+      !page ||
+      page.workspaceId !== ctx.workspace.id ||
+      page.deletedAt !== null
+    ) {
+      throw new NotFoundException('Shared Page not found');
+    }
+    await this.pageAccessService.validateCanReadCitationSourceWithPermissions(
+      page,
+      ctx.user,
+    );
+    return {
+      pageId: page.id,
+      spaceId: page.spaceId,
+      title: getPageTitle(page.title),
+      url: `/p/${page.slugId}`,
+      content: page.content ? jsonToMarkdown(page.content) : '',
+      updatedAt: page.updatedAt,
+    };
+  }
+
+  private personalSpaceId(ctx: ToolContext): string {
+    const spaceId = getApiKeyAccess(ctx.user)?.personalSpaceId;
+    if (!spaceId) throw new ForbiddenException('Personal space is unavailable');
+    return spaceId;
+  }
+
+  private async getAttachmentInfo(
+    ctx: ToolContext,
+    args: { attachmentId: string },
+  ) {
+    const attachment = await this.attachmentRepo.findById(args.attachmentId);
+    if (
+      !attachment ||
+      !attachment.pageId ||
+      attachment.workspaceId !== ctx.workspace.id
+    ) {
+      throw new NotFoundException('Attachment not found');
+    }
+    const page = await this.pageRepo.findById(attachment.pageId);
+    if (!page) throw new NotFoundException('Attachment not found');
+    await this.pageAccessService.validateCanView(page, ctx.user);
+    const fileName = attachment.fileName ?? 'attachment';
+    const url = `/api/files/${attachment.id}/${encodeURIComponent(fileName)}`;
+    return {
+      attachmentId: attachment.id,
+      pageId: page.id,
+      fileName,
+      mimeType: attachment.mimeType,
+      fileSize: attachment.fileSize,
+      url,
+    };
+  }
+
+  private async downloadAttachment(
+    ctx: ToolContext,
+    args: { attachmentId: string },
+  ) {
+    const info = await this.getAttachmentInfo(ctx, args);
+    return {
+      ...info,
+      downloadUrl: info.url,
+    };
+  }
+
+  private async uploadAttachment(
+    ctx: ToolContext,
+    args: {
+      pageId: string;
+      fileName: string;
+      contentBase64: string;
+      attachmentId?: string;
+    },
+  ) {
+    const page = await this.pageRepo.findById(args.pageId);
+    if (!page || page.workspaceId !== ctx.workspace.id) {
+      throw new NotFoundException('Page not found');
+    }
+    await this.pageAccessService.validateCanEdit(page, ctx.user);
+
+    let content: Buffer;
+    try {
+      content = Buffer.from(args.contentBase64, 'base64');
+      if (
+        !content.length ||
+        content.toString('base64') !== args.contentBase64.replace(/\s/g, '')
+      ) {
+        throw new Error('invalid base64');
+      }
+    } catch {
+      throw new BadRequestException(
+        'contentBase64 must be valid non-empty Base64',
+      );
+    }
+
+    const multipartFile = {
+      filename: args.fileName,
+      file: Readable.from(content),
+      toBuffer: async () => content,
+    } as any;
+    const attachment = await this.attachmentService.uploadFile({
+      filePromise: Promise.resolve(multipartFile),
+      pageId: page.id,
+      spaceId: page.spaceId,
+      userId: ctx.user.id,
+      workspaceId: ctx.workspace.id,
+      attachmentId: args.attachmentId,
+    });
+    const fileName = attachment.fileName;
+    const url = `/api/files/${attachment.id}/${encodeURIComponent(fileName)}`;
+    return {
+      attachmentId: attachment.id,
+      pageId: page.id,
+      fileName,
+      mimeType: attachment.mimeType,
+      fileSize: attachment.fileSize,
+      url,
+      markdown: attachment.mimeType?.startsWith('image/')
+        ? `![${fileName}](${url})`
+        : `[${fileName}](${url})`,
+      replaced: Boolean(args.attachmentId),
+    };
+  }
+
+  private async deletePersonalPage(ctx: ToolContext, args: { pageId: string }) {
+    const page = await this.pageRepo.findById(args.pageId);
+    const personalSpaceId = this.personalSpaceId(ctx);
+    if (
+      !page ||
+      page.workspaceId !== ctx.workspace.id ||
+      page.spaceId !== personalSpaceId
+    ) {
+      throw new NotFoundException('Personal Page not found');
+    }
+    await this.pageAccessService.validateCanEdit(page, ctx.user);
+    await this.pageService.removePage(page.id, ctx.user.id, ctx.workspace.id);
+    return { success: true, pageId: page.id, deleted: true };
+  }
+
+  private async restorePersonalPage(
+    ctx: ToolContext,
+    args: { pageId: string },
+  ) {
+    const page = await this.pageRepo.findById(args.pageId);
+    const personalSpaceId = this.personalSpaceId(ctx);
+    if (
+      !page ||
+      page.workspaceId !== ctx.workspace.id ||
+      page.spaceId !== personalSpaceId
+    ) {
+      throw new NotFoundException('Personal Page not found');
+    }
+    await this.requireSpaceAbility(
+      ctx.user,
+      page.spaceId,
+      SpaceCaslAction.Edit,
+      SpaceCaslSubject.Page,
+    );
+    await this.pageAccessService.validateCanEdit(page, ctx.user);
+    await this.pageRepo.restorePage(page.id, ctx.workspace.id);
+    return this.pageRepo.findById(page.id, { includeHasChildren: true });
+  }
+
+  private async listRecentPersonalPages(
+    ctx: ToolContext,
+    args: { limit?: number; cursor?: string; beforeCursor?: string },
+  ) {
+    return this.pageService.getRecentPages(ctx.user.id, this.pagination(args));
+  }
+
+  private async listTrashPersonalPages(
+    ctx: ToolContext,
+    args: { limit?: number; cursor?: string; beforeCursor?: string },
+  ) {
+    return this.pageService.getDeletedSpacePages(
+      this.personalSpaceId(ctx),
+      ctx.user.id,
+      this.pagination(args),
+    );
   }
 
   private async searchPages(
@@ -438,7 +857,7 @@ export class McpService {
   private async createPage(
     ctx: ToolContext,
     args: {
-      spaceId: string;
+      spaceId?: string;
       title?: string;
       icon?: string;
       parentPageId?: string;
@@ -446,12 +865,13 @@ export class McpService {
       format?: ContentFormat;
     },
   ) {
+    const spaceId = args.spaceId ?? this.personalSpaceId(ctx);
     if (args.parentPageId) {
       const parentPage = await this.pageRepo.findById(args.parentPageId);
       if (
         !parentPage ||
         parentPage.deletedAt ||
-        parentPage.spaceId !== args.spaceId ||
+        parentPage.spaceId !== spaceId ||
         parentPage.workspaceId !== ctx.workspace.id
       ) {
         throw new NotFoundException('Parent page not found');
@@ -460,21 +880,25 @@ export class McpService {
     } else {
       await this.requireSpaceAbility(
         ctx.user,
-        args.spaceId,
+        spaceId,
         SpaceCaslAction.Create,
         SpaceCaslSubject.Page,
       );
     }
 
     const dto: CreatePageDto = {
-      spaceId: args.spaceId,
+      spaceId,
       title: args.title,
       icon: args.icon,
       parentPageId: args.parentPageId,
       content: args.content,
       format: this.contentFormatFor(args.content, args.format),
     };
-    const page = await this.pageService.create(ctx.user.id, ctx.workspace.id, dto);
+    const page = await this.pageService.create(
+      ctx.user.id,
+      ctx.workspace.id,
+      dto,
+    );
     const permissions =
       await this.pageAccessService.validateCanViewWithPermissions(
         page,
@@ -505,7 +929,9 @@ export class McpService {
       ctx.user,
     );
     if (args.content !== undefined && !args.operation) {
-      throw new BadRequestException('operation is required when content is provided');
+      throw new BadRequestException(
+        'operation is required when content is provided',
+      );
     }
 
     const dto: UpdatePageDto = {
@@ -525,7 +951,12 @@ export class McpService {
 
   private async listPages(
     ctx: ToolContext,
-    args: { spaceId: string; limit?: number; cursor?: string; beforeCursor?: string },
+    args: {
+      spaceId: string;
+      limit?: number;
+      cursor?: string;
+      beforeCursor?: string;
+    },
   ) {
     const ability = await this.requireSpaceAbility(
       ctx.user,
@@ -546,7 +977,12 @@ export class McpService {
 
   private async listChildPages(
     ctx: ToolContext,
-    args: { pageId: string; limit?: number; cursor?: string; beforeCursor?: string },
+    args: {
+      pageId: string;
+      limit?: number;
+      cursor?: string;
+      beforeCursor?: string;
+    },
   ) {
     const page = await this.pageRepo.findById(args.pageId);
     if (!page || page.workspaceId !== ctx.workspace.id) {
@@ -648,7 +1084,11 @@ export class McpService {
     ]);
     await this.pageAccessService.validateCanEdit(movedPage, ctx.user);
 
-    return this.pageService.movePageToSpace(movedPage, args.spaceId, ctx.user.id);
+    return this.pageService.movePageToSpace(
+      movedPage,
+      args.spaceId,
+      ctx.user.id,
+    );
   }
 
   private async getSpace(ctx: ToolContext, args: { spaceId: string }) {
@@ -718,39 +1158,14 @@ export class McpService {
     return result;
   }
 
-  private async createSpace(
-    ctx: ToolContext,
-    args: { name: string; slug: string; description?: string },
-  ) {
-    this.requireWorkspaceAbility(
-      ctx.user,
-      ctx.workspace,
-      WorkspaceCaslAction.Manage,
-      WorkspaceCaslSubject.Space,
-    );
-    return this.spaceService.createSpace(ctx.user, ctx.workspace.id, {
-      name: args.name,
-      slug: args.slug,
-      description: args.description,
-    } as CreateSpaceDto);
-  }
-
-  private async updateSpace(
-    ctx: ToolContext,
-    args: { spaceId: string; name?: string; slug?: string; description?: string },
-  ) {
-    await this.requireSpaceAbility(
-      ctx.user,
-      args.spaceId,
-      SpaceCaslAction.Manage,
-      SpaceCaslSubject.Settings,
-    );
-    return this.spaceService.updateSpace(args as UpdateSpaceDto, ctx.workspace.id);
-  }
-
   private async getComments(
     ctx: ToolContext,
-    args: { pageId: string; limit?: number; cursor?: string; beforeCursor?: string },
+    args: {
+      pageId: string;
+      limit?: number;
+      cursor?: string;
+      beforeCursor?: string;
+    },
   ) {
     const page = await this.pageRepo.findById(args.pageId);
     if (!page || page.workspaceId !== ctx.workspace.id) {
@@ -881,12 +1296,13 @@ export class McpService {
     const pageIds = attachments
       .map((attachment) => attachment.pageId)
       .filter(Boolean);
-    const accessibleIds =
-      await this.pagePermissionRepo.filterAccessiblePageIds({
+    const accessibleIds = await this.pagePermissionRepo.filterAccessiblePageIds(
+      {
         pageIds,
         userId: ctx.user.id,
         spaceId: args.spaceId,
-      });
+      },
+    );
     const accessibleSet = new Set(accessibleIds);
     attachments = attachments.filter((attachment) =>
       accessibleSet.has(attachment.pageId),
@@ -1000,6 +1416,15 @@ export class McpService {
     } catch (err: any) {
       return this.textResult(
         {
+          code:
+            err?.code ??
+            (err?.status === 404
+              ? 'NOT_FOUND'
+              : err?.status === 403
+                ? 'FORBIDDEN'
+                : err?.status === 400
+                  ? 'INVALID_ARGUMENT'
+                  : 'TOOL_FAILED'),
           error: err?.response?.message ?? err?.message ?? 'Tool failed',
           statusCode: err?.status ?? err?.statusCode,
         },
