@@ -35,6 +35,7 @@ export interface KnowledgeContextBudget {
 
 export interface KnowledgeQueryResult {
   answer: string;
+  answerMode?: "knowledge" | "no_match" | "general";
   citations: KnowledgeCitation[];
   snippets: KnowledgeSnippet[];
   warnings: string[];

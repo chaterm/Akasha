@@ -28,6 +28,7 @@ import { PageAccessService } from '../../core/page/page-access/page-access.servi
 import { ApiKeyService } from '../api-key/api-key.service';
 import { withApiKeyAccess } from '../../common/auth/api-key-access';
 import { KnowledgeQueryType } from './dto/query-knowledge.dto';
+import { EnvironmentService } from '../../integrations/environment/environment.service';
 
 describe('LlmWikiController', () => {
   it('rejects queries when workspace AI knowledge chat is disabled', async () => {
@@ -151,6 +152,82 @@ describe('LlmWikiController', () => {
     });
     expect(JSON.stringify(queryAuditRepo.recordQuery.mock.calls)).not.toContain(
       'How do we use Kafka?',
+    );
+  });
+
+  it('returns citation links on APP_URL for external Skill consumers', async () => {
+    const controller = createController({
+      environmentService: {
+        getAppUrl: jest.fn().mockReturnValue('https://akasha.example.com/'),
+      },
+      chatService: {
+        isEnabledForWorkspace: jest.fn().mockReturnValue(true),
+        chat: jest.fn().mockResolvedValue({
+          answer: 'Use Kafka.',
+          citations: [
+            { sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1' },
+          ],
+          citationEvidence: [
+            {
+              sourcePageId: 'page-1',
+              title: 'Kafka',
+              url: '/p/page-1',
+              excerpts: [],
+            },
+          ],
+          retrievedSources: [
+            { sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1' },
+          ],
+          retrievalDiagnostics: {
+            mode: 'high_completeness',
+            queryEmbeddingAvailable: false,
+            candidateSourceCount: 1,
+            policyCandidateSourceCount: 1,
+            fallbackCandidateSourceCount: 0,
+            finalAuthorizedSourceCount: 1,
+            accessPolicyFallbackUsed: false,
+            candidateChunkCount: 1,
+            rankedCandidateCount: 1,
+            authorizedChunkCount: 1,
+            filteredChunkCount: 0,
+          },
+          snippets: [
+            {
+              id: 'chunk-1',
+              title: 'Kafka',
+              text: 'Use Kafka.',
+              retrievalReasons: [],
+              sourceWindows: [
+                {
+                  sourcePageId: 'page-1',
+                  title: 'Kafka',
+                  url: '/p/page-1',
+                  text: 'Use Kafka.',
+                  sourceRange: { startOffset: 0, endOffset: 10 },
+                  quoteHash: 'sha256:test',
+                },
+              ],
+            },
+          ],
+        }),
+      },
+    });
+
+    const result = await controller.queryKnowledge(
+      { query: 'Kafka?', spaceIds: ['space-1'] },
+      user(),
+      workspace(),
+    );
+
+    expect(result.citations[0].url).toBe('https://akasha.example.com/p/page-1');
+    expect(result.citationEvidence[0].url).toBe(
+      'https://akasha.example.com/p/page-1',
+    );
+    expect(result.retrievedSources[0].url).toBe(
+      'https://akasha.example.com/p/page-1',
+    );
+    expect(result.snippets[0].sourceWindows[0].url).toBe(
+      'https://akasha.example.com/p/page-1',
     );
   });
 
@@ -1573,6 +1650,7 @@ function createController(
     pageAccessService?: Partial<PageAccessService>;
     aiModelConfigService?: Partial<AiModelConfigService>;
     apiKeyService?: Partial<ApiKeyService>;
+    environmentService?: Partial<EnvironmentService>;
   } = {},
 ) {
   return new LlmWikiController(
@@ -1662,6 +1740,7 @@ function createController(
       validatePublicApiKey: jest.fn(),
       ...overrides.apiKeyService,
     } as unknown as ApiKeyService,
+    overrides.environmentService as EnvironmentService | undefined,
   );
 }
 

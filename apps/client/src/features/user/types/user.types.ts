@@ -25,6 +25,7 @@ export interface IUser {
   notificationCommentUserMention: boolean; // used for update
   notificationCommentCreated: boolean; // used for update
   notificationCommentResolved: boolean; // used for update
+  generalKnowledge: boolean; // used for update
   hasGeneratedPassword?: boolean;
 }
 
@@ -38,6 +39,7 @@ export interface IUserSettings {
   preferences: {
     fullPageWidth: boolean;
     editorToolbar: boolean;
+    generalKnowledge: boolean;
   };
   notifications?: {
     "page.updated"?: boolean;

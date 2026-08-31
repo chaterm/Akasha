@@ -69,6 +69,14 @@ export class UserService {
       );
     }
 
+    if (typeof updateUserDto.generalKnowledge !== 'undefined') {
+      return this.userRepo.updatePreference(
+        userId,
+        'generalKnowledge',
+        updateUserDto.generalKnowledge,
+      );
+    }
+
     const notificationSettings: Record<string, NotificationSettingKey> = {
       notificationPageUpdates: 'page.updated',
       notificationPageUserMention: 'page.userMention',
