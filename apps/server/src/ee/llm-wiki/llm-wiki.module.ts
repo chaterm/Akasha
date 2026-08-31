@@ -27,6 +27,7 @@ import {
   KNOWLEDGE_IMAGE_UNDERSTANDING_PROVIDER,
 } from './llm-wiki.constants';
 import { LlmWikiController } from './llm-wiki.controller';
+import { IsElfLlmWikiController } from './iself-llm-wiki.controller';
 import { NoopAuditModule } from '../../integrations/audit/audit.module';
 import { LlmWikiFileCompilerAdapter } from './adapters/llm-wiki-file-compiler.adapter';
 import { SemanticKnowledgeCompilerRunner } from './adapters/semantic-knowledge-compiler.runner';
@@ -55,6 +56,8 @@ import { TokenModule } from '../../core/auth/token.module';
 import { McpModule } from '../../core/mcp/mcp.module';
 import { SpaceModule } from '../../core/space/space.module';
 import { KnowledgeMcpToolExtension } from './services/knowledge-mcp-tool.extension';
+import { IsElfAgentAuthGuard } from './guards/iself-agent-auth.guard';
+import { SsoModule } from '../sso/sso.module';
 
 @Module({
   imports: [
@@ -65,8 +68,9 @@ import { KnowledgeMcpToolExtension } from './services/knowledge-mcp-tool.extensi
     TokenModule,
     McpModule,
     SpaceModule,
+    SsoModule,
   ],
-  controllers: [LlmWikiController],
+  controllers: [LlmWikiController, IsElfLlmWikiController],
   providers: [
     SpaceAuthorizationService,
     KnowledgeSourceAuthorizationService,
@@ -129,6 +133,7 @@ import { KnowledgeMcpToolExtension } from './services/knowledge-mcp-tool.extensi
     KnowledgeImageProcessor,
     KnowledgeSpaceProcessor,
     KnowledgeMcpToolExtension,
+    IsElfAgentAuthGuard,
   ],
   exports: [
     KnowledgeSourceAuthorizationService,

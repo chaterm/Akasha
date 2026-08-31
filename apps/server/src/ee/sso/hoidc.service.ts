@@ -17,6 +17,15 @@ export interface HoidcProviderConfig {
   allowSignup: boolean;
 }
 
+export type HoidcAgentUserInfo = {
+  uid: number;
+  email: string;
+  name: string | null;
+  status?: number;
+  digital_employee_id?: string;
+  target_platform_id?: string;
+};
+
 @Injectable()
 export class HoidcService {
   constructor(
@@ -76,6 +85,58 @@ export class HoidcService {
 
     const json = (await responseBody.json()) as any;
     return this.parseUserInfo(json);
+  }
+
+  async verifyAgentToken(
+    config: Pick<HoidcProviderConfig, 'ssoApi' | 'platformId'>,
+    token: string,
+  ): Promise<HoidcAgentUserInfo> {
+    const url = `${config.ssoApi.replace(/\/+$/, '')}/auth/internal/verify-agent-token`;
+    const { statusCode, body: responseBody } = await request(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Token': token,
+      },
+      body: JSON.stringify({ platform_id: config.platformId }),
+    });
+
+    const rawBody = await responseBody.text();
+    if (statusCode < 200 || statusCode >= 300) {
+      throw new UnauthorizedException(
+        `HOIDC verify-agent-token failed: HTTP ${statusCode}`,
+      );
+    }
+
+    let json: any;
+    try {
+      json = JSON.parse(rawBody);
+    } catch {
+      throw new UnauthorizedException(
+        'HOIDC verify-agent-token returned invalid JSON',
+      );
+    }
+    if (Number(json?.code) !== 0 || !json?.data?.email) {
+      throw new UnauthorizedException(
+        json?.msg || 'Invalid digital employee token',
+      );
+    }
+    if (
+      json.data.target_platform_id &&
+      json.data.target_platform_id !== config.platformId
+    ) {
+      throw new UnauthorizedException('Digital employee token target mismatch');
+    }
+
+    return {
+      uid: Number(json.data.uid),
+      email: String(json.data.email),
+      name: json.data.name ?? null,
+      status:
+        typeof json.data.status === 'number' ? json.data.status : undefined,
+      digital_employee_id: json.data.digital_employee_id,
+      target_platform_id: json.data.target_platform_id,
+    };
   }
 
   async loginUser(opts: {

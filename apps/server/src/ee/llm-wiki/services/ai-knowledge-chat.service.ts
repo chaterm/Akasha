@@ -127,6 +127,39 @@ export type AiKnowledgeChatResult = {
   retrievalScope?: KnowledgeRetrievalScope;
 };
 
+/** Result returned to external agents that perform their own answer judgment. */
+export type AiKnowledgeRetrievalResult = {
+  query: string;
+  citations: ReturnType<
+    KnowledgeContextPackService['buildContextPack']
+  >['citations'];
+  citationEvidence: AiKnowledgeCitationEvidence[];
+  retrievedSources: ReturnType<
+    KnowledgeContextPackService['buildContextPack']
+  >['citations'];
+  snippets: Array<{
+    id: string;
+    title: string;
+    text: string;
+    retrievalReasons: string[];
+    sourceWindows: KnowledgeSourceWindow[];
+  }>;
+  warnings: ReturnType<
+    KnowledgeContextPackService['buildContextPack']
+  >['warnings'];
+  retrievalReasons: ReturnType<
+    KnowledgeContextPackService['buildContextPack']
+  >['retrievalReasons'];
+  budget: ReturnType<KnowledgeContextPackService['buildContextPack']>['budget'];
+  completenessNotice: ReturnType<
+    KnowledgeContextPackService['buildContextPack']
+  >['completenessNotice'];
+  retrievalDiagnostics: KnowledgeRetrievalDiagnostics & {
+    mode: Awaited<ReturnType<KnowledgeRetrievalService['retrieve']>>['mode'];
+  };
+  retrievalScope: KnowledgeRetrievalScope;
+};
+
 @Injectable()
 export class AiKnowledgeChatService {
   constructor(
@@ -140,6 +173,82 @@ export class AiKnowledgeChatService {
     private readonly sourceAuthorization?: KnowledgeSourceAuthorizationService,
     @Optional() private readonly attachmentRepo?: AttachmentRepo,
   ) {}
+
+  /**
+   * Retrieve and format authorized knowledge without invoking any answer LLM.
+   * This is intentionally separate from `chat` so external agents can decide
+   * themselves whether and how to use the returned evidence.
+   */
+  async retrieveOnly(input: {
+    workspaceId: string;
+    userId: string;
+    query: string;
+    spaceIds: string[];
+    workspace?: Workspace;
+  }): Promise<AiKnowledgeRetrievalResult> {
+    if (input.workspace && !this.isEnabledForWorkspace(input.workspace)) {
+      throw new ForbiddenException('AI knowledge chat is disabled');
+    }
+
+    const authCache = new KnowledgeAuthorizationCache({
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+    });
+    const retrieval = await this.retrieval.retrieve({
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      query: input.query,
+      spaceIds: input.spaceIds,
+      authCache,
+    });
+    const chunkCitations = retrieval.chunks.length
+      ? await this.citationResolver.resolveForChunks({
+          workspaceId: input.workspaceId,
+          query: input.query,
+          chunks: retrieval.chunks,
+        })
+      : undefined;
+    // Keep the same precedence as chat(): chunk evidence is authoritative;
+    // capsule citations are only resolved for capsule-only retrieval results.
+    const capsuleCitations =
+      !chunkCitations && retrieval.capsules.length
+        ? await this.citationResolver.resolveForCapsules({
+            workspaceId: input.workspaceId,
+            userId: input.userId,
+            capsules: retrieval.capsules,
+            authCache,
+          })
+        : undefined;
+    const pack = this.contextPack.buildContextPack({
+      chunks: chunkCitations,
+      capsules: capsuleCitations,
+    });
+    const sourceWindows = pack.primary.flatMap((entry) => entry.sourceWindows);
+    const citations = pack.citations;
+
+    return {
+      query: input.query,
+      citations,
+      citationEvidence: buildCitationEvidence(citations, sourceWindows),
+      retrievedSources: citations,
+      snippets: pack.primary.map((entry) => ({
+        id: entry.id,
+        title: entry.title,
+        text: entry.text,
+        retrievalReasons: entry.retrievalReasons,
+        sourceWindows: entry.sourceWindows,
+      })),
+      warnings: pack.warnings,
+      retrievalReasons: pack.retrievalReasons,
+      budget: pack.budget,
+      completenessNotice: pack.completenessNotice,
+      retrievalDiagnostics: {
+        mode: retrieval.mode,
+        ...retrieval.diagnostics,
+      },
+      retrievalScope: retrieval.scope,
+    };
+  }
 
   async chat(input: AiKnowledgeChatInput): Promise<AiKnowledgeChatResult> {
     if (input.workspace && !this.isEnabledForWorkspace(input.workspace)) {
