@@ -27,6 +27,7 @@ import {
 import { KnowledgeVectorIndexService } from './knowledge-vector-index.service';
 import { KnowledgeArtifactMaterializerService } from './knowledge-artifact-materializer.service';
 import { chunkKnowledgeSource } from '../chunking/knowledge-structural-chunker';
+import { hasTableNode } from '../../../common/helpers/prosemirror/table-text';
 import {
   KnowledgeOperationBudget,
   mapKnowledgeOperations,
@@ -96,6 +97,9 @@ export class KnowledgeImportService {
     const operationBudget =
       input.input.operationBudget ?? new KnowledgeOperationBudget();
     input.input.operationBudget = operationBudget;
+    const hasTableSource = input.input.sources.some((source) =>
+      hasTableNode(source.content),
+    );
     operationBudget.throwIfAborted();
     if (!input.preparedImport) await input.onStage?.('validation');
     const validation = input.preparedImport
@@ -105,12 +109,14 @@ export class KnowledgeImportService {
         }
       : this.validator.validateCompileResult(input);
     operationBudget.assertArtifactCount(validation.accepted.length);
-    operationBudget.assertChunkCount(
-      validation.accepted.reduce(
-        (count, artifact) => count + (artifact.chunks?.length ?? 0),
-        0,
-      ),
-    );
+    if (!hasTableSource) {
+      operationBudget.assertChunkCount(
+        validation.accepted.reduce(
+          (count, artifact) => count + (artifact.chunks?.length ?? 0),
+          0,
+        ),
+      );
+    }
 
     const quarantineInputs =
       input.preparedImport?.quarantineInputs ??
@@ -188,12 +194,14 @@ export class KnowledgeImportService {
         operationBudget,
       });
       artifactsToPublish = materialized.artifacts;
-      operationBudget.assertChunkCount(
-        artifactsToPublish.reduce(
-          (count, artifact) => count + (artifact.chunks?.length ?? 0),
-          0,
-        ),
-      );
+      if (!hasTableSource) {
+        operationBudget.assertChunkCount(
+          artifactsToPublish.reduce(
+            (count, artifact) => count + (artifact.chunks?.length ?? 0),
+            0,
+          ),
+        );
+      }
       contributionPublication = {
         sourcePageId: source.sourcePageId,
         removedArtifactIds: materialized.removedArtifactIds,

@@ -66,6 +66,64 @@ describe('KnowledgeImportService', () => {
     expect(capsuleRepo.upsertCompiledArtifacts).not.toHaveBeenCalled();
   });
 
+  it('allows more than 200 chunks when the source page contains a table', async () => {
+    const artifact = {
+      artifactId: 'artifact-table',
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      title: 'Table page',
+      contentMarkdown: '# Table page',
+      sourcePageIds: ['source-1'],
+      artifactKind: 'source_summary' as const,
+      compilerVersion: 'compiler@1',
+      promptVersion: 'prompt@1',
+      chunks: Array.from({ length: 201 }, (_, index) => ({
+        text: `table-row-${index}`,
+        embedding: [0.1, 0.2],
+      })),
+    };
+    const capsuleRepo = {
+      markCompileScopeStale: jest.fn().mockResolvedValue(undefined),
+      upsertCompiledArtifacts: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new KnowledgeImportService(
+      {} as KnowledgeSourceRepo,
+      capsuleRepo as unknown as KnowledgeCapsuleRepo,
+      {
+        validateCompileResult: jest.fn().mockReturnValue({
+          accepted: [artifact],
+          quarantined: [],
+        }),
+      } as unknown as KnowledgeArtifactValidatorService,
+      {} as never,
+      {} as never,
+      createTransactionDb() as never,
+      { ensureProfileIndex: jest.fn().mockResolvedValue('created') } as never,
+      createContributionRepo() as never,
+      createMaterializer() as never,
+    );
+
+    await expect(
+      service.importCompileResult({
+        input: {
+          ...compileInput(),
+          sources: [
+            {
+              ...compileInput().sources[0],
+              content: {
+                type: 'doc',
+                content: [{ type: 'table', content: [] }],
+              },
+            },
+          ],
+        },
+        artifacts: [artifact],
+        upsertSources: false,
+      }),
+    ).resolves.toMatchObject({ importedArtifactCount: 1 });
+    expect(capsuleRepo.upsertCompiledArtifacts).toHaveBeenCalled();
+  });
+
   it('embeds imported chunks when compiler artifacts do not include embeddings', async () => {
     const artifact = {
       artifactId: 'artifact-1',
