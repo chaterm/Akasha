@@ -121,13 +121,6 @@ export class HoidcService {
         json?.msg || 'Invalid digital employee token',
       );
     }
-    if (
-      json.data.target_platform_id &&
-      json.data.target_platform_id !== config.platformId
-    ) {
-      throw new UnauthorizedException('Digital employee token target mismatch');
-    }
-
     return {
       uid: Number(json.data.uid),
       email: String(json.data.email),
