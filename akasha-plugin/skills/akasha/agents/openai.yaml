@@ -1,0 +1,4 @@
+interface:
+  display_name: "Akasha"
+  short_description: "查询公司与个人知识库"
+  default_prompt: "Akasha 是当前宿主配置的公司与个人知识库；问题可能需要模型外部信息时使用 $akasha 查询并依据来源回答。"

@@ -136,23 +136,22 @@ export class LlmWikiController {
           'Robot queries require a personal API key',
         );
       }
-      if (!publicApiKey) {
-        throw new UnauthorizedException(
-          'Robot queries require a Public API key',
+      // Robot queries can authenticate with a single personal API key. A
+      // Public API key remains supported when supplied, in which case its
+      // Space scope is enforced as an additional restriction.
+      if (publicApiKey) {
+        const publicAccess = await this.apiKeyService.validatePublicApiKey(
+          publicApiKey,
+          workspace.id,
         );
+        const allowedSpaceIds = new Set(publicAccess.spaceIds);
+        if (dto.spaceIds.some((spaceId) => !allowedSpaceIds.has(spaceId))) {
+          throw new ForbiddenException(
+            'Requested Spaces are outside the Public API key scope',
+          );
+        }
+        publicApiKeyId = publicAccess.apiKeyId;
       }
-
-      const publicAccess = await this.apiKeyService.validatePublicApiKey(
-        publicApiKey,
-        workspace.id,
-      );
-      const allowedSpaceIds = new Set(publicAccess.spaceIds);
-      if (dto.spaceIds.some((spaceId) => !allowedSpaceIds.has(spaceId))) {
-        throw new ForbiddenException(
-          'Requested Spaces are outside the Public API key scope',
-        );
-      }
-      publicApiKeyId = publicAccess.apiKeyId;
     } else if (publicApiKey !== undefined) {
       throw new BadRequestException(
         'Public API keys are only valid for robot queries',
@@ -178,7 +177,7 @@ export class LlmWikiController {
     const requestedSpaceIds = retrievalScope?.requestedSpaceIds ?? dto.spaceIds;
     const effectiveSpaceIds =
       retrievalScope?.effectiveSpaceIds ?? requestedSpaceIds;
-    const publicScopeValidated = queryType === KnowledgeQueryType.ROBOT;
+    const publicScopeValidated = Boolean(publicApiKeyId);
 
     this.auditService.log({
       event: AuditEvent.KNOWLEDGE_QUERY,

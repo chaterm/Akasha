@@ -9,6 +9,8 @@ import { SearchModule } from '../search/search.module';
 import { SpaceModule } from '../space/space.module';
 import { CommentModule } from '../comment/comment.module';
 import { WorkspaceModule } from '../workspace/workspace.module';
+import { McpToolRegistry } from './mcp-tool-registry';
+import { AttachmentModule } from '../attachment/attachment.module';
 
 @Module({
   imports: [
@@ -18,8 +20,10 @@ import { WorkspaceModule } from '../workspace/workspace.module';
     SpaceModule,
     CommentModule,
     WorkspaceModule,
+    AttachmentModule,
   ],
   controllers: [McpController],
-  providers: [McpService, McpAuthService, ApiKeyRepo],
+  providers: [McpService, McpAuthService, ApiKeyRepo, McpToolRegistry],
+  exports: [McpToolRegistry],
 })
 export class McpModule {}

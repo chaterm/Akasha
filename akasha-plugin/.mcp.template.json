@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "akasha": {
+      "type": "http",
+      "url": "https://<your-akasha-host>/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-akasha-api-key>"
+      }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "akasha",
+  "version": "1.3.0",
+  "description": "Access the locally configured Akasha knowledge base and Page operations through MCP.",
+  "author": {
+    "name": "Akasha"
+  }
+}
