@@ -83,9 +83,21 @@ export class ExportService {
 
     if (format === ExportFormat.HTML) {
       return `<!DOCTYPE html>
-      <html>
+      <html lang="zh-CN">
         <head>
+         <meta charset="utf-8" />
+         <meta name="viewport" content="width=device-width, initial-scale=1" />
          <title>${getPageTitle(page.title)}</title>
+         <style>
+           body { margin: 0; padding: 24px; color: #212529; background: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; }
+           .tableWrapper { margin: 1rem 0; max-width: 100%; overflow-x: auto; }
+           .tableWrapper table { width: 100%; min-width: 0; border-collapse: collapse; table-layout: fixed; }
+           .tableWrapper th, .tableWrapper td { box-sizing: border-box; min-width: 1em; padding: 6px 8px; border: 1px solid #ced4da; vertical-align: top; overflow-wrap: anywhere; word-break: break-word; }
+           .tableWrapper th { background: #f1f3f5; font-weight: 600; text-align: left; }
+           .tableWrapper p { margin: 0; }
+           .tableWrapper p + p { margin-top: 0.75rem; }
+           img, video { max-width: 100%; }
+         </style>
         </head>
         <body>${pageHtml}</body>
       </html>`;
