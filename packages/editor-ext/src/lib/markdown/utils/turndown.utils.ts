@@ -39,7 +39,25 @@ export function htmlToMarkdown(html: string): string {
     // lib/macros/turndown-rules.ts
     ...macroTurndownRules,
   ]);
+  preserveMergedTables(turndownService);
   return turndownService.turndown(html).replaceAll('<br>', ' ');
+}
+
+function preserveMergedTables(turndownService: _TurndownService) {
+  // Markdown tables cannot represent rowspan/colspan, so keep these tables as HTML.
+  turndownService.addRule('mergedTable', {
+    filter: (node: HTMLInputElement) => {
+      if (node.nodeName !== 'TABLE') return false;
+      return Array.from(node.querySelectorAll('th, td')).some((cell) =>
+        ['rowspan', 'colspan'].some(
+          (attribute) =>
+            Number.parseInt(cell.getAttribute(attribute) || '1', 10) > 1,
+        ),
+      );
+    },
+    replacement: (_content: string, node: HTMLInputElement) =>
+      `\n\n${node.outerHTML}\n\n`,
+  });
 }
 
 function listParagraph(turndownService: _TurndownService) {
