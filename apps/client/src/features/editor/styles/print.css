@@ -32,6 +32,13 @@
     height: auto !important;
   }
 
+  /* Editor tables keep pixel widths on <col>; reset them so the print area
+     can distribute all columns instead of clipping the rightmost ones. */
+  .tableWrapper table > colgroup > col {
+    width: auto !important;
+    min-width: 0 !important;
+  }
+
   .tableWrapper tbody,
   .tableWrapper tr,
   .tableWrapper th,
