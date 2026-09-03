@@ -462,11 +462,17 @@ export class KnowledgeSpaceRunnerService {
         errorCode?: string | null;
         errorMessage?: string | null;
       }) =>
-        this.executionRepo.failMergePage(lease, {
-          ...pageIdentity,
-          errorCode: outcome.errorCode,
-          errorMessage: outcome.errorMessage,
-        }),
+        outcome.status === 'skipped'
+          ? this.executionRepo.skipMergePage(lease, {
+              ...pageIdentity,
+              errorCode: outcome.errorCode,
+              errorMessage: outcome.errorMessage,
+            })
+          : this.executionRepo.failMergePage(lease, {
+              ...pageIdentity,
+              errorCode: outcome.errorCode,
+              errorMessage: outcome.errorMessage,
+            }),
       catalog: async () => [],
       publicationGuard: (
         trx: Parameters<

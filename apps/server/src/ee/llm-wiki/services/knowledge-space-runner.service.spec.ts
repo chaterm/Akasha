@@ -299,6 +299,7 @@ describe('KnowledgeSpaceRunnerService', () => {
       .fn()
       .mockResolvedValue(true);
     executionRepo.failMergePage = jest.fn().mockResolvedValue({});
+    executionRepo.skipMergePage = jest.fn().mockResolvedValue({});
     const pageCompilation = {
       mergePageImages: jest.fn(async (input) => {
         activeMerges += 1;
@@ -426,6 +427,63 @@ describe('KnowledgeSpaceRunnerService', () => {
     });
     expect(executionRepo.finishRun).toHaveBeenCalledWith(lease, 'partial');
   });
+
+  it('persists a skipped image merge as skipped instead of failed', async () => {
+    const lease = mergeLeaseFixture();
+    const executionRepo = createExecutionRepo(lease, [
+      {
+        id: 'run-page-1',
+        sourcePageId: 'page-1',
+        expectedSourceVersion: 'v1',
+        expectedSourceContentHash: 'sha256:page-1',
+        targetEffectiveKnowledgeHash: null,
+        createdAt: new Date(0),
+        images: [],
+      },
+    ]);
+    executionRepo.findPendingMergePages = jest
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          id: 'run-page-1',
+          sourcePageId: 'page-1',
+          expectedSourceVersion: 'v1',
+          expectedSourceContentHash: 'sha256:page-1',
+          targetEffectiveKnowledgeHash: null,
+          createdAt: new Date(0),
+          images: [],
+        },
+      ])
+      .mockResolvedValue([]);
+    const pageCompilation = {
+      mergePageImages: jest.fn(async (input) => {
+        await input.execution.completePage({
+          status: 'skipped',
+          errorCode: 'image_snapshot_changed',
+        });
+        return { outcome: 'succeeded', result: pageResult() };
+      }),
+    };
+    const runner = new KnowledgeSpaceRunnerService(
+      executionRepo as never,
+      { initializeLeasedRun: jest.fn() } as never,
+      pageCompilation as never,
+      finalizer() as never,
+      { getKnowledgePageDeadlineMs: () => 900_000 } as never,
+    );
+
+    await runner.runImageMergeSlice(mergeSliceInput(), {
+      workerId: 'worker-1',
+      finalAttempt: false,
+      settings: settings(),
+    });
+
+    expect(executionRepo.skipMergePage).toHaveBeenCalledWith(
+      lease,
+      expect.objectContaining({ errorCode: 'image_snapshot_changed' }),
+    );
+    expect(executionRepo.failMergePage).not.toHaveBeenCalled();
+  });
 });
 
 function createExecutionRepo(
@@ -450,6 +508,7 @@ function createExecutionRepo(
     completeMergePagePublicationInTransaction: jest
       .fn()
       .mockResolvedValue(true),
+    skipMergePage: jest.fn().mockResolvedValue({}),
     failMergePage: jest.fn().mockResolvedValue({}),
     completeTextPage: jest.fn().mockResolvedValue({ barrierComplete: false }),
     heartbeatSpaceSlice: jest.fn().mockResolvedValue(true),

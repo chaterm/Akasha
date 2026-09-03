@@ -187,6 +187,16 @@ export class KnowledgeImageEnrichmentService {
       model: providerCacheIdentity,
       promptVersion: DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
     });
+    this.logger.log({
+      event: 'knowledge_image_ready_lookup',
+      workspaceId: source.workspaceId,
+      spaceId: source.spaceId,
+      sourcePageId: source.sourcePageId,
+      providerCacheIdentity,
+      requestedAttachmentIds: images.map((image) => image.attachmentId),
+      matchedAttachmentIds: rows.map((row) => row.attachmentId),
+      matchedExtractionModels: rows.map((row) => row.model),
+    });
     const rowByAttachmentId = new Map(
       rows.map((row) => [row.attachmentId, row] as const),
     );
@@ -374,7 +384,7 @@ export class KnowledgeImageEnrichmentService {
         claim = await this.extractionRepo.claim(
           cacheKey,
           this.environmentService.getKnowledgeImageTimeoutMs() +
-            CLAIM_LEASE_GRACE_MS,
+          CLAIM_LEASE_GRACE_MS,
         );
       } catch {
         warnings.push(warning(image.attachmentId, 'image_cache_unavailable'));
@@ -382,6 +392,19 @@ export class KnowledgeImageEnrichmentService {
         retryableFailureCount += 1;
         continue;
       }
+
+      this.logger.log({
+        event: 'knowledge_image_cache_claim',
+        workspaceId: source.workspaceId,
+        spaceId: source.spaceId,
+        sourcePageId: source.sourcePageId,
+        attachmentId: image.attachmentId,
+        providerCacheIdentity,
+        cacheFingerprint: cacheKey.cacheFingerprint,
+        claimState: claim.state,
+        extractionId: claim.extraction.id,
+        extractionModel: claim.extraction.model,
+      });
 
       if (claim.state === 'ready') {
         cacheHitCount += 1;
