@@ -28,9 +28,9 @@ import { QueryKnowledgeDto } from './dto/query-knowledge.dto';
 import {
   AiKnowledgeChatService,
   AiKnowledgeChatResult,
-  isGeneralKnowledgeEnabledForUser,
 } from './services/ai-knowledge-chat.service';
 import { KnowledgeCitationImageResolverService } from './services/knowledge-citation-image-resolver.service';
+import { KnowledgeCitationAttachmentResolverService } from './services/knowledge-citation-attachment-resolver.service';
 import { IsElfAgentAuthGuard } from './guards/iself-agent-auth.guard';
 
 /** HTTP boundary for iself agents, with the same knowledge-chat behavior as the regular API. */
@@ -46,6 +46,8 @@ export class IsElfLlmWikiController {
     private readonly apiKeyService: ApiKeyService,
     @Inject(AUDIT_SERVICE) private readonly auditService: IAuditService,
     @Optional() private readonly environmentService?: EnvironmentService,
+    @Optional()
+    private readonly attachmentResolver?: KnowledgeCitationAttachmentResolverService,
   ) {}
 
   @HttpCode(HttpStatus.OK)
@@ -85,9 +87,13 @@ export class IsElfLlmWikiController {
       spaceIds: dto.spaceIds,
       chatContext: dto.chatContext,
       workspace,
-      ...(isGeneralKnowledgeEnabledForUser(user)
-        ? {}
-        : { generalKnowledgeEnabled: false }),
+      // iself is intentionally fail-closed for general knowledge. The caller
+      // must opt in per request; the user's UI preference does not override
+      // this agent-facing default.
+      generalKnowledgeEnabled: dto.generalKnowledgeEnabled === true,
+      ...(dto.scoreThreshold !== undefined
+        ? { scoreThreshold: dto.scoreThreshold }
+        : {}),
     });
     const queryHash = hashQuery(dto.query);
     const { retrievalDiagnostics, retrievalScope, ...response } = result;
@@ -147,10 +153,18 @@ export class IsElfLlmWikiController {
       citations: response.citations,
       citationEvidence: response.citationEvidence,
     });
+    const attachments =
+      dto.attachments === true || dto.includeCitations === true
+        ? await this.resolveAttachments({
+            workspaceId: workspace.id,
+            citations: response.citations,
+          })
+        : undefined;
     const appUrl = this.environmentService?.getAppUrl();
     return {
       ...response,
       citations: mapCitationUrls(citationsWithImages, appUrl),
+      ...(attachments ? { attachments } : {}),
       ...(Array.isArray(response.citationEvidence)
         ? {
             citationEvidence: mapCitationUrls(
@@ -208,6 +222,23 @@ export class IsElfLlmWikiController {
         err instanceof Error ? err.stack : undefined,
       );
       return emptyImages();
+    }
+  }
+
+  private async resolveAttachments(input: {
+    workspaceId: string;
+    citations: AiKnowledgeChatResult['citations'];
+  }) {
+    if (!this.attachmentResolver) return [];
+    try {
+      return await this.attachmentResolver.resolveAttachments(input);
+    } catch (error) {
+      this.logger.error(
+        `Attachment resolution failed for workspace ${input.workspaceId}; ` +
+          'returning attachments: []',
+        error instanceof Error ? error.stack : undefined,
+      );
+      return [];
     }
   }
 }

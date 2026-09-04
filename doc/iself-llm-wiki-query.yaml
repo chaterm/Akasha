@@ -1,0 +1,239 @@
+api:
+  name: iself 知识检索接口
+  description: >-
+    为 iself 智能体检索 Akasha 知识。请求使用 SSO/HOIDC Token 认证，且只能检索
+    公共检索 API Key 允许访问的知识空间。
+  method: POST
+  path: /api/iself/llm-wiki/query
+  contentType: application/json
+
+authentication:
+  headers:
+    x-token:
+      required: true
+      type: string
+      description: >-
+        原始 SSO 访问 Token 或 iself 数字员工 Token，不要添加 Bearer 前缀。
+        系统会通过 HOIDC 校验 Token，并将身份映射到当前工作区成员。
+    x-akasha-public-key:
+      required: true
+      type: string
+      description: >-
+        公共检索 API Key。系统会校验 request.spaceIds 中的每个空间是否都在该
+        API Key 的授权范围内。
+
+request:
+  body:
+    required: true
+    type: object
+    requiredFields:
+      - query
+      - spaceIds
+    properties:
+      query:
+        type: string
+        required: true
+        minLength: 1
+        maxLength: 4000
+        description: 自然语言知识问题。
+      spaceIds:
+        type: array
+        required: true
+        uniqueItems: true
+        minItems: 1
+        items:
+          type: string
+          format: uuid
+        description: >-
+          要检索的知识空间。每个空间都必须位于公共检索 API Key 的授权范围内。
+      chatContext:
+        type: array
+        required: false
+        maxItems: 30
+        items:
+          type: string
+          maxLength: 4000
+        description: 可选的历史对话内容，用于辅助理解当前问题。
+      attachments:
+        type: boolean
+        required: false
+        default: false
+        description: >-
+          传入 true 时，在响应顶层返回 attachments 列表，包含引用页面的所有附件
+          及签名下载地址。未传入或传入 false 时，不返回 attachments 字段。
+      includeCitations:
+        type: boolean
+        required: false
+        default: false
+        description: >-
+          是否附带引用资料。传入 true 时返回顶层 attachments 列表及签名下载
+          地址，与 attachments: true 等效；原有 citations 页面引用链接仍会返回。
+      generalKnowledgeEnabled:
+        type: boolean
+        required: false
+        default: false
+        description: >-
+          传入 true 时，当授权范围内没有检索结果或结果不足时，允许回答模型使用
+          通用知识兜底。iself 不会自动使用用户界面中的通用知识偏好配置。
+      scoreThreshold:
+        type: number
+        required: false
+        default: 0.45
+        minimum: 0
+        maximum: 2
+        description: >-
+          语义召回允许的最大 cosine distance。值越小，召回越严格；值越大，召回
+          越宽松。该参数只影响语义候选，词法匹配和标题精确匹配仍使用原有规则。
+
+examples:
+  request:
+    headers:
+      x-token: <sso 或 iself token>
+      x-akasha-public-key: <公共检索 API key>
+    body:
+      query: 如何配置 Kafka？
+      spaceIds:
+        - 00000000-0000-4000-8000-000000000001
+      includeCitations: true
+      generalKnowledgeEnabled: false
+      scoreThreshold: 0.6
+
+response:
+  status: 200
+  body:
+    type: object
+    properties:
+      answer:
+        type: string
+      answerMode:
+        type: string
+        enum:
+          - knowledge
+          - no_match
+          - general
+      retrievalQuery:
+        type: string
+        required: false
+        description: 如果发生查询改写，返回实际用于检索的查询文本。
+      citations:
+        type: array
+        items:
+          $ref: '#/definitions/citation'
+      citationEvidence:
+        type: array
+        items:
+          $ref: '#/definitions/citationEvidence'
+      retrievedSources:
+        type: array
+        items:
+          $ref: '#/definitions/citation'
+      snippets:
+        type: array
+        items:
+          type: object
+          properties:
+            id:
+              type: string
+            title:
+              type: string
+            text:
+              type: string
+            retrievalReasons:
+              type: array
+              items:
+                type: string
+            sourceWindows:
+              type: array
+              items:
+                $ref: '#/definitions/sourceWindow'
+      warnings:
+        type: array
+        items:
+          type: string
+      retrievalReasons:
+        type: array
+        items:
+          type: string
+      budget:
+        type: object
+        properties:
+          maxContextLength: { type: number }
+          usedContextLength: { type: number }
+          remainingContextLength: { type: number }
+          includedItemCount: { type: number }
+          omittedItemCount: { type: number }
+          responseReserve: { type: number }
+          perItemMaxLength: { type: number }
+      completenessNotice:
+        type: string
+      attachments:
+        required: false
+        description: 仅当请求参数 attachments 或 includeCitations 为 true 时返回。
+        type: array
+        maxItems: 15
+        items:
+          $ref: '#/definitions/attachment'
+
+definitions:
+  citation:
+    type: object
+    properties:
+      sourcePageId: { type: string, format: uuid }
+      title: { type: string }
+      url: { type: string }
+      images:
+        type: array
+        description: 引用页面关联的图片列表，可能为空。
+        items:
+          type: object
+          properties:
+            attachmentId: { type: string, format: uuid }
+            fileName: { type: string }
+            mimeType: { type: string }
+            url: { type: string }
+            description: { type: string }
+  citationEvidence:
+    type: object
+    properties:
+      sourcePageId: { type: string, format: uuid }
+      title: { type: string }
+      url: { type: string }
+      excerpts:
+        type: array
+        items:
+          type: object
+          properties:
+            text: { type: string }
+            sourceRange: { type: object }
+            quoteHash: { type: string }
+  sourceWindow:
+    type: object
+    properties:
+      sourcePageId: { type: string, format: uuid }
+      title: { type: string }
+      url: { type: string }
+      text: { type: string }
+      sourceRange: { type: object }
+      quoteHash: { type: string }
+  attachment:
+    type: object
+    properties:
+      attachmentId: { type: string, format: uuid }
+      sourcePageId: { type: string, format: uuid }
+      fileName: { type: string }
+      mimeType: { type: string, nullable: true }
+      fileSize: { type: number, nullable: true }
+      url:
+        type: string
+        description: 附件的签名公开下载地址。
+
+errors:
+  400:
+    description: >-
+      请求参数校验失败，例如 UUID、布尔值格式错误，或 scoreThreshold 超出范围。
+  401:
+    description: >-
+      缺少或无效的 x-token、SSO 用户不是当前工作区成员，或公共 API Key 缺失/无效。
+  403:
+    description: >-
+      工作区未启用 AI 知识问答，或请求的知识空间不在公共 API Key 的授权范围内。

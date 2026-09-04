@@ -15,6 +15,64 @@ describe('QueryKnowledgeDto', () => {
     await expect(validate(dto)).resolves.toEqual([]);
   });
 
+  it('defaults attachments to disabled when omitted', async () => {
+    const dto = createDto();
+    await expect(validate(dto)).resolves.toEqual([]);
+    expect(dto.attachments).toBeUndefined();
+  });
+
+  it('accepts the attachments opt-in flag', async () => {
+    await expect(validate(createDto({ attachments: true }))).resolves.toEqual(
+      [],
+    );
+  });
+
+  it('accepts the citation materials opt-in flag', async () => {
+    await expect(
+      validate(createDto({ includeCitations: true })),
+    ).resolves.toEqual([]);
+  });
+
+  it('accepts the general knowledge opt-in flag', async () => {
+    await expect(
+      validate(createDto({ generalKnowledgeEnabled: true })),
+    ).resolves.toEqual([]);
+  });
+
+  it('accepts a custom semantic score threshold', async () => {
+    await expect(validate(createDto({ scoreThreshold: 0.6 }))).resolves.toEqual(
+      [],
+    );
+  });
+
+  it.each([
+    ['a non-number', '0.6' as never],
+    ['a negative number', -0.1],
+    ['a number above the cosine distance range', 2.1],
+  ])('rejects %s score threshold', async (_label, scoreThreshold) => {
+    const errors = await validate(createDto({ scoreThreshold }));
+    expect(errors).not.toEqual([]);
+  });
+
+  it('rejects a non-boolean attachments flag', async () => {
+    const errors = await validate(createDto({ attachments: 'true' as never }));
+    expect(errors).not.toEqual([]);
+  });
+
+  it('rejects a non-boolean citation materials flag', async () => {
+    const errors = await validate(
+      createDto({ includeCitations: 'true' as never }),
+    );
+    expect(errors).not.toEqual([]);
+  });
+
+  it('rejects a non-boolean general knowledge flag', async () => {
+    const errors = await validate(
+      createDto({ generalKnowledgeEnabled: 'true' as never }),
+    );
+    expect(errors).not.toEqual([]);
+  });
+
   it.each([
     [
       'duplicate',
