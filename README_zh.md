@@ -158,7 +158,7 @@ Akasha 计划从知识工作区进一步发展为更完整的组织记忆系统�
 ### 安装
 
 ```bash
-git clone https://github.com/fishyu-mushroom/Akasha.git
+git clone https://github.com/chaterm/Akasha.git
 cd Akasha
 pnpm install
 ```
