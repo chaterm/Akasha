@@ -105,6 +105,25 @@ export class AttachmentRepo {
       .execute();
   }
 
+  async findByPageIds(
+    pageIds: string[],
+    workspaceId: string,
+    opts?: {
+      trx?: KyselyTransaction;
+    },
+  ): Promise<Attachment[]> {
+    if (pageIds.length === 0) return [];
+    const db = dbOrTx(this.db, opts?.trx);
+
+    return db
+      .selectFrom('attachments')
+      .select(this.baseFields)
+      .where('pageId', 'in', pageIds)
+      .where('workspaceId', '=', workspaceId)
+      .where('deletedAt', 'is', null)
+      .execute();
+  }
+
   async findByAiChatId(
     aiChatId: string,
     opts?: {

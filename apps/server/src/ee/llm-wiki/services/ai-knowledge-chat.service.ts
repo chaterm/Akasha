@@ -52,6 +52,8 @@ type AiKnowledgeChatInput = {
   responseMode?: 'knowledge' | 'general';
   /** Whether an empty/insufficient knowledge retrieval may fall back to general AI. */
   generalKnowledgeEnabled?: boolean;
+  /** Maximum semantic cosine distance accepted during recall. */
+  scoreThreshold?: number;
   onToken?: (token: string) => void;
   onStage?: (stage: 'understanding' | 'retrieval' | 'generation') => void;
   onThinking?: (event: AiChatThinkingEvent) => void;
@@ -290,6 +292,9 @@ export class AiKnowledgeChatService {
           query: retrievalQuery,
           spaceIds: input.spaceIds,
           authCache,
+          ...(input.scoreThreshold !== undefined
+            ? { maxCosineDistance: input.scoreThreshold }
+            : {}),
           ...(input.debugTiming ? { debugTiming: input.debugTiming } : {}),
         }),
       (result) => ({

@@ -15,6 +15,7 @@ import { KnowledgeDiagnosticsService } from './services/knowledge-diagnostics.se
 import { KnowledgeGraphService } from './services/knowledge-graph.service';
 import { AiKnowledgeChatService } from './services/ai-knowledge-chat.service';
 import { KnowledgeCitationImageResolverService } from './services/knowledge-citation-image-resolver.service';
+import { KnowledgeCitationAttachmentResolverService } from './services/knowledge-citation-attachment-resolver.service';
 import { KnowledgeCitationImageRepo } from '../../database/repos/llm-wiki/knowledge-citation-image.repo';
 import { ConfiguredKnowledgeAnswerProvider } from './services/knowledge-answer-provider.service';
 import { KnowledgeTextProcessor } from './processors/knowledge-text.processor';
@@ -88,6 +89,7 @@ import { SsoModule } from '../sso/sso.module';
     KnowledgeGraphService,
     AiKnowledgeChatService,
     KnowledgeCitationImageResolverService,
+    KnowledgeCitationAttachmentResolverService,
     KnowledgeCitationImageRepo,
     ConfiguredKnowledgeEmbeddingProvider,
     KnowledgeVectorIndexService,

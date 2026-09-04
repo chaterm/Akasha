@@ -79,6 +79,18 @@ describe('IsElfLlmWikiController', () => {
     const environmentService = {
       getAppUrl: jest.fn().mockReturnValue('https://akasha.example.com'),
     };
+    const attachmentResolver = {
+      resolveAttachments: jest.fn().mockResolvedValue([
+        {
+          attachmentId: 'attachment-1',
+          sourcePageId: 'page-1',
+          fileName: 'design.pdf',
+          mimeType: 'application/pdf',
+          fileSize: 42,
+          url: 'https://akasha.example.com/api/files/public/attachment-1/design.pdf?jwt=jwt-1',
+        },
+      ]),
+    };
     const controller = new IsElfLlmWikiController(
       chatService as any,
       citationImageResolver as any,
@@ -86,12 +98,14 @@ describe('IsElfLlmWikiController', () => {
       apiKeyService as any,
       auditService as any,
       environmentService as any,
+      attachmentResolver as any,
     );
     const user = {
       id: 'user-1',
       workspaceId: 'workspace-1',
       role: UserRole.MEMBER,
-      settings: { preferences: { generalKnowledge: false } },
+      // iself must remain fail-closed even if the user's UI preference is on.
+      settings: { preferences: { generalKnowledge: true } },
     } as any;
     const workspace = {
       id: 'workspace-1',
@@ -177,5 +191,51 @@ describe('IsElfLlmWikiController', () => {
         metadata: expect.objectContaining({ origin: 'iself_knowledge_query' }),
       }),
     );
+    expect(attachmentResolver.resolveAttachments).not.toHaveBeenCalled();
+
+    const withAttachments = await controller.queryKnowledge(
+      {
+        query: 'How do we use Kafka?',
+        spaceIds: ['space-1'],
+        attachments: true,
+        generalKnowledgeEnabled: true,
+        scoreThreshold: 0.6,
+      },
+      user,
+      workspace,
+      'public-token',
+    );
+    expect(withAttachments.attachments).toEqual([
+      expect.objectContaining({
+        attachmentId: 'attachment-1',
+        sourcePageId: 'page-1',
+        fileName: 'design.pdf',
+      }),
+    ]);
+    expect(attachmentResolver.resolveAttachments).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      citations: [{ sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1' }],
+    });
+    expect(chatService.chat).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        generalKnowledgeEnabled: true,
+        scoreThreshold: 0.6,
+      }),
+    );
+
+    await controller.queryKnowledge(
+      {
+        query: 'How do we use Kafka?',
+        spaceIds: ['space-1'],
+        includeCitations: true,
+      },
+      user,
+      workspace,
+      'public-token',
+    );
+    expect(attachmentResolver.resolveAttachments).toHaveBeenLastCalledWith({
+      workspaceId: 'workspace-1',
+      citations: [{ sourcePageId: 'page-1', title: 'Kafka', url: '/p/page-1' }],
+    });
   });
 });

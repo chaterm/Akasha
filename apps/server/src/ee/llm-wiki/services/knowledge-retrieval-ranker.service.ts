@@ -175,6 +175,8 @@ export class KnowledgeRetrievalRankerService {
   isCandidateRelevant(input: {
     query: string;
     candidate: KnowledgeRankedChunkCandidate;
+    /** Maximum semantic cosine distance; defaults to the built-in threshold. */
+    maxCosineDistance?: number;
   }): boolean {
     const { candidate } = input;
     if (candidate.signals.includes('exact-title')) return true;
@@ -194,9 +196,10 @@ export class KnowledgeRetrievalRankerService {
       return true;
     }
     const semanticDistance = candidate.signalScores.semantic;
+    const maxCosineDistance =
+      input.maxCosineDistance ?? MAX_RELEVANT_COSINE_DISTANCE;
     return (
-      semanticDistance === undefined ||
-      semanticDistance <= MAX_RELEVANT_COSINE_DISTANCE
+      semanticDistance === undefined || semanticDistance <= maxCosineDistance
     );
   }
 }
@@ -209,7 +212,6 @@ function candidateSignalScores(
     candidate.signals.map((signal) => [signal, candidate.signalScore]),
   );
 }
-
 
 function rankSemanticCandidates(input: {
   query: string;
