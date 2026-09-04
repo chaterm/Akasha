@@ -158,7 +158,7 @@ Akasha may eventually allow reusable agent skills, operating patterns, and execu
 ### Install
 
 ```bash
-git clone https://github.com/fishyu-mushroom/Akasha.git
+git clone https://github.com/chaterm/Akasha.git
 cd Akasha
 pnpm install
 ```

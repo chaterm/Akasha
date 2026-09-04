@@ -5,6 +5,7 @@ import {
   HttpCode,
   HttpStatus,
   Inject,
+  Logger,
   Optional,
   Post,
   UnauthorizedException,
@@ -26,16 +27,21 @@ import { EnvironmentService } from '../../integrations/environment/environment.s
 import { QueryKnowledgeDto } from './dto/query-knowledge.dto';
 import {
   AiKnowledgeChatService,
-  AiKnowledgeRetrievalResult,
+  AiKnowledgeChatResult,
+  isGeneralKnowledgeEnabledForUser,
 } from './services/ai-knowledge-chat.service';
+import { KnowledgeCitationImageResolverService } from './services/knowledge-citation-image-resolver.service';
 import { IsElfAgentAuthGuard } from './guards/iself-agent-auth.guard';
 
-/** HTTP boundary for external agents that judge retrieved evidence themselves. */
+/** HTTP boundary for iself agents, with the same knowledge-chat behavior as the regular API. */
 @UseGuards(IsElfAgentAuthGuard)
 @Controller('iself/llm-wiki')
 export class IsElfLlmWikiController {
+  private readonly logger = new Logger(IsElfLlmWikiController.name);
+
   constructor(
     private readonly chatService: AiKnowledgeChatService,
+    private readonly citationImageResolver: KnowledgeCitationImageResolverService,
     private readonly queryAuditRepo: KnowledgeQueryAuditRepo,
     private readonly apiKeyService: ApiKeyService,
     @Inject(AUDIT_SERVICE) private readonly auditService: IAuditService,
@@ -49,7 +55,7 @@ export class IsElfLlmWikiController {
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
     @Headers('x-akasha-public-key') publicApiKey?: string,
-  ): Promise<AiKnowledgeRetrievalResult> {
+  ) {
     if (!this.chatService.isEnabledForWorkspace(workspace)) {
       throw new ForbiddenException('AI knowledge chat is disabled');
     }
@@ -63,22 +69,31 @@ export class IsElfLlmWikiController {
       workspace.id,
     );
     const allowedSpaceIds = new Set(publicAccess.spaceIds);
-    if (dto.spaceIds.some((spaceId) => !allowedSpaceIds.has(spaceId))) {
+    const unauthorizedSpaceIds = dto.spaceIds.filter(
+      (spaceId) => !allowedSpaceIds.has(spaceId),
+    );
+    if (unauthorizedSpaceIds.length > 0) {
       throw new ForbiddenException(
         'Requested Spaces are outside the Public API key scope',
       );
     }
 
-    const result = await this.chatService.retrieveOnly({
+    const result = await this.chatService.chat({
       workspaceId: workspace.id,
       userId: user.id,
       query: dto.query,
       spaceIds: dto.spaceIds,
+      chatContext: dto.chatContext,
       workspace,
+      ...(isGeneralKnowledgeEnabledForUser(user)
+        ? {}
+        : { generalKnowledgeEnabled: false }),
     });
     const queryHash = hashQuery(dto.query);
-    const requestedSpaceIds = result.retrievalScope.requestedSpaceIds;
-    const effectiveSpaceIds = result.retrievalScope.effectiveSpaceIds;
+    const { retrievalDiagnostics, retrievalScope, ...response } = result;
+    const requestedSpaceIds = retrievalScope?.requestedSpaceIds ?? dto.spaceIds;
+    const effectiveSpaceIds =
+      retrievalScope?.effectiveSpaceIds ?? requestedSpaceIds;
     const publicScopeValidated = true;
 
     this.auditService.log({
@@ -93,7 +108,7 @@ export class IsElfLlmWikiController {
         effectiveSpaceIds,
         publicScopeValidated,
         publicApiKeyId: publicAccess.apiKeyId,
-        citationCount: result.citations.length,
+        citationCount: response.citations.length,
       },
     });
 
@@ -101,8 +116,8 @@ export class IsElfLlmWikiController {
       workspaceId: workspace.id,
       userId: user.id,
       queryHash,
-      retrievalMode: result.retrievalDiagnostics.mode,
-      authorizedCapsuleCount: result.retrievalDiagnostics.authorizedChunkCount,
+      retrievalMode: retrievalDiagnostics.mode,
+      authorizedCapsuleCount: retrievalDiagnostics.authorizedChunkCount,
       metadata: {
         origin: 'iself_knowledge_query',
         spaceIds: dto.spaceIds,
@@ -110,39 +125,90 @@ export class IsElfLlmWikiController {
         effectiveSpaceIds,
         publicScopeValidated,
         publicApiKeyId: publicAccess.apiKeyId,
-        queryEmbeddingAvailable:
-          result.retrievalDiagnostics.queryEmbeddingAvailable,
-        candidateSourceCount: result.retrievalDiagnostics.candidateSourceCount,
+        queryEmbeddingAvailable: retrievalDiagnostics.queryEmbeddingAvailable,
+        candidateSourceCount: retrievalDiagnostics.candidateSourceCount,
         policyCandidateSourceCount:
-          result.retrievalDiagnostics.policyCandidateSourceCount,
+          retrievalDiagnostics.policyCandidateSourceCount,
         fallbackCandidateSourceCount:
-          result.retrievalDiagnostics.fallbackCandidateSourceCount,
+          retrievalDiagnostics.fallbackCandidateSourceCount,
         finalAuthorizedSourceCount:
-          result.retrievalDiagnostics.finalAuthorizedSourceCount,
-        accessPolicyFallbackUsed:
-          result.retrievalDiagnostics.accessPolicyFallbackUsed,
-        candidateChunkCount: result.retrievalDiagnostics.candidateChunkCount,
-        rankedCandidateCount: result.retrievalDiagnostics.rankedCandidateCount,
-        authorizedChunkCount: result.retrievalDiagnostics.authorizedChunkCount,
-        filteredChunkCount: result.retrievalDiagnostics.filteredChunkCount,
+          retrievalDiagnostics.finalAuthorizedSourceCount,
+        accessPolicyFallbackUsed: retrievalDiagnostics.accessPolicyFallbackUsed,
+        candidateChunkCount: retrievalDiagnostics.candidateChunkCount,
+        rankedCandidateCount: retrievalDiagnostics.rankedCandidateCount,
+        authorizedChunkCount: retrievalDiagnostics.authorizedChunkCount,
+        filteredChunkCount: retrievalDiagnostics.filteredChunkCount,
       },
     });
 
+    const citationsWithImages = await this.resolveCitationImages({
+      workspaceId: workspace.id,
+      answer: response.answer,
+      citations: response.citations,
+      citationEvidence: response.citationEvidence,
+    });
     const appUrl = this.environmentService?.getAppUrl();
     return {
-      ...result,
-      citations: mapCitationUrls(result.citations, appUrl),
-      citationEvidence: result.citationEvidence.map((evidence) => ({
-        ...evidence,
-        url: toAppCitationUrl(evidence.url, appUrl),
-        excerpts: evidence.excerpts,
-      })),
-      retrievedSources: mapCitationUrls(result.retrievedSources, appUrl),
-      snippets: result.snippets.map((snippet) => ({
-        ...snippet,
-        sourceWindows: mapCitationUrls(snippet.sourceWindows, appUrl),
-      })),
+      ...response,
+      citations: mapCitationUrls(citationsWithImages, appUrl),
+      ...(Array.isArray(response.citationEvidence)
+        ? {
+            citationEvidence: mapCitationUrls(
+              response.citationEvidence,
+              appUrl,
+            ),
+          }
+        : {}),
+      ...(Array.isArray(response.retrievedSources)
+        ? {
+            retrievedSources: mapCitationUrls(
+              response.retrievedSources,
+              appUrl,
+            ),
+          }
+        : {}),
+      ...(Array.isArray(response.snippets)
+        ? {
+            snippets: response.snippets.map((snippet) => ({
+              ...snippet,
+              ...(Array.isArray(snippet.sourceWindows)
+                ? {
+                    sourceWindows: mapCitationUrls(
+                      snippet.sourceWindows,
+                      appUrl,
+                    ),
+                  }
+                : {}),
+            })),
+          }
+        : {}),
     };
+  }
+
+  private async resolveCitationImages(input: {
+    workspaceId: string;
+    answer: string;
+    citations: AiKnowledgeChatResult['citations'];
+    citationEvidence: AiKnowledgeChatResult['citationEvidence'];
+  }): Promise<AiKnowledgeChatResult['citations']> {
+    const emptyImages = () =>
+      input.citations.map((citation) => ({ ...citation, images: [] }));
+
+    try {
+      return await this.citationImageResolver.resolveImagesForCitations({
+        workspaceId: input.workspaceId,
+        citations: input.citations,
+        citationEvidence: input.citationEvidence,
+        answerText: input.answer,
+      });
+    } catch (err) {
+      this.logger.error(
+        `Citation image resolution failed for workspace ${input.workspaceId}; ` +
+          `degrading ${input.citations.length} citation(s) to images: []`,
+        err instanceof Error ? err.stack : undefined,
+      );
+      return emptyImages();
+    }
   }
 }
 

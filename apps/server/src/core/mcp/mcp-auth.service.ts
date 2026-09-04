@@ -1,6 +1,7 @@
 import {
   Injectable,
   Logger,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ApiKeyRepo } from '@akasha/db/repos/api-key/api-key.repo';
@@ -16,6 +17,8 @@ import {
 } from '../../common/helpers';
 import { withApiKeyAccess } from '../../common/auth/api-key-access';
 import { FastifyRequest } from 'fastify';
+import { EnvironmentService } from '../../integrations/environment/environment.service';
+import { ModuleRef } from '@nestjs/core';
 
 export type McpAuthContext = {
   user: User;
@@ -32,9 +35,17 @@ export class McpAuthService {
     private readonly userRepo: UserRepo,
     private readonly workspaceRepo: WorkspaceRepo,
     private readonly spaceRepo: SpaceRepo,
+    @Optional() private readonly environmentService?: EnvironmentService,
+    @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
 
   async authenticate(request: FastifyRequest): Promise<McpAuthContext> {
+    const tokenHeader = request.headers['x-token'];
+    const ssoToken = Array.isArray(tokenHeader) ? tokenHeader[0] : tokenHeader;
+    if (typeof ssoToken === 'string' && ssoToken.trim()) {
+      return this.authenticateSso(request, ssoToken.trim());
+    }
+
     const token = extractBearerTokenFromHeader(request);
     if (!token) {
       throw new UnauthorizedException('Missing bearer token');
@@ -92,5 +103,47 @@ export class McpAuthService {
       );
 
     return { user: authenticatedUser, workspace };
+  }
+
+  private async authenticateSso(
+    request: FastifyRequest,
+    token: string,
+  ): Promise<McpAuthContext> {
+    const workspace =
+      (request.raw as any)?.workspace ?? (request as any).workspace;
+    const ssoApi = this.environmentService?.getHoidcSsoApi();
+    const platformId = this.environmentService?.getHoidcPlatformId();
+    if (!workspace?.id || !ssoApi || !platformId) {
+      throw new UnauthorizedException('SSO authentication is not configured');
+    }
+
+    let hoidcService: any;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { HoidcService } = require('../../ee/sso/hoidc.service');
+      hoidcService = this.moduleRef?.get(HoidcService, { strict: false });
+    } catch {
+      throw new UnauthorizedException('SSO authentication is unavailable');
+    }
+    if (!hoidcService) {
+      throw new UnauthorizedException('SSO authentication is unavailable');
+    }
+
+    const info = await hoidcService.verifyToken(
+      {
+        ssoApi,
+        platformId,
+        workspaceId: workspace.id,
+        allowSignup: false,
+      },
+      token,
+    );
+    const user = await this.userRepo.findByEmail(info.email, workspace.id);
+    if (!user || isUserDisabled(user)) {
+      throw new UnauthorizedException(
+        'SSO user is not a member of this workspace',
+      );
+    }
+    return { user, workspace };
   }
 }
