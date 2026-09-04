@@ -1,4 +1,0 @@
-interface:
-  display_name: "Akasha"
-  short_description: "查询可信 Wiki、读写 Page，并管理附件"
-  default_prompt: "使用 $akasha 查询带可信论据的 Wiki 知识，读取有权限的共享 Page，管理个人空间 Page，或上传/替换/下载 Page 附件。"

@@ -81,6 +81,8 @@ export class KnowledgeRetrievalService {
     query: string;
     spaceIds: string[];
     candidateLimit?: number;
+    /** Maximum semantic cosine distance accepted during recall. */
+    maxCosineDistance?: number;
     abortSignal?: AbortSignal;
     authCache?: KnowledgeAuthorizationCache;
     debugTiming?: AiChatDebugTiming;
@@ -227,6 +229,7 @@ export class KnowledgeRetrievalService {
           this.ranker.isCandidateRelevant({
             query: input.query,
             candidate,
+            maxCosineDistance: input.maxCosineDistance,
           }),
       );
     let rankingStartedAt = performance.now();

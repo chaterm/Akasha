@@ -15,6 +15,7 @@ import { KnowledgeDiagnosticsService } from './services/knowledge-diagnostics.se
 import { KnowledgeGraphService } from './services/knowledge-graph.service';
 import { AiKnowledgeChatService } from './services/ai-knowledge-chat.service';
 import { KnowledgeCitationImageResolverService } from './services/knowledge-citation-image-resolver.service';
+import { KnowledgeCitationAttachmentResolverService } from './services/knowledge-citation-attachment-resolver.service';
 import { KnowledgeCitationImageRepo } from '../../database/repos/llm-wiki/knowledge-citation-image.repo';
 import { ConfiguredKnowledgeAnswerProvider } from './services/knowledge-answer-provider.service';
 import { KnowledgeTextProcessor } from './processors/knowledge-text.processor';
@@ -27,6 +28,7 @@ import {
   KNOWLEDGE_IMAGE_UNDERSTANDING_PROVIDER,
 } from './llm-wiki.constants';
 import { LlmWikiController } from './llm-wiki.controller';
+import { IsElfLlmWikiController } from './iself-llm-wiki.controller';
 import { NoopAuditModule } from '../../integrations/audit/audit.module';
 import { LlmWikiFileCompilerAdapter } from './adapters/llm-wiki-file-compiler.adapter';
 import { SemanticKnowledgeCompilerRunner } from './adapters/semantic-knowledge-compiler.runner';
@@ -52,6 +54,11 @@ import { KnowledgeQualityService } from './services/knowledge-quality.service';
 import { AiModelConfigModule } from './services/ai-model-config.module';
 import { ApiKeyModule } from '../api-key/api-key.module';
 import { TokenModule } from '../../core/auth/token.module';
+import { McpModule } from '../../core/mcp/mcp.module';
+import { SpaceModule } from '../../core/space/space.module';
+import { KnowledgeMcpToolExtension } from './services/knowledge-mcp-tool.extension';
+import { IsElfAgentAuthGuard } from './guards/iself-agent-auth.guard';
+import { SsoModule } from '../sso/sso.module';
 
 @Module({
   imports: [
@@ -60,8 +67,11 @@ import { TokenModule } from '../../core/auth/token.module';
     ReviewModule,
     ApiKeyModule,
     TokenModule,
+    McpModule,
+    SpaceModule,
+    SsoModule,
   ],
-  controllers: [LlmWikiController],
+  controllers: [LlmWikiController, IsElfLlmWikiController],
   providers: [
     SpaceAuthorizationService,
     KnowledgeSourceAuthorizationService,
@@ -79,6 +89,7 @@ import { TokenModule } from '../../core/auth/token.module';
     KnowledgeGraphService,
     AiKnowledgeChatService,
     KnowledgeCitationImageResolverService,
+    KnowledgeCitationAttachmentResolverService,
     KnowledgeCitationImageRepo,
     ConfiguredKnowledgeEmbeddingProvider,
     KnowledgeVectorIndexService,
@@ -123,6 +134,8 @@ import { TokenModule } from '../../core/auth/token.module';
     KnowledgeTextProcessor,
     KnowledgeImageProcessor,
     KnowledgeSpaceProcessor,
+    KnowledgeMcpToolExtension,
+    IsElfAgentAuthGuard,
   ],
   exports: [
     KnowledgeSourceAuthorizationService,

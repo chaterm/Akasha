@@ -294,6 +294,40 @@ describe('KnowledgeRetrievalRankerService', () => {
       }),
     ).toBe(true);
   });
+
+  it('uses a caller-provided semantic cosine distance threshold', () => {
+    const ranker = new KnowledgeRetrievalRankerService();
+    const ranked = ranker.fuseRecallLists({
+      recallLists: [
+        {
+          signal: 'semantic',
+          candidates: [
+            {
+              chunk: chunk(
+                'chunk-unrelated',
+                'kp-unrelated',
+                [0, 1],
+                'Database backup retention settings',
+              ),
+              page: page('kp-unrelated', 'Backup operations'),
+              sourcePageIds: ['source-unrelated'],
+              signals: ['semantic'],
+              signalScore: 0.91,
+            },
+          ],
+        },
+      ],
+      limit: 10,
+    });
+
+    expect(
+      ranker.isCandidateRelevant({
+        query: 'employee vacation policy',
+        candidate: ranked[0],
+        maxCosineDistance: 1,
+      }),
+    ).toBe(true);
+  });
 });
 
 function page(id: string, title = `Title ${id}`) {

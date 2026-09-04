@@ -1062,6 +1062,19 @@ export class KnowledgeSpaceExecutionRepo {
     return this.finishMergePage(lease, { ...input, status: 'failed' });
   }
 
+  async skipMergePage(
+    lease: SpaceExecutionLease,
+    input: {
+      sourcePageId: string;
+      sourceVersion: string;
+      sourceContentHash: string;
+      errorCode?: string | null;
+      errorMessage?: string | null;
+    },
+  ) {
+    return this.finishMergePage(lease, { ...input, status: 'skipped' });
+  }
+
   async yieldSpaceSlice(
     lease: SpaceExecutionLease,
     input: { reason: 'page_limit' | 'time_limit' },
@@ -1199,7 +1212,11 @@ export class KnowledgeSpaceExecutionRepo {
       let followUp;
       if (
         run.rerunRequested &&
-        run.knowledgeGeneration === run.currentKnowledgeGeneration
+        run.knowledgeGeneration === run.currentKnowledgeGeneration &&
+        // A follow-up is a bounded convergence pass. If that pass also
+        // requests a rerun (for example because image knowledge is still not
+        // available), stop the automatic chain and require an explicit retry.
+        run.trigger !== 'follow_up'
       ) {
         followUp = await trx
           .insertInto('knowledgeSpaceCompileRuns')

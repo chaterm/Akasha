@@ -1,0 +1,17 @@
+{
+  "name": "akasha-local",
+  "owner": {
+    "name": "Akasha"
+  },
+  "metadata": {
+    "description": "Company-internal Akasha knowledge base and Page operations for Agent hosts."
+  },
+  "plugins": [
+    {
+      "name": "akasha",
+      "source": "./",
+      "description": "Access the company's internal Akasha knowledge base and Page operations through MCP.",
+      "version": "1.3.0"
+    }
+  ]
+}

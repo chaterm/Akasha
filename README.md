@@ -22,34 +22,29 @@
   - [Why Choose Akasha](#why-choose-akasha)
   - [Key Features](#key-features)
   - [Core Concepts](#core-concepts)
-    - [Three-Layer Memory](#three-layer-memory)
-    - [Context Graph](#context-graph)
-    - [Living Knowledge](#living-knowledge)
-    - [Cognitive Compounding](#cognitive-compounding)
-  - [Development Guide](#development-guide)
-    - [Prerequisites](#prerequisites)
+    - [Knowledge Compilation](#knowledge-compilation)
+    - [Source-Grounded Knowledge](#source-grounded-knowledge)
+    - [Relationship-Aware Knowledge](#relationship-aware-knowledge)
+    - [Human and Agent Access](#human-and-agent-access)
+  - [Roadmap / Vision](#roadmap--vision)
+    - [Organizational Memory Beyond Pages](#organizational-memory-beyond-pages)
+    - [Compounding Agent Experience](#compounding-agent-experience)
+  - [Development](#development)
     - [Install](#install)
-    - [Start Dependencies](#start-dependencies)
-    - [Development](#development)
+    - [Start](#start)
     - [Build](#build)
-    - [Troubleshooting](#troubleshooting)
-  - [Agent Skill](#agent-skill)
-  - [Self-hosted First](#self-hosted-first)
+  - [Agent Integration](#agent-integration)
+  - [Self-hosted](#self-hosted)
   - [Acknowledgements](#acknowledgements)
   - [Contributors](#contributors)
 
 # Introduction
 
-Akasha is an enterprise memory system built for humans and agents alike. It turns the experience scattered across individuals, teams, and business lines into organizational knowledge that accumulates, gets reused, and keeps evolving.
+Akasha is an enterprise knowledge and memory workspace for humans and agents.
 
-It solves three problems:
+It helps organizations turn scattered work context and experience into knowledge that can be discovered, connected, reused, and grounded in its sources. Teams collaborate in shared spaces, while agents retrieve and work with organizational knowledge within the same permission boundaries.
 
-1. **Turn fragmented information into knowledge.** Documents, meetings, conversations, and email are captured into one place, so knowledge stops leaking away.
-
-2. **Keep knowledge accurate over time.** The Dream Cycle organizes, verifies, and updates knowledge automatically, building up a knowledge graph as it goes.
-
-3. **Give agents domain experience.** Skills and progressive disclosure hand agents the domain knowledge and operating experience they need.
-
+Akasha brings together a collaborative Wiki, AI-powered knowledge compilation and retrieval, relationship-aware navigation, and MCP-based agent access in a self-hosted platform.
 
 ![Preview image](resources/hero1.webp)
 
@@ -57,96 +52,108 @@ It solves three problems:
 
 ## Why Choose Akasha
 
-Akasha is not a better wiki, it's a memory system. A knowledge base waits; memory participates.
+Akasha combines the familiarity of a collaborative Wiki with an AI-ready knowledge layer.
 
-- 🧠 **Memory, not storage** — actively remembers, associates, and surfaces context instead of filing documents
+- 🧠 **Knowledge that stays connected** — Pages, spaces, attachments, and compiled knowledge are connected through links, citations, and relationships.
 
-- 🌱 **Emergent knowledge** — grows from how people actually work, not from top-down mandates to keep the wiki updated
+- 🔍 **Answers grounded in sources** — AI retrieval and answers can point back to source pages and supporting evidence instead of returning unsupported summaries.
 
-- 🔄 **Self-maintaining** — the Dream Cycle verifies and refreshes knowledge so answers don't rot
+- 🤝 **Built for humans and agents** — People and agents access the same knowledge surface within the same workspace and permission model.
 
-- 🤖 **Built for agents too** — humans and agents are both first-class citizens, with the same permissions model
+- 🕸️ **Context beyond keyword search** — Relationship-aware navigation helps users explore how pages, concepts, entities, and sources are connected.
 
-- 🔍 **Provenance by default** — every memory carries its origin, freshness, and confidence
-
-- 🏠 **Self-hosted** — your data, your memory, your reasoning
+- 🏠 **Self-hosted by design** — Organizations can run Akasha in their own environment and control their data, storage, and model endpoints.
 
 ## Key Features
 
-- 🗂️ **Unified Capture**
+- 📝 **Collaborative Knowledge Workspace**
 
-  Documents, meetings, conversations, and email land in one system instead of a dozen tools, so knowledge stops leaking on the way.
+  Create and organize pages in shared spaces with rich-text editing, Markdown support, attachments, comments, version history, real-time collaboration, and access control.
 
-  Entity and relation extraction run on ingest, and permissions travel with the content.
+- 🌙 **AI Knowledge Compilation**
 
-- 🌙 **Dream Cycle**
+  Queue selected pages and spaces for asynchronous compilation into structured knowledge artifacts. Jobs begin processing after they are enqueued; the pipeline can identify entities, concepts, claims, relations, comparisons, contradictions, and supporting evidence.
 
-  Knowledge is organized, verified, and updated automatically in the background, and the knowledge graph is built up incrementally as it runs.
+- 🔍 **Source-Grounded Retrieval and Q&A**
 
-  Staleness detection, confidence scoring, and contradiction discovery keep answers from quietly going out of date.
+  Search and ask questions over organizational knowledge using lexical and vector retrieval. When workspace knowledge is used, answers include source-page citations and supporting evidence, with permission-aware results.
 
-- ⚡ **Skills for Agents**
+- 🕸️ **Relationship Graph**
 
-  Domain knowledge and operating experience are packaged as Skills that agents can load and reuse.
+  Explore direct page links and semantic relationships through a visual graph. Graph data is filtered according to the user's access permissions.
 
-  Progressive disclosure keeps the context window lean: agents pull detail only when the task needs it.
+- 🤖 **Agent Access through MCP**
 
-- 🕸️ **Context Graph**
-
-  People, decisions, events, services, and commitments are connected into a living map of what the organization means, not just what it stored.
-
-  Graph traversal answers questions a search box cannot, like why a decision was made and who disagreed.
-
-- 📝 **Workspace & Collaboration**
-
-  Real-time collaborative editing, spaces and projects, Markdown, rich text, version history, comments, and RBAC.
-
-- 🔌 **MCP-Compatible APIs**
-
-  Memory, graph, and retrieval APIs are exposed over MCP with full audit trails, so agents read and write memory inside permission boundaries.
+  Connect agents to Akasha through the `/mcp` endpoint. Agents can query knowledge and perform permitted operations on pages, spaces, comments, attachments, and workspace information using API-key authentication.
 
 ## Core Concepts
 
-### Three-Layer Memory
+### Knowledge Compilation
 
-| Layer | Question it answers | What it holds |
-|-------|--------------------|---------------|
-| Factual Memory | What happened | Artifacts with provenance, permissions, freshness, and relationships |
-| Interaction Memory | Why it mattered | Decisions, disagreements, tradeoffs, commitments, untested assumptions |
-| Action Memory | What to do next | Workflows, guardrails, and the results of past execution |
+Akasha keeps original Wiki pages and imported content as the source layer, then builds a structured knowledge layer from them.
 
-Factual memory is more than RAG — it's a semantic file system with durable structure. Interaction memory captures the organizational reasoning that rarely makes it into any artifact: a transcript is not enough, and neither is a summary. Action memory participates in operations, and **doing nothing is a first-class action** — a system that cannot stay still on purpose cannot be trusted to act on purpose.
-
-### Context Graph
-
-The reasoning layer, where facts become a model of the company:
+The compilation pipeline analyzes source content and produces knowledge artifacts such as summaries, entities, concepts, claims, relations, comparisons, and contradictions. Each artifact retains its source references and evidence so that compiled knowledge can be traced back to the original content.
 
 ```text
-Customer Call → Opportunity → Product Gap → Engineering Tradeoff → Roadmap Decision → Strategy
-Service → Team → Codebase → Deployment → Incident → SOP → Owner → Skill
+Wiki pages / imported content
+            ↓
+    Knowledge compilation
+            ↓
+Structured artifacts + evidence + indexes
+            ↓
+   Retrieval / Q&A / graph navigation
 ```
 
-This is also where metacognition lives: knowing when evidence is weak, when context is stale, when teams hold conflicting assumptions, when a commitment has no owner, and when an agent needs help.
+Compilation augments the original Wiki; it does not replace it. Source pages remain available for reading, editing, permission checks, and citation.
 
-### Living Knowledge
+### Source-Grounded Knowledge
 
-Knowledge is born, verified, used, strengthened, challenged, outdated, and retired. The Dream Cycle manages that lifecycle — freshness and staleness detection, confidence scoring, contradiction discovery, semantic version diff, deprecation warnings, and re-activation when dormant knowledge becomes relevant again.
+Akasha distinguishes between source content and derived knowledge.
 
-### Cognitive Compounding
+Original Wiki pages and imported content remain the primary sources. Compiled artifacts and AI answers are derived from those sources and retain citations, source references, or supporting evidence whenever available.
 
-One agent's insight propagates to all of them at zero marginal learning cost. Every execution generates training signal, patterns emerge from accumulated action memory, and Skills improve through feedback loops. The organization gets smarter without anyone "doing knowledge management."
+This makes it possible to:
 
+- trace a compiled claim back to its source page;
+- inspect the evidence behind an answer;
+- respect source-page permissions during retrieval;
+- identify knowledge that needs to be refreshed after its sources change.
 
-## Development Guide
+When the available evidence is insufficient, the system can indicate that limitation instead of presenting an unsupported conclusion as fact.
 
-### Prerequisites
+### Relationship-Aware Knowledge
 
-- [Node.js](https://nodejs.org/) 22+ (LTS recommended)
-- [pnpm](https://pnpm.io/) 10.4.0 (see `packageManager` in `package.json`)
-- PostgreSQL 18 with the [pgvector](https://github.com/pgvector/pgvector) extension available
-- Redis (local install or container)
+Akasha does not treat knowledge as a collection of isolated pages.
 
-Migrations run `CREATE EXTENSION IF NOT EXISTS vector` themselves, so you don't create the extension by hand. What you must provide is a PostgreSQL server that *has pgvector installed*, otherwise that migration fails.
+The knowledge layer records direct page links and semantic relationships discovered during compilation. These relationships connect pages, sections, entities, concepts, and shared sources, making it easier to explore related context and navigate across a knowledge space.
+
+The relationship graph is an aid for discovery and retrieval, not a replacement for the original source pages. Graph results are filtered according to the user's access permissions.
+
+### Human and Agent Access
+
+Akasha is designed for both people and agents.
+
+People use the Wiki interface to create, edit, organize, and discuss knowledge. Agents connect through MCP to search knowledge and perform permitted operations on pages, spaces, comments, attachments, and workspace information.
+
+Both access paths use workspace and resource-level authorization. Agent requests are authenticated with API keys, and supported knowledge queries and operations are recorded for auditing.
+
+## Roadmap / Vision
+
+The following ideas describe Akasha's product direction. They are exploratory plans and should not be read as a list of features guaranteed to be available in the current release.
+
+### Organizational Memory Beyond Pages
+
+Akasha aims to evolve from a knowledge workspace into a broader organizational memory system:
+
+- **Factual memory** — what happened, supported by source artifacts and provenance;
+- **Interaction memory** — why decisions, disagreements, and trade-offs mattered;
+- **Action memory** — what actions, workflows, and safeguards should follow.
+
+### Compounding Agent Experience
+
+Akasha may eventually allow reusable agent skills, operating patterns, and execution feedback to accumulate across tasks and agents, so that organizational experience becomes easier to reuse over time.
+
+## Development
 
 ### Install
 
@@ -156,133 +163,74 @@ cd Akasha
 pnpm install
 ```
 
-> Use `pnpm`, not `npm`. This is a pnpm workspace monorepo.
+This repository is a pnpm workspace monorepo. Use `pnpm` for dependency installation and scripts.
 
-Copy the environment file and set a local secret:
+Create the local environment file:
 
 ```bash
 cp .env.example .env
-openssl rand -hex 32   # use the output as APP_SECRET
 ```
 
-The other defaults are ready for the included PostgreSQL Docker Compose service and a local Redis on `6379`.
+Generate a local application secret and set it as `APP_SECRET` in `.env`:
 
-### Start Dependencies
+```bash
+openssl rand -hex 32
+```
 
-**PostgreSQL — Option A, Docker (recommended).** The `pgvector/pgvector` image ships the extension, and Compose already provisions the `akasha` role and database:
+Do not commit `.env` or any production credentials to the repository.
+
+### Start
+
+Start PostgreSQL with pgvector using the included Compose service, and provide Redis separately:
 
 ```bash
 docker compose up -d db
+docker run -d --name akasha-redis -p 6379:6379 redis:7
 ```
 
-**PostgreSQL — Option B, native install (macOS/Homebrew).** `postgresql@18` is keg-only, so the binaries are not on `PATH`; the snippets below call them through `$PGB`:
-
-```bash
-brew install postgresql@18 pgvector
-export PGB=/opt/homebrew/opt/postgresql@18/bin
-
-# Initialize the cluster (once) and start the server
-$PGB/initdb --locale=C -E UTF-8 -D /opt/homebrew/var/postgresql@18
-mkdir -p /opt/homebrew/var/log
-$PGB/pg_ctl -D /opt/homebrew/var/postgresql@18 \
-  -l /opt/homebrew/var/log/postgresql@18.log start
-
-# Create the role and database that DATABASE_URL expects
-$PGB/psql -d postgres -c \
-  "CREATE ROLE akasha LOGIN PASSWORD 'STRONG_DB_PASSWORD' SUPERUSER;"
-$PGB/createdb -O akasha akasha
-
-# Verify pgvector is visible to the server
-$PGB/psql -d akasha -c "CREATE EXTENSION IF NOT EXISTS vector;" \
-  -c "SELECT extname, extversion FROM pg_extension;"
-```
-
-**Redis:**
-
-```bash
-brew services start redis              # managed background service
-redis-server --port 6379 --daemonize yes   # or a plain process
-docker run -d --name akasha-redis -p 6379:6379 redis:7   # or a container
-
-redis-cli ping   # -> PONG
-```
-
-### Development
-
-Run migrations, then start both dev servers:
+Then apply migrations and start the development servers:
 
 ```bash
 pnpm --filter ./apps/server run migration:latest
 pnpm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The frontend dev server runs on port 3000 and proxies `/api`, `/socket.io`, and `/collab` to `BACKEND_URL`.
-
-To verify the backend and its dependencies:
-
-```bash
-curl http://127.0.0.1:8080/api/health
-```
-
-A healthy stack reports both dependencies as `up`:
-
-```json
-{
-  "status": "ok",
-  "info": { "database": { "status": "up" }, "redis": { "status": "up" } },
-  "error": {},
-  "details": { "database": { "status": "up" }, "redis": { "status": "up" } }
-}
-```
-
-Docker Compose and `brew services` restart on their own after a reboot. A natively installed PostgreSQL started through `pg_ctl`, or a Redis started with `--daemonize`, does not — bring them back up before `pnpm run dev`.
+Open [http://localhost:3000](http://localhost:3000). For environment requirements, model configuration, service details, and troubleshooting, see [`docs/development.md`](./docs/development.md).
 
 ### Build
 
 ```bash
-pnpm run build           # all packages
-pnpm run client:build    # frontend only
-pnpm run server:build    # backend only
+pnpm run build           # Build all workspace projects
+pnpm run client:build    # Build the frontend
+pnpm run server:build    # Build the backend
 ```
 
-### Troubleshooting
+Build artifacts are generated under the corresponding `apps/*/dist` and `packages/*/dist` directories.
 
-**`initdb: error: file ".../postgres.bki" does not exist` after installing `postgresql@18` via Homebrew.** Homebrew installs the keg but performs the prefix symlinks in a separate post-install step. On older Homebrew versions that step can abort (`unknown install step: link_dir`, or `undefined method 'stop_timeout'`), leaving the keg's `share/postgresql` unlinked as `share/postgresql@18` — which is where `pg_config` points. Upgrade Homebrew itself, then reinstall so the step runs:
+## Agent Integration
 
-```bash
-brew update
-brew reinstall postgresql@18
-```
+Akasha provides an MCP endpoint for agents to access the knowledge workspace.
 
-**AI features appear inert.** AI and knowledge-compilation features are gated on `AI_DRIVER`. When it is unset, the validation in `apps/server/src/integrations/environment/environment.validation.ts` skips every AI-related variable and those subsystems stay idle; the wiki, editor, and real-time collaboration are unaffected. To enable them, set `AI_DRIVER` plus the matching credentials for that provider.
+Configure the MCP server with:
 
-**`DATABASE_URL` points at a database that does not exist.** The name in your `.env` must match the database you created. Older local `.env` files inherited from the upstream project may still reference `docmost` rather than `akasha`; either update the connection string and re-run the migrations, or create the database under the name already configured.
+- the absolute URL of the deployed Akasha instance followed by `/mcp`;
+- an API key with the required workspace permissions.
 
-## Agent Skill
+The MCP integration supports knowledge queries and permitted operations on pages, spaces, comments, attachments, and workspace information. Requests follow Akasha's authorization rules.
 
-The Akasha Agent Skill lets coding agents query wiki knowledge with citations, read shared pages they have permission to see, and create, read, update, delete, and restore pages in a personal space.
+See [`akasha-plugin/README.md`](./akasha-plugin/README.md) for installation instructions and host-specific configuration examples.
 
-```bash
-npx skills add chaterm/Akasha --skill akasha --agent codex --global --yes
-```
+## Self-hosted
 
-Start a new agent session afterwards so the Skill is discovered. Drop `--agent codex` to pick a different target agent interactively. On first use, run the authentication command the agent gives you in your own terminal and enter the API key at the hidden prompt — never paste the key into command arguments, source files, logs, or chat messages.
-
-See [`skills/README.md`](./skills/README.md) for details and [`skills/akasha/SKILL.md`](./skills/akasha/SKILL.md) for the full behavior and permission constraints.
-
-## Self-hosted First
-
-Akasha is designed for enterprise self-hosting, private cloud, on-prem deployment, air-gapped environments, and internal AI systems. Organizations own their data, memory, reasoning, workflows, and organizational intelligence.
-
-Memory is not something you rent. You cannot rent a nervous system.
+Akasha is designed to run in self-hosted environments. Organizations can control where application data, file storage, and AI model endpoints are configured, while applying their own access-control and operational policies.
 
 ## Acknowledgements
 
 Akasha builds upon excellent open-source projects. We gratefully acknowledge:
 
-- **[Docmost](https://github.com/docmost/docmost)** — the collaborative wiki foundation that the workspace and editor layers build on.
+- **[Docmost](https://github.com/docmost/docmost)** — the collaborative Wiki foundation that the workspace and editor layers build on.
 
 ## Contributors
 
 Thank you for your contribution!
-Please refer to the <a href="./CONTRIBUTING.md">Contribution Guide</a> for more information.
+Please refer to the [Contribution Guide](./CONTRIBUTING.md) for more information.

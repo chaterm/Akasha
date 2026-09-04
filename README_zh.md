@@ -22,34 +22,29 @@
   - [为什么选择 Akasha](#为什么选择-akasha)
   - [核心特性](#核心特性)
   - [核心概念](#核心概念)
-    - [三层记忆](#三层记忆)
-    - [上下文图谱](#上下文图谱)
-    - [活的知识](#活的知识)
-    - [认知复利](#认知复利)
-  - [开发指南](#开发指南)
-    - [环境要求](#环境要求)
+    - [知识编译](#知识编译)
+    - [有来源依据的知识](#有来源依据的知识)
+    - [关系化知识](#关系化知识)
+    - [人与 Agent 的统一访问](#人与-agent-的统一访问)
+  - [Roadmap / Vision](#roadmap--vision)
+    - [超越页面的组织记忆](#超越页面的组织记忆)
+    - [Agent 经验复利](#agent-经验复利)
+  - [开发](#开发)
     - [安装](#安装)
-    - [启动依赖服务](#启动依赖服务)
-    - [本地开发](#本地开发)
+    - [启动](#启动)
     - [构建](#构建)
-    - [故障排查](#故障排查)
-  - [Agent Skill](#agent-skill)
-  - [私有化部署优先](#私有化部署优先)
+  - [Agent 集成](#agent-集成)
+  - [私有化部署](#私有化部署)
   - [致谢](#致谢)
   - [贡献者](#贡献者)
 
 # 简介
 
-Akasha 是一个同时面向人类和 Agent 的企业记忆系统，致力于将散落在个人、团队和业务中的经验，转化为可沉淀、可复用、可持续进化的组织知识。
+Akasha 是一个同时面向人类和 Agent 的企业知识与记忆工作区。
 
-它主要解决三个问题：
+它帮助组织把散落在日常工作中的信息和经验，沉淀为可发现、可关联、可复用并且有来源依据的知识。团队可以在共享空间中协作，Agent 则在同一套权限边界内检索和使用组织知识。
 
-1. **让碎片信息变成知识。** 将文档、会议、对话、邮件等多渠道信息统一沉淀，减少知识流失。
-
-2. **让知识持续保持准确。** 通过 Dream Cycle 自动整理、验证和更新知识，并逐步构建知识图谱。
-
-3. **让 Agent 掌握领域经验。** 通过 Skills 和渐进式披露，为 Agent 提供领域知识和操作经验。
-
+Akasha 将协作 Wiki、AI 知识编译与检索、关系导航以及基于 MCP 的 Agent 接入整合在一个支持私有化部署的平台中。
 
 ![Preview image](resources/hero1.webp)
 
@@ -57,96 +52,108 @@ Akasha 是一个同时面向人类和 Agent 的企业记忆系统，致力于将
 
 ## 为什么选择 Akasha
 
-Akasha 不是一个更好的 wiki，而是一套记忆系统。知识库在等待被查询，记忆则主动参与。
+Akasha 将协作 Wiki 的使用体验，与面向 AI 的知识层结合在一起。
 
-- 🧠 **记忆，而非存储** — 主动记住、关联并呈现上下文，而不只是把文档归档
+- 🧠 **保持关联的知识** — 页面、空间、附件和编译后的知识通过链接、引用和关系连接起来。
 
-- 🌱 **知识自然涌现** — 从真实工作流中生长出来，而不是靠"记得更新 wiki"的自上而下要求
+- 🔍 **有来源依据的回答** — AI 检索和问答可以回溯到来源页面及支持证据，避免只返回无法核验的摘要。
 
-- 🔄 **自我维护** — Dream Cycle 持续验证并刷新知识，避免答案腐化
+- 🤝 **同时服务人类和 Agent** — 人和 Agent 使用同一套知识空间，并遵循同一套工作区权限模型。
 
-- 🤖 **同时服务 Agent** — 人和 Agent 都是一等公民，共用同一套权限模型
+- 🕸️ **超越关键词搜索的上下文** — 基于关系的导航帮助用户探索页面、概念、实体和来源之间的联系。
 
-- 🔍 **来源可追溯** — 每条记忆都带有出处、时效性和置信度
-
-- 🏠 **私有化部署** — 数据、记忆和推理都归你自己
+- 🏠 **面向私有化部署设计** — 组织可以在自己的环境中运行 Akasha，并掌控数据、存储和模型接入地址。
 
 ## 核心特性
 
-- 🗂️ **统一沉淀**
+- 📝 **协作知识工作区**
 
-  文档、会议、对话、邮件汇聚到一个系统，而不是散落在十几个工具里，知识不再在流转中丢失。
+  在共享空间中创建和组织页面，支持富文本编辑、Markdown、附件、评论、版本历史、实时协作和访问控制。
 
-  实体与关系抽取在写入时同步完成，权限随内容一起流动。
+- 🌙 **AI 知识编译**
 
-- 🌙 **Dream Cycle**
+  将选定的页面和空间加入队列，异步编译为结构化知识产物。任务入队后即开始处理；编译流程可以识别实体、概念、声明、关系、对比、矛盾以及支持证据。
 
-  后台自动整理、验证和更新知识，并在这个过程中逐步构建知识图谱。
+- 🔍 **有来源依据的检索与问答**
 
-  过期检测、置信度评分和矛盾发现，避免答案悄悄失效。
+  通过全文和向量检索查询组织知识并进行问答。在使用工作区知识回答时，会提供来源页面引用和支持证据，并遵循用户的访问权限。
 
-- ⚡ **面向 Agent 的 Skills**
+- 🕸️ **关系图谱**
 
-  把领域知识和操作经验封装成可加载、可复用的 Skills。
+  通过可视化图谱探索页面链接和语义关系。图谱数据会根据用户权限进行过滤。
 
-  渐进式披露让上下文窗口保持精简：Agent 只在任务需要时才拉取细节。
+- 🤖 **基于 MCP 的 Agent 接入**
 
-- 🕸️ **上下文图谱**
-
-  把人、决策、事件、服务和承诺连成一张活的地图，记录组织的含义，而不只是它存了什么。
-
-  图谱遍历能回答搜索框回答不了的问题，比如某个决策为什么这么定、当时谁持反对意见。
-
-- 📝 **协作工作区**
-
-  实时协同编辑、空间与项目、Markdown、富文本、版本历史、评论以及 RBAC 权限。
-
-- 🔌 **兼容 MCP 的接口**
-
-  记忆、图谱和检索接口通过 MCP 暴露，带完整审计轨迹，Agent 在权限边界内读写记忆。
+  Agent 可以通过 `/mcp` 接入 Akasha，在 API Key 和权限控制下查询知识，并对页面、空间、评论、附件和工作区信息执行允许的操作。
 
 ## 核心概念
 
-### 三层记忆
+### 知识编译
 
-| 层次 | 回答的问题 | 承载的内容 |
-|------|-----------|-----------|
-| 事实记忆 | 发生了什么 | 带出处、权限、时效性和关联关系的产出物 |
-| 交互记忆 | 为什么重要 | 决策、分歧、取舍、承诺、尚未验证的假设 |
-| 行动记忆 | 接下来做什么 | 工作流、护栏，以及过往执行的结果 |
+Akasha 将 Wiki 页面和导入内容保留为来源层，并在此基础上构建结构化知识层。
 
-事实记忆不止是 RAG，它是一套有稳定结构的语义文件系统。交互记忆捕捉的是那些几乎不会落到任何文档里的组织推理过程：会议记录不够，摘要也不够。行动记忆真正参与组织运转，其中**"什么都不做"也是一等公民的动作** — 一个无法有意识地保持不动的系统，也无法被信任去有意识地行动。
-
-### 上下文图谱
-
-推理层，事实在这里变成一个关于公司的模型：
+知识编译流程会分析来源内容，生成摘要、实体、概念、声明、关系、对比和矛盾等知识产物。每个知识产物都会保留来源引用和支持证据，使编译后的知识可以回溯到原始内容。
 
 ```text
-客户通话 → 商机 → 产品缺口 → 工程取舍 → 路线图决策 → 战略
-服务 → 团队 → 代码库 → 部署 → 故障 → SOP → 负责人 → 技能
+Wiki 页面 / 导入内容
+          ↓
+      知识编译
+          ↓
+结构化产物 + 证据 + 索引
+          ↓
+检索 / 问答 / 图谱导航
 ```
 
-元认知也发生在这一层：判断证据何时不足、上下文何时过期、团队之间何时持有冲突假设、哪个承诺没有负责人，以及 Agent 何时需要求助。
+知识编译是对原始 Wiki 的增强，而不是替代。来源页面仍然用于阅读、编辑、权限校验和引用。
 
-### 活的知识
+### 有来源依据的知识
 
-知识会诞生、被验证、被使用、被强化、被质疑、过期，最后退役。Dream Cycle 管理这整个生命周期 — 时效与过期检测、置信度评分、矛盾发现、语义版本差异、废弃提醒，以及当沉睡的知识重新变得相关时把它重新激活。
+Akasha 将来源内容与派生知识区分开来。
 
-### 认知复利
+原始 Wiki 页面和导入内容是主要来源。编译后的知识产物和 AI 回答都来源于这些内容，并在可能的情况下保留引用、来源页面或支持证据。
 
-一个 Agent 学到的东西，以零边际学习成本传播给所有 Agent。每一次执行都产生训练信号，模式从积累的行动记忆中浮现，Skills 通过反馈循环不断改进。组织变得更聪明，而不需要任何人专门去"做知识管理"。
+这使系统能够：
 
+- 将编译后的声明追溯到来源页面；
+- 查看回答背后的支持证据；
+- 在检索时遵循来源页面的访问权限；
+- 在来源发生变化后识别需要更新的知识。
 
-## 开发指南
+当现有证据不足时，系统可以明确提示这一限制，而不是把缺乏依据的结论当作事实。
 
-### 环境要求
+### 关系化知识
 
-- [Node.js](https://nodejs.org/) 22+（推荐 LTS）
-- [pnpm](https://pnpm.io/) 10.4.0（见 `package.json` 中的 `packageManager`）
-- PostgreSQL 18，且已安装 [pgvector](https://github.com/pgvector/pgvector) 扩展
-- Redis（本地安装或容器）
+Akasha 不把知识看作彼此孤立的页面集合。
 
-迁移脚本会自己执行 `CREATE EXTENSION IF NOT EXISTS vector`，不需要手动创建扩展。你需要保证的是这台 PostgreSQL 服务器**已经装了 pgvector**，否则该条迁移会失败。
+知识层会记录页面之间的直接链接，以及知识编译阶段发现的语义关系。这些关系连接页面、章节、实体、概念和共享来源，帮助用户探索相关上下文，并在知识空间中进行关联导航。
+
+关系图谱用于辅助发现和检索，不替代原始来源页面。图谱结果会根据用户的访问权限进行过滤。
+
+### 人与 Agent 的统一访问
+
+Akasha 同时面向人类用户和 Agent 设计。
+
+人类用户通过 Wiki 界面创建、编辑、组织和讨论知识。Agent 则通过 MCP 查询知识，并对页面、空间、评论、附件和工作区信息执行允许的操作。
+
+两种访问方式都遵循工作区和资源级别的权限控制。Agent 请求使用 API Key 认证，支持的知识查询和操作会记录到审计日志中。
+
+## Roadmap / Vision
+
+以下内容代表 Akasha 的产品方向，属于探索中的规划，不应视为当前版本已经提供或保证提供的功能清单。
+
+### 超越页面的组织记忆
+
+Akasha 计划从知识工作区进一步发展为更完整的组织记忆系统：
+
+- **事实记忆** — 记录发生了什么，并保留来源产物和出处；
+- **交互记忆** — 记录决策、分歧和取舍为什么重要；
+- **行动记忆** — 记录接下来应该采取哪些行动、工作流和防护措施。
+
+### Agent 经验复利
+
+未来可能支持将可复用的 Agent Skills、操作模式和执行反馈积累到组织层面，让组织经验能够在不同任务和 Agent 之间持续复用。
+
+## 开发
 
 ### 安装
 
@@ -156,133 +163,74 @@ cd Akasha
 pnpm install
 ```
 
-> 请使用 `pnpm`，不要用 `npm`。这是一个 pnpm workspace monorepo。
+这是一个 pnpm workspace monorepo。依赖安装和项目脚本都请使用 `pnpm`。
 
-复制环境变量文件并设置本地密钥：
+创建本地环境变量文件：
 
 ```bash
 cp .env.example .env
-openssl rand -hex 32   # 用输出结果作为 APP_SECRET
 ```
 
-其余默认值已经适配仓库内置的 PostgreSQL Docker Compose 服务，以及本地 `6379` 端口的 Redis。
+生成本地应用密钥，并将结果写入 `.env` 中的 `APP_SECRET`：
 
-### 启动依赖服务
+```bash
+openssl rand -hex 32
+```
 
-**PostgreSQL — 方式 A，Docker（推荐）。** `pgvector/pgvector` 镜像自带扩展，Compose 也已经预置了 `akasha` 角色和数据库：
+不要将 `.env` 或生产环境凭证提交到仓库。
+
+### 启动
+
+使用仓库提供的 Compose 服务启动带 pgvector 的 PostgreSQL，并单独提供 Redis：
 
 ```bash
 docker compose up -d db
+docker run -d --name akasha-redis -p 6379:6379 redis:7
 ```
 
-**PostgreSQL — 方式 B，本机安装（macOS / Homebrew）。** `postgresql@18` 是 keg-only 的，可执行文件不在 `PATH` 里，所以下面的命令都通过 `$PGB` 调用：
-
-```bash
-brew install postgresql@18 pgvector
-export PGB=/opt/homebrew/opt/postgresql@18/bin
-
-# 初始化数据目录（只需一次）并启动服务
-$PGB/initdb --locale=C -E UTF-8 -D /opt/homebrew/var/postgresql@18
-mkdir -p /opt/homebrew/var/log
-$PGB/pg_ctl -D /opt/homebrew/var/postgresql@18 \
-  -l /opt/homebrew/var/log/postgresql@18.log start
-
-# 创建 DATABASE_URL 对应的角色和数据库
-$PGB/psql -d postgres -c \
-  "CREATE ROLE akasha LOGIN PASSWORD 'STRONG_DB_PASSWORD' SUPERUSER;"
-$PGB/createdb -O akasha akasha
-
-# 确认服务器能看到 pgvector
-$PGB/psql -d akasha -c "CREATE EXTENSION IF NOT EXISTS vector;" \
-  -c "SELECT extname, extversion FROM pg_extension;"
-```
-
-**Redis：**
-
-```bash
-brew services start redis                    # 作为后台托管服务
-redis-server --port 6379 --daemonize yes     # 或作为普通进程
-docker run -d --name akasha-redis -p 6379:6379 redis:7   # 或用容器
-
-redis-cli ping   # -> PONG
-```
-
-### 本地开发
-
-先执行迁移，再同时启动前后端：
+然后执行数据库迁移并启动开发服务器：
 
 ```bash
 pnpm --filter ./apps/server run migration:latest
 pnpm run dev
 ```
 
-打开 [http://localhost:3000](http://localhost:3000)。前端开发服务器跑在 3000 端口，并把 `/api`、`/socket.io`、`/collab` 代理到 `BACKEND_URL`。
-
-验证后端及其依赖：
-
-```bash
-curl http://127.0.0.1:8080/api/health
-```
-
-一切正常时，两个依赖都会报 `up`：
-
-```json
-{
-  "status": "ok",
-  "info": { "database": { "status": "up" }, "redis": { "status": "up" } },
-  "error": {},
-  "details": { "database": { "status": "up" }, "redis": { "status": "up" } }
-}
-```
-
-重启机器后，Docker Compose 和 `brew services` 会自己恢复。用 `pg_ctl` 启动的本机 PostgreSQL，或用 `--daemonize` 启动的 Redis 不会 — 在 `pnpm run dev` 之前需要手动拉起来。
+打开 [http://localhost:3000](http://localhost:3000)。环境要求、模型配置、服务详情和故障排查请参阅 [`docs/development.md`](./docs/development.md)。
 
 ### 构建
 
 ```bash
-pnpm run build           # 全部包
-pnpm run client:build    # 仅前端
-pnpm run server:build    # 仅后端
+pnpm run build           # 构建所有 workspace 项目
+pnpm run client:build    # 仅构建前端
+pnpm run server:build    # 仅构建后端
 ```
 
-### 故障排查
+构建产物会生成在对应的 `apps/*/dist` 和 `packages/*/dist` 目录中。
 
-**通过 Homebrew 安装 `postgresql@18` 后报 `initdb: error: file ".../postgres.bki" does not exist`。** Homebrew 会先装好 keg，再在独立的 post-install 步骤里创建 prefix 软链。在较旧的 Homebrew 版本上这一步可能中断（`unknown install step: link_dir`，或 `undefined method 'stop_timeout'`），导致 keg 的 `share/postgresql` 没有被链接，而是留在 `share/postgresql@18` — 而后者正是 `pg_config` 指向的位置。先升级 Homebrew 本身，再重装让这一步跑完：
+## Agent 集成
 
-```bash
-brew update
-brew reinstall postgresql@18
-```
+Akasha 提供 MCP 接口，供 Agent 访问知识工作区。
 
-**AI 功能没有反应。** AI 和知识编译相关功能由 `AI_DRIVER` 控制。未设置时，`apps/server/src/integrations/environment/environment.validation.ts` 中的校验会跳过所有 AI 相关变量，这些子系统保持空转；wiki、编辑器和实时协作不受影响。要启用的话，设置 `AI_DRIVER` 以及对应 provider 的凭证。
+配置 MCP Server 时需要提供：
 
-**`DATABASE_URL` 指向了不存在的数据库。** `.env` 里的库名必须和你实际创建的数据库一致。从上游项目继承下来的旧 `.env` 可能还写着 `docmost` 而不是 `akasha`；要么改连接串并重新执行迁移，要么按已配置的名字建库。
+- 部署后的 Akasha 实例绝对地址，并在末尾加上 `/mcp`；
+- 具有相应工作区权限的 API Key。
 
-## Agent Skill
+MCP 集成支持知识查询，以及对页面、空间、评论、附件和工作区信息执行权限范围内的操作。所有请求都会遵循 Akasha 的授权规则。
 
-Akasha Agent Skill 可让编码 Agent 查询带可信论据的 Wiki 知识、按站内地址读取有权限访问的共享 Page，以及在个人空间中创建、读取、更新、删除和恢复 Page。
+安装方式和不同 Agent 宿主的配置示例，请参阅 [`akasha-plugin/README.md`](./akasha-plugin/README.md)。
 
-```bash
-npx skills add chaterm/Akasha --skill akasha --agent codex --global --yes
-```
+## 私有化部署
 
-安装完成后请新建一个会话，以便 Agent 发现并加载 Skill。去掉 `--agent codex` 可以在交互提示中选择其他目标 Agent。首次使用时，在自己的本地终端执行 Agent 提供的认证命令，并在隐藏提示中输入 API Key — 不要把密钥放进命令参数、源代码、日志或聊天消息里。
-
-详细说明见 [`skills/README.md`](./skills/README.md)，完整行为和权限约束见 [`skills/akasha/SKILL.md`](./skills/akasha/SKILL.md)。
-
-## 私有化部署优先
-
-Akasha 面向企业私有化部署、私有云、本地机房、离网环境和内部 AI 系统设计。组织完全拥有自己的数据、记忆、推理、工作流和组织智能。
-
-记忆不是租来的东西。你租不到一套神经系统。
+Akasha 面向私有化环境设计。组织可以自行控制应用数据、文件存储和 AI 模型接入地址，并根据自身要求配置访问控制和运行策略。
 
 ## 致谢
 
 Akasha 建立在优秀的开源项目之上，在此致谢：
 
-- **[Docmost](https://github.com/docmost/docmost)** — 工作区与编辑器层所基于的协作 wiki 基础。
+- **[Docmost](https://github.com/docmost/docmost)** — 工作区与编辑器层所基于的协作 Wiki 基础。
 
 ## 贡献者
 
 感谢每一位贡献者！
-更多信息请参阅<a href="./CONTRIBUTING_zh.md">贡献指南</a>。
+更多信息请参阅[贡献指南](./CONTRIBUTING.md)。

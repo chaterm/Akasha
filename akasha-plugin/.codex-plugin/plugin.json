@@ -1,0 +1,21 @@
+{
+  "name": "akasha",
+  "version": "1.3.0",
+  "description": "Autonomous access to the locally configured Akasha knowledge base and Page operations for coding agents.",
+  "author": {
+    "name": "Akasha"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Akasha Knowledge",
+    "shortDescription": "Query the locally configured Akasha knowledge base",
+    "longDescription": "Install the Akasha Skill, then connect the locally configured Akasha MCP server with an explicit absolute URL.",
+    "developerName": "Akasha",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": [
+      "Use Akasha to answer a question from the local knowledge base",
+      "Find and update the relevant Akasha Page"
+    ]
+  }
+}
