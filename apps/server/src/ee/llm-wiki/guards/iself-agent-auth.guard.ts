@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { FastifyRequest } from 'fastify';
 import { UserRepo } from '@akasha/db/repos/user/user.repo';
+import { isUserDisabled } from '../../../common/helpers';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import { HoidcService } from '../../sso/hoidc.service';
 
@@ -44,12 +45,41 @@ export class IsElfAgentAuthGuard implements CanActivate {
       );
     }
 
+    // Accept a regular SSO access token on the iself endpoint as well. The
+    // endpoint historically accepted only digital-employee tokens verified by
+    // verify-agent-token; keeping that path below preserves existing callers.
+    try {
+      const ssoInfo = await this.hoidcService.verifyToken(
+        {
+          ssoApi,
+          platformId,
+          workspaceId: workspace.id,
+          allowSignup: false,
+        },
+        token,
+      );
+      const ssoUser = await this.userRepo.findByEmail(
+        ssoInfo.email,
+        workspace.id,
+      );
+      if (ssoUser && !isUserDisabled(ssoUser)) {
+        (request as any).user = { user: ssoUser, workspace };
+        (request.raw as any).workspace = workspace;
+        (request as any).sso = { email: ssoInfo.email };
+        return true;
+      }
+    } catch {
+      // Fall through to the legacy digital-employee token verifier. It uses a
+      // different upstream endpoint and response contract.
+    }
+
     const agentInfo = await this.hoidcService.verifyAgentToken(
       { ssoApi, platformId },
       token,
     );
+
     const user = await this.userRepo.findByEmail(agentInfo.email, workspace.id);
-    if (!user || user.deactivatedAt) {
+    if (!user || isUserDisabled(user)) {
       throw new UnauthorizedException(
         'SSO user is not a member of this workspace',
       );
