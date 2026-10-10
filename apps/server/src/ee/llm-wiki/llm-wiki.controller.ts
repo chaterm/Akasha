@@ -1118,9 +1118,10 @@ export class LlmWikiController {
       model: dto.model,
       baseUrl: dto.baseUrl ?? null,
       apiKey: dto.apiKey,
-      parameters: dto.parameters
-        ? (dto.parameters as unknown as Record<string, unknown>)
-        : null,
+      parameters: dto.parameters as unknown as
+        | Record<string, unknown>
+        | null
+        | undefined,
     });
   }
 

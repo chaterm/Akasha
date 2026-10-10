@@ -81,7 +81,7 @@ export class UpdateAiModelConfigDto {
   @IsOptional()
   @ValidateNested()
   @Type(() => AiModelConfigParametersDto)
-  parameters?: AiModelConfigParametersDto;
+  parameters?: AiModelConfigParametersDto | null;
 }
 
 // Payload for a connectivity test. Mirrors UpdateAiModelConfigDto: the admin

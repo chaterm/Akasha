@@ -21,8 +21,6 @@ import type {
   AiModelConfigFeature,
   AiModelConfigView,
   AiModelProvider,
-  ReasoningEffort,
-  ThinkingMode,
   UpdateAiModelConfigInput,
 } from "@/ee/ai/types/ai-model-config.types.ts";
 
@@ -37,19 +35,7 @@ interface FormValues {
   apiKey: string;
   dimension: number | "";
   supportsMrl: boolean;
-  temperature: number | "";
-  topP: number | "";
-  seed: number | "";
-  thinkingMode: ThinkingMode | "";
-  thinkingEnabled: boolean;
-  reasoningEffort: ReasoningEffort | "";
 }
-
-const TUNABLE_FEATURES: ReadonlySet<AiModelConfigFeature> = new Set([
-  "answer",
-  "compiler",
-  "image",
-]);
 
 function useFeatureCopy(feature: AiModelConfigFeature): {
   title: string;
@@ -117,21 +103,6 @@ export default function AiModelFeatureForm({
           ? config.parameters.dimension
           : "",
       supportsMrl: config.parameters?.supportsMrl === true,
-      temperature: numberOrBlank(config.parameters?.temperature),
-      topP: numberOrBlank(config.parameters?.topP),
-      seed: numberOrBlank(config.parameters?.seed),
-      thinkingMode:
-        config.parameters?.thinkingMode === "qwen" ||
-        config.parameters?.thinkingMode === "openai"
-          ? config.parameters.thinkingMode
-          : "",
-      thinkingEnabled: config.parameters?.thinkingEnabled !== false,
-      reasoningEffort:
-        config.parameters?.reasoningEffort === "low" ||
-        config.parameters?.reasoningEffort === "medium" ||
-        config.parameters?.reasoningEffort === "high"
-          ? config.parameters.reasoningEffort
-          : "",
     },
     validate: {
       model: (value) =>
@@ -248,78 +219,6 @@ export default function AiModelFeatureForm({
           </Group>
         )}
 
-        {TUNABLE_FEATURES.has(config.feature) && (
-          <>
-            <Group grow align="flex-start">
-              <NumberInput
-                label={t("Temperature")}
-                description={t("Leave blank to use the built-in default.")}
-                placeholder={String(defaultTemperatureFor(config.feature))}
-                min={0}
-                max={2}
-                step={0.1}
-                {...form.getInputProps("temperature")}
-              />
-              <NumberInput
-                label={t("Top P")}
-                description={t("Leave blank to omit.")}
-                min={0}
-                max={1}
-                step={0.05}
-                {...form.getInputProps("topP")}
-              />
-              <NumberInput
-                label={t("Seed")}
-                description={t("Leave blank to omit.")}
-                {...form.getInputProps("seed")}
-              />
-            </Group>
-
-            <Group grow align="flex-start">
-              <Select
-                label={t("Thinking mode")}
-                description={t(
-                  "How the backend expects thinking to be requested.",
-                )}
-                data={[
-                  { value: "", label: t("Not set (send nothing)") },
-                  { value: "qwen", label: t("Qwen template (vLLM / SGLang)") },
-                  { value: "openai", label: t("OpenAI reasoning") },
-                ]}
-                {...form.getInputProps("thinkingMode")}
-              />
-              <Select
-                label={t("Reasoning effort")}
-                disabled={form.values.thinkingMode === ""}
-                data={[
-                  { value: "", label: t("Not set") },
-                  { value: "low", label: t("Low") },
-                  { value: "medium", label: t("Medium") },
-                  { value: "high", label: t("High") },
-                ]}
-                {...form.getInputProps("reasoningEffort")}
-              />
-              {form.values.thinkingMode === "qwen" && (
-                <Switch
-                  mt="xl"
-                  label={t("Enable thinking")}
-                  {...form.getInputProps("thinkingEnabled", {
-                    type: "checkbox",
-                  })}
-                />
-              )}
-            </Group>
-
-            {form.values.thinkingMode === "openai" && (
-              <Text size="xs" c="dimmed">
-                {t(
-                  "OpenAI reasoning models reject temperature and seed, so those are not sent in this mode.",
-                )}
-              </Text>
-            )}
-          </>
-        )}
-
         <Group>
           <Button
             type="submit"
@@ -345,43 +244,16 @@ export default function AiModelFeatureForm({
   );
 }
 
-function defaultTemperatureFor(feature: AiModelConfigFeature): number {
-  return feature === "compiler" ? 0.1 : 0;
-}
-
-function numberOrBlank(value: unknown): number | "" {
-  return typeof value === "number" && Number.isFinite(value) ? value : "";
-}
-
 function buildParameters(
   feature: AiModelConfigFeature,
   values: FormValues,
 ): UpdateAiModelConfigInput["parameters"] {
-  if (feature === "embedding") {
-    return {
-      ...(typeof values.dimension === "number"
-        ? { dimension: values.dimension }
-        : {}),
-      supportsMrl: values.supportsMrl,
-    };
-  }
+  if (feature !== "embedding") return undefined;
 
-  if (!TUNABLE_FEATURES.has(feature)) return undefined;
-
-  const thinkingMode =
-    values.thinkingMode === "" ? undefined : values.thinkingMode;
   return {
-    ...(typeof values.temperature === "number"
-      ? { temperature: values.temperature }
+    ...(typeof values.dimension === "number"
+      ? { dimension: values.dimension }
       : {}),
-    ...(typeof values.topP === "number" ? { topP: values.topP } : {}),
-    ...(typeof values.seed === "number" ? { seed: values.seed } : {}),
-    ...(thinkingMode ? { thinkingMode } : {}),
-    ...(thinkingMode === "qwen" && !values.thinkingEnabled
-      ? { thinkingEnabled: false }
-      : {}),
-    ...(thinkingMode && values.reasoningEffort
-      ? { reasoningEffort: values.reasoningEffort }
-      : {}),
+    supportsMrl: values.supportsMrl,
   };
 }

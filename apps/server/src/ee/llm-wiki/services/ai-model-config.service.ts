@@ -99,13 +99,20 @@ export class AiModelConfigService {
       apiKeyEncrypted = this.secretService.encrypt(input.apiKey);
     }
 
+    let parameters: Record<string, unknown> | null;
+    if (input.parameters === undefined) {
+      parameters =
+        (existing?.parameters as Record<string, unknown> | null) ?? null;
+    } else {
+      parameters = input.parameters;
+    }
+
     const saved = await this.repo.upsert(feature, {
       provider: input.provider,
       model: input.model,
       baseUrl: input.baseUrl ?? null,
       apiKeyEncrypted,
-      parameters: (input.parameters ??
-        null) as InsertableAiModelConfig['parameters'],
+      parameters: parameters as InsertableAiModelConfig['parameters'],
     });
 
     this.invalidate(feature);

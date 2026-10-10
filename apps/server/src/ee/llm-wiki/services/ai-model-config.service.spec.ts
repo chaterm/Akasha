@@ -6,7 +6,23 @@ import { AiModelConfig } from '@akasha/db/types/entity.types';
 function buildRepo(row: AiModelConfig | undefined) {
   return {
     findByFeature: jest.fn().mockResolvedValue(row),
+    upsert: jest
+      .fn()
+      .mockImplementation((feature, data) =>
+        Promise.resolve({ feature, ...data } as unknown as AiModelConfig),
+      ),
   } as unknown as AiModelConfigRepo;
+}
+
+function storedRow(parameters: Record<string, unknown> | null): AiModelConfig {
+  return {
+    feature: 'answer',
+    provider: 'openai-compatible',
+    model: 'qwen-plus',
+    baseUrl: null,
+    apiKeyEncrypted: 'enc(sk-db-key)',
+    parameters,
+  } as unknown as AiModelConfig;
 }
 
 const secretService = {
@@ -16,7 +32,10 @@ const secretService = {
 
 describe('AiModelConfigService', () => {
   it('returns unconfigured config when no DB row exists', async () => {
-    const service = new AiModelConfigService(buildRepo(undefined), secretService);
+    const service = new AiModelConfigService(
+      buildRepo(undefined),
+      secretService,
+    );
 
     const resolved = await service.getResolvedConfig('compiler');
 
@@ -100,6 +119,57 @@ describe('AiModelConfigService', () => {
     await service.getResolvedConfig('compiler');
 
     expect(repo.findByFeature).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps stored parameters when the payload omits them', async () => {
+    const repo = buildRepo(storedRow({ temperature: 0.4, topP: 0.9 }));
+    const service = new AiModelConfigService(repo, secretService);
+
+    await service.updateConfig('answer', {
+      provider: 'openai-compatible',
+      model: 'qwen-max',
+    });
+
+    expect(repo.upsert).toHaveBeenCalledWith(
+      'answer',
+      expect.objectContaining({
+        parameters: { temperature: 0.4, topP: 0.9 },
+      }),
+    );
+  });
+
+  it('clears stored parameters when the payload sends null', async () => {
+    const repo = buildRepo(storedRow({ temperature: 0.4 }));
+    const service = new AiModelConfigService(repo, secretService);
+
+    await service.updateConfig('answer', {
+      provider: 'openai-compatible',
+      model: 'qwen-max',
+      parameters: null,
+    });
+
+    expect(repo.upsert).toHaveBeenCalledWith(
+      'answer',
+      expect.objectContaining({ parameters: null }),
+    );
+  });
+
+  it('replaces stored parameters when the payload sends an object', async () => {
+    const repo = buildRepo(storedRow({ temperature: 0.4, seed: 7 }));
+    const service = new AiModelConfigService(repo, secretService);
+
+    await service.updateConfig('embedding', {
+      provider: 'openai-compatible',
+      model: 'text-embedding-v4',
+      parameters: { dimension: 1024, supportsMrl: true },
+    });
+
+    expect(repo.upsert).toHaveBeenCalledWith(
+      'embedding',
+      expect.objectContaining({
+        parameters: { dimension: 1024, supportsMrl: true },
+      }),
+    );
   });
 
   it('falls back to env key when decryption fails', async () => {
