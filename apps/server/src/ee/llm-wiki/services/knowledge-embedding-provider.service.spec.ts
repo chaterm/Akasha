@@ -52,22 +52,29 @@ describe('ConfiguredKnowledgeEmbeddingProvider', () => {
   });
 
   it('returns the observed vector dimensions rather than a configured hint', async () => {
-    (embed as jest.Mock).mockResolvedValue({ embedding: [0.1, 0.2, 0.3] });
+    (embed as jest.Mock).mockResolvedValue({
+      embedding: [0.1, 0.2, 0.3],
+      usage: { tokens: 7 },
+    });
     const service = new ConfiguredKnowledgeEmbeddingProvider(
       environment({ embeddingDimensions: 3072 }) as never,
     );
 
-    await expect(service.embedQuery('Akasha wiki')).resolves.toEqual({
-      vector: [0.1, 0.2, 0.3],
-      profile: buildKnowledgeEmbeddingProfile({
-        driver: 'openai-compatible',
-        baseUrl: 'https://llm.example/v1',
+    await expect(service.embedQuery('Akasha wiki')).resolves.toEqual(
+      expect.objectContaining({
+        vector: [0.1, 0.2, 0.3],
+        profile: buildKnowledgeEmbeddingProfile({
+          driver: 'openai-compatible',
+          baseUrl: 'https://llm.example/v1',
+          model: 'bge-m3',
+          dimensions: 3,
+        }),
         model: 'bge-m3',
         dimensions: 3,
+        totalTokens: 7,
+        durationMs: expect.any(Number),
       }),
-      model: 'bge-m3',
-      dimensions: 3,
-    });
+    );
   });
 
   it('embeds many table rows in one provider-level batch', async () => {
@@ -76,6 +83,7 @@ describe('ConfiguredKnowledgeEmbeddingProvider', () => {
         [0.1, 0.2],
         [0.3, 0.4],
       ],
+      usage: { tokens: 9 },
     });
     const service = new ConfiguredKnowledgeEmbeddingProvider(
       environment() as never,
@@ -92,6 +100,11 @@ describe('ConfiguredKnowledgeEmbeddingProvider', () => {
     expect(result.map((embedding) => embedding.vector)).toEqual([
       [0.1, 0.2],
       [0.3, 0.4],
+    ]);
+    expect(result.map((embedding) => embedding.totalTokens)).toEqual([5, 4]);
+    expect(result.map((embedding) => embedding.durationMs)).toEqual([
+      expect.any(Number),
+      expect.any(Number),
     ]);
     expect(embed).not.toHaveBeenCalled();
   });

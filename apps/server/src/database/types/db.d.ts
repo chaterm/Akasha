@@ -306,6 +306,8 @@ export interface KnowledgeArtifactContributions {
 }
 
 export interface KnowledgeChunks {
+  embeddingDurationMs: Generated<number | null>;
+  embeddingTotalTokens: Generated<number | null>;
   chunkRole: Generated<string>;
   claimId: string | null;
   compilerRunId: string | null;

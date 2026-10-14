@@ -295,6 +295,8 @@ export class KnowledgeImportService {
         embeddingProfile: chunk.embedding?.profile ?? null,
         embeddingModel: chunk.embedding?.model ?? null,
         embeddingDimensions: chunk.embedding?.dimensions ?? null,
+        embeddingTotalTokens: chunk.embedding?.totalTokens ?? null,
+        embeddingDurationMs: chunk.embedding?.durationMs ?? null,
         parentSectionId: chunk.parentStableKey
           ? (parentIdByStableKey.get(chunk.parentStableKey) ?? null)
           : null,

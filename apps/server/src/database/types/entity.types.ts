@@ -167,6 +167,8 @@ export type InsertableKnowledgeClaimSource = Insertable<KnowledgeClaimSources>;
 type SelectedKnowledgeChunk = Selectable<KnowledgeChunks>;
 type KnowledgeChunkMigrationColumn =
   | 'chunkRole'
+  | 'embeddingDurationMs'
+  | 'embeddingTotalTokens'
   | 'embeddingDimensions'
   | 'embeddingLegacy'
   | 'embeddingModel'
