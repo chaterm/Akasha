@@ -601,6 +601,19 @@ export interface KnowledgeQueryAudit {
   workspaceId: string;
 }
 
+export interface KnowledgeEmbeddingRebuildBatches {
+  chunkCount: number;
+  createdAt: Generated<Timestamp>;
+  durationMs: number;
+  embeddingModel: string | null;
+  embeddingProfile: string | null;
+  failedCount: Generated<number>;
+  id: Generated<string>;
+  spaceId: string;
+  totalTokens: number | null;
+  workspaceId: string;
+}
+
 export interface KnowledgeSourceAccessPolicy {
   policyHash: string;
   policyVersion: Generated<number>;
@@ -1202,6 +1215,7 @@ export interface DB {
   knowledgeParentSections: KnowledgeParentSections;
   knowledgeParentSectionSources: KnowledgeParentSectionSources;
   knowledgeQuarantinedArtifacts: KnowledgeQuarantinedArtifacts;
+  knowledgeEmbeddingRebuildBatches: KnowledgeEmbeddingRebuildBatches;
   knowledgeQueryAudit: KnowledgeQueryAudit;
   knowledgeSourceAccessPolicy: KnowledgeSourceAccessPolicy;
   knowledgeSourceAccessPrincipals: KnowledgeSourceAccessPrincipals;
