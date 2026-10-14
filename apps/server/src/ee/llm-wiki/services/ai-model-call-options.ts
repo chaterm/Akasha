@@ -34,9 +34,13 @@ export function resolveModelCallOptions(
   input: ResolveModelCallOptionsInput,
 ): ModelCallOptions {
   const parameters = readParameters(config);
+  const thinkingIntent =
+    parameters.thinkingEnabled ?? input.defaultThinkingEnabled;
   const thinkingMode = input.ignoreThinking
     ? undefined
-    : (parameters.thinkingMode ?? input.defaultThinkingMode);
+    : (parameters.thinkingMode ??
+      input.defaultThinkingMode ??
+      (thinkingIntent === undefined ? undefined : 'qwen'));
 
   const samplingAllowed = thinkingMode !== 'openai';
 

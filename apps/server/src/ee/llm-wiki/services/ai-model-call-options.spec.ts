@@ -13,6 +13,42 @@ describe('resolveModelCallOptions', () => {
     ).toEqual({});
   });
 
+  it('sends the feature thinking default when the config omits it', () => {
+    expect(
+      resolveModelCallOptions(config(), {
+        providerOptionsName: PROVIDER,
+        defaultThinkingEnabled: false,
+      }),
+    ).toEqual({
+      providerOptions: {
+        [PROVIDER]: { chat_template_kwargs: { enable_thinking: false } },
+      },
+    });
+  });
+
+  it('prefers the configured thinking flag over the feature default', () => {
+    expect(
+      resolveModelCallOptions(config({ thinkingEnabled: true }), {
+        providerOptionsName: PROVIDER,
+        defaultThinkingEnabled: false,
+      }),
+    ).toEqual({
+      providerOptions: {
+        [PROVIDER]: { chat_template_kwargs: { enable_thinking: true } },
+      },
+    });
+  });
+
+  it('keeps the OpenAI dialect when the model is a reasoning model', () => {
+    expect(
+      resolveModelCallOptions(config({ thinkingEnabled: false }), {
+        providerOptionsName: PROVIDER,
+        defaultThinkingMode: 'openai',
+        defaultTemperature: 0.1,
+      }),
+    ).toEqual({});
+  });
+
   it('applies the feature default temperature only when unset', () => {
     expect(
       resolveModelCallOptions(config(), {
