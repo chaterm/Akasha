@@ -60,6 +60,41 @@ describe('resolveModelCallOptions', () => {
     });
   });
 
+  it('applies a feature default for Qwen thinking without changing other callers', () => {
+    expect(
+      resolveModelCallOptions(config(), {
+        providerOptionsName: PROVIDER,
+        defaultThinkingMode: 'qwen',
+        defaultThinkingEnabled: false,
+      }),
+    ).toEqual({
+      providerOptions: {
+        [PROVIDER]: {
+          chat_template_kwargs: { enable_thinking: false },
+        },
+      },
+    });
+  });
+
+  it('lets an explicit thinking setting override the feature default', () => {
+    expect(
+      resolveModelCallOptions(
+        config({ thinkingMode: 'qwen', thinkingEnabled: true }),
+        {
+          providerOptionsName: PROVIDER,
+          defaultThinkingMode: 'openai',
+          defaultThinkingEnabled: false,
+        },
+      ),
+    ).toEqual({
+      providerOptions: {
+        [PROVIDER]: {
+          chat_template_kwargs: { enable_thinking: true },
+        },
+      },
+    });
+  });
+
   it('drops reasoning_effort when Qwen thinking is off', () => {
     const options = resolveModelCallOptions(
       config({

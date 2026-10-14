@@ -86,7 +86,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     },
   );
 
-  it('sends no thinking parameters when the compiler config does not set them', async () => {
+  it('disables Qwen thinking by default for an unconfigured compiler row', async () => {
     (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
@@ -103,7 +103,11 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
       expect.objectContaining({ name: COMPILER_PROVIDER_NAME }),
     );
     const request = (generateText as jest.Mock).mock.calls[0][0];
-    expect(request).not.toHaveProperty('providerOptions');
+    expect(request.providerOptions).toEqual({
+      [COMPILER_PROVIDER_NAME]: {
+        chat_template_kwargs: { enable_thinking: false },
+      },
+    });
     expect(request.temperature).toBe(0.1);
   });
 
@@ -120,13 +124,13 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
       parameters: { thinkingMode: 'qwen', thinkingEnabled: false },
     }).analyze({ system: 'system', prompt: 'prompt' });
 
-    expect((generateText as jest.Mock).mock.calls[0][0].providerOptions).toEqual(
-      {
-        [COMPILER_PROVIDER_NAME]: {
-          chat_template_kwargs: { enable_thinking: false },
-        },
+    expect(
+      (generateText as jest.Mock).mock.calls[0][0].providerOptions,
+    ).toEqual({
+      [COMPILER_PROVIDER_NAME]: {
+        chat_template_kwargs: { enable_thinking: false },
       },
-    );
+    });
   });
 
   it('omits temperature when the OpenAI reasoning dialect is configured', async () => {

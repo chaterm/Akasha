@@ -24,6 +24,8 @@ export type ModelCallOptions = {
 export type ResolveModelCallOptionsInput = {
   providerOptionsName: string;
   defaultTemperature?: number;
+  defaultThinkingMode?: ThinkingMode;
+  defaultThinkingEnabled?: boolean;
   ignoreThinking?: boolean;
 };
 
@@ -34,7 +36,7 @@ export function resolveModelCallOptions(
   const parameters = readParameters(config);
   const thinkingMode = input.ignoreThinking
     ? undefined
-    : parameters.thinkingMode;
+    : (parameters.thinkingMode ?? input.defaultThinkingMode);
 
   const samplingAllowed = thinkingMode !== 'openai';
 
@@ -52,6 +54,7 @@ export function resolveModelCallOptions(
       thinkingMode,
       parameters,
       input.providerOptionsName,
+      input.defaultThinkingEnabled,
     ),
   };
 }
@@ -60,6 +63,7 @@ function buildProviderOptions(
   thinkingMode: ThinkingMode | undefined,
   parameters: AiModelCallParameters,
   providerOptionsName: string,
+  defaultThinkingEnabled?: boolean,
 ): { providerOptions?: ProviderOptions } {
   if (thinkingMode === undefined) return {};
 
@@ -73,7 +77,8 @@ function buildProviderOptions(
         };
   }
 
-  const enableThinking = parameters.thinkingEnabled ?? true;
+  const enableThinking =
+    parameters.thinkingEnabled ?? defaultThinkingEnabled ?? true;
   return {
     providerOptions: {
       [providerOptionsName]: {

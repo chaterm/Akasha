@@ -329,11 +329,25 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
   }
 
   private callOptions(config: ResolvedAiModelConfig): ModelCallOptions {
+    const reasoningModel = isOpenAiReasoningModel(config);
     return resolveModelCallOptions(config, {
       providerOptionsName: COMPILER_PROVIDER_NAME,
-      defaultTemperature: COMPILER_DEFAULT_TEMPERATURE,
+      defaultTemperature: reasoningModel
+        ? undefined
+        : COMPILER_DEFAULT_TEMPERATURE,
+      defaultThinkingMode: reasoningModel ? 'openai' : 'qwen',
+      defaultThinkingEnabled: reasoningModel ? undefined : false,
     });
   }
+}
+
+function isOpenAiReasoningModel(config: ResolvedAiModelConfig): boolean {
+  if (config.driver?.trim().toLowerCase() !== 'openai-compatible') {
+    return false;
+  }
+  const model = config.model?.trim().toLowerCase();
+  if (!model) return false;
+  return model.includes('gpt') || /(^|[-_])o[134](?:[-_]|$)/.test(model);
 }
 
 function invalidOutputError(
