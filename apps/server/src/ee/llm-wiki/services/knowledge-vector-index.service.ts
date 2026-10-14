@@ -31,6 +31,7 @@ export class KnowledgeVectorIndexService {
     workspaceId: string;
     spaceId: string;
     afterChunkId?: string;
+    embeddingConcurrency?: number;
     abortSignal?: AbortSignal;
   }): Promise<{
     rebuiltChunkCount: number;
@@ -44,14 +45,20 @@ export class KnowledgeVectorIndexService {
       limit: 50,
     });
     if (chunks.length === 0) return { rebuiltChunkCount: 0 };
-    const outcomes = await mapKnowledgeOperations(chunks, async (chunk) => {
-      const embedding = input.abortSignal
-        ? await this.embeddingProvider.embedQuery(embeddingInput(chunk), {
-            abortSignal: input.abortSignal,
-          })
-        : await this.embeddingProvider.embedQuery(embeddingInput(chunk));
-      return { chunk, embedding };
-    });
+    const outcomes = await mapKnowledgeOperations(
+      chunks,
+      async (chunk) => {
+        const embedding = input.abortSignal
+          ? await this.embeddingProvider.embedQuery(embeddingInput(chunk), {
+              abortSignal: input.abortSignal,
+            })
+          : await this.embeddingProvider.embedQuery(embeddingInput(chunk));
+        return { chunk, embedding };
+      },
+      input.embeddingConcurrency === undefined
+        ? undefined
+        : { concurrency: input.embeddingConcurrency },
+    );
     const rebuilt: Array<KnowledgeEmbedding & { id: string }> = outcomes
       .filter(
         (

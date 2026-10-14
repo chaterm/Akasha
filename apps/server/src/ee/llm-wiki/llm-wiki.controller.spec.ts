@@ -972,7 +972,11 @@ describe('LlmWikiController', () => {
       workspace(),
     );
     await controller.runAdminSpaceAction(
-      { action: 'rebuild_embeddings', spaceIds: ['space-1'] },
+      {
+        action: 'rebuild_embeddings',
+        spaceIds: ['space-1'],
+        embeddingConcurrency: 4,
+      },
       adminUser(),
       workspace(),
     );
@@ -1000,6 +1004,7 @@ describe('LlmWikiController', () => {
       {
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
+        embeddingConcurrency: 4,
       },
       expect.objectContaining({
         jobId: 'knowledge-rebuild-embeddings__workspace-1__space-1',
@@ -1519,7 +1524,10 @@ describe('LlmWikiController', () => {
 
     expect(aiModelConfigTestService.testConfig).toHaveBeenCalledWith(
       'answer',
-      expect.objectContaining({ provider: 'openai-compatible', model: 'qwen-max' }),
+      expect.objectContaining({
+        provider: 'openai-compatible',
+        model: 'qwen-max',
+      }),
     );
   });
 

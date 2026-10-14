@@ -89,6 +89,9 @@ export class KnowledgeTextJobHandler {
           workspaceId: data.workspaceId,
           spaceId: data.spaceId,
           ...(data.afterChunkId ? { afterChunkId: data.afterChunkId } : {}),
+          ...(data.embeddingConcurrency === undefined
+            ? {}
+            : { embeddingConcurrency: data.embeddingConcurrency }),
         });
         if (result.failedChunkIds?.length) {
           throw new Error(
@@ -102,6 +105,9 @@ export class KnowledgeTextJobHandler {
               workspaceId: data.workspaceId,
               spaceId: data.spaceId,
               afterChunkId: result.nextCursor,
+              ...(data.embeddingConcurrency === undefined
+                ? {}
+                : { embeddingConcurrency: data.embeddingConcurrency }),
             } satisfies IKnowledgeRebuildEmbeddingsJob,
             {
               attempts: 3,

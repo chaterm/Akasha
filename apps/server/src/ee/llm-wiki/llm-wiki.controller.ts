@@ -657,6 +657,7 @@ export class LlmWikiController {
       workspaceId: workspace.id,
       spaceIds: dto.spaceIds,
       action: dto.action,
+      embeddingConcurrency: dto.embeddingConcurrency,
     });
 
     this.auditService.log({
@@ -1209,6 +1210,7 @@ export class LlmWikiController {
     workspaceId: string;
     spaceIds: string[];
     action: KnowledgeAdminSpaceAction;
+    embeddingConcurrency?: number;
   }): Promise<{
     action: KnowledgeAdminSpaceAction;
     queuedSpaceCount: number;
@@ -1231,7 +1233,13 @@ export class LlmWikiController {
         });
         await this.knowledgeQueue.add(
           QueueJob.KNOWLEDGE_REBUILD_EMBEDDINGS,
-          { workspaceId: input.workspaceId, spaceId },
+          {
+            workspaceId: input.workspaceId,
+            spaceId,
+            ...(input.embeddingConcurrency === undefined
+              ? {}
+              : { embeddingConcurrency: input.embeddingConcurrency }),
+          },
           {
             jobId,
             attempts: 3,

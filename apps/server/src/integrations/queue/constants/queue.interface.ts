@@ -150,6 +150,7 @@ export interface IKnowledgeRebuildEmbeddingsJob {
   workspaceId: string;
   spaceId: string;
   afterChunkId?: string;
+  embeddingConcurrency?: number;
 }
 
 export interface IKnowledgeReindexAccessJob {

@@ -238,6 +238,44 @@ describe('KnowledgeVectorIndexService', () => {
     expect(embeddingProvider.embedQuery).toHaveBeenCalledTimes(50);
   });
 
+  it('uses the requested embedding concurrency for a maintenance batch', async () => {
+    let active = 0;
+    let maxActive = 0;
+    const embeddingProvider = {
+      embedQuery: jest.fn().mockImplementation(async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        active -= 1;
+        return {
+          vector: [0.1],
+          profile: 'c'.repeat(64),
+          model: 'embedding-v2',
+          dimensions: 1,
+        };
+      }),
+    };
+    const chunks = Array.from({ length: 8 }, (_, index) => ({
+      id: `chunk-${index}`,
+      text: `body-${index}`,
+      headingPath: [],
+    }));
+    const service = serviceWithRebuilder({
+      embeddingProvider,
+      findActiveChunks: jest.fn().mockResolvedValue(chunks),
+      persistEmbeddings: jest.fn().mockResolvedValue(undefined),
+      ensureProfileIndex: jest.fn().mockResolvedValue('created'),
+    });
+
+    await service.rebuildSpaceEmbeddings({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      embeddingConcurrency: 4,
+    });
+
+    expect(maxActive).toBe(4);
+  });
+
   it('finishes an empty active chunk scope without provider or database writes', async () => {
     const embeddingProvider = { embedQuery: jest.fn() };
     const persistEmbeddings = jest.fn();
