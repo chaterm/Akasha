@@ -583,12 +583,12 @@ function tableRowEvidenceChunks(
 ) {
   let sourceCursor = 0;
   return extractKnowledgeTableRows(source.content).map((row) => {
-    const startOffset = source.text.indexOf(row.text, sourceCursor);
-    const endOffset =
-      startOffset >= 0 ? startOffset + row.text.length : undefined;
-    if (startOffset >= 0) sourceCursor = endOffset!;
+    const rawOffset = source.text.indexOf(row.text, sourceCursor);
+    const startOffset = rawOffset >= 0 ? rawOffset : null;
+    const endOffset = startOffset !== null ? startOffset + row.text.length : null;
+    if (startOffset !== null) sourceCursor = endOffset!;
     const rowSourceRef =
-      startOffset >= 0
+      startOffset !== null
         ? {
             ...sourceRef,
             sourceRange: { startOffset, endOffset: endOffset! },
