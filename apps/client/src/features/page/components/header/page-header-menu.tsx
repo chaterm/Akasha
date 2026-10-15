@@ -23,6 +23,7 @@ import {
   IconList,
   IconMarkdown,
   IconMessage,
+  IconPaperclip,
   IconPrinter,
   IconRocket,
   IconStar,
@@ -74,6 +75,7 @@ import { applyTemplateToEditor } from "@/features/template/lib/apply-template";
 import { formattedDate } from "@/lib/time.ts";
 import { PageEditModeControls } from "@/features/editor/components/page-edit-mode-toggle.tsx";
 import MovePageModal from "@/features/page/components/move-page-modal.tsx";
+import PageAttachmentsModal from "@/features/attachments/components/page-attachments-modal.tsx";
 import { useTimeAgo } from "@/hooks/use-time-ago.tsx";
 import useUserRole from "@/hooks/use-user-role.tsx";
 import { PageShareModal } from "@/ee/page-permission";
@@ -215,6 +217,10 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
   const [
     verificationOpened,
     { open: openVerificationModal, close: closeVerificationModal },
+  ] = useDisclosure(false);
+  const [
+    attachmentsOpened,
+    { open: openAttachmentsModal, close: closeAttachmentsModal },
   ] = useDisclosure(false);
   const [pageEditor] = useAtom(pageEditorAtom);
   const titleEditor = useAtomValue(titleEditorAtom);
@@ -655,6 +661,13 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
             {t("Page history")}
           </Menu.Item>
 
+          <Menu.Item
+            leftSection={<IconPaperclip size={16} />}
+            onClick={openAttachmentsModal}
+          >
+            {t("Attachments")}
+          </Menu.Item>
+
           {!readOnly && (
             <PageVerificationMenuItem
               pageId={page?.id}
@@ -747,6 +760,13 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
         pageId={page.id}
         opened={verificationOpened}
         onClose={closeVerificationModal}
+      />
+
+      <PageAttachmentsModal
+        pageId={page.id}
+        readOnly={readOnly}
+        open={attachmentsOpened}
+        onClose={closeAttachmentsModal}
       />
 
       {hasTemplates && insertTemplateOpened && (
