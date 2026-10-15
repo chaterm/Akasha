@@ -18,6 +18,7 @@ import { AttachmentRepo } from './repos/attachment/attachment.repo';
 import { KyselyDB } from '@akasha/db/types/kysely.types';
 import * as process from 'node:process';
 import { MigrationService } from '@akasha/db/services/migration.service';
+import { DatabaseRequirementsService } from '@akasha/db/services/database-requirements.service';
 import { UserTokenRepo } from './repos/user-token/user-token.repo';
 import { UserSessionRepo } from '@akasha/db/repos/session/user-session.repo';
 import { BacklinkRepo } from '@akasha/db/repos/backlink/backlink.repo';
@@ -79,6 +80,7 @@ export {
   ],
   providers: [
     MigrationService,
+    DatabaseRequirementsService,
     WorkspaceRepo,
     UserRepo,
     GroupRepo,
@@ -163,14 +165,21 @@ export class DatabaseModule implements OnModuleInit {
     @InjectKysely() private readonly db: KyselyDB,
     private readonly migrationService: MigrationService,
     private readonly environmentService: EnvironmentService,
+    private readonly requirementsService: DatabaseRequirementsService,
   ) {}
 
   async onModuleInit() {
     await this.establishConnection();
 
+    // Refuse to start on a database that lacks required components; a thrown
+    // error here aborts bootstrap (main.ts exits with a fatal log).
+    await this.requirementsService.assertEnvironment();
+
     if (this.environmentService.getNodeEnv() === 'production') {
       await this.migrationService.migrateToLatest();
     }
+
+    await this.requirementsService.assertSchema();
   }
 
   async establishConnection() {

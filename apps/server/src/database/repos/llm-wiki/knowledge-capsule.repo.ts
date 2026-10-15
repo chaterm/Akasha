@@ -296,7 +296,7 @@ export class KnowledgeCapsuleRepo {
           WHERE chunk.workspace_id = ${input.workspaceId}::uuid
             AND chunk.space_id = ${input.spaceId}::uuid
             AND chunk.stale_at IS NULL
-            AND chunk.search_tsv @@ plainto_tsquery('simple', signal.value)
+            AND chunk.search_tsv_zh @@ knowledge_zh_tsquery(signal.value, true)
             AND page.stale_at IS NULL
             AND page.canonical_key IS NOT NULL
             AND page.page_type IN ('source_summary', 'concept', 'entity', 'comparison')
@@ -823,15 +823,40 @@ export class KnowledgeCapsuleRepo {
       return [];
 
     const db = dbOrTx(this.db, trx);
-    const tsQuery = sql`websearch_to_tsquery('simple', ${input.query.trim()})`;
-    const rank = sql<number>`ts_rank_cd(knowledge_chunks.search_tsv, ${tsQuery})`;
+    // jieba-segmented FTS (see migration 20261015T100000): `simple` does not
+    // split Han text, so Chinese queries used to match almost nothing.
+    const terms = await this.classifyLexicalQueryTerms(input, trx);
+    const rareTerms = terms.filter((term) => !term.common);
+    // A lexical hit bypasses the semantic-distance gate, so only rare terms
+    // may make a chunk relevant (ES common-terms query): a query left with
+    // only common words (请问配置在哪里 -> 配置) is handed to dense recall.
+    if (rareTerms.length === 0) return [];
+
+    // Terms are passed as tsquery literals, not re-segmented per row; a
+    // per-row function call is re-evaluated on every recheck (≈15x slower).
+    const rareQuery = rareTerms.map((term) => term.term).join(' | ');
+    const allQuery = terms.map((term) => term.term).join(' | ');
+    const rareTermArray = sql`${rareTerms.map((term) => term.term)}::tsquery[]`;
+    // Minimum-should-match over rare terms; coverage ranks first, and
+    // ts_rank_cd over all terms (common ones included) breaks ties.
+    const coverage = sql<number>`(
+      SELECT count(*)::int
+      FROM unnest(${rareTermArray}) AS term
+      WHERE knowledge_chunks.search_tsv_zh @@ term
+    )`;
+    const rank = sql<number>`(${coverage} + ts_rank_cd(knowledge_chunks.search_tsv_zh, ${allQuery}::tsquery, 32))`;
     let query = db
       .selectFrom('knowledgeChunks')
       .select(['knowledgeChunks.id as chunkId', rank.as('score')])
       .where('knowledgeChunks.workspaceId', '=', input.workspaceId)
       .where('knowledgeChunks.spaceId', 'in', input.spaceIds)
       .where('knowledgeChunks.staleAt', 'is', null)
-      .where(sql<boolean>`knowledge_chunks.search_tsv @@ ${tsQuery}`);
+      .where(
+        sql<boolean>`knowledge_chunks.search_tsv_zh @@ ${rareQuery}::tsquery`,
+      )
+      .where(
+        sql<boolean>`${coverage} >= ${minimumShouldMatch(rareTerms.length)}`,
+      );
     if (input.retrievalChannel) {
       query = query.where(
         'knowledgeChunks.retrievalChannel',
@@ -857,6 +882,65 @@ export class KnowledgeCapsuleRepo {
       input,
       trx,
     );
+  }
+
+  // Segments the query (knowledge_zh_query_terms) and measures each term's
+  // document frequency within the candidate scope. Document frequency ignores
+  // ACLs: it is a corpus statistic, not a visibility decision. Counts stop at
+  // the threshold, so a very common term costs at most `threshold` index hits.
+  private async classifyLexicalQueryTerms(
+    input: AuthorizedCandidateInput & {
+      query: string;
+      knowledgePageIds?: string[];
+    },
+    trx?: KyselyTransaction,
+  ): Promise<{ term: string; documentFrequency: number; common: boolean }[]> {
+    const scope = sql.join(
+      [
+        sql`chunk.workspace_id = ${input.workspaceId}::uuid`,
+        sql`chunk.space_id = ANY(${input.spaceIds}::uuid[])`,
+        sql`chunk.stale_at IS NULL`,
+        ...(input.retrievalChannel
+          ? [sql`chunk.retrieval_channel = ${input.retrievalChannel}`]
+          : []),
+        ...(input.knowledgePageIds
+          ? [
+              sql`chunk.knowledge_page_id = ANY(${input.knowledgePageIds}::uuid[])`,
+            ]
+          : []),
+      ],
+      sql` AND `,
+    );
+    const result = await sql<{
+      term: string;
+      documentFrequency: number;
+      threshold: number;
+    }>`
+      WITH scope_size AS (
+        SELECT count(*)::int AS total FROM knowledge_chunks chunk WHERE ${scope}
+      ), settings AS (
+        SELECT greatest(
+          ${LEXICAL_COMMON_TERM_MIN_DOCUMENTS}::int,
+          ceil(total * ${LEXICAL_COMMON_TERM_RATIO}::float8)::int
+        ) AS threshold
+        FROM scope_size
+      )
+      SELECT term::text AS term, frequency.n AS document_frequency, settings.threshold
+      FROM settings,
+           unnest(knowledge_zh_query_terms(${input.query.trim()})) AS term,
+           LATERAL (
+             SELECT count(*)::int AS n FROM (
+               SELECT 1 FROM knowledge_chunks chunk
+               WHERE ${scope} AND chunk.search_tsv_zh @@ term
+               LIMIT settings.threshold + 1
+             ) hits
+           ) frequency
+    `.execute(dbOrTx(this.db, trx));
+    return result.rows.map((row) => ({
+      term: row.term,
+      documentFrequency: Number(row.documentFrequency),
+      common: Number(row.documentFrequency) > Number(row.threshold),
+    }));
   }
 
   async findExactTitleChunkCandidates(
@@ -2005,6 +2089,20 @@ function normalizeCatalogSignal(value: string): string {
 function splitPairKey(key: string): [string, string] {
   const separator = key.indexOf('\u001f');
   return [key.slice(0, separator), key.slice(separator + 1)];
+}
+
+// Lexical recall needs every rare term of a 1–2 term query and 75% (floored)
+// of a longer one, roughly the old AND semantics but tolerant of extra words.
+export const LEXICAL_MINIMUM_SHOULD_MATCH_RATIO = 0.75;
+// A term in more than 5% of the scope's chunks (and more than 20 chunks) is a
+// common term: it only affects ranking and never qualifies a chunk alone.
+export const LEXICAL_COMMON_TERM_RATIO = 0.05;
+export const LEXICAL_COMMON_TERM_MIN_DOCUMENTS = 20;
+
+export function minimumShouldMatch(termCount: number): number {
+  return termCount <= 2
+    ? termCount
+    : Math.floor(termCount * LEXICAL_MINIMUM_SHOULD_MATCH_RATIO);
 }
 
 function hasCandidateScope(input: AuthorizedCandidateInput): boolean {

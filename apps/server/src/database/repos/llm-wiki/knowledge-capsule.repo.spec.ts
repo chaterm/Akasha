@@ -2,11 +2,13 @@ import { KnowledgeCapsuleRepo } from './knowledge-capsule.repo';
 import {
   CamelCasePlugin,
   CompiledQuery,
+  DatabaseConnection,
   DummyDriver,
   Kysely,
   PostgresAdapter,
   PostgresIntrospector,
   PostgresQueryCompiler,
+  QueryResult,
 } from 'kysely';
 import { DbInterface } from '@akasha/db/types/db.interface';
 
@@ -181,7 +183,9 @@ describe('KnowledgeCapsuleRepo', () => {
     expect(query).toContain('join lateral');
     expect(query).toContain('page.title % signal.value');
     expect(query).toContain('similarity(page.title, signal.value)');
-    expect(query).toContain('search_tsv @@ plainto_tsquery');
+    expect(query).toContain(
+      'search_tsv_zh @@ knowledge_zh_tsquery(signal.value, true)',
+    );
     expect(query).toContain('union all');
     expect(query).toContain('order by "explicitmatch" desc');
     expect(query).toContain('"canonicalexactmatch" desc');
@@ -248,7 +252,9 @@ describe('KnowledgeCapsuleRepo', () => {
       limit: 10,
     });
 
-    const sql = queries[0].sql.toLowerCase().replace(/\s+/g, ' ');
+    const sql = lexicalCandidateQuery(queries)
+      .sql.toLowerCase()
+      .replace(/\s+/g, ' ');
     expect(sql).toContain('knowledge_chunk_sources as source_presence');
     expect(sql).not.toContain('knowledge_source_access_policy');
     expect(sql.indexOf('source_presence')).toBeLessThan(sql.indexOf('limit'));
@@ -302,22 +308,96 @@ describe('KnowledgeCapsuleRepo', () => {
     ).toBe(false);
   });
 
-  it('uses PostgreSQL FTS after complete-source authorization', async () => {
+  it('uses jieba-segmented FTS after complete-source authorization', async () => {
     const { repo, queries } = createSqlRepo();
 
     await repo.findLexicalChunkCandidates({
       workspaceId: 'workspace-1',
       spaceIds: ['space-1'],
       principals: [{ principalType: 'user', principalId: 'user-visible' }],
-      query: 'Akasha wiki',
+      query: '  合同什么时候批准的  ',
       limit: 10,
     });
 
-    const sql = queries[0].sql.toLowerCase().replace(/\s+/g, ' ');
-    expect(sql).toContain("websearch_to_tsquery('simple'");
-    expect(sql).toContain('ts_rank_cd');
+    // Term statistics: segmented once, document frequency bounded by the
+    // common-term threshold within the same scope.
+    const stats = queries[0];
+    const statsSql = stats.sql.toLowerCase().replace(/\s+/g, ' ');
+    expect(statsSql).toContain('unnest(knowledge_zh_query_terms($');
+    expect(statsSql).toContain('chunk.search_tsv_zh @@ term');
+    expect(statsSql).toContain('limit settings.threshold + 1');
+    expect(stats.parameters).toEqual(
+      expect.arrayContaining(['合同什么时候批准的', 20, 0.05]),
+    );
+
+    const candidate = lexicalCandidateQuery(queries);
+    const sql = candidate.sql.toLowerCase().replace(/\s+/g, ' ');
+    expect(sql).toContain('knowledge_chunks.search_tsv_zh @@ $');
+    expect(sql).not.toContain("'simple'");
+    expect(sql).not.toContain('knowledge_zh_tsquery(');
+    expect(sql).toContain('ts_rank_cd(knowledge_chunks.search_tsv_zh, $');
+    expect(candidate.parameters).toContain("'akasha'");
     expect(sql).toContain('not exists ( select');
     expect(sql.indexOf('not exists')).toBeLessThan(sql.indexOf('limit'));
+  });
+
+  it('never lets common terms alone qualify a lexical candidate', async () => {
+    const { repo, queries } = createSqlRepo([
+      { term: "'配置'", document_frequency: 71, threshold: 70 },
+    ]);
+
+    const lexical = await repo.findLexicalChunkCandidates({
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-1'],
+      principals: [{ principalType: 'user', principalId: 'user-visible' }],
+      query: '请问配置在哪里',
+      limit: 10,
+    });
+
+    expect(lexical).toEqual([]);
+    expect(queries).toHaveLength(1);
+  });
+
+  it('requires rare terms only and lets common terms affect ranking', async () => {
+    const { repo, queries } = createSqlRepo([
+      { term: "'数据库'", document_frequency: 71, threshold: 70 },
+      { term: "'失败'", document_frequency: 3, threshold: 70 },
+      { term: "'排查'", document_frequency: 4, threshold: 70 },
+      { term: "'连接'", document_frequency: 55, threshold: 70 },
+    ]);
+
+    await repo.findLexicalChunkCandidates({
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-1'],
+      principals: [{ principalType: 'user', principalId: 'user-visible' }],
+      query: '数据库连接失败怎么排查',
+      limit: 10,
+    });
+
+    const candidate = lexicalCandidateQuery(queries);
+    // Filter and coverage use rare terms; three rare terms -> floor(3*0.75)=2.
+    expect(candidate.parameters).toContain("'失败' | '排查' | '连接'");
+    expect(candidate.parameters).toContainEqual(["'失败'", "'排查'", "'连接'"]);
+    expect(candidate.parameters).toContain(2);
+    // Ranking still sees the common term.
+    expect(candidate.parameters).toContain(
+      "'数据库' | '失败' | '排查' | '连接'",
+    );
+  });
+
+  it('returns no lexical candidates when the query has no searchable terms', async () => {
+    const { repo, queries } = createSqlRepo([]);
+
+    const lexical = await repo.findLexicalChunkCandidates({
+      workspaceId: 'workspace-1',
+      spaceIds: ['space-1'],
+      principals: [{ principalType: 'user', principalId: 'user-visible' }],
+      query: '请问',
+      limit: 10,
+    });
+
+    expect(lexical).toEqual([]);
+    expect(queries).toHaveLength(1);
   });
 
   it('applies OR page-label filtering to every chunk source before candidate limits', async () => {
@@ -332,7 +412,7 @@ describe('KnowledgeCapsuleRepo', () => {
       limit: 10,
     });
 
-    const compiled = queries[0];
+    const compiled = lexicalCandidateQuery(queries);
     const sql = compiled.sql.toLowerCase().replace(/\s+/g, ' ');
     expect(sql).toContain('knowledge_chunk_sources as label_source');
     expect(sql).toContain('page_labels as matching_page_label');
@@ -419,7 +499,9 @@ describe('KnowledgeCapsuleRepo', () => {
       limit: 8,
     });
 
-    const sql = queries[0].sql.toLowerCase().replace(/\s+/g, ' ');
+    const sql = lexicalCandidateQuery(queries)
+      .sql.toLowerCase()
+      .replace(/\s+/g, ' ');
     expect(sql).toContain('"knowledge_chunks"."knowledge_page_id" in');
     expect(sql).toContain('ts_rank_cd');
   });
@@ -1235,14 +1317,42 @@ describe('KnowledgeCapsuleRepo', () => {
   });
 });
 
-function createSqlRepo(): {
+type LexicalTermRow = {
+  term: string;
+  document_frequency: number;
+  threshold: number;
+};
+
+// Default term statistics: one rare term, so lexical recall reaches the main
+// candidate query. Tests that exercise term classification pass their own.
+const DEFAULT_LEXICAL_TERMS: LexicalTermRow[] = [
+  { term: "'akasha'", document_frequency: 3, threshold: 20 },
+];
+
+function createSqlRepo(
+  lexicalTerms: LexicalTermRow[] = DEFAULT_LEXICAL_TERMS,
+): {
   repo: KnowledgeCapsuleRepo;
   queries: CompiledQuery[];
 } {
   const queries: CompiledQuery[] = [];
+  const connection: DatabaseConnection = {
+    executeQuery: async <R>(query: CompiledQuery) =>
+      ({
+        rows: query.sql.includes('knowledge_zh_query_terms(')
+          ? lexicalTerms
+          : [],
+      }) as unknown as QueryResult<R>,
+    streamQuery: () => {
+      throw new Error('not supported');
+    },
+  };
   const dialect = {
     createAdapter: () => new PostgresAdapter(),
-    createDriver: () => new DummyDriver(),
+    createDriver: () =>
+      Object.assign(new DummyDriver(), {
+        acquireConnection: async () => connection,
+      }),
     createIntrospector: (db: Kysely<unknown>) => new PostgresIntrospector(db),
     createQueryCompiler: () => new PostgresQueryCompiler(),
   };
@@ -1255,4 +1365,13 @@ function createSqlRepo(): {
   });
 
   return { repo: new KnowledgeCapsuleRepo(db), queries };
+}
+
+/** The lexical candidate query, i.e. not the term-statistics query. */
+function lexicalCandidateQuery(queries: CompiledQuery[]): CompiledQuery {
+  const query = queries.find(
+    (item) => !item.sql.includes('knowledge_zh_query_terms('),
+  );
+  if (!query) throw new Error('lexical candidate query was not issued');
+  return query;
 }

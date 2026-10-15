@@ -324,6 +324,7 @@ export interface KnowledgeChunks {
   parentSectionId: string | null;
   retrievalChannel: Generated<string>;
   searchTsv: Generated<string | null>;
+  searchTsvZh: Generated<string | null>;
   spaceId: string;
   stableKey: string;
   staleAt: Timestamp | null;

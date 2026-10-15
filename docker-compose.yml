@@ -1,11 +1,14 @@
 services:
   db:
-    image: pgvector/pgvector:pg18-trixie
-    #image: pgvector/pgvector:pg18
+    # pgvector/pgvector:pg18-trixie + pg_jieba, aligned with the cloud database
+    build: ./docker/postgres
+    image: akasha/postgres:pg18-jieba
     environment:
       POSTGRES_DB: akasha
       POSTGRES_USER: akasha
       POSTGRES_PASSWORD: STRONG_DB_PASSWORD
+      # Match the cloud database locale; only applies when the volume is first initialized.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
     restart: unless-stopped
     ports:
       - "5432:5432"

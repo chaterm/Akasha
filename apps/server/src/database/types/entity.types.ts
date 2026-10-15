@@ -176,6 +176,7 @@ type KnowledgeChunkMigrationColumn =
   | 'parentSectionId'
   | 'retrievalChannel'
   | 'searchTsv'
+  | 'searchTsvZh'
   | 'stableKey'
   | 'startOffset';
 export type KnowledgeChunk = Omit<
