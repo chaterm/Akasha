@@ -160,6 +160,7 @@ describe('KnowledgeTextJobHandler maintenance boundary', () => {
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
           afterChunkId: 'chunk-before',
+          embeddingConcurrency: 4,
         }),
       ),
     ).resolves.toMatchObject({ rebuiltChunkCount: 50 });
@@ -168,6 +169,7 @@ describe('KnowledgeTextJobHandler maintenance boundary', () => {
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
       afterChunkId: 'chunk-before',
+      embeddingConcurrency: 4,
     });
     expect(fixture.textQueue.add).toHaveBeenCalledWith(
       QueueJob.KNOWLEDGE_REBUILD_EMBEDDINGS,
@@ -175,6 +177,7 @@ describe('KnowledgeTextJobHandler maintenance boundary', () => {
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
         afterChunkId: 'chunk-049',
+        embeddingConcurrency: 4,
       },
       {
         attempts: 3,

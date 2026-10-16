@@ -25,6 +25,8 @@ export type KnowledgeEmbedding = {
   profile: string;
   model: string;
   dimensions: number;
+  totalTokens?: number;
+  durationMs?: number;
 };
 
 export type KnowledgeEmbeddingErrorCode =
@@ -129,7 +131,10 @@ export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingP
     const config = await this.configService.getResolvedConfig('embedding');
     const driver = config.driver;
     const modelName = config.model;
-    const model = createEmbeddingModelFromConfig(config, EMBEDDING_PROVIDER_NAME);
+    const model = createEmbeddingModelFromConfig(
+      config,
+      EMBEDDING_PROVIDER_NAME,
+    );
     if (!driver || !modelName || !model) {
       throw new KnowledgeEmbeddingError(
         'embedding_not_configured',
@@ -142,6 +147,7 @@ export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingP
       options?.abortSignal,
       30_000,
     );
+    const startedAt = Date.now();
     try {
       // This is provider-level batching, not merely a local concurrency loop.
       // `texts` has already been capped at Bailian's 10-item request limit;
@@ -168,7 +174,9 @@ export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingP
         );
       }
 
-      return result.embeddings.map((vector) => ({
+      const batchDurationMs = Math.max(0, Date.now() - startedAt);
+      const allocatedTokens = allocateBatchTokens(texts, result.usage?.tokens);
+      return result.embeddings.map((vector, index) => ({
         vector,
         profile: buildKnowledgeEmbeddingProfile({
           driver,
@@ -178,6 +186,8 @@ export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingP
         }),
         model: modelName,
         dimensions: vector.length,
+        ...(allocatedTokens ? { totalTokens: allocatedTokens[index] } : {}),
+        durationMs: batchDurationMs,
       }));
     } catch (error) {
       if (options?.abortSignal?.aborted) {
@@ -198,7 +208,10 @@ export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingP
     const config = await this.configService.getResolvedConfig('embedding');
     const driver = config.driver;
     const modelName = config.model;
-    const model = createEmbeddingModelFromConfig(config, EMBEDDING_PROVIDER_NAME);
+    const model = createEmbeddingModelFromConfig(
+      config,
+      EMBEDDING_PROVIDER_NAME,
+    );
     if (text.trim().length === 0) {
       if (required) {
         throw new KnowledgeEmbeddingError(
@@ -224,6 +237,7 @@ export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingP
       options?.abortSignal,
       30_000,
     );
+    const startedAt = Date.now();
     try {
       const result = await embed({
         model,
@@ -255,6 +269,10 @@ export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingP
         }),
         model: modelName,
         dimensions: vector.length,
+        ...(result.usage?.tokens !== undefined
+          ? { totalTokens: result.usage.tokens }
+          : {}),
+        durationMs: Math.max(0, Date.now() - startedAt),
       };
     } catch (error) {
       if (options?.abortSignal?.aborted) {
@@ -269,6 +287,26 @@ export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingP
       boundedSignal.dispose();
     }
   }
+}
+
+function allocateBatchTokens(
+  texts: string[],
+  totalTokens: number | undefined,
+): number[] | undefined {
+  if (totalTokens === undefined) return undefined;
+  if (texts.length === 0) return [];
+  const weights = texts.map((text) => Math.max(1, text.length));
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  const allocated = weights.map((weight) =>
+    Math.floor((totalTokens * weight) / totalWeight),
+  );
+  let remainder =
+    totalTokens - allocated.reduce((sum, value) => sum + value, 0);
+  for (let index = 0; remainder > 0; index = (index + 1) % allocated.length) {
+    allocated[index] += 1;
+    remainder -= 1;
+  }
+  return allocated;
 }
 
 function classifyRequiredEmbeddingError(

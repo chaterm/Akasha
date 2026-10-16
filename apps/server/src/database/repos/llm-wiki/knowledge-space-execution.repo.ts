@@ -241,6 +241,7 @@ export class KnowledgeSpaceExecutionRepo {
           'sourcePageId',
           'bindingStatus',
           'attemptCount',
+          'indexMode',
           'expectedSourceVersion',
           'expectedSourceContentHash',
           'createdAt',
@@ -1334,6 +1335,7 @@ export class KnowledgeSpaceExecutionRepo {
           expected_source_version,
           expected_source_content_hash,
           expected_image_count,
+          index_mode,
           bound_at,
           status,
           image_status,
@@ -1351,6 +1353,7 @@ export class KnowledgeSpaceExecutionRepo {
           NULL,
           NULL,
           NULL,
+          COALESCE(settings.index_mode, 'compiled'),
           NULL,
           'pending',
           'not_required',
@@ -1358,6 +1361,9 @@ export class KnowledgeSpaceExecutionRepo {
           ${now},
           ${now}
         FROM pages AS page
+        LEFT JOIN knowledge_page_index_settings AS settings
+          ON settings.workspace_id = page.workspace_id
+         AND settings.source_page_id = page.id
         WHERE page.workspace_id = ${run.workspaceId}
           AND page.space_id = ${run.spaceId}
           AND page.deleted_at IS NULL

@@ -8,6 +8,7 @@ import {
   KnowledgeEmbedding,
 } from './knowledge-embedding-provider.service';
 import { mapKnowledgeOperations } from './knowledge-operation-budget';
+import { KnowledgeEmbeddingRebuildBatchRepo } from '@akasha/db/repos/llm-wiki/knowledge-embedding-rebuild-batch.repo';
 
 export type KnowledgeVectorIndexResult = 'created' | 'exists' | 'exact-only';
 
@@ -25,12 +26,14 @@ export class KnowledgeVectorIndexService {
   constructor(
     @InjectKysely() private readonly db: KyselyDB,
     private readonly embeddingProvider: ConfiguredKnowledgeEmbeddingProvider,
+    private readonly rebuildBatchRepo: KnowledgeEmbeddingRebuildBatchRepo,
   ) {}
 
   async rebuildSpaceEmbeddings(input: {
     workspaceId: string;
     spaceId: string;
     afterChunkId?: string;
+    embeddingConcurrency?: number;
     abortSignal?: AbortSignal;
   }): Promise<{
     rebuiltChunkCount: number;
@@ -44,14 +47,21 @@ export class KnowledgeVectorIndexService {
       limit: 50,
     });
     if (chunks.length === 0) return { rebuiltChunkCount: 0 };
-    const outcomes = await mapKnowledgeOperations(chunks, async (chunk) => {
-      const embedding = input.abortSignal
-        ? await this.embeddingProvider.embedQuery(embeddingInput(chunk), {
-            abortSignal: input.abortSignal,
-          })
-        : await this.embeddingProvider.embedQuery(embeddingInput(chunk));
-      return { chunk, embedding };
-    });
+    const batchStartedAt = Date.now();
+    const outcomes = await mapKnowledgeOperations(
+      chunks,
+      async (chunk) => {
+        const embedding = input.abortSignal
+          ? await this.embeddingProvider.embedQuery(embeddingInput(chunk), {
+              abortSignal: input.abortSignal,
+            })
+          : await this.embeddingProvider.embedQuery(embeddingInput(chunk));
+        return { chunk, embedding };
+      },
+      input.embeddingConcurrency === undefined
+        ? undefined
+        : { concurrency: input.embeddingConcurrency },
+    );
     const rebuilt: Array<KnowledgeEmbedding & { id: string }> = outcomes
       .filter(
         (
@@ -71,6 +81,14 @@ export class KnowledgeVectorIndexService {
         chunks: rebuilt,
       });
     }
+
+    await this.recordRebuildBatch({
+      workspaceId: input.workspaceId,
+      spaceId: input.spaceId,
+      chunks: rebuilt,
+      failedCount: failedChunkIds.length,
+      durationMs: Math.max(0, Date.now() - batchStartedAt),
+    });
 
     const profiles = new Map<string, number>();
     for (const chunk of rebuilt) {
@@ -121,6 +139,38 @@ export class KnowledgeVectorIndexService {
       .orderBy('chunk.id', 'asc')
       .limit(input.limit)
       .execute();
+  }
+
+  protected async recordRebuildBatch(input: {
+    workspaceId: string;
+    spaceId: string;
+    chunks: Array<KnowledgeEmbedding & { id: string }>;
+    failedCount: number;
+    durationMs: number;
+  }): Promise<void> {
+    const tokenValues = input.chunks
+      .map((chunk) => chunk.totalTokens)
+      .filter((value): value is number => typeof value === 'number');
+    const first = input.chunks[0];
+
+    try {
+      await this.rebuildBatchRepo.recordBatch({
+        workspaceId: input.workspaceId,
+        spaceId: input.spaceId,
+        chunkCount: input.chunks.length,
+        failedCount: input.failedCount,
+        totalTokens: tokenValues.length
+          ? tokenValues.reduce((sum, value) => sum + value, 0)
+          : null,
+        durationMs: input.durationMs,
+        embeddingProfile: first?.profile ?? null,
+        embeddingModel: first?.model ?? null,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Unable to record embedding rebuild batch usage: ${errorMessage(error)}`,
+      );
+    }
   }
 
   protected async persistRebuiltEmbeddings(input: {

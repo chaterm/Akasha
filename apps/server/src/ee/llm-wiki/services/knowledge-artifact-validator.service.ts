@@ -168,6 +168,7 @@ export class KnowledgeArtifactValidatorService {
 
 const SUPPORTED_ARTIFACT_KINDS = new Set<CompiledKnowledgeArtifactKind>([
   'source_summary',
+  'original_source',
   'concept',
   'entity',
   'comparison',

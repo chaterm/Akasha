@@ -127,26 +127,24 @@ export class KnowledgeCompilationRepo {
         updatedAt: now,
       })
       .onConflict((oc) =>
-        oc
-          .columns(['workspaceId', 'sourcePageId'])
-          .doUpdateSet({
-            spaceId: input.spaceId,
-            sourceVersion: input.sourceVersion ?? null,
-            sourceContentHash: input.sourceContentHash ?? null,
-            effectiveKnowledgeHash: input.effectiveKnowledgeHash ?? null,
-            compilerVersion: input.compilerVersion,
-            promptVersion: input.promptVersion,
-            compilerRunId: input.compilerRunId,
-            compileTaskId: input.compileTaskId,
-            status: 'running',
-            stage: 'read_source',
-            attemptCount: sql<number>`knowledge_compilation_attempts.attempt_count + 1`,
-            errorCode: null,
-            errorMessage: null,
-            startedAt: now,
-            finishedAt: null,
-            updatedAt: now,
-          }),
+        oc.columns(['workspaceId', 'sourcePageId']).doUpdateSet({
+          spaceId: input.spaceId,
+          sourceVersion: input.sourceVersion ?? null,
+          sourceContentHash: input.sourceContentHash ?? null,
+          effectiveKnowledgeHash: input.effectiveKnowledgeHash ?? null,
+          compilerVersion: input.compilerVersion,
+          promptVersion: input.promptVersion,
+          compilerRunId: input.compilerRunId,
+          compileTaskId: input.compileTaskId,
+          status: 'running',
+          stage: 'read_source',
+          attemptCount: sql<number>`knowledge_compilation_attempts.attempt_count + 1`,
+          errorCode: null,
+          errorMessage: null,
+          startedAt: now,
+          finishedAt: null,
+          updatedAt: now,
+        }),
       )
       .execute();
   }
@@ -425,6 +423,59 @@ export class KnowledgeCompilationRepo {
     );
   }
 
+  /** Reads the index actually serving retrieval, independently of the latest Run. */
+  async findPublishedPageIndex(input: {
+    workspaceId: string;
+    spaceId: string;
+    sourcePageId: string;
+  }): Promise<
+    { indexMode: 'compiled' | 'original'; sourceVersion: string } | undefined
+  > {
+    const row = await this.db
+      .selectFrom('knowledgePages as page')
+      .innerJoin('knowledgePageSources as ref', (join) =>
+        join
+          .onRef('ref.knowledgePageId', '=', 'page.id')
+          .onRef('ref.workspaceId', '=', 'page.workspaceId'),
+      )
+      .innerJoin('knowledgeSources as source', (join) =>
+        join
+          .onRef('source.workspaceId', '=', 'ref.workspaceId')
+          .onRef('source.sourcePageId', '=', 'ref.sourcePageId')
+          .onRef('source.sourceVersion', '=', 'ref.sourceVersion')
+          .onRef('source.contentHash', '=', 'ref.contentHash')
+          .on('source.sourceSpaceId', '=', input.spaceId)
+          .on('source.staleAt', 'is', null)
+          .on('source.deletedAt', 'is', null),
+      )
+      .select(['page.pageType', 'ref.sourceVersion'])
+      .where('page.workspaceId', '=', input.workspaceId)
+      .where('page.spaceId', '=', input.spaceId)
+      .where('ref.sourcePageId', '=', input.sourcePageId)
+      .where('page.pageType', 'in', ['source_summary', 'original_source'])
+      .where('page.staleAt', 'is', null)
+      .where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom('knowledgeChunks as chunk')
+            .select('chunk.id')
+            .whereRef('chunk.workspaceId', '=', 'page.workspaceId')
+            .whereRef('chunk.knowledgePageId', '=', 'page.id')
+            .where('chunk.staleAt', 'is', null)
+            .where('chunk.embedding', 'is not', null),
+        ),
+      )
+      .orderBy('page.compiledAt', 'desc')
+      .executeTakeFirst();
+    return row
+      ? {
+          indexMode:
+            row.pageType === 'original_source' ? 'original' : 'compiled',
+          sourceVersion: row.sourceVersion,
+        }
+      : undefined;
+  }
+
   /**
    * Reads the last published page identity in one Space-scoped query. A row is
    * returned only when the successful attempt still has its exact active
@@ -436,8 +487,78 @@ export class KnowledgeCompilationRepo {
     workspaceId: string;
     spaceId: string;
     sourcePageIds: string[];
+    indexMode?: 'compiled' | 'original';
   }) {
     if (input.sourcePageIds.length === 0) return [];
+
+    if (input.indexMode === 'original') {
+      return this.db
+        .selectFrom('knowledgeCompilationAttempts as attempt')
+        .innerJoin('knowledgeSources as source', (join) =>
+          join
+            .onRef('source.workspaceId', '=', 'attempt.workspaceId')
+            .onRef('source.sourcePageId', '=', 'attempt.sourcePageId')
+            .onRef(
+              'source.sourceVersion',
+              '=',
+              'attempt.lastSuccessfulSourceVersion',
+            )
+            .onRef(
+              'source.contentHash',
+              '=',
+              'attempt.lastSuccessfulSourceHash',
+            )
+            .on('source.sourceSpaceId', '=', input.spaceId)
+            .on('source.staleAt', 'is', null)
+            .on('source.deletedAt', 'is', null),
+        )
+        .innerJoin('knowledgePageSources as ref', (join) =>
+          join
+            .onRef('ref.workspaceId', '=', 'source.workspaceId')
+            .onRef('ref.sourcePageId', '=', 'source.sourcePageId')
+            .onRef('ref.sourceVersion', '=', 'source.sourceVersion')
+            .onRef('ref.contentHash', '=', 'source.contentHash'),
+        )
+        .innerJoin('knowledgePages as original', (join) =>
+          join
+            .onRef('original.id', '=', 'ref.knowledgePageId')
+            .onRef('original.workspaceId', '=', 'attempt.workspaceId')
+            .on('original.spaceId', '=', input.spaceId)
+            .on('original.pageType', '=', 'original_source')
+            .on('original.generationMode', '=', 'original')
+            .on('original.staleAt', 'is', null),
+        )
+        .innerJoin('knowledgeChunks as originalChunk', (join) =>
+          join
+            .onRef('originalChunk.knowledgePageId', '=', 'original.id')
+            .onRef('originalChunk.workspaceId', '=', 'attempt.workspaceId')
+            .on('originalChunk.staleAt', 'is', null)
+            .on('originalChunk.retrievalChannel', '=', 'evidence')
+            .on('originalChunk.embedding', 'is not', null),
+        )
+        .select([
+          'attempt.sourcePageId',
+          'attempt.status',
+          'attempt.lastSuccessfulSourceVersion',
+          'attempt.lastSuccessfulSourceHash',
+          'attempt.lastSuccessfulEffectiveHash',
+          'source.id as activeSourceId',
+          'original.id as activeSummaryId',
+          'originalChunk.id as activeSummaryChunkId',
+          'ref.sourceVersion as contributionSourceVersion',
+          'ref.contentHash as contributionSourceHash',
+          'original.compilerVersion as contributionCompilerVersion',
+          'original.compilerVersion as contributionPromptVersion',
+        ])
+        .where('attempt.workspaceId', '=', input.workspaceId)
+        .where('attempt.spaceId', '=', input.spaceId)
+        .where('attempt.sourcePageId', 'in', input.sourcePageIds)
+        .where('attempt.lastSuccessfulEffectiveHash', 'is not', null)
+        .distinctOn('attempt.sourcePageId')
+        .orderBy('attempt.sourcePageId', 'asc')
+        .orderBy('original.compiledAt', 'desc')
+        .execute();
+    }
 
     return this.db
       .selectFrom('knowledgeCompilationAttempts as attempt')

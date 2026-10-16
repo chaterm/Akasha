@@ -32,6 +32,7 @@ import {
   KnowledgeOperationBudget,
   mapKnowledgeOperations,
 } from './knowledge-operation-budget';
+import { stableKnowledgeUuid } from './knowledge-stable-id';
 
 // This slices every content type, not only table rows. Batching does not alter
 // individual embedding inputs, so prose/attachment vector quality is unchanged.
@@ -106,8 +107,13 @@ export class KnowledgeImportService {
       compileTaskId: quarantined.artifact.compileTaskId ?? null,
       reasonCodes: toQuarantineReasonCodes(quarantined.reasons),
     }));
-    const isSemanticPagePublication = input.input.sources.length === 1;
-    if (isSemanticPagePublication && quarantineInputs.length > 0) {
+    const isOriginalPagePublication = input.input.indexMode === 'original';
+    const isSemanticPagePublication =
+      input.input.sources.length === 1 && !isOriginalPagePublication;
+    if (
+      (isSemanticPagePublication || isOriginalPagePublication) &&
+      quarantineInputs.length > 0
+    ) {
       let quarantinePublicationRejected = false;
       await executeTx(this.db, async (trx) => {
         if (input.publicationGuard && !(await input.publicationGuard(trx))) {
@@ -143,7 +149,7 @@ export class KnowledgeImportService {
           removedArtifactIds: string[];
         }
       | undefined;
-    if (isSemanticPagePublication) {
+    if (isSemanticPagePublication || isOriginalPagePublication) {
       await input.onStage?.('merge');
       const source = input.input.sources[0];
       const previousSourceContributions =
@@ -168,24 +174,32 @@ export class KnowledgeImportService {
         sourcePageId: source.sourcePageId,
         previousSourceContributions,
         affectedContributions,
-        incomingArtifacts: validation.accepted,
+        incomingArtifacts: isOriginalPagePublication ? [] : validation.accepted,
+        ...(isOriginalPagePublication
+          ? { mergeMode: 'deterministic' as const }
+          : {}),
         operationBudget,
       });
-      artifactsToPublish = materialized.artifacts;
+      artifactsToPublish = isOriginalPagePublication
+        ? [...materialized.artifacts, ...validation.accepted]
+        : materialized.artifacts;
       // Materialization can union chunks from several source contributions, so
       // enforce the same budgets again on the representation actually written.
       assertPublicationChunkBudgets(operationBudget, artifactsToPublish);
       contributionPublication = {
         sourcePageId: source.sourcePageId,
         removedArtifactIds: materialized.removedArtifactIds,
-        contributions: validation.accepted.map((artifact) => {
+        contributions: (isOriginalPagePublication
+          ? []
+          : validation.accepted
+        ).map((artifact) => {
           if (!artifact.artifactKind || !artifact.canonicalKey) {
             throw new Error(
               'semantic artifact contribution requires kind and canonical key',
             );
           }
           return {
-            id: stableUuid(
+            id: stableKnowledgeUuid(
               `${input.input.workspaceId}:${source.sourcePageId}:${artifact.artifactId}`,
             ),
             workspaceId: input.input.workspaceId,
@@ -218,7 +232,7 @@ export class KnowledgeImportService {
       const artifactChunks =
         embeddedChunksByArtifactId.get(artifact.artifactId) ?? [];
       const claims = (artifact.claims ?? []).map((claim, index) => ({
-        id: stableUuid(`${artifact.artifactId}:claim:${index}`),
+        id: stableKnowledgeUuid(`${artifact.artifactId}:claim:${index}`),
         workspaceId: artifact.workspaceId,
         spaceId: artifact.spaceId,
         knowledgePageId: artifact.artifactId,
@@ -230,7 +244,9 @@ export class KnowledgeImportService {
         staleAt: null,
       }));
       const parentSections = (artifact.parentSections ?? []).map((parent) => ({
-        id: stableUuid(`${artifact.artifactId}:parent:${parent.stableKey}`),
+        id: stableKnowledgeUuid(
+          `${artifact.artifactId}:parent:${parent.stableKey}`,
+        ),
         workspaceId: artifact.workspaceId,
         spaceId: artifact.spaceId,
         knowledgePageId: artifact.artifactId,
@@ -280,7 +296,7 @@ export class KnowledgeImportService {
         })),
       );
       const chunks = artifactChunks.map((chunk, index) => ({
-        id: stableUuid(`${artifact.artifactId}:chunk:${index}`),
+        id: stableKnowledgeUuid(`${artifact.artifactId}:chunk:${index}`),
         workspaceId: artifact.workspaceId,
         spaceId: artifact.spaceId,
         knowledgePageId: artifact.artifactId,
@@ -295,6 +311,8 @@ export class KnowledgeImportService {
         embeddingProfile: chunk.embedding?.profile ?? null,
         embeddingModel: chunk.embedding?.model ?? null,
         embeddingDimensions: chunk.embedding?.dimensions ?? null,
+        embeddingTotalTokens: chunk.embedding?.totalTokens ?? null,
+        embeddingDurationMs: chunk.embedding?.durationMs ?? null,
         parentSectionId: chunk.parentStableKey
           ? (parentIdByStableKey.get(chunk.parentStableKey) ?? null)
           : null,
@@ -344,7 +362,9 @@ export class KnowledgeImportService {
         ),
       );
       const links = (artifact.links ?? []).map((link, index) => {
-        const linkId = stableUuid(`${artifact.artifactId}:link:${index}`);
+        const linkId = stableKnowledgeUuid(
+          `${artifact.artifactId}:link:${index}`,
+        );
 
         return {
           id: linkId,
@@ -384,7 +404,7 @@ export class KnowledgeImportService {
         })),
       );
       const graphEdges = (artifact.graphEdges ?? []).map((edge, index) => ({
-        id: stableUuid(`${artifact.artifactId}:graph-edge:${index}`),
+        id: stableKnowledgeUuid(`${artifact.artifactId}:graph-edge:${index}`),
         workspaceId: artifact.workspaceId,
         spaceId: artifact.spaceId,
         fromKnowledgePageId: artifact.artifactId,
@@ -540,7 +560,7 @@ export class KnowledgeImportService {
               text: source.text,
             }).flatMap((parent) =>
               parent.children.map((child) => ({
-                id: stableUuid(
+                id: stableKnowledgeUuid(
                   `${sourceRow.id}:${child.startOffset}:${child.endOffset}:${child.quoteHash}`,
                 ),
                 text: child.text,
@@ -848,18 +868,6 @@ function toStoredSourceRange(source: KnowledgeSourceRef) {
     startOffset: source.sourceRange.startOffset,
     endOffset: source.sourceRange.endOffset,
   };
-}
-
-function stableUuid(input: string): string {
-  const hash = createHash('sha256').update(input).digest('hex');
-  return [
-    hash.slice(0, 8),
-    hash.slice(8, 12),
-    `4${hash.slice(13, 16)}`,
-    ((parseInt(hash.slice(16, 18), 16) & 0x3f) | 0x80).toString(16) +
-      hash.slice(18, 20),
-    hash.slice(20, 32),
-  ].join('-');
 }
 
 function toJsonValue(value: unknown): JsonValue {

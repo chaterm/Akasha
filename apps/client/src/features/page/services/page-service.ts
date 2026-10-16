@@ -39,7 +39,10 @@ export interface PublishPageKnowledgeResult {
   disposition: "created" | "coalesced" | "rerun_requested";
   mode: "incremental";
   knowledgeGeneration: number;
+  indexMode: "compiled" | "original";
 }
+
+export type KnowledgeIndexMode = "compiled" | "original";
 
 export interface PagePublishCooldown {
   step: number;
@@ -62,6 +65,8 @@ export interface PageCompileStatusResult {
   errorMessage?: string;
   sourceVersion?: number;
   publishedSourceVersion?: number;
+  configuredIndexMode?: KnowledgeIndexMode;
+  publishedIndexMode?: KnowledgeIndexMode;
 }
 
 export async function getPageCompileStatus(
@@ -84,9 +89,11 @@ export async function getPagePublishCooldown(
 
 export async function publishPageKnowledge(
   pageId: string,
+  indexMode: KnowledgeIndexMode = "compiled",
 ): Promise<PublishPageKnowledgeResult> {
   const req = await api.post<PublishPageKnowledgeResult>(
     `/llm-wiki/pages/${pageId}/publish`,
+    { indexMode },
   );
   return req.data;
 }

@@ -1,8 +1,10 @@
 import {
   ActionIcon,
   Badge,
+  Box,
   Group,
   Menu,
+  SegmentedControl,
   Text,
   ThemeIcon,
   Tooltip,
@@ -23,6 +25,7 @@ import {
   IconRocket,
   IconStar,
   IconStarFilled,
+  IconSparkles,
   IconTrash,
   IconWifiOff,
   IconAlertCircle,
@@ -76,6 +79,7 @@ import {
   useWatchPageMutation,
   useUnwatchPageMutation,
 } from "@/features/page/queries/watcher-query";
+import type { KnowledgeIndexMode } from "@/features/page/services/page-service";
 
 const PUBLISH_COOLDOWNS = [10 * 60_000, 30 * 60_000, 2 * 60 * 60_000];
 const publishCooldownKey = (pageId: string) =>
@@ -207,6 +211,7 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
     step: number;
   } | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [indexMode, setIndexMode] = useState<KnowledgeIndexMode>("compiled");
   const publishCooldownRemaining = publishCooldown
     ? publishCooldown.expiresAt - now
     : 0;
@@ -219,7 +224,11 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
     }
   }, [serverCooldown]);
   const publishCoolingDown = publishCooldownRemaining > 0;
-  const isCompiling = compileStatus?.status === "compiling";
+  const isPublishing = compileStatus?.status === "compiling";
+
+  useEffect(() => {
+    setIndexMode(compileStatus?.configuredIndexMode ?? "compiled");
+  }, [page?.id, compileStatus?.configuredIndexMode]);
 
   useEffect(() => {
     setPublishCooldown(null);
@@ -294,76 +303,81 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
   const handlePublishPage = () => {
     if (
       !page?.id ||
+      !compileStatus ||
       publishPageKnowledge.isPending ||
       publishCoolingDown ||
-      isCompiling
+      isPublishing
     )
       return;
-    publishPageKnowledge.mutate(page.id, {
-      onSuccess: () => {
-        const step = (publishCooldown?.step ?? 0) + 1;
-        const expiresAt =
-          Date.now() +
-          PUBLISH_COOLDOWNS[Math.min(step - 1, PUBLISH_COOLDOWNS.length - 1)];
-        setPublishCooldown({ expiresAt, step });
-        localStorage.setItem(
-          publishCooldownKey(page.id),
-          JSON.stringify({ expiresAt, step }),
-        );
-        notifications.show({ message: t("Page publish started") });
-        void refetchCompileStatus();
+    publishPageKnowledge.mutate(
+      { pageId: page.id, indexMode },
+      {
+        onSuccess: () => {
+          const step = (publishCooldown?.step ?? 0) + 1;
+          const expiresAt =
+            Date.now() +
+            PUBLISH_COOLDOWNS[Math.min(step - 1, PUBLISH_COOLDOWNS.length - 1)];
+          setPublishCooldown({ expiresAt, step });
+          localStorage.setItem(
+            publishCooldownKey(page.id),
+            JSON.stringify({ expiresAt, step }),
+          );
+          notifications.show({ message: t("Page publish started") });
+          void refetchCompileStatus();
+        },
+        onError: (error: any) => {
+          if (error?.response?.status === 429) {
+            void refetchCooldown();
+          }
+          notifications.show({
+            message:
+              error?.response?.data?.message || t("Failed to publish page"),
+            color: "red",
+          });
+        },
       },
-      onError: (error: any) => {
-        if (error?.response?.status === 429) {
-          void refetchCooldown();
-        }
-        notifications.show({
-          message:
-            error?.response?.data?.message || t("Failed to publish page"),
-          color: "red",
-        });
-      },
-    });
+    );
   };
 
-  const compileBadge = (() => {
-    const status = compileStatus?.status ?? "not_compiled";
+  const publishBadge = (() => {
+    if (!compileStatus) return null;
+    const status = compileStatus.status;
     const config = {
       completed: {
         color: "green",
-        label: t("Compiled"),
+        label: t("Published"),
         icon: <IconCircleCheck size={13} />,
       },
       compiling: {
         color: "blue",
-        label: t("Compiling"),
+        label: t("Publishing"),
         icon: <IconLoader2 size={13} className="animate-spin" />,
       },
       failed: {
         color: "red",
-        label: t("Compilation failed"),
+        label: t("Publish failed"),
         icon: <IconAlertCircle size={13} />,
       },
       not_compiled: {
         color: "gray",
-        label: t("Not compiled"),
+        label: t("Not published"),
         icon: <IconCircle size={13} />,
       },
       outdated: {
         color: "gray",
-        label: t("Needs recompilation"),
+        label: t("Needs republishing"),
         icon: <IconCircle size={13} />,
       },
     }[status] ?? {
       color: "gray",
-      label: t("Not compiled"),
+      label: t("Not published"),
       icon: <IconCircle size={13} />,
     };
     return (
       <Tooltip
         label={
           status === "failed"
-            ? compileStatus?.errorMessage || t("Compilation failed")
+            ? compileStatus.errorMessage || t("Publish failed")
             : config.label
         }
         withArrow
@@ -448,15 +462,53 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
           )}
 
           {!readOnly && (
+            <>
+              <Menu.Divider />
+              <Box px="sm" py="xs">
+                <Group gap="xs" mb="xs">
+                  <IconSparkles size={16} aria-hidden />
+                  <Text size="sm">{t("Publish mode")}</Text>
+                </Group>
+                <SegmentedControl
+                  fullWidth
+                  size="xs"
+                  styles={{ label: { whiteSpace: "normal" } }}
+                  value={indexMode}
+                  data={[
+                    { value: "compiled", label: t("Smart compilation") },
+                    { value: "original", label: t("Original text indexing") },
+                  ]}
+                  onChange={(value) => {
+                    if (value === "compiled" || value === "original") {
+                      setIndexMode(value);
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key.startsWith("Arrow")) event.stopPropagation();
+                  }}
+                  disabled={
+                    !compileStatus ||
+                    publishPageKnowledge.isPending ||
+                    publishCoolingDown ||
+                    isPublishing
+                  }
+                  aria-label={t("Publish mode")}
+                />
+              </Box>
+            </>
+          )}
+
+          {!readOnly && (
             <Menu.Item
               leftSection={<IconRocket size={16} />}
               onClick={handlePublishPage}
               disabled={
+                !compileStatus ||
                 publishPageKnowledge.isPending ||
                 publishCoolingDown ||
-                isCompiling
+                isPublishing
               }
-              rightSection={compileBadge}
+              rightSection={publishBadge}
             >
               {publishCoolingDown
                 ? t("Publish available in {{time}}", {

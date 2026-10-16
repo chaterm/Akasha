@@ -398,6 +398,36 @@ describe('KnowledgeSpaceCompilationService', () => {
     ).not.toHaveBeenCalled();
   });
 
+  it('reuses an unchanged original index without embedding again', async () => {
+    const source = sourceSnapshot();
+    const fixture = createService({
+      exportedSources: [source],
+      reuseCandidates: [
+        {
+          ...reuseCandidate(source),
+          lastSuccessfulEffectiveHash: buildEffectiveKnowledgeHash({
+            sourceContentHash: source.contentHash,
+            compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
+            promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+            indexMode: 'original',
+            readyImages: [],
+          }),
+        },
+      ],
+    });
+
+    await expect(
+      fixture.service.bindLeasedRunPage(lease(), {
+        sourcePageId: 'page-1',
+        indexMode: 'original',
+      }),
+    ).resolves.toEqual(expect.objectContaining({ outcome: 'reused' }));
+    expect(fixture.executionRepo.bindTextPage).toHaveBeenCalledWith(
+      lease(),
+      expect.objectContaining({ reused: true, imageStatus: 'not_required' }),
+    );
+  });
+
   it('bypasses reuse for a force rebuild', async () => {
     const source = sourceSnapshot();
     const fixture = createService({

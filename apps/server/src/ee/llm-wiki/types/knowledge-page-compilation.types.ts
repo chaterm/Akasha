@@ -1,4 +1,5 @@
 import { KnowledgeSourceSnapshot } from './source-snapshot.types';
+import { KnowledgeIndexMode } from './knowledge-index-mode.types';
 
 export type KnowledgeTextPageData = {
   workspaceId: string;
@@ -8,6 +9,7 @@ export type KnowledgeTextPageData = {
   sourceContentHash?: string;
   spaceRunId: string;
   knowledgeGeneration: number;
+  indexMode?: KnowledgeIndexMode;
 };
 
 export type KnowledgeImageMergePageData = {

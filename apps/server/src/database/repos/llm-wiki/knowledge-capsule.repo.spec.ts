@@ -378,6 +378,20 @@ describe('KnowledgeCapsuleRepo', () => {
     expect(sql.indexOf('quota_source')).toBeLessThan(sql.indexOf('limit'));
   });
 
+  it('excludes original index containers from graph candidates', async () => {
+    const { repo, queries } = createSqlRepo();
+
+    await repo.findGraphCandidatesForSpace({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      limit: 100,
+    });
+
+    const sql = queries[0].sql.toLowerCase().replace(/\s+/g, ' ');
+    expect(sql).toContain('"page_type" != $3');
+    expect(queries[0].parameters).toContain('original_source');
+  });
+
   it('scopes dense recall to the graph window and authorizes before the limit', async () => {
     const { repo, queries } = createSqlRepo();
 

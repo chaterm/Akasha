@@ -39,6 +39,7 @@ import {
   CompilerCatalogSelection,
   KnowledgeArtifactCatalogService,
 } from '../services/knowledge-artifact-catalog.service';
+import { stableKnowledgeUuid } from '../services/knowledge-stable-id';
 
 @Injectable()
 export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
@@ -583,12 +584,13 @@ function tableRowEvidenceChunks(
 ) {
   let sourceCursor = 0;
   return extractKnowledgeTableRows(source.content).map((row) => {
-    const startOffset = source.text.indexOf(row.text, sourceCursor);
+    const rawOffset = source.text.indexOf(row.text, sourceCursor);
+    const startOffset = rawOffset >= 0 ? rawOffset : null;
     const endOffset =
-      startOffset >= 0 ? startOffset + row.text.length : undefined;
-    if (startOffset >= 0) sourceCursor = endOffset!;
+      startOffset !== null ? startOffset + row.text.length : null;
+    if (startOffset !== null) sourceCursor = endOffset!;
     const rowSourceRef =
-      startOffset >= 0
+      startOffset !== null
         ? {
             ...sourceRef,
             sourceRange: { startOffset, endOffset: endOffset! },
@@ -891,21 +893,9 @@ function stableArtifactId(
   kind: string,
   canonicalKey: string,
 ): string {
-  return stableUuid(
+  return stableKnowledgeUuid(
     `${input.workspaceId}:${input.spaceId}:${kind}:${canonicalKey}`,
   );
-}
-
-function stableUuid(value: string): string {
-  const hash = sha256(value);
-  return [
-    hash.slice(0, 8),
-    hash.slice(8, 12),
-    `4${hash.slice(13, 16)}`,
-    ((parseInt(hash.slice(16, 18), 16) & 0x3f) | 0x80).toString(16) +
-      hash.slice(18, 20),
-    hash.slice(20, 32),
-  ].join('-');
 }
 
 function sha256(value: string): string {

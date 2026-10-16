@@ -1262,7 +1262,13 @@ export class KnowledgeCapsuleRepo {
       .selectAll()
       .where('workspaceId', '=', input.workspaceId)
       .where('spaceId', '=', input.spaceId)
-      .where('staleAt', 'is', null);
+      .where('staleAt', 'is', null)
+      .where((eb) =>
+        eb.or([
+          eb('pageType', 'is', null),
+          eb('pageType', '!=', 'original_source'),
+        ]),
+      );
     if (input.readableSourcePageIds) {
       const readable = input.readableSourcePageIds;
       pageQuery = pageQuery.where((eb) =>
@@ -1709,7 +1715,10 @@ export class KnowledgeCapsuleRepo {
       .$if(Boolean(input.spaceId), (query) =>
         query.where('knowledgePages.spaceId', '=', input.spaceId!),
       )
-      .where('knowledgePages.pageType', '=', 'source_summary')
+      .where('knowledgePages.pageType', 'in', [
+        'source_summary',
+        'original_source',
+      ])
       .where('knowledgePageSources.sourcePageId', 'in', input.sourcePageIds)
       .execute();
     const knowledgePageIds = pageRows.map((row) => row.id);

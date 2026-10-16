@@ -95,6 +95,9 @@ import { AgentCapability } from '../../common/auth/agent-capability';
 import { AgentAccess } from '../../common/decorators/agent-access.decorator';
 import type { AgentAccessContext } from '../../common/auth/agent-access-context';
 import { AgentAccessService } from '../../core/page/page-access/agent-access.service';
+import { KnowledgePageIndexSettingsRepo } from '../../database/repos/llm-wiki/knowledge-page-index-settings.repo';
+import { PagePublishDto } from './dto/page-publish.dto';
+import { DEFAULT_KNOWLEDGE_INDEX_MODE } from './types/knowledge-index-mode.types';
 
 @UseGuards(JwtAuthGuard)
 @Controller('llm-wiki')
@@ -128,6 +131,8 @@ export class LlmWikiController {
     @Optional() private readonly environmentService?: EnvironmentService,
     @Optional() private readonly agentAccessService?: AgentAccessService,
     @Inject(CACHE_MANAGER) private readonly cacheManager?: Cache,
+    @Optional()
+    private readonly pageIndexSettingsRepo?: KnowledgePageIndexSettingsRepo,
   ) {}
 
   private publishCooldownKey(pageId: string) {
@@ -450,12 +455,28 @@ export class LlmWikiController {
     if (!page || page.workspaceId !== workspace.id || page.deletedAt !== null) {
       throw new NotFoundException('Page not found');
     }
-    return this.spaceCompilation.getPageCompileStatus({
+    const status = await this.spaceCompilation.getPageCompileStatus({
       workspaceId: workspace.id,
       spaceId: page.spaceId,
       sourcePageId: page.id,
       currentSourceVersion: page.updatedAt?.toISOString(),
     });
+    const configuredIndexMode = this.pageIndexSettingsRepo
+      ? await this.pageIndexSettingsRepo.findMode({
+          workspaceId: workspace.id,
+          sourcePageId: page.id,
+        })
+      : DEFAULT_KNOWLEDGE_INDEX_MODE;
+    return {
+      ...status,
+      status:
+        status.status === 'completed' &&
+        status.publishedIndexMode &&
+        status.publishedIndexMode !== configuredIndexMode
+          ? 'outdated'
+          : status.status,
+      configuredIndexMode,
+    };
   }
 
   @HttpCode(HttpStatus.OK)
@@ -464,6 +485,7 @@ export class LlmWikiController {
     @Param('pageId', ParseUUIDPipe) pageId: string,
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
+    @Body() dto: PagePublishDto = {},
   ) {
     if (!this.chatService.isEnabledForWorkspace(workspace)) {
       throw new ForbiddenException('AI knowledge chat is disabled');
@@ -475,6 +497,8 @@ export class LlmWikiController {
     }
 
     await this.pageAccessService.validateCanEdit(page, user);
+
+    const indexMode = dto.indexMode ?? DEFAULT_KNOWLEDGE_INDEX_MODE;
 
     const cooldownKey = this.publishCooldownKey(page.id);
     const cooldown = await this.cacheManager?.get<{
@@ -495,6 +519,8 @@ export class LlmWikiController {
       workspaceId: workspace.id,
       spaceId: page.spaceId,
       sourcePageId: page.id,
+      indexMode,
+      updatedBy: user.id,
     });
     const run = request.run!;
     const step = Math.min(
@@ -515,6 +541,7 @@ export class LlmWikiController {
       disposition: request.disposition,
       mode: 'incremental' as const,
       knowledgeGeneration: run.knowledgeGeneration,
+      indexMode,
     };
 
     this.auditService.log({
@@ -527,6 +554,7 @@ export class LlmWikiController {
         runId: run.id,
         disposition: request.disposition,
         priority: 0,
+        indexMode,
       },
     });
 
@@ -657,6 +685,7 @@ export class LlmWikiController {
       workspaceId: workspace.id,
       spaceIds: dto.spaceIds,
       action: dto.action,
+      embeddingConcurrency: dto.embeddingConcurrency,
     });
 
     this.auditService.log({
@@ -1209,6 +1238,7 @@ export class LlmWikiController {
     workspaceId: string;
     spaceIds: string[];
     action: KnowledgeAdminSpaceAction;
+    embeddingConcurrency?: number;
   }): Promise<{
     action: KnowledgeAdminSpaceAction;
     queuedSpaceCount: number;
@@ -1231,7 +1261,13 @@ export class LlmWikiController {
         });
         await this.knowledgeQueue.add(
           QueueJob.KNOWLEDGE_REBUILD_EMBEDDINGS,
-          { workspaceId: input.workspaceId, spaceId },
+          {
+            workspaceId: input.workspaceId,
+            spaceId,
+            ...(input.embeddingConcurrency === undefined
+              ? {}
+              : { embeddingConcurrency: input.embeddingConcurrency }),
+          },
           {
             jobId,
             attempts: 3,

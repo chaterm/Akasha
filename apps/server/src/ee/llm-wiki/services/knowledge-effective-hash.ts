@@ -16,6 +16,7 @@ export type EffectiveKnowledgeHashInput = {
   compilerVersion: string;
   promptVersion: string;
   readyImages: ReadyKnowledgeImage[];
+  indexMode?: 'compiled' | 'original';
 };
 
 /**
@@ -31,6 +32,8 @@ export function buildEffectiveKnowledgeHash(
     input.sourceTextHash ?? null,
     input.compilerVersion,
     input.promptVersion,
+    input.indexMode ?? 'compiled',
+    input.indexMode === 'original' ? 'structural-900-v1' : null,
     input.readyImages.map((image) => [
       image.attachmentId,
       image.attachmentVersion,

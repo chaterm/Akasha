@@ -17,6 +17,7 @@ import {
 import {
   KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER,
   KnowledgeSpaceCompilationRepo,
+  SpaceRunRequest,
 } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
 import {
   KnowledgeSpaceExecutionRepo,
@@ -42,6 +43,7 @@ import {
 } from './knowledge-worker-settings';
 import { KnowledgeSourceRetirementService } from './knowledge-source-retirement.service';
 import { KnowledgeImageUnderstandingProvider } from './knowledge-image-understanding-provider.service';
+import { KnowledgeIndexMode } from '../types/knowledge-index-mode.types';
 
 @Injectable()
 export class KnowledgeSpaceCompilationService implements OnModuleInit {
@@ -89,6 +91,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       removedSourcePageIds?: string[];
       scanRemovedSources?: boolean;
       targetSourcePageIds?: string[];
+      pageIndexSetting?: SpaceRunRequest['pageIndexSetting'];
     }>,
   ) {
     const results = await this.runRepo.requestRuns({
@@ -148,6 +151,8 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     spaceId: string;
     sourcePageId: string;
     currentSourceVersion?: string;
+    indexMode?: KnowledgeIndexMode;
+    updatedBy?: string;
   }) {
     // Keep this lookup optional for lightweight callers that provide only the
     // run-request repository contract; production repos always implement it.
@@ -173,7 +178,8 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
         (this.runRepo.findRun
           ? await this.runRepo.findRun(existing!.runId)
           : undefined);
-      if (run) return { disposition: 'coalesced' as const, run };
+      if (run && input.indexMode === undefined)
+        return { disposition: 'coalesced' as const, run };
     }
     const [result] = await this.requestRuns([
       {
@@ -181,6 +187,15 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
         spaceId: input.spaceId,
         trigger: KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER,
         targetSourcePageIds: [input.sourcePageId],
+        ...(input.indexMode
+          ? {
+              pageIndexSetting: {
+                sourcePageId: input.sourcePageId,
+                indexMode: input.indexMode,
+                updatedBy: input.updatedBy ?? null,
+              },
+            }
+          : {}),
       },
     ]);
     if (result?.run?.spaceJobId) {
@@ -195,6 +210,11 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     sourcePageId: string;
     currentSourceVersion?: string;
   }) {
+    const published = await this.compilationRepo.findPublishedPageIndex({
+      workspaceId: input.workspaceId,
+      spaceId: input.spaceId,
+      sourcePageId: input.sourcePageId,
+    });
     const latest = await this.runRepo.findLatestPageCompileStatus(input);
     if (!latest) {
       const active = this.runRepo.findActiveRunForPage
@@ -206,7 +226,10 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
             runId: active.id,
             startedAt: active.queuedAt,
           }
-        : { status: 'not_compiled' as const };
+        : {
+            status: 'not_compiled' as const,
+            publishedIndexMode: published?.indexMode,
+          };
     }
     const active = ['queued', 'compiling', 'aggregating'];
     let status:
@@ -244,6 +267,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       startedAt: latest.startedAt,
       finishedAt: latest.finishedAt,
       errorMessage: latest.errorMessage,
+      publishedIndexMode: published?.indexMode,
     };
   }
 
@@ -359,7 +383,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
 
   async bindLeasedRunPage(
     lease: SpaceExecutionLease,
-    input: { sourcePageId: string },
+    input: { sourcePageId: string; indexMode?: KnowledgeIndexMode },
   ) {
     if (!this.executionRepo) {
       throw new Error(
@@ -392,6 +416,52 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
         });
       }
       return terminalized ? { outcome: 'terminalized' as const } : undefined;
+    }
+
+    if (input.indexMode === 'original') {
+      const effectiveKnowledgeHash = buildEffectiveKnowledgeHash({
+        sourceContentHash: source.contentHash,
+        compilerVersion: run.compilerVersion,
+        promptVersion: run.promptVersion,
+        indexMode: 'original',
+        readyImages: [],
+      });
+      const [candidate] = await this.compilationRepo.findSpaceReuseCandidates({
+        ...scope,
+        sourcePageIds: [source.sourcePageId],
+        indexMode: 'original',
+      });
+      const forcePageCompilation =
+        run.mode === 'force_rebuild' ||
+        run.trigger === 'page_retry' ||
+        run.trigger === 'follow_up';
+      const reusable =
+        !forcePageCompilation &&
+        Boolean(candidate?.activeSourceId) &&
+        Boolean(candidate?.activeSummaryId) &&
+        Boolean(candidate?.activeSummaryChunkId) &&
+        candidate?.lastSuccessfulSourceHash === source.contentHash &&
+        candidate?.lastSuccessfulEffectiveHash === effectiveKnowledgeHash;
+      const bound = await this.executionRepo.bindTextPage(lease, {
+        sourcePageId: source.sourcePageId,
+        expectedSourceVersion: source.sourceVersion,
+        expectedSourceContentHash: source.contentHash,
+        expectedImageCount: 0,
+        succeededImageCount: 0,
+        status: reusable ? 'succeeded' : 'pending',
+        imageStatus: 'not_required',
+        mergeStatus: 'not_required',
+        targetEffectiveKnowledgeHash: effectiveKnowledgeHash,
+        qualityStatus: 'normal',
+        reused: reusable,
+        images: [],
+      });
+      return bound
+        ? {
+            outcome: reusable ? ('reused' as const) : ('bound' as const),
+            page: bound,
+          }
+        : undefined;
     }
 
     const expectedImages = source.images ?? [];

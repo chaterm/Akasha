@@ -45,8 +45,10 @@ import {
   KnowledgeLinkSources,
   KnowledgePages,
   KnowledgePageSources,
+  KnowledgePageIndexSettings,
   KnowledgeParentSections,
   KnowledgeParentSectionSources,
+  KnowledgeEmbeddingRebuildBatches,
   KnowledgeQueryAudit,
   KnowledgeQuarantinedArtifacts,
   KnowledgeSourceAccessPolicy as _KnowledgeSourceAccessPolicy,
@@ -146,6 +148,10 @@ export type KnowledgePage = Omit<Selectable<KnowledgePages>, 'generationMode'> &
 export type InsertableKnowledgePage = Insertable<KnowledgePages>;
 export type UpdatableKnowledgePage = Updateable<Omit<KnowledgePages, 'id'>>;
 
+export type KnowledgePageIndexSetting = Selectable<KnowledgePageIndexSettings>;
+export type InsertableKnowledgePageIndexSetting =
+  Insertable<KnowledgePageIndexSettings>;
+
 export type KnowledgePageSource = Selectable<KnowledgePageSources>;
 export type InsertableKnowledgePageSource = Insertable<KnowledgePageSources>;
 
@@ -167,6 +173,8 @@ export type InsertableKnowledgeClaimSource = Insertable<KnowledgeClaimSources>;
 type SelectedKnowledgeChunk = Selectable<KnowledgeChunks>;
 type KnowledgeChunkMigrationColumn =
   | 'chunkRole'
+  | 'embeddingDurationMs'
+  | 'embeddingTotalTokens'
   | 'embeddingDimensions'
   | 'embeddingLegacy'
   | 'embeddingModel'
@@ -231,6 +239,10 @@ export type InsertableKnowledgeSourceAccessPrincipal =
 export type KnowledgeQueryAuditEntry = Selectable<KnowledgeQueryAudit>;
 export type InsertableKnowledgeQueryAuditEntry =
   Insertable<KnowledgeQueryAudit>;
+export type KnowledgeEmbeddingRebuildBatch =
+  Selectable<KnowledgeEmbeddingRebuildBatches>;
+export type InsertableKnowledgeEmbeddingRebuildBatch =
+  Insertable<KnowledgeEmbeddingRebuildBatches>;
 
 export type KnowledgeQuarantinedArtifact =
   Selectable<KnowledgeQuarantinedArtifacts>;

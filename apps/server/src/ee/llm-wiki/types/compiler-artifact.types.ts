@@ -19,6 +19,7 @@ export interface CompileSpaceInput extends KnowledgeScope {
   hasLastSuccess?: boolean;
   publicationGuard?: (trx: KyselyTransaction) => Promise<boolean>;
   operationBudget?: KnowledgeOperationBudget;
+  indexMode?: 'compiled' | 'original';
 }
 
 export interface KnowledgeArtifactCatalogEntry {
@@ -42,6 +43,7 @@ export interface CompileDiagnostics {
 
 export type CompiledKnowledgeArtifactKind =
   | 'source_summary'
+  | 'original_source'
   | 'concept'
   | 'entity'
   | 'comparison';
@@ -55,7 +57,7 @@ export interface CompiledKnowledgeArtifact extends KnowledgeScope {
   sourcePageIds: string[];
   compilerVersion: string;
   promptVersion: string;
-  generationMode?: 'semantic' | 'legacy' | 'raw_fallback';
+  generationMode?: 'semantic' | 'legacy' | 'raw_fallback' | 'original';
   compilerRunId?: string;
   compileTaskId?: string;
   inputSourceRefs?: KnowledgeSourceRef[];

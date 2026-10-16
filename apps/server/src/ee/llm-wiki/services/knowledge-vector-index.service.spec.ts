@@ -238,6 +238,123 @@ describe('KnowledgeVectorIndexService', () => {
     expect(embeddingProvider.embedQuery).toHaveBeenCalledTimes(50);
   });
 
+  it('uses the requested embedding concurrency for a maintenance batch', async () => {
+    let active = 0;
+    let maxActive = 0;
+    const embeddingProvider = {
+      embedQuery: jest.fn().mockImplementation(async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        active -= 1;
+        return {
+          vector: [0.1],
+          profile: 'c'.repeat(64),
+          model: 'embedding-v2',
+          dimensions: 1,
+        };
+      }),
+    };
+    const chunks = Array.from({ length: 8 }, (_, index) => ({
+      id: `chunk-${index}`,
+      text: `body-${index}`,
+      headingPath: [],
+    }));
+    const service = serviceWithRebuilder({
+      embeddingProvider,
+      findActiveChunks: jest.fn().mockResolvedValue(chunks),
+      persistEmbeddings: jest.fn().mockResolvedValue(undefined),
+      ensureProfileIndex: jest.fn().mockResolvedValue('created'),
+    });
+
+    await service.rebuildSpaceEmbeddings({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      embeddingConcurrency: 4,
+    });
+
+    expect(maxActive).toBe(4);
+  });
+
+  it('records one aggregate usage row per batch instead of per-chunk history', async () => {
+    const embeddingProvider = {
+      embedQuery: jest
+        .fn()
+        .mockResolvedValueOnce({
+          vector: [0.1],
+          profile: 'f'.repeat(64),
+          model: 'embedding-v2',
+          dimensions: 1,
+          totalTokens: 30,
+        })
+        .mockResolvedValueOnce({
+          vector: [0.2],
+          profile: 'f'.repeat(64),
+          model: 'embedding-v2',
+          dimensions: 1,
+          totalTokens: 12,
+        })
+        .mockResolvedValueOnce(null),
+    };
+    const recordBatch = jest.fn().mockResolvedValue(undefined);
+    const service = serviceWithRebuilder({
+      embeddingProvider,
+      findActiveChunks: jest.fn().mockResolvedValue([
+        { id: 'chunk-1', text: 'One', headingPath: [] },
+        { id: 'chunk-2', text: 'Two', headingPath: [] },
+        { id: 'chunk-3', text: 'Three', headingPath: [] },
+      ]),
+      persistEmbeddings: jest.fn().mockResolvedValue(undefined),
+      ensureProfileIndex: jest.fn().mockResolvedValue('created'),
+      recordBatch,
+    });
+
+    await service.rebuildSpaceEmbeddings({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+    });
+
+    expect(recordBatch).toHaveBeenCalledTimes(1);
+    expect(recordBatch).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      chunkCount: 2,
+      failedCount: 1,
+      totalTokens: 42,
+      durationMs: expect.any(Number),
+      embeddingProfile: 'f'.repeat(64),
+      embeddingModel: 'embedding-v2',
+    });
+  });
+
+  it('keeps a rebuild batch successful when usage recording fails', async () => {
+    const recordBatch = jest.fn().mockRejectedValue(new Error('insert failed'));
+    const service = serviceWithRebuilder({
+      embeddingProvider: {
+        embedQuery: jest.fn().mockResolvedValue({
+          vector: [0.1],
+          profile: 'a'.repeat(64),
+          model: 'embedding-v2',
+          dimensions: 1,
+        }),
+      },
+      findActiveChunks: jest
+        .fn()
+        .mockResolvedValue([{ id: 'chunk-1', text: 'One', headingPath: [] }]),
+      persistEmbeddings: jest.fn().mockResolvedValue(undefined),
+      ensureProfileIndex: jest.fn().mockResolvedValue('created'),
+      recordBatch,
+    });
+
+    await expect(
+      service.rebuildSpaceEmbeddings({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+      }),
+    ).resolves.toEqual({ rebuiltChunkCount: 1 });
+    expect(recordBatch).toHaveBeenCalledTimes(1);
+  });
+
   it('finishes an empty active chunk scope without provider or database writes', async () => {
     const embeddingProvider = { embedQuery: jest.fn() };
     const persistEmbeddings = jest.fn();
@@ -268,7 +385,11 @@ function serviceWithExecutor(execute: jest.Mock): KnowledgeVectorIndexService {
     }
   }
 
-  return new TestService({} as never, { embedQuery: jest.fn() } as never);
+  return new TestService(
+    {} as never,
+    { embedQuery: jest.fn() } as never,
+    { recordBatch: jest.fn() } as never,
+  );
 }
 
 function serviceWithRebuilder(input: {
@@ -276,6 +397,7 @@ function serviceWithRebuilder(input: {
   findActiveChunks: jest.Mock;
   persistEmbeddings: jest.Mock;
   ensureProfileIndex: jest.Mock;
+  recordBatch?: jest.Mock;
 }): KnowledgeVectorIndexService {
   class TestService extends KnowledgeVectorIndexService {
     protected findActiveChunksForSpace(scope: {
@@ -296,5 +418,9 @@ function serviceWithRebuilder(input: {
     }
   }
 
-  return new TestService({} as never, input.embeddingProvider as never);
+  return new TestService(
+    {} as never,
+    input.embeddingProvider as never,
+    { recordBatch: input.recordBatch ?? jest.fn() } as never,
+  );
 }

@@ -135,6 +135,31 @@ describe('KnowledgeArtifactMaterializerService', () => {
     ).not.toContain('Retired-only fact claim');
   });
 
+  it('remerges survivors deterministically for original publication', async () => {
+    const provider = createProvider();
+    const service = new KnowledgeArtifactMaterializerService(provider);
+    const survivor = artifact('page-2', 'Shared', 'Survivor body');
+
+    const result = await service.materializeSourceUpdate({
+      sourcePageId: 'page-1',
+      previousSourceContributions: [
+        contribution('page-1', artifact('page-1', 'Shared', 'Retired body')),
+      ],
+      affectedContributions: [
+        contribution('page-1', artifact('page-1', 'Shared', 'Retired body')),
+        contribution('page-2', survivor),
+      ],
+      incomingArtifacts: [],
+      mergeMode: 'deterministic',
+    });
+
+    expect(provider.completeMerge).not.toHaveBeenCalled();
+    expect(result.artifacts[0]).toMatchObject({
+      contentMarkdown: 'Survivor body',
+      sourcePageIds: ['page-2'],
+    });
+  });
+
   it('keeps the current source run metadata on a shared materialization', async () => {
     const provider = createProvider();
     provider.completeMerge.mockResolvedValue(

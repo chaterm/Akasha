@@ -306,6 +306,8 @@ export interface KnowledgeArtifactContributions {
 }
 
 export interface KnowledgeChunks {
+  embeddingDurationMs: Generated<number | null>;
+  embeddingTotalTokens: Generated<number | null>;
   chunkRole: Generated<string>;
   claimId: string | null;
   compilerRunId: string | null;
@@ -514,6 +516,15 @@ export interface KnowledgePageCompileSchedules {
   workspaceId: string;
 }
 
+export interface KnowledgePageIndexSettings {
+  createdAt: Generated<Timestamp>;
+  indexMode: string;
+  sourcePageId: string;
+  updatedAt: Generated<Timestamp>;
+  updatedBy: string | null;
+  workspaceId: string;
+}
+
 export interface KnowledgePages {
   body: string;
   canonicalKey: string | null;
@@ -596,6 +607,19 @@ export interface KnowledgeQueryAudit {
   queryHash: string;
   retrievalMode: string;
   userId: string | null;
+  workspaceId: string;
+}
+
+export interface KnowledgeEmbeddingRebuildBatches {
+  chunkCount: number;
+  createdAt: Generated<Timestamp>;
+  durationMs: number;
+  embeddingModel: string | null;
+  embeddingProfile: string | null;
+  failedCount: Generated<number>;
+  id: Generated<string>;
+  spaceId: string;
+  totalTokens: number | null;
   workspaceId: string;
 }
 
@@ -715,6 +739,7 @@ export interface KnowledgeSpaceCompileRunPages {
   id: Generated<string>;
   imageJobId: string | null;
   imageStatus: Generated<string>;
+  indexMode: Generated<string>;
   jobId: string | null;
   mergeAttemptCount: Generated<number>;
   mergedEffectiveKnowledgeHash: string | null;
@@ -1195,11 +1220,13 @@ export interface DB {
   knowledgeLinks: KnowledgeLinks;
   knowledgeLinkSources: KnowledgeLinkSources;
   knowledgePageCompileSchedules: KnowledgePageCompileSchedules;
+  knowledgePageIndexSettings: KnowledgePageIndexSettings;
   knowledgePages: KnowledgePages;
   knowledgePageSources: KnowledgePageSources;
   knowledgeParentSections: KnowledgeParentSections;
   knowledgeParentSectionSources: KnowledgeParentSectionSources;
   knowledgeQuarantinedArtifacts: KnowledgeQuarantinedArtifacts;
+  knowledgeEmbeddingRebuildBatches: KnowledgeEmbeddingRebuildBatches;
   knowledgeQueryAudit: KnowledgeQueryAudit;
   knowledgeSourceAccessPolicy: KnowledgeSourceAccessPolicy;
   knowledgeSourceAccessPrincipals: KnowledgeSourceAccessPrincipals;

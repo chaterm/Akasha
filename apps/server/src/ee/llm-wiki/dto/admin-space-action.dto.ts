@@ -4,7 +4,11 @@ import {
   ArrayUnique,
   IsArray,
   IsIn,
+  IsInt,
+  IsOptional,
   IsUUID,
+  Max,
+  Min,
 } from 'class-validator';
 import { KnowledgeAdminSpaceAction } from '../types/knowledge-queue.types';
 
@@ -18,4 +22,10 @@ export class AdminKnowledgeSpaceActionDto {
   @ArrayUnique()
   @IsUUID('all', { each: true })
   spaceIds: string[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  embeddingConcurrency?: number;
 }

@@ -44,6 +44,11 @@ export interface SpaceRunRequest {
   // When set, the Run compiles only these source pages instead of the whole
   // Space (page-scoped retry). Undefined/empty means a full-Space Run.
   targetSourcePageIds?: string[];
+  pageIndexSetting?: {
+    sourcePageId: string;
+    indexMode: 'compiled' | 'original';
+    updatedBy: string | null;
+  };
 }
 
 export const KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER = 'manual_page_publish';
@@ -688,6 +693,36 @@ export class KnowledgeSpaceCompilationRepo {
     }
 
     const pageScoped = requestTargetSourcePageIds !== null;
+
+    if (request.pageIndexSetting) {
+      const setting = request.pageIndexSetting;
+      const page = await trx
+        .selectFrom('pages')
+        .select('id')
+        .where('id', '=', setting.sourcePageId)
+        .where('workspaceId', '=', request.workspaceId)
+        .where('spaceId', '=', request.spaceId)
+        .where('deletedAt', 'is', null)
+        .executeTakeFirst();
+      if (!page) throw new Error('Knowledge source page is unavailable.');
+      await trx
+        .insertInto('knowledgePageIndexSettings')
+        .values({
+          workspaceId: request.workspaceId,
+          sourcePageId: setting.sourcePageId,
+          indexMode: setting.indexMode,
+          updatedBy: setting.updatedBy,
+          updatedAt: now,
+        })
+        .onConflict((oc) =>
+          oc.columns(['workspaceId', 'sourcePageId']).doUpdateSet({
+            indexMode: setting.indexMode,
+            updatedBy: setting.updatedBy,
+            updatedAt: now,
+          }),
+        )
+        .execute();
+    }
 
     let activeRun = await trx
       .selectFrom('knowledgeSpaceCompileRuns')

@@ -106,7 +106,10 @@ export class KnowledgeSpaceRunnerService {
           if (page.bindingStatus !== 'bound') {
             const binding = await this.spaceCompilation.bindLeasedRunPage(
               lease,
-              { sourcePageId: page.sourcePageId },
+              {
+                sourcePageId: page.sourcePageId,
+                indexMode: page.indexMode as 'compiled' | 'original',
+              },
             );
             if (!binding) {
               return { outcome: 'superseded', completedPages };
@@ -170,6 +173,7 @@ export class KnowledgeSpaceRunnerService {
                   sourceContentHash: boundPage.expectedSourceContentHash,
                   spaceRunId: input.spaceRunId,
                   knowledgeGeneration: input.knowledgeGeneration,
+                  indexMode: boundPage.indexMode as 'compiled' | 'original',
                 },
                 compileTaskId: `${input.spaceJobId}__${boundPage.sourcePageId}`,
                 execution: this.textExecutionContext(lease, boundPage),

@@ -24,6 +24,7 @@ import {
   publishPageKnowledge,
   getPagePublishCooldown,
   getPageCompileStatus,
+  KnowledgeIndexMode,
 } from "@/features/page/services/page-service";
 import {
   IMovePage,
@@ -121,7 +122,13 @@ export function useUpdatePageMutation() {
 
 export function usePublishPageKnowledgeMutation() {
   return useMutation({
-    mutationFn: (pageId: string) => publishPageKnowledge(pageId),
+    mutationFn: ({
+      pageId,
+      indexMode,
+    }: {
+      pageId: string;
+      indexMode: KnowledgeIndexMode;
+    }) => publishPageKnowledge(pageId, indexMode),
   });
 }
 

@@ -13,6 +13,42 @@ describe('resolveModelCallOptions', () => {
     ).toEqual({});
   });
 
+  it('sends the feature thinking default when the config omits it', () => {
+    expect(
+      resolveModelCallOptions(config(), {
+        providerOptionsName: PROVIDER,
+        defaultThinkingEnabled: false,
+      }),
+    ).toEqual({
+      providerOptions: {
+        [PROVIDER]: { chat_template_kwargs: { enable_thinking: false } },
+      },
+    });
+  });
+
+  it('prefers the configured thinking flag over the feature default', () => {
+    expect(
+      resolveModelCallOptions(config({ thinkingEnabled: true }), {
+        providerOptionsName: PROVIDER,
+        defaultThinkingEnabled: false,
+      }),
+    ).toEqual({
+      providerOptions: {
+        [PROVIDER]: { chat_template_kwargs: { enable_thinking: true } },
+      },
+    });
+  });
+
+  it('keeps the OpenAI dialect when the model is a reasoning model', () => {
+    expect(
+      resolveModelCallOptions(config({ thinkingEnabled: false }), {
+        providerOptionsName: PROVIDER,
+        defaultThinkingMode: 'openai',
+        defaultTemperature: 0.1,
+      }),
+    ).toEqual({});
+  });
+
   it('applies the feature default temperature only when unset', () => {
     expect(
       resolveModelCallOptions(config(), {
@@ -57,6 +93,41 @@ describe('resolveModelCallOptions', () => {
       ).providerOptions,
     ).toEqual({
       [PROVIDER]: { chat_template_kwargs: { enable_thinking: false } },
+    });
+  });
+
+  it('applies a feature default for Qwen thinking without changing other callers', () => {
+    expect(
+      resolveModelCallOptions(config(), {
+        providerOptionsName: PROVIDER,
+        defaultThinkingMode: 'qwen',
+        defaultThinkingEnabled: false,
+      }),
+    ).toEqual({
+      providerOptions: {
+        [PROVIDER]: {
+          chat_template_kwargs: { enable_thinking: false },
+        },
+      },
+    });
+  });
+
+  it('lets an explicit thinking setting override the feature default', () => {
+    expect(
+      resolveModelCallOptions(
+        config({ thinkingMode: 'qwen', thinkingEnabled: true }),
+        {
+          providerOptionsName: PROVIDER,
+          defaultThinkingMode: 'openai',
+          defaultThinkingEnabled: false,
+        },
+      ),
+    ).toEqual({
+      providerOptions: {
+        [PROVIDER]: {
+          chat_template_kwargs: { enable_thinking: true },
+        },
+      },
     });
   });
 
