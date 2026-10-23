@@ -12,6 +12,7 @@ import type {
   KnowledgeSpaceOperationResult,
   KnowledgeGraphNode,
   KnowledgeGraphResult,
+  KnowledgeIndexMode,
   KnowledgeQueryResult,
   KnowledgeQueueSnapshot,
   KnowledgeQualityIssue,
@@ -82,12 +83,17 @@ export async function updateKnowledgeSpace(params: {
 export async function forceRebuildKnowledgeSpace(params: {
   spaceId: string;
   confirmationSpaceName: string;
+  forceIndexMode?: KnowledgeIndexMode;
 }): Promise<KnowledgeSpaceOperationResult> {
   return requestConfirmedSpaceCompilation(params, "force-rebuild-knowledge");
 }
 
 async function requestConfirmedSpaceCompilation(
-  params: { spaceId: string; confirmationSpaceName: string },
+  params: {
+    spaceId: string;
+    confirmationSpaceName: string;
+    forceIndexMode?: KnowledgeIndexMode;
+  },
   endpoint: "update-knowledge" | "force-rebuild-knowledge",
 ): Promise<KnowledgeSpaceOperationResult> {
   const response = await fetch(
@@ -98,6 +104,9 @@ async function requestConfirmedSpaceCompilation(
       credentials: "include",
       body: JSON.stringify({
         confirmationSpaceName: params.confirmationSpaceName,
+        ...(params.forceIndexMode
+          ? { forceIndexMode: params.forceIndexMode }
+          : {}),
       }),
     },
   );
@@ -150,6 +159,11 @@ function normalizeSpaceOperationResult(
     runId: typeof record.runId === "string" ? record.runId : "",
     mode: record.mode === "force_rebuild" ? "force_rebuild" : "incremental",
     knowledgeGeneration: numberOrZero(record.knowledgeGeneration),
+    forcedIndexMode:
+      record.forcedIndexMode === "original" ||
+      record.forcedIndexMode === "compiled"
+        ? record.forcedIndexMode
+        : null,
   };
 }
 

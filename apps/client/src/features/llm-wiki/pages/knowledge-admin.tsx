@@ -144,7 +144,7 @@ const PAGE_LOG_RANGE_HOURS: Record<string, number> = {
 type PageLogRange = keyof typeof PAGE_LOG_RANGE_HOURS | "all";
 
 type ConfirmedSpaceCompilation = {
-  mode: "update" | "force";
+  mode: "update" | "force" | "force_original";
   spaceId: string;
   spaceName: string;
 };
@@ -382,6 +382,12 @@ export default function KnowledgeAdminPage() {
         spaceId: params.target.spaceId,
         confirmationSpaceName: params.confirmationSpaceName,
       };
+      if (params.target.mode === "force_original") {
+        return forceRebuildKnowledgeSpace({
+          ...request,
+          forceIndexMode: "original",
+        });
+      }
       return params.target.mode === "force"
         ? forceRebuildKnowledgeSpace(request)
         : updateKnowledgeSpace(request);
@@ -571,31 +577,39 @@ export default function KnowledgeAdminPage() {
               }
             }}
             title={
-              confirmedCompilation?.mode === "force"
-                ? t("Force rebuild knowledge")
-                : t("Update knowledge")
+              confirmedCompilation?.mode === "force_original"
+                ? t("Rebuild space in original mode")
+                : confirmedCompilation?.mode === "force"
+                  ? t("Force rebuild knowledge")
+                  : t("Update knowledge")
             }
             centered
           >
             {confirmedCompilation && (
               <Stack gap="md">
                 <Alert
-                  color={confirmedCompilation.mode === "force" ? "red" : "blue"}
+                  color={
+                    confirmedCompilation.mode === "update" ? "blue" : "red"
+                  }
                   icon={
-                    confirmedCompilation.mode === "force" ? (
-                      <IconAlertTriangle size={18} />
-                    ) : (
+                    confirmedCompilation.mode === "update" ? (
                       <IconInfoCircle size={18} />
+                    ) : (
+                      <IconAlertTriangle size={18} />
                     )
                   }
                 >
-                  {confirmedCompilation.mode === "force"
+                  {confirmedCompilation.mode === "force_original"
                     ? t(
-                        "Compiled knowledge is cleared before a complete rebuild. Original pages and attachments are preserved.",
+                        "Every page in the space is switched to the original embedding mode, then the whole space is rebuilt from original page text. Existing per-page index settings are overwritten.",
                       )
-                    : t(
-                        "Only changed pages are compiled; unchanged knowledge is reused.",
-                      )}
+                    : confirmedCompilation.mode === "force"
+                      ? t(
+                          "Compiled knowledge is cleared before a complete rebuild. Original pages and attachments are preserved.",
+                        )
+                      : t(
+                          "Only changed pages are compiled; unchanged knowledge is reused.",
+                        )}
                 </Alert>
                 <Text size="sm">
                   {t("Enter the exact space name to continue:")}{" "}
@@ -623,7 +637,7 @@ export default function KnowledgeAdminPage() {
                   </Button>
                   <Button
                     color={
-                      confirmedCompilation.mode === "force" ? "red" : undefined
+                      confirmedCompilation.mode === "update" ? undefined : "red"
                     }
                     loading={confirmedCompilationMutation.isPending}
                     disabled={
@@ -1304,6 +1318,13 @@ export default function KnowledgeAdminPage() {
                                       space.name,
                                     )
                                   }
+                                  onForceOriginal={() =>
+                                    openCompilation(
+                                      "force_original",
+                                      space.id,
+                                      space.name,
+                                    )
+                                  }
                                 />
                               </Group>
                             </Table.Td>
@@ -1771,7 +1792,7 @@ function PageLogRow({
           {imageSummary}
         </Text>
       </Table.Td>
-            <Table.Td>
+      <Table.Td>
         <StateBadge value={item.mergeStatus} />
       </Table.Td>
       <Table.Td>
@@ -2108,9 +2129,11 @@ function RunRow({
 function MaintenanceMenu({
   onAction,
   onForce,
+  onForceOriginal,
 }: {
   onAction: (action: KnowledgeAdminSpaceAction) => void;
   onForce: () => void;
+  onForceOriginal: () => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -2136,7 +2159,10 @@ function MaintenanceMenu({
           </Stack>
         </Menu.Item>
         <Menu.Item color="red" onClick={onForce}>
-          {t("Force rebuild knowledge")}
+          {t("Rebuild space (compiled)")}
+        </Menu.Item>
+        <Menu.Item color="red" onClick={onForceOriginal}>
+          {t("Rebuild space (original)")}
         </Menu.Item>
       </Menu.Dropdown>
     </Menu>

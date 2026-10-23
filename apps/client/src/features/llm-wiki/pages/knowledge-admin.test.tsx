@@ -269,11 +269,13 @@ describe("KnowledgeAdminPage", () => {
       runId: "run-2",
       mode: "incremental",
       knowledgeGeneration: 5,
+      forcedIndexMode: null,
     });
     vi.mocked(forceRebuildKnowledgeSpace).mockResolvedValue({
       runId: "run-3",
       mode: "force_rebuild",
       knowledgeGeneration: 6,
+      forcedIndexMode: null,
     });
     vi.mocked(cancelKnowledgeCompilationRun).mockResolvedValue({
       disposition: "cancelled",
@@ -603,6 +605,35 @@ describe("KnowledgeAdminPage", () => {
       expect(updateKnowledgeSpace).toHaveBeenCalledWith({
         spaceId: "space-1",
         confirmationSpaceName: "AIM",
+      }),
+    );
+  });
+
+  it("forces the original index mode for a whole-space rebuild after Space confirmation", async () => {
+    renderPage();
+    await screen.findByText("Space compilation runs");
+    selectOption("space-1");
+    await screen.findByText("Space operations");
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", {
+        name: /Rebuild space \(original\)/,
+      }),
+    );
+
+    const input = await screen.findByLabelText(
+      "Type the space name to confirm",
+    );
+    const confirm = screen.getByRole("button", { name: "Confirm" });
+    expect((confirm as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(input, { target: { value: "AIM" } });
+    fireEvent.click(confirm);
+
+    await waitFor(() =>
+      expect(forceRebuildKnowledgeSpace).toHaveBeenCalledWith({
+        spaceId: "space-1",
+        confirmationSpaceName: "AIM",
+        forceIndexMode: "original",
       }),
     );
   });

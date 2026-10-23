@@ -65,10 +65,13 @@ export interface KnowledgeCompileSpacesResult {
   }>;
 }
 
+export type KnowledgeIndexMode = "compiled" | "original";
+
 export interface KnowledgeSpaceOperationResult {
   runId: string;
   mode: "incremental" | "force_rebuild";
   knowledgeGeneration: number;
+  forcedIndexMode: KnowledgeIndexMode | null;
 }
 
 export type KnowledgeAdminSpaceAction =

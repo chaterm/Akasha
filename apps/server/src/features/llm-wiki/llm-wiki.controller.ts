@@ -97,7 +97,10 @@ import type { AgentAccessContext } from '../../common/auth/agent-access-context'
 import { AgentAccessService } from '../../core/page/page-access/agent-access.service';
 import { KnowledgePageIndexSettingsRepo } from '../../database/repos/llm-wiki/knowledge-page-index-settings.repo';
 import { PagePublishDto } from './dto/page-publish.dto';
-import { DEFAULT_KNOWLEDGE_INDEX_MODE } from './types/knowledge-index-mode.types';
+import {
+  DEFAULT_KNOWLEDGE_INDEX_MODE,
+  KnowledgeIndexMode,
+} from './types/knowledge-index-mode.types';
 
 @UseGuards(JwtAuthGuard)
 @Controller('llm-wiki')
@@ -602,11 +605,14 @@ export class LlmWikiController {
       workspaceId: workspace.id,
       spaceId,
       confirmationSpaceName: dto.confirmationSpaceName,
+      forceIndexMode: dto.forceIndexMode,
+      requestedBy: user.id,
     });
     const result = {
       runId: reset.run.id,
       mode: 'force_rebuild' as const,
       knowledgeGeneration: reset.generation,
+      forcedIndexMode: reset.forcedIndexMode,
     };
     this.auditKnowledgeOperation(spaceId, result);
     return result;
@@ -1224,6 +1230,7 @@ export class LlmWikiController {
       runId: string;
       mode: 'incremental' | 'force_rebuild';
       knowledgeGeneration: number;
+      forcedIndexMode?: KnowledgeIndexMode | null;
     },
   ): void {
     this.auditService.log({

@@ -1041,6 +1041,8 @@ export class KnowledgeSpaceCompilationRepo {
     trigger: string;
     compilerVersion: string;
     promptVersion: string;
+    forceIndexMode?: 'compiled' | 'original';
+    forceIndexModeUpdatedBy?: string | null;
     sources: Array<{
       sourcePageId: string;
       sourceVersion: string;
@@ -1086,6 +1088,46 @@ export class KnowledgeSpaceCompilationRepo {
         .where('workspaceId', '=', input.workspaceId)
         .where('spaceId', '=', input.spaceId)
         .execute();
+
+      // Pin every page in the Space to the requested index mode inside the
+      // reset transaction. `initializeRun` seeds each RunPage's index_mode
+      // from this table, so the rewrite has to land before the new Run is
+      // initialized or the rebuild would still use the old per-page modes.
+      if (input.forceIndexMode) {
+        const forcedIndexMode = input.forceIndexMode;
+        const forcedIndexModeUpdatedBy = input.forceIndexModeUpdatedBy ?? null;
+        await trx
+          .insertInto('knowledgePageIndexSettings')
+          .columns([
+            'workspaceId',
+            'sourcePageId',
+            'indexMode',
+            'updatedBy',
+            'updatedAt',
+          ])
+          .expression((eb) =>
+            eb
+              .selectFrom('pages as page')
+              .select((selectEb) => [
+                'page.workspaceId',
+                'page.id as sourcePageId',
+                selectEb.val(forcedIndexMode).as('indexMode'),
+                selectEb.val(forcedIndexModeUpdatedBy).as('updatedBy'),
+                selectEb.val(now).as('updatedAt'),
+              ])
+              .where('page.workspaceId', '=', input.workspaceId)
+              .where('page.spaceId', '=', input.spaceId)
+              .where('page.deletedAt', 'is', null),
+          )
+          .onConflict((oc) =>
+            oc.columns(['workspaceId', 'sourcePageId']).doUpdateSet({
+              indexMode: forcedIndexMode,
+              updatedBy: forcedIndexModeUpdatedBy,
+              updatedAt: now,
+            }),
+          )
+          .execute();
+      }
 
       const oldRuns = await trx
         .selectFrom('knowledgeSpaceCompileRuns')
@@ -1332,6 +1374,8 @@ export class KnowledgeSpaceCompilationRepo {
     trigger: string;
     compilerVersion: string;
     promptVersion: string;
+    forceIndexMode?: 'compiled' | 'original';
+    forceIndexModeUpdatedBy?: string | null;
   }) {
     return this.forceResetAndCreateRun({
       ...input,

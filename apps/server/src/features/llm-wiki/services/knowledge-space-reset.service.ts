@@ -12,6 +12,7 @@ import {
   DEFAULT_KNOWLEDGE_COMPILER_VERSION,
   DEFAULT_KNOWLEDGE_PROMPT_VERSION,
 } from '../llm-wiki.constants';
+import { KnowledgeIndexMode } from '../types/knowledge-index-mode.types';
 import { KnowledgeSpaceCompilationService } from './knowledge-space-compilation.service';
 
 @Injectable()
@@ -30,6 +31,8 @@ export class KnowledgeSpaceResetService {
     workspaceId: string;
     spaceId: string;
     confirmationSpaceName: string;
+    forceIndexMode?: KnowledgeIndexMode;
+    requestedBy?: string | null;
   }) {
     const scope = {
       workspaceId: input.workspaceId,
@@ -41,6 +44,12 @@ export class KnowledgeSpaceResetService {
       trigger: 'manual_compile',
       compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
       promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+      ...(input.forceIndexMode
+        ? {
+            forceIndexMode: input.forceIndexMode,
+            forceIndexModeUpdatedBy: input.requestedBy ?? null,
+          }
+        : {}),
     });
     if (!result.reset) {
       if (result.reason === 'space_name_mismatch') {
@@ -55,7 +64,11 @@ export class KnowledgeSpaceResetService {
     // active jobs remain and are stopped by the publication fence.
     await this.removeSupersededJobs(result.supersededJobIds);
     await this.compilation.dispatchPending();
-    return { generation: result.generation, run: result.run };
+    return {
+      generation: result.generation,
+      run: result.run,
+      forcedIndexMode: input.forceIndexMode ?? null,
+    };
   }
 
   private async removeSupersededJobs(jobIds: string[]): Promise<void> {

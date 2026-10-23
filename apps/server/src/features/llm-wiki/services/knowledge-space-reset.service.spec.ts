@@ -55,6 +55,7 @@ describe('KnowledgeSpaceResetService', () => {
     ).resolves.toEqual({
       generation: 8,
       run: { id: 'force-run', mode: 'force_rebuild' },
+      forcedIndexMode: null,
     });
 
     expect(runRepo.forceResetAndRequestRun).toHaveBeenCalledWith(
@@ -64,11 +65,55 @@ describe('KnowledgeSpaceResetService', () => {
         promptVersion: expect.any(String),
       }),
     );
+    expect(runRepo.forceResetAndRequestRun.mock.calls[0][0]).not.toHaveProperty(
+      'forceIndexMode',
+    );
     expect(queue.getJob).toHaveBeenCalledTimes(3);
     expect(imageQueue.getJob).toHaveBeenCalledTimes(1);
     expect(prioritized.remove).toHaveBeenCalledTimes(1);
     expect(active.remove).not.toHaveBeenCalled();
     expect(imageWaiting.remove).toHaveBeenCalledTimes(1);
+    expect(compilation.dispatchPending).toHaveBeenCalledTimes(1);
+  });
+
+  it('pins the whole Space to the original index mode when forced', async () => {
+    const queue = { getJob: jest.fn() };
+    const runRepo = {
+      forceResetAndRequestRun: jest.fn().mockResolvedValue({
+        reset: true,
+        generation: 9,
+        run: { id: 'original-run', mode: 'force_rebuild' },
+        supersededJobIds: [],
+      }),
+    };
+    const compilation = { dispatchPending: jest.fn() };
+    const service = new KnowledgeSpaceResetService(
+      queue as never,
+      { getJob: jest.fn() } as never,
+      runRepo as never,
+      compilation as never,
+    );
+
+    await expect(
+      service.forceRebuild({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-1',
+        confirmationSpaceName: 'Exact Space',
+        forceIndexMode: 'original',
+        requestedBy: 'user-1',
+      }),
+    ).resolves.toEqual({
+      generation: 9,
+      run: { id: 'original-run', mode: 'force_rebuild' },
+      forcedIndexMode: 'original',
+    });
+
+    expect(runRepo.forceResetAndRequestRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        forceIndexMode: 'original',
+        forceIndexModeUpdatedBy: 'user-1',
+      }),
+    );
     expect(compilation.dispatchPending).toHaveBeenCalledTimes(1);
   });
 

@@ -139,6 +139,66 @@ describePostgres('force-reset PostgreSQL scope', () => {
     ).resolves.toEqual({ reset: false, reason: 'space_name_mismatch' });
     expect(await evidence(db)).toEqual(before);
   });
+
+  it('pins every live page in the Space to the forced index mode and leaves other Spaces alone', async () => {
+    await sql`
+      insert into pages (id, workspace_id, space_id, deleted_at) values
+        ('page-extra','workspace-1','space-control',null),
+        ('page-gone','workspace-1','space-control',now());
+      insert into knowledge_page_index_settings
+        (workspace_id, source_page_id, index_mode, updated_by) values
+        ('workspace-1','page-control','compiled','user-old'),
+        ('workspace-1','page-target','compiled','user-old');
+    `.execute(db);
+
+    const result = await repo.forceResetAndCreateRun({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-control',
+      confirmationSpaceName: 'Control Space',
+      trigger: 'manual_compile',
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+      forceIndexMode: 'original',
+      forceIndexModeUpdatedBy: 'user-new',
+      sources: [],
+      deferInitialization: true,
+    });
+    expect(result).toEqual(expect.objectContaining({ reset: true }));
+
+    const settings = await sql<{
+      sourcePageId: string;
+      indexMode: string;
+      updatedBy: string | null;
+    }>`
+      select source_page_id as "sourcePageId",
+             index_mode as "indexMode",
+             updated_by as "updatedBy"
+      from knowledge_page_index_settings
+      where workspace_id = 'workspace-1'
+      order by source_page_id
+    `.execute(db);
+
+    expect(settings.rows).toEqual([
+      // Updated in place.
+      {
+        sourcePageId: 'page-control',
+        indexMode: 'original',
+        updatedBy: 'user-new',
+      },
+      // Inserted for a page that had no stored setting.
+      {
+        sourcePageId: 'page-extra',
+        indexMode: 'original',
+        updatedBy: 'user-new',
+      },
+      // Untouched: it belongs to the other Space.
+      {
+        sourcePageId: 'page-target',
+        indexMode: 'compiled',
+        updatedBy: 'user-old',
+      },
+    ]);
+  });
 });
 
 async function createFixture(db: Kysely<unknown>): Promise<void> {
@@ -150,7 +210,18 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       knowledge_generation integer not null default 0,
       deleted_at timestamptz, updated_at timestamptz not null default now()
     );
-    create table pages (id varchar primary key, workspace_id varchar not null, space_id varchar not null);
+    create table pages (
+      id varchar primary key, workspace_id varchar not null,
+      space_id varchar not null, deleted_at timestamptz
+    );
+    create table knowledge_page_index_settings (
+      workspace_id varchar not null, source_page_id varchar not null,
+      index_mode varchar(32) not null default 'compiled',
+      updated_by varchar,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      primary key (workspace_id, source_page_id)
+    );
     create table knowledge_page_compile_schedules (
       id varchar primary key, workspace_id varchar not null,
       space_id varchar not null, source_page_id varchar not null,
@@ -233,7 +304,9 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       ('space-target','workspace-1','Target Space',3,null,now()),
       ('space-control','workspace-1','Control Space',7,null,now()),
       ('space-cross','workspace-2','Target Space',11,null,now());
-    insert into pages values ('page-target','workspace-1','space-target'),('page-control','workspace-1','space-control');
+    insert into pages (id, workspace_id, space_id) values
+      ('page-target','workspace-1','space-target'),
+      ('page-control','workspace-1','space-control');
     insert into knowledge_page_compile_schedules (
       id, workspace_id, space_id, source_page_id, trigger,
       first_changed_at, last_changed_at, eligible_at
