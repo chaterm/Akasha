@@ -147,7 +147,6 @@ export function editorCallOptions(
   return resolveModelCallOptions(config, {
     providerOptionsName: EDITOR_PROVIDER_NAME,
     defaultTemperature: ANSWER_DEFAULT_TEMPERATURE,
-    ignoreThinking: true,
   });
 }
 

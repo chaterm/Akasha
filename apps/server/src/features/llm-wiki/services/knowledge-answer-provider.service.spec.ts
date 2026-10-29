@@ -61,6 +61,11 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
         'How do we use Kafka?',
       ].join('\n'),
       temperature: 0,
+      providerOptions: {
+        [ANSWER_PROVIDER_NAME]: {
+          chat_template_kwargs: { enable_thinking: false },
+        },
+      },
     });
     expect(generateText).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -81,6 +86,7 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
         temperature: 0.4,
         seed: 11,
         thinkingMode: 'qwen',
+        thinkingEnabled: true,
         reasoningEffort: 'medium',
       },
     });

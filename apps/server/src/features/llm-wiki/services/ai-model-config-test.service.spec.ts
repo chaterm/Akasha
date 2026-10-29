@@ -44,7 +44,15 @@ describe('AiModelConfigTestService', () => {
     expect(result.ok).toBe(true);
     expect(typeof result.latencyMs).toBe('number');
     expect(generateText).toHaveBeenCalledWith(
-      expect.objectContaining({ model: 'lang-model', prompt: 'ping' }),
+      expect.objectContaining({
+        model: 'lang-model',
+        prompt: 'ping',
+        providerOptions: {
+          akashaConfigTest: {
+            chat_template_kwargs: { enable_thinking: false },
+          },
+        },
+      }),
     );
     expect(configService.getResolvedConfig).not.toHaveBeenCalled();
   });

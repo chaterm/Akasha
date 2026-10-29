@@ -317,7 +317,6 @@ export class ConfiguredKnowledgeCompilerLlmProvider implements KnowledgeCompiler
         ? undefined
         : COMPILER_DEFAULT_TEMPERATURE,
       defaultThinkingMode: reasoningModel ? 'openai' : undefined,
-      defaultThinkingEnabled: reasoningModel ? undefined : false,
     });
   }
 }
