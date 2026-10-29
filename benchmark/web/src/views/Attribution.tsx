@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { api } from '../api'
 import type {
   AttributionResult,
@@ -7,8 +7,8 @@ import type {
   CompileRun,
   EvalRun,
   EvidenceChain,
-  Provider,
   QueryAuditSnapshot,
+  Task,
 } from '../types'
 import {
   CauseTag,
@@ -21,6 +21,7 @@ import {
   ModeTag,
   downloadText,
   Pager,
+  ProviderSelect,
   RecordNav,
   RecordSearch,
   RunCells,
@@ -30,6 +31,8 @@ import {
   useAsync,
   usePagedRecordNavigation,
   usePoll,
+  useProvider,
+  useTaskWatch,
 } from '../ui'
 import { AttributionChain } from './AttributionChain'
 import { MetricInterpretations } from './MetricInterpretations'
@@ -46,6 +49,7 @@ export function Attribution({
   onOpenSettings: () => void
 }) {
   const compiles = useAsync(() => api.compiles(), [])
+  const tasks = useTaskWatch(compiles.reload)
   const [open, setOpen] = useState<number | null>(null)
   const cleanup = useAction<unknown>()
 
@@ -74,7 +78,13 @@ export function Attribution({
       ) : (
         <ConfigPanel storageKey="attribution" title="归因配置">
           <Field label="选择评测">
-            <select value={current?.id ?? ''} onChange={(e) => onSelectEval(Number(e.target.value))}>
+            <select
+              value={current?.id ?? ''}
+              onChange={(e) => {
+                onSelectEval(Number(e.target.value))
+                setOpen(null)
+              }}
+            >
               {done.map((run) => (
                 <option key={run.id} value={run.id}>
                   {run.name}（#{run.id}）
@@ -83,7 +93,7 @@ export function Attribution({
             </select>
           </Field>
           {current && (
-            <NewAttribution evalRun={current} onOpenSettings={onOpenSettings} onStarted={compiles.reload} />
+            <NewAttribution evalRun={current} onOpenSettings={onOpenSettings} onStarted={tasks.watch} />
           )}
         </ConfigPanel>
       )}
@@ -166,21 +176,13 @@ function NewAttribution({
   onOpenSettings,
 }: {
   evalRun: EvalRun
-  onStarted: () => void
+  onStarted: (task: Task) => void
   onOpenSettings: () => void
 }) {
-  const providers = useAsync<Provider[]>(() => api.providers('attribution'), [])
+  const provider = useProvider('attribution')
   const [name, setName] = useState('')
   const [useModel, setUseModel] = useState(false)
-  const [providerId, setProviderId] = useState<number | ''>('')
   const start = useAction<unknown>()
-
-  useEffect(() => {
-    const latest = providers.data?.[0]
-    if (latest && !(providers.data ?? []).some((provider) => provider.id === providerId)) {
-      setProviderId(latest.id)
-    }
-  }, [providers.data, providerId])
 
   return (
     <div style={{ marginTop: 12 }}>
@@ -189,22 +191,7 @@ function NewAttribution({
         <Field label="归因名称" hint="留空自动生成">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="自动" />
         </Field>
-        {useModel && (
-          <>
-            <Field label="归因模型">
-              <select
-                value={providerId}
-                onChange={(e) => setProviderId(e.target.value === '' ? '' : Number(e.target.value))}
-              >
-                {(providers.data ?? []).map((provider) => (
-                  <option key={provider.id} value={provider.id}>
-                    {provider.label} · {provider.model}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </>
-        )}
+        {useModel && <ProviderSelect label="归因模型" provider={provider} />}
       </div>
 
       <label className="check" style={{ marginTop: 8 }}>
@@ -212,7 +199,7 @@ function NewAttribution({
         用模型分析并生成一份报告
       </label>
 
-      {useModel && (providers.data ?? []).length === 0 && (
+      {useModel && provider.list.length === 0 && (
         <div className="note warn">
           还没配归因模型端点；不配只能进行规则归因。
           <button className="action small" style={{ marginLeft: 8 }} onClick={onOpenSettings}>
@@ -231,9 +218,9 @@ function NewAttribution({
                 eval_id: evalRun.id,
                 use_model: useModel,
                 ...(name.trim() ? { name: name.trim() } : {}),
-                ...(providerId === '' ? {} : { provider_id: providerId }),
+                ...(provider.id === null ? {} : { provider_id: provider.id }),
               })
-              onStarted()
+              onStarted(task)
               return task
             })
           }
@@ -571,24 +558,22 @@ function QueryAuditPanel({ evidence }: { evidence: unknown }) {
   if (!evidence || typeof evidence !== 'object') {
     return (
       <div className="query-audit-missing">
-        本条归因没有保存 PG Query Audit 快照。旧归因记录需要重新运行后，才能看到模型 General 理由。
+        本条归因没有 PG Query Audit 快照：归因时 PostgreSQL 不可用，或审计表里没有这条问题的记录。
       </div>
     )
   }
-  const audit = evidence as QueryAuditSnapshot
-  if (!audit.budget) return null
+  const { budget } = evidence as QueryAuditSnapshot
+  if (!budget) return null
   return (
     <div className="query-audit-inline">
-      {audit.budget && (
-        <Collapsible title="上下文预算">
-          <div className="query-audit-budget">
-            <div><span>includedItemCount</span><strong>{audit.budget.includedItemCount ?? '—'}</strong></div>
-            <div><span>omittedItemCount</span><strong>{audit.budget.omittedItemCount ?? '—'}</strong></div>
-            <div><span>maxContextLength</span><strong>{audit.budget.maxContextLength?.toLocaleString() ?? '—'}</strong></div>
-            <div><span>usedContextLength</span><strong>{audit.budget.usedContextLength?.toLocaleString() ?? '—'}</strong></div>
-          </div>
-        </Collapsible>
-      )}
+      <Collapsible title="上下文预算">
+        <div className="query-audit-budget">
+          <div><span>includedItemCount</span><strong>{budget.includedItemCount ?? '—'}</strong></div>
+          <div><span>omittedItemCount</span><strong>{budget.omittedItemCount ?? '—'}</strong></div>
+          <div><span>maxContextLength</span><strong>{budget.maxContextLength?.toLocaleString() ?? '—'}</strong></div>
+          <div><span>usedContextLength</span><strong>{budget.usedContextLength?.toLocaleString() ?? '—'}</strong></div>
+        </div>
+      </Collapsible>
     </div>
   )
 }

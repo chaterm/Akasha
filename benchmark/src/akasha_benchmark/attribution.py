@@ -94,6 +94,12 @@ def _response_evidence(response: dict[str, Any] | None) -> list[dict[str, str]]:
     return [row for row in rows if row["title"] or row["text"]]
 
 
+def _evidence_tokens(evidence: list[dict[str, str]]) -> list[str]:
+    return _normalized_tokens(
+        "\n".join(value for row in evidence for value in (row["title"], row["text"]) if value)
+    )
+
+
 def _matching_evidence(
     evidence: list[dict[str, str]], support_text: str, answer: str
 ) -> list[dict[str, Any]]:
@@ -144,13 +150,7 @@ def analyze_evidence_chain(
         }
 
     response_evidence = _response_evidence(response)
-    context = "\n".join(
-        value
-        for row in response_evidence
-        for value in (row["title"], row["text"])
-        if value
-    )
-    context_tokens = _normalized_tokens(context)
+    context_tokens = _evidence_tokens(response_evidence)
     steps: list[dict[str, Any]] = []
     for position, step in enumerate(decomposition, 1):
         answer = str(step.get("answer") or "")
@@ -274,7 +274,6 @@ def analyze_compiled_answers(
 
 
 def _usable_references(references: list[str]) -> list[list[str]]:
-
     usable: list[list[str]] = []
     for reference in references:
         tokens = _normalized_tokens(reference)
@@ -293,7 +292,6 @@ def _reference_covered(answer_tokens: list[str], reference_tokens: list[str]) ->
 
 
 def _contains_reference(answer: str, references: list[str]) -> bool:
-
     answer_tokens = _normalized_tokens(answer)
     return any(
         _reference_covered(answer_tokens, tokens)
@@ -311,9 +309,7 @@ def analyze_reference_grounding(
     usable = _usable_references(references)
     if not usable or not evidence:
         return {"status": "unavailable", "grounded": None}
-    context_tokens = _normalized_tokens(
-        "\n".join(value for row in evidence for value in (row["title"], row["text"]) if value)
-    )
+    context_tokens = _evidence_tokens(evidence)
     matched = [
         " ".join(tokens)
         for tokens in usable
@@ -327,23 +323,9 @@ def analyze_reference_grounding(
     }
 
 
-def _at_max_k(metrics: dict[str, float], prefix: str) -> float | None:
-
-    keys = sorted(
-        (k for k in metrics if k.startswith(prefix)),
-        key=lambda k: int(k.split("@", 1)[1]),
-        reverse=True,
-    )
-    return metrics[keys[0]] if keys else None
-
-
-def _at_min_k(metrics: dict[str, float], prefix: str) -> float | None:
-
-    keys = sorted(
-        (k for k in metrics if k.startswith(prefix)),
-        key=lambda k: int(k.split("@", 1)[1]),
-    )
-    return metrics[keys[0]] if keys else None
+def _at_k(metrics: dict[str, float], prefix: str, pick=max) -> float | None:
+    keys = [k for k in metrics if k.startswith(prefix)]
+    return metrics[pick(keys, key=lambda k: int(k.split("@", 1)[1]))] if keys else None
 
 
 def classify(
@@ -366,10 +348,10 @@ def classify(
         )
     metrics.update(sample.get("metrics") or {})
     answer_mode = sample.get("answer_mode")
-    hit = _at_max_k(metrics, "hit@")
-    top_hit = _at_min_k(metrics, "hit@")
-    recall = _at_max_k(metrics, "recall@")
-    coverage = _at_max_k(metrics, "full_coverage@")
+    hit = _at_k(metrics, "hit@")
+    top_hit = _at_k(metrics, "hit@", min)
+    recall = _at_k(metrics, "recall@")
+    coverage = _at_k(metrics, "full_coverage@")
     gold_count = len(detail.get("gold_doc_ids") or [])
     uncited_gold = float(metrics.get("uncited_gold_count", 0.0) or 0.0)
     all_gold_uncited = gold_count > 0 and uncited_gold >= gold_count

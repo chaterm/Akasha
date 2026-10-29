@@ -1,11 +1,21 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..task import Stage
-from . import attribute, chain, compile, download, evaluate, normalize, query
+from . import (
+    attribute,
+    chain,
+    compile,
+    download,
+    embed,
+    evaluate,
+    generate,
+    normalize,
+    query,
+)
 
 
 @dataclass(frozen=True)
@@ -14,8 +24,6 @@ class StageDefinition:
     run: Stage
 
     params: dict[str, type] = field(default_factory=dict)
-    run_kind: str | None = None
-    input: tuple[str, str] | None = None
     verify: Callable[..., None] | None = None
 
 
@@ -25,6 +33,18 @@ STAGES: dict[str, StageDefinition] = {
         run=download.run,
         params={"datasets": list},
     ),
+    "generate": StageDefinition(
+        label="生成样本",
+        run=generate.run,
+        params={
+            "dataset": str,
+            "provider_id": int,
+            "per_doc": int,
+            "doc_limit": int,
+            "concurrency": int,
+            "seed": int,
+        },
+    ),
     "normalize": StageDefinition(
         label="归一化",
         run=normalize.run,
@@ -33,7 +53,6 @@ STAGES: dict[str, StageDefinition] = {
     "compile": StageDefinition(
         label="编译",
         run=compile.run,
-        run_kind="compile",
         params={
             "run_id": str,
             "datasets": list,
@@ -46,11 +65,14 @@ STAGES: dict[str, StageDefinition] = {
             "schedule_at": str,
         },
     ),
+    "embed": StageDefinition(
+        label="嵌入",
+        run=embed.run,
+        params={"compile_id": int, "embedding_concurrency": int},
+    ),
     "query": StageDefinition(
         label="查询",
         run=query.run,
-        run_kind="query",
-        input=("compile", "compile_id"),
         verify=chain.verify_query,
         params={
             "compile_id": int,
@@ -65,8 +87,6 @@ STAGES: dict[str, StageDefinition] = {
     "evaluate": StageDefinition(
         label="评测",
         run=evaluate.run,
-        run_kind="eval",
-        input=("query", "query_id"),
         verify=chain.verify_evaluate,
         params={
             "query_id": int,
@@ -81,8 +101,6 @@ STAGES: dict[str, StageDefinition] = {
     "attribute": StageDefinition(
         label="归因",
         run=attribute.run,
-        run_kind="attribution",
-        input=("eval", "eval_id"),
         verify=chain.verify_attribute,
         params={
             "eval_id": int,
@@ -95,7 +113,6 @@ STAGES: dict[str, StageDefinition] = {
 
 
 def clean_params(stage: str, args: dict[str, Any]) -> dict[str, Any]:
-
     spec = STAGES.get(stage)
     if spec is None:
         raise ValueError(f"未知阶段 {stage!r}；可用：{sorted(STAGES)}")

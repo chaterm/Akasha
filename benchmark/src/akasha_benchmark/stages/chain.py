@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .. import naming
-from ..datasets import DATASET_NAMES, get_adapter
+from ..datasets import get_adapter
 from ..metrics import registry
 from ..store import (
     attribution_store,
@@ -14,12 +14,10 @@ from ..store import (
 )
 from . import compile
 
-
 DATASETS = ("hotpotqa", "2wikimultihopqa", "musique")
 
 
 def verify_query(connection, query_id: int) -> None:
-
     run = query_store.get_query_run(connection, query_id)
     if run is None:
         raise RuntimeError("查询记录丢失")
@@ -72,7 +70,6 @@ def verify_attribute(connection, attribution_id: int) -> None:
 
 
 def follow_up_steps() -> list[dict[str, Any]]:
-    """查询完成后自动跟的两步：确定性指标评测 + 规则归因。"""
     return [
         {
             "stage": "evaluate",
@@ -90,12 +87,9 @@ def follow_up_steps() -> list[dict[str, Any]]:
 
 
 def build(params: dict[str, Any], connection) -> list[dict[str, Any]]:
-
     dataset = str(params.get("dataset") or DATASETS[0])
     if dataset not in DATASETS:
         raise ValueError(f"链路测试仅支持 {DATASETS}")
-    if dataset not in DATASET_NAMES:
-        raise ValueError(f"未知数据集：{dataset}")
     if data_store.get_dataset(connection, dataset) is None:
         raise ValueError(f"请先归一化 {dataset}")
     sample_id = str(params.get("sample_id") or "").strip()

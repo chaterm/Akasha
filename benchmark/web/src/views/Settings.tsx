@@ -8,8 +8,19 @@ import type {
   ModelConfigsView,
   Provider,
   ProviderProbe,
+  ProviderRole,
 } from '../types'
-import { Failed, Field, Loading, Pass, SecretField, useAction, useAsync } from '../ui'
+import {
+  Failed,
+  Field,
+  Loading,
+  Pass,
+  SecretField,
+  downloadText,
+  pickFile,
+  useAction,
+  useAsync,
+} from '../ui'
 
 export function Settings() {
   return (
@@ -23,8 +34,10 @@ export function Settings() {
       </div>
       <ConnectionForm />
       <ModelConfigs />
+      <AkashaModels />
       <Providers role="judge" title="评估模型" />
       <Providers role="attribution" title="归因模型" />
+      <Providers role="generation" title="样本生成模型" />
     </>
   )
 }
@@ -38,13 +51,11 @@ function ExportButton() {
       onClick={() =>
         save.run(async () => {
           const data = await api.exportConfig()
-          const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-          const url = URL.createObjectURL(blob)
-          const a = document.createElement('a')
-          a.href = url
-          a.download = `akasha-config-${new Date().toISOString().slice(0, 10)}.json`
-          a.click()
-          URL.revokeObjectURL(url)
+          downloadText(
+            JSON.stringify(data, null, 2),
+            `akasha-config-${new Date().toISOString().slice(0, 10)}.json`,
+            'application/json',
+          )
           return data
         })
       }
@@ -57,23 +68,15 @@ function ExportButton() {
 function ImportButton() {
   const load = useAction<unknown>()
 
-  const pick = () => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = 'application/json,.json'
-    input.onchange = () => {
-      const file = input.files?.[0]
-      if (!file) return
+  const pick = () =>
+    pickFile('application/json,.json', (file) =>
       load.run(async () => {
-        const text = await file.text()
-        const data = JSON.parse(text) as Record<string, unknown>
+        const data = JSON.parse(await file.text()) as Record<string, unknown>
         const result = await api.importConfig(data)
         window.location.reload()
         return result
-      })
-    }
-    input.click()
-  }
+      }),
+    )
 
   return (
     <button className="action" disabled={load.busy} onClick={pick}>
@@ -97,20 +100,18 @@ function toForm(data: Connection): Form {
 function ConnectionForm() {
   const { data, error, loading, reload } = useAsync(() => api.connection(), [])
   const [form, setForm] = useState<Form>({})
-  const [loaded, setLoaded] = useState<Form>({})
   const save = useAction<{ updated: string[] }>()
   const test = useAction<ConnectionTest>()
 
   useEffect(() => {
-    if (data) {
-      setForm(toForm(data))
-      setLoaded(toForm(data))
-    }
+    if (data) setForm(toForm(data))
   }, [data])
 
   if (loading && !data) return <Loading what="连接配置" />
   if (error) return <Failed error={error} />
   if (!data) return null
+
+  const loaded = toForm(data)
 
   const set = (key: string, value: string) => {
     setForm((f) => ({ ...f, [key]: value }))
@@ -247,11 +248,11 @@ function ConnectionForm() {
   )
 }
 
-const FEATURE_LABELS: Record<string, { title: string }> = {
-  compiler: { title: '编译模型' },
-  embedding: { title: '嵌入模型' },
-  answer: { title: '回答模型' },
-  image: { title: '图像模型' },
+const FEATURE_LABELS: Record<string, string> = {
+  compiler: '编译模型',
+  embedding: '嵌入模型',
+  answer: '回答模型',
+  image: '图像模型',
 }
 
 function ModelConfigs() {
@@ -260,21 +261,10 @@ function ModelConfigs() {
   if (loading && !data) return <Loading what="模型配置" />
 
   return (
-    <>
-      <div className="panel">
-        <h3>Akasha 远端模型配置</h3>
-        {error ? (
-          <>
-            <Failed error={error} />
-            <p className="small muted">这一段需要连上 Akasha。先把上面的连接配好并测试通过。</p>
-          </>
-        ) : (
-          data && <LiveTable data={data} />
-        )}
-      </div>
-
-      <AkashaModels />
-    </>
+    <div className="panel">
+      <h3>Akasha 远端模型配置</h3>
+      {error ? <Failed error={error} /> : data && <LiveTable data={data} />}
+    </div>
   )
 }
 
@@ -294,12 +284,11 @@ function LiveTable({ data }: { data: ModelConfigsView }) {
       <tbody>
         {data.features.map((feature) => {
           const row = byFeature.get(feature)
-          const label = FEATURE_LABELS[feature] ?? { title: feature }
           return (
             <tr key={feature}>
               <td>
                 <div className="stack">
-                  <span>{label.title}</span>
+                  <span>{FEATURE_LABELS[feature] ?? feature}</span>
                   <span className="mono muted">{feature}</span>
                 </div>
               </td>
@@ -341,7 +330,6 @@ const TUNABLE_KEYS =
   'temperature（0-2）、topP（0-1）、seed（整数）、thinkingMode（qwen|openai）、' +
   'thinkingEnabled（布尔）、reasoningEffort（low|medium|high）'
 
-// Akasha 服务端按白名单校验，列表外的 key 会被静默丢弃
 const PARAMETER_KEYS: Record<AkashaFeature, string> = {
   compiler: TUNABLE_KEYS,
   answer: TUNABLE_KEYS,
@@ -424,7 +412,7 @@ function AkashaModels() {
       {data?.features.map((feature) => (
         <div key={feature} className="metric-family">
           <div className="spread">
-            <h4>{FEATURE_LABELS[feature]?.title ?? feature}</h4>
+            <h4>{FEATURE_LABELS[feature] ?? feature}</h4>
             <button className="action small" disabled={save.busy} onClick={() => create(feature)}>
               新增端点
             </button>
@@ -658,7 +646,7 @@ function ProbeResult({ result, onClose }: { result: ProviderProbe; onClose: () =
   )
 }
 
-function Providers({ role, title }: { role: 'judge' | 'attribution'; title: string }) {
+function Providers({ role, title }: { role: ProviderRole; title: string }) {
   const { data, error, loading, reload } = useAsync<Provider[]>(() => api.providers(role), [role])
   const [mode, setMode] = useState<number | 'new' | null>(null)
   const [form, setForm] = useState(BLANK)
@@ -700,11 +688,9 @@ function Providers({ role, title }: { role: 'judge' | 'attribution'; title: stri
     <div className="panel">
       <div className="panel-head">
         <h3>{title}</h3>
-        <div className="row tight">
         <button className="action small" disabled={save.busy} onClick={create}>
-            新增端点
-          </button>
-        </div>
+          新增端点
+        </button>
       </div>
 
       {error && <Failed error={error} />}
@@ -785,12 +771,8 @@ function Providers({ role, title }: { role: 'judge' | 'attribution'; title: stri
               已经有一个叫「{label}」的端点了。换个标签，或者在上表里点它的「编辑」。
             </div>
           )}
-        </>
-      )}
 
-      {mode !== null && (
-        <div className="panel-actions">
-          <>
+          <div className="panel-actions">
             <button
               className="action primary"
               disabled={save.busy || taken || !form.base_url || !form.model}
@@ -813,8 +795,8 @@ function Providers({ role, title }: { role: 'judge' | 'attribution'; title: stri
             <button className="action" disabled={save.busy} onClick={close}>
               取消
             </button>
-          </>
-        </div>
+          </div>
+        </>
       )}
     </div>
   )

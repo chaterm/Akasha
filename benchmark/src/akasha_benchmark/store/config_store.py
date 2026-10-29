@@ -4,6 +4,7 @@ import sqlite3
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from ..model_configs import FEATURES as AKASHA_FEATURES
 from .db import dumps, utc_now
 
 CONNECTION_FIELDS = (
@@ -20,8 +21,7 @@ _FLOATS = {
     "request_interval_seconds",
 }
 
-MODEL_ROLES = ("judge", "attribution")
-AKASHA_FEATURES = ("compiler", "embedding", "answer", "image")
+MODEL_ROLES = ("judge", "attribution", "generation")
 MODEL_PURPOSES = (*MODEL_ROLES, *AKASHA_FEATURES)
 
 
@@ -29,7 +29,6 @@ _HOST_URLS = {"base_url", "database_url"}
 
 
 def _prefer_ipv4(url: str) -> str:
-
     parts = urlsplit(url)
     if parts.hostname != "localhost":
         return url
@@ -45,7 +44,6 @@ def get_connection_row(connection: sqlite3.Connection) -> dict[str, Any]:
 
 
 def sanitize_connection(payload: dict[str, Any]) -> dict[str, Any]:
-
     cleaned: dict[str, Any] = {}
     for key, value in payload.items():
         if key not in CONNECTION_FIELDS:
@@ -147,7 +145,6 @@ def list_model_providers(
 
 
 def remote_label_map(connection: sqlite3.Connection) -> dict[tuple[str, str, str], str]:
-    """(purpose, model, base_url) → 标签，用于把远端配置快照认回本地配置。"""
     return {
         (row["purpose"], row["model"], row["base_url"]): row["label"]
         for row in connection.execute("SELECT purpose, label, model, base_url FROM model_provider")

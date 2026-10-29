@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import type { CompileRun, QueryRun } from '../types'
+import type { CompileRun, Task } from '../types'
 import {
   AnswerModeFilter,
   CleanupButton,
@@ -22,6 +22,7 @@ import {
   useAsync,
   usePagedRecordNavigation,
   usePoll,
+  useTaskWatch,
 } from '../ui'
 
 export function Query({
@@ -41,6 +42,7 @@ export function Query({
   const [openQuery, setOpenQuery] = useState<number | null>(activeQuery)
   const cleanup = useAction<unknown>()
   const retry = useAction<unknown>()
+  const tasks = useTaskWatch(compiles.reload)
 
   const runs = compiles.data?.compiles ?? []
   useEffect(() => {
@@ -74,7 +76,10 @@ export function Query({
           <Field label="选择编译">
             <select
               value={compile?.id ?? ''}
-              onChange={(e) => onSelectCompile(Number(e.target.value))}
+              onChange={(e) => {
+                onSelectCompile(Number(e.target.value))
+                setOpenQuery(null)
+              }}
             >
               {ready.map((run) => (
                 <option key={run.id} value={run.id}>
@@ -85,7 +90,7 @@ export function Query({
             </select>
           </Field>
           {compile && (
-            <NewQuery key={compile.id} compile={compile} onStarted={compiles.reload} />
+            <NewQuery key={compile.id} compile={compile} onStarted={tasks.watch} />
           )}
         </ConfigPanel>
       )}
@@ -99,10 +104,12 @@ export function Query({
                 <th>名称</th>
                 <th>Answer 模型</th>
                 <th>状态</th>
+                <th>嵌入模型</th>
                 <th>质量阀门</th>
                 <th className="num">样本数</th>
                 <th className="num">成功</th>
-                <th className="num">并发</th>
+                <th className="num">嵌入并发</th>
+                <th className="num">查询并发</th>
                 <th>耗时</th>
                 <th />
               </tr>
@@ -117,12 +124,14 @@ export function Query({
                 return (
                   <tr key={run.id} className={openQuery === run.id ? 'selected' : ''}>
                     <RunCells run={run} />
+                    <td className="small">{run.embedding_label ?? '—'}</td>
                     <td>
                       {run.status === 'succeeded' ? <Pass ok /> :
                         run.status === 'failed' ? <Pass ok={false} /> :
                           <span className="tag">进行中</span>}
                     </td>
                     <RunCountCells run={run} />
+                    <td className="num mono">{run.embedding_concurrency ?? '默认'}</td>
                     <td className="num mono">{run.concurrency}</td>
                     <td>
                       <Timing
@@ -157,7 +166,7 @@ export function Query({
                             onClick={() =>
                               retry.run(async () => {
                                 const task = await api.retryFailedQuery(run.id)
-                                compiles.reload()
+                                tasks.watch(task)
                                 return task
                               })
                             }
@@ -193,12 +202,78 @@ export function Query({
   )
 }
 
+function useEmbedding(compile: CompileRun, onStarted: (task: Task) => void) {
+  const embedding = useAsync(() => api.compileEmbedding(compile.id), [compile.id])
+  const rebuild = useAction<unknown>()
+  const [concurrency, setConcurrency] = useState<number | ''>('')
+  const rebuilding = useTaskWatch(embedding.reload, 3000)
+
+  const data = embedding.data
+  const field = (
+    <Field label="嵌入并发" hint="1-50，留空用远端默认">
+      <input
+        type="number"
+        min={1}
+        max={50}
+        value={concurrency}
+        onChange={(e) => setConcurrency(e.target.value === '' ? '' : Number(e.target.value))}
+        placeholder="默认"
+      />
+    </Field>
+  )
+  const button = (
+    <button
+      className="action"
+      disabled={rebuild.busy || rebuilding.watching || (concurrency !== '' && (concurrency < 1 || concurrency > 50))}
+      onClick={() =>
+        rebuild.run(async () => {
+          const task = await api.startTask('embed', {
+            compile_id: compile.id,
+            ...(concurrency === '' ? {} : { embedding_concurrency: concurrency }),
+          })
+          rebuilding.watch(task)
+          onStarted(task)
+          return task
+        })
+      }
+    >
+      {rebuild.busy ? '启动中…' : rebuilding.watching ? '重建中…' : '重建嵌入'}
+    </button>
+  )
+
+  let status = null
+  if (embedding.loading) status = <Loading what="嵌入状态" />
+  else if (embedding.error) {
+    status = (
+      <div className="note warn">读不到嵌入状态：{embedding.error}</div>
+    )
+  } else if (data) {
+    status = (
+      <div className={data.coverage.ready ? 'note small' : 'note warn'}>
+        嵌入模型 <span className="mono">{data.target.model ?? '—'}</span>，
+        {data.coverage.matched} / {data.coverage.total} 个 chunk 已就绪。
+      </div>
+    )
+  }
+
+  return {
+    field,
+    button,
+    status: (
+      <div style={{ marginTop: 10 }}>
+        {rebuild.error && <Failed error={rebuild.error} />}
+        {status}
+      </div>
+    ),
+  }
+}
+
 function NewQuery({
   compile,
   onStarted,
 }: {
   compile: CompileRun
-  onStarted: () => void
+  onStarted: (task: Task) => void
 }) {
   const [selected, setSelected] = useState<string[]>(compile.datasets)
   const [name, setName] = useState('')
@@ -206,6 +281,7 @@ function NewQuery({
   const [concurrency, setConcurrency] = useState(5)
   const [followUp, setFollowUp] = useState(false)
   const start = useAction<unknown>()
+  const embedding = useEmbedding(compile, onStarted)
 
   const available = Object.keys(compile.stats)
   const selectedAvailable = selected.filter((name) => available.includes(name))
@@ -245,6 +321,7 @@ function NewQuery({
             onChange={(e) => setConcurrency(Number(e.target.value))}
           />
         </Field>
+        {embedding.field}
       </div>
       <label className="check" style={{ marginTop: 10 }}>
         <input type="checkbox" checked={followUp} onChange={() => setFollowUp(!followUp)} />
@@ -260,6 +337,8 @@ function NewQuery({
         查询使用 Akasha 当前远端生效的 embedding 和 answer 配置。
       </div>
 
+      {embedding.status}
+
       <div className="panel-actions">
         <button
           className="action primary"
@@ -274,13 +353,14 @@ function NewQuery({
                 ...(limit === '' ? {} : { sample_limit: limit }),
                 ...(followUp ? { follow_up: true } : {}),
               })
-              onStarted()
+              onStarted(task)
               return task
             })
           }
         >
           {start.busy ? '启动中…' : '开始查询'}
         </button>
+        {embedding.button}
       </div>
     </div>
   )
@@ -418,5 +498,3 @@ function FullResponse({ queryId, sampleId }: { queryId: number; sampleId: string
     </pre>
   )
 }
-
-export type { QueryRun }

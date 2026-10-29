@@ -222,67 +222,28 @@ def test_generation_unavailable_answer_is_retryable_despite_http_200(db, query_i
     assert [row["sample_id"] for row in query_store.responses_of(db, query_id)] == ["good"]
 
 
-def test_compile_ready_requires_quality_gate(db, compile_id):
-    compile_store.replace_compile_subset(
-        db, compile_id, "d", [], [{"doc_id": "0", "is_gold": True}]
-    )
+FAILED_PROGRESS = '{"passed": false, "progress": {"expected": 1, "succeeded": 0, "failed": 1, "skipped": 0}}'
+
+
+@pytest.mark.parametrize(
+    ("status", "quality", "ready"),
+    [
+        (run_store.STATUS_SUCCEEDED, '{"passed": false}', False),
+        (run_store.STATUS_SUCCEEDED, '{"passed": true}', True),
+        (run_store.STATUS_FAILED, FAILED_PROGRESS, False),
+    ],
+    ids=["gate-failed", "gate-passed", "failed-without-partial-success"],
+)
+def test_compile_ready_requires_quality_gate(db, compile_id, status, quality, ready):
+    compile_store.replace_compile_subset(db, compile_id, "d", [], [{"doc_id": "0", "is_gold": True}])
     assert compile_store.compile_ready(db, compile_id)["ready"] is False
 
     compile_store.record_page(db, compile_id, "d", "0", page_id="p0", error=None)
-    compile_store.update_compile_run(
-        db,
-        compile_id,
-        space_id="s",
-        status=run_store.STATUS_SUCCEEDED,
-        quality_json='{"passed": false}',
-    )
-    assert compile_store.compile_ready(db, compile_id)["ready"] is False
-
-    compile_store.update_compile_run(db, compile_id, quality_json='{"passed": true}')
-    assert compile_store.compile_ready(db, compile_id)["ready"] is True
-
-
-def test_compile_ready_rejects_failed_compile_without_partial_success(db, compile_id):
-    compile_store.replace_compile_subset(
-        db, compile_id, "d", [], [{"doc_id": "0", "is_gold": True}]
-    )
-    compile_store.record_page(db, compile_id, "d", "0", page_id="p0", error=None)
-    compile_store.update_compile_run(
-        db,
-        compile_id,
-        space_id="s",
-        status=run_store.STATUS_FAILED,
-        quality_json=(
-            '{"passed": false, "progress": '
-            '{"expected": 1, "succeeded": 0, "failed": 1, "skipped": 0}}'
-        ),
-    )
-
+    compile_store.update_compile_run(db, compile_id, space_id="s", status=status, quality_json=quality)
     readiness = compile_store.compile_ready(db, compile_id)
-    assert readiness["ready"] is False
-    assert readiness["warnings"] == []
-
-
-def test_provider_api_key_roundtrip(db):
-    provider_id = config_store.upsert_model_provider(
-        db,
-        purpose="judge",
-        label="default",
-        base_url="https://x/v1",
-        model="m",
-        api_key="secret",
-    )
-    assert config_store.get_model_provider(db, provider_id)["api_key"] == "secret"
-
-    with pytest.raises(ValueError):
-        config_store.upsert_model_provider(
-            db,
-            purpose="bogus",
-            label="x",
-            base_url="u",
-            model="m",
-            api_key="",
-        )
+    assert readiness["ready"] is ready
+    if status == run_store.STATUS_FAILED:
+        assert readiness["warnings"] == []
 
 
 def test_providers_are_listed_by_most_recent_update(db):
@@ -357,9 +318,11 @@ def test_task_tree_preserves_one_to_many_run_branches(db, compile_id, query_id, 
     assert [task["id"] for task in tree["unlinked_tasks"]] == [unlinked]
 
 
-def test_connection_rejects_unknown_fields(db):
+def test_config_store_rejects_unknown_fields_and_purposes(db):
     with pytest.raises(ValueError):
         config_store.update_connection(db, bogus="x")
+    with pytest.raises(ValueError):
+        config_store.upsert_model_provider(db, purpose="bogus", label="x", base_url="u", model="m", api_key="")
 
 
 def test_localhost_is_rewritten_to_ipv4():

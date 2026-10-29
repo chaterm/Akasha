@@ -8,7 +8,6 @@ ORIGIN_GRAPH = "graph"
 
 
 def snippet_doc_ids(snippet: dict[str, Any], page_to_doc: dict[str, str]) -> set[str]:
-
     return {
         page_to_doc[window["sourcePageId"]]
         for window in snippet.get("sourceWindows") or []
@@ -17,7 +16,6 @@ def snippet_doc_ids(snippet: dict[str, Any], page_to_doc: dict[str, str]) -> set
 
 
 def is_graph(snippet: dict[str, Any]) -> bool:
-    """检索路径看 origin；reasons 只表达匹配方式。"""
     return snippet.get("origin") == ORIGIN_GRAPH
 
 
@@ -26,7 +24,6 @@ def knowledge_page_of(snippet: dict[str, Any]) -> str:
 
 
 def chunk_of(snippet: dict[str, Any]) -> str:
-    """独占性按 chunk 判定：同一 knowledge page 的不同 chunk 是不同证据。"""
     return str(snippet.get("id") or snippet.get("knowledgePageId") or "")
 
 

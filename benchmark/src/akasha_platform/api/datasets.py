@@ -4,9 +4,15 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from akasha_benchmark.datasets import all_adapters, get_adapter
-from akasha_benchmark.datasets.resolver import DEFAULT_DATASET_DIR
-from akasha_benchmark.io_utils import load_json
+from akasha_benchmark.datasets import (
+    LocalAdapter,
+    all_adapters,
+    dataset_dir,
+    get_adapter,
+    is_local_name,
+)
+from akasha_benchmark.datasets.space_export import parse_space_export
+from akasha_benchmark.io_utils import load_json, write_json
 from akasha_benchmark.metrics import registry
 from akasha_benchmark.stages import download
 from akasha_benchmark.store import data_store
@@ -20,7 +26,6 @@ MAX_PAGE = 200
 
 
 def _contains_text(value: Any, needle: str) -> bool:
-
     if isinstance(value, dict):
         return any(_contains_text(item, needle) for item in value.values())
     if isinstance(value, list):
@@ -30,7 +35,6 @@ def _contains_text(value: Any, needle: str) -> bool:
 
 @router.get("/datasets")
 def datasets(request: Request) -> dict[str, Any]:
-
     with db(request) as connection:
         normalized = {row["name"]: row for row in data_store.list_datasets(connection)}
 
@@ -60,12 +64,29 @@ def datasets(request: Request) -> dict[str, Any]:
                 "corpus_rows": (record or {}).get("corpus_rows"),
             }
         )
-    return {"datasets": entries, "dataset_dir": str(DEFAULT_DATASET_DIR)}
+    return {"datasets": entries, "dataset_dir": str(dataset_dir())}
+
+
+@router.post("/datasets/import")
+async def import_space(request: Request, name: str, overwrite: bool = False) -> dict[str, Any]:
+    if not is_local_name(name):
+        raise HTTPException(422, "名称只能用小写字母、数字和连字符，且不能与内置数据集同名")
+    try:
+        rows = parse_space_export(await request.body())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    adapter = LocalAdapter(name)
+    corpus_path = dataset_dir() / adapter.corpus_filename
+    if corpus_path.exists() and not overwrite:
+        raise HTTPException(409, f"{name} 已存在")
+    write_json(corpus_path, rows)
+    (dataset_dir() / adapter.qa_filename).unlink(missing_ok=True)
+    return {"dataset": name, "docs": len(rows)}
 
 
 @router.delete("/datasets/{name}")
 def delete_dataset(request: Request, name: str) -> dict[str, Any]:
-
     with writable(request) as connection:
         try:
             deleted = data_store.delete_dataset(connection, name)
@@ -92,7 +113,7 @@ def raw_samples(
         raise HTTPException(404, str(exc)) from exc
 
     filename = adapter.qa_filename if kind == "qa" else adapter.corpus_filename
-    path = DEFAULT_DATASET_DIR / filename
+    path = dataset_dir() / filename
     if not path.is_file():
         raise HTTPException(404, f"{path.name} 缺失，请先在数据集页下载。")
     rows = load_json(path)
@@ -143,7 +164,6 @@ def normalized_samples(
 
 @router.get("/datasets/{name}/samples/{sample_id}")
 def normalized_sample(request: Request, name: str, sample_id: str) -> dict[str, Any]:
-
     with db(request) as connection:
         sample = data_store.get_sample(connection, sample_id)
         if sample is None or sample["dataset"] != name:
@@ -192,7 +212,6 @@ def normalized_corpus(
 
 @router.get("/metrics")
 def metrics(datasets: str | None = None) -> dict[str, Any]:
-
     definitions = [
         {
             "name": d.name,

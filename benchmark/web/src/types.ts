@@ -86,9 +86,11 @@ export interface ModelConfigsView {
   compiles: { id: number; run_id: string; drift: Record<string, boolean> }[]
 }
 
+export type ProviderRole = 'judge' | 'attribution' | 'generation'
+
 export interface Provider {
   id: number
-  role: 'judge' | 'attribution'
+  role: ProviderRole
   label: string
   base_url: string
   model: string
@@ -253,6 +255,46 @@ export interface QueryStats {
   server_total_ms_mean: number | null
 }
 
+export interface EmbeddingGeneration {
+  model: string | null
+  dimensions: number | null
+  active: boolean
+  chunks: number
+  embedded: number
+  total_tokens: number | null
+  duration_ms_sum: number | null
+  duration_ms_mean: number | null
+  first_created_at: string | null
+  last_created_at: string | null
+}
+
+export interface EmbeddingCoverage {
+  total: number
+  matched: number
+  ready: boolean
+  models: string[]
+}
+
+export interface EmbeddingRebuild {
+  model: string | null
+  batches: number
+  chunks: number
+  failed: number
+  total_tokens: number | null
+  duration_ms_sum: number | null
+  first_batch_at: string | null
+  last_batch_at: string | null
+}
+
+export interface CompileEmbedding {
+  compile_id: number
+  space_id: string
+  target: { model: string | null; dimensions: number | null }
+  coverage: EmbeddingCoverage
+  generations: EmbeddingGeneration[]
+  rebuilds: EmbeddingRebuild[]
+}
+
 export interface QueryRun {
   id: number
   name: string
@@ -260,6 +302,9 @@ export interface QueryRun {
   concurrency: number
   status: RunStatus
   model_label: string | null
+  embedding_label: string | null
+  embedding_model: string | null
+  embedding_concurrency: number | null
   sample_count: number
   success_count: number
   created_at: string
@@ -293,12 +338,12 @@ export interface CompileRun {
   space_name: string | null
   workspace_id: string | null
   model_label: string | null
+  embedding_label: string | null
   status: RunStatus
   created_at: string
   finished_at: string | null
   stats: Record<string, CompileStats>
   compiled_pages: number | null
-  compiled_pages_error: string | null
   quality: {
     passed: boolean
     gates: Record<string, number | null>
@@ -317,6 +362,22 @@ export interface CompileDoc {
   is_gold: number
   page_id: string | null
   error: string | null
+}
+
+export interface QueryPreview {
+  compile_id: number
+  run_id: string
+  space_id: string
+  question: string
+  http_status: number
+  latency_ms: number
+  error: string | null
+  answer_mode: string | null
+  answer: unknown
+  retrieved_sources: Array<Record<string, unknown>>
+  citations: Array<Record<string, unknown>>
+  snippets: Array<Record<string, unknown>>
+  response: unknown
 }
 
 export interface QueryResponseRow {

@@ -318,10 +318,12 @@ const todoChecklist: BuiltinTemplate = {
       title: '待办清单',
       description: '用勾选清单记下要做的事，完成一项勾一项。',
       content: doc(
-        h(2, '☀️ 今天'),
-        tasks('待办事项 1', '待办事项 2', '待办事项 3'),
-        h(2, '⏳ 稍后'),
-        tasks('不急的事项'),
+        h(2, '🔥 紧急'),
+        tasks('今天必须完成的事', '卡住别人的事'),
+        h(2, '⭐ 重要'),
+        tasks('需要重点推进的事'),
+        h(2, '📌 一般'),
+        tasks('有空再做的小事'),
         h(2, '📝 备注'),
         bullets('相关链接、补充说明'),
       ),
@@ -330,10 +332,12 @@ const todoChecklist: BuiltinTemplate = {
       title: 'To-do checklist',
       description: 'Jot down what needs doing and check items off as you go.',
       content: doc(
-        h(2, '☀️ Today'),
-        tasks('To-do item 1', 'To-do item 2', 'To-do item 3'),
-        h(2, '⏳ Later'),
-        tasks('Not urgent'),
+        h(2, '🔥 Urgent'),
+        tasks('Must finish today', 'Blocking someone else'),
+        h(2, '⭐ Important'),
+        tasks('Needs focused effort'),
+        h(2, '📌 Normal'),
+        tasks('Small things for later'),
         h(2, '📝 Notes'),
         bullets('Related links and details'),
       ),
@@ -463,8 +467,8 @@ const techDesign: BuiltinTemplate = {
       title: '技术方案',
       description: '写清背景、方案和计划，内含流程图、代码块和公式示例。',
       content: doc(
-        callout('先写结论和关键取舍，再展开细节。'),
         h(2, '🎯 背景与目标'),
+        callout('先写结论和关键取舍，再展开细节。'),
         bullets('要解决什么问题，现在是什么情况', '做到什么程度算完成，哪些不在本次范围内'),
         h(2, '💡 方案概述'),
         p(text('用几句话说明打算怎么做。')),
@@ -511,8 +515,8 @@ const techDesign: BuiltinTemplate = {
       description:
         'Lay out background, approach and plan, with sample flowchart, code block and formulas.',
       content: doc(
-        callout('Lead with the conclusion and key trade-offs, then go into detail.'),
         h(2, '🎯 Background & goals'),
+        callout('Lead with the conclusion and key trade-offs, then go into detail.'),
         bullets(
           'What problem this solves and where things stand today',
           'What “done” looks like and what is out of scope',

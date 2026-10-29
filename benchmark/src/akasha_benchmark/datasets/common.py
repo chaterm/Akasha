@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .corpus import CorpusIndex
+from .models import CanonicalSample, make_sample_id
 
 
 def require_native_id(row: dict[str, Any], row_index: int, dataset: str, key: str) -> str:
@@ -10,6 +11,13 @@ def require_native_id(row: dict[str, Any], row_index: int, dataset: str, key: st
     if not isinstance(value, str) or not value:
         raise ValueError(f"{dataset}: row {row_index} has no usable {key!r}")
     return value
+
+
+def require_answer(row: dict[str, Any], row_index: int, dataset: str) -> str:
+    answer = row.get("answer")
+    if not isinstance(answer, str) or not answer:
+        raise ValueError(f"{dataset}: row {row_index} answer is not a non-empty string")
+    return answer
 
 
 def gold_titles_from_supporting_facts(
@@ -43,3 +51,29 @@ def resolve_gold_doc_ids(
         except KeyError as exc:
             raise ValueError(f"{dataset}: row {row_index} gold unresolvable: {exc}") from None
     return tuple(resolved)
+
+
+def supporting_facts_sample(
+    dataset: str,
+    row: dict[str, Any],
+    row_index: int,
+    corpus: CorpusIndex,
+    metadata: dict[str, Any],
+) -> CanonicalSample:
+    native_id = require_native_id(row, row_index, dataset, "_id")
+    answer = require_answer(row, row_index, dataset)
+    titles = gold_titles_from_supporting_facts(row, row_index, dataset)
+    gold_doc_ids = resolve_gold_doc_ids(titles, corpus, row_index, dataset)
+    return CanonicalSample(
+        dataset=dataset,
+        sample_id=make_sample_id(dataset, native_id),
+        dataset_sample_id=native_id,
+        question=row["question"],
+        answers=(answer,),
+        gold_doc_ids=gold_doc_ids,
+        metadata={
+            **metadata,
+            "gold_count": len(gold_doc_ids),
+            "supporting_fact_count": len(row["supporting_facts"]),
+        },
+    )

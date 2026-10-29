@@ -5,9 +5,10 @@ import { useTranslation } from "react-i18next";
 import { PageTemplate, TemplateOutlineItem } from "../api/template.types";
 import classes from "./template-card.module.css";
 
-// 按文本长度画骨架条，空文本给一个默认宽度
+// 按文本长度画骨架条，空文本给一个默认宽度；最长只到 80%，不要顶到纸张右边
+const BAR_MAX = 80;
 const barWidth = (text: string, base: number) =>
-  `${Math.min(88, Math.max(22, text ? text.length * 4 + 18 : base))}%`;
+  `${Math.min(BAR_MAX, Math.max(22, text ? text.length * 4 + 18 : base))}%`;
 
 function OutlineLine({ item }: { item: TemplateOutlineItem }) {
   switch (item.kind) {
@@ -41,7 +42,7 @@ function OutlineLine({ item }: { item: TemplateOutlineItem }) {
       return (
         <span
           className={classes.bar}
-          style={{ width: barWidth(item.text, 70) }}
+          style={{ width: barWidth(item.text, 58) }}
         />
       );
   }
@@ -55,7 +56,7 @@ export function TemplateThumbnail({
   template: Pick<PageTemplate, "icon" | "outline">;
   compact?: boolean;
 }) {
-  const outline = template.outline ?? [];
+  const [first, ...rest] = template.outline ?? [];
   return (
     <div
       className={classes.thumb}
@@ -63,19 +64,28 @@ export function TemplateThumbnail({
       aria-hidden
     >
       <div className={classes.paper}>
-        <span className={classes.paperIcon}>
-          {template.icon || (
-            <IconFileText size={compact ? 16 : 20} stroke={1.5} />
-          )}
-        </span>
-        {outline.length === 0 ? (
-          <>
-            <span className={classes.bar} style={{ width: "60%" }} />
-            <span className={classes.bar} style={{ width: "80%" }} />
-            <span className={classes.bar} style={{ width: "40%" }} />
-          </>
+        {/* 首行和 icon 同一行：icon 占固定宽度，正文在左侧区域内截断，压不到它 */}
+        <div className={classes.paperTop}>
+          <div className={classes.paperTopLine}>
+            {first ? (
+              <OutlineLine item={first} />
+            ) : (
+              <span className={classes.bar} style={{ width: "52%" }} />
+            )}
+          </div>
+          <span className={classes.paperIcon}>
+            {template.icon || (
+              <IconFileText size={compact ? 16 : 20} stroke={1.5} />
+            )}
+          </span>
+        </div>
+        {first ? (
+          rest.map((item, i) => <OutlineLine key={i} item={item} />)
         ) : (
-          outline.map((item, i) => <OutlineLine key={i} item={item} />)
+          <>
+            <span className={classes.bar} style={{ width: "66%" }} />
+            <span className={classes.bar} style={{ width: "38%" }} />
+          </>
         )}
       </div>
     </div>

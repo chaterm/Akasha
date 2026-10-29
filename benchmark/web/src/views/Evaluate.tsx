@@ -6,8 +6,8 @@ import type {
   EvalSampleDetail,
   EvalSampleList,
   MetricsView,
-  Provider,
   QueryRun,
+  Task,
 } from '../types'
 import {
   AnswerModeFilter,
@@ -18,7 +18,7 @@ import {
   Loading,
   ModeTag,
   Pager,
-  Pass,
+  ProviderSelect,
   RecordNav,
   RecordSearch,
   RunCells,
@@ -31,6 +31,8 @@ import {
   useAsync,
   usePagedRecordNavigation,
   usePoll,
+  useProvider,
+  useTaskWatch,
 } from '../ui'
 
 const FAMILIES = [
@@ -43,12 +45,9 @@ const FAMILIES = [
 
 type MetricFamily = (typeof FAMILIES)[number]['key']
 
-function metricBaseName(name: string): string {
-  return name.split('@', 1)[0]!
-}
-
 function metricFamily(name: string, definitions: MetricsView['definitions']): string | null {
-  return definitions.find((definition) => definition.name === metricBaseName(name))?.family ?? null
+  const base = name.split('@', 1)[0]
+  return definitions.find((definition) => definition.name === base)?.family ?? null
 }
 
 export function Evaluate({
@@ -69,6 +68,7 @@ export function Evaluate({
   onOpenSettings: () => void
 }) {
   const compiles = useAsync(() => api.compiles(), [])
+  const tasks = useTaskWatch(compiles.reload)
   const cleanup = useAction<unknown>()
 
   const queries: QueryRun[] = (compiles.data?.compiles ?? []).flatMap((c: CompileRun) => c.queries)
@@ -109,7 +109,7 @@ export function Evaluate({
             </select>
           </Field>
           {query && (
-            <NewEval query={query} onOpenSettings={onOpenSettings} onStarted={compiles.reload} />
+            <NewEval query={query} onOpenSettings={onOpenSettings} onStarted={tasks.watch} />
           )}
         </ConfigPanel>
       )}
@@ -197,35 +197,25 @@ function NewEval({
   onOpenSettings,
 }: {
   query: QueryRun
-  onStarted: () => void
+  onStarted: (task: Task) => void
   onOpenSettings: () => void
 }) {
   const datasets = Object.keys(query.stats)
   const metrics = useAsync<MetricsView>(() => api.metrics(datasets), [datasets.join(',')])
-  const providers = useAsync<Provider[]>(() => api.providers('judge'), [])
+  const judge = useProvider('judge')
   const [selected, setSelected] = useState<string[]>([])
   const [name, setName] = useState('')
-  const [providerId, setProviderId] = useState<number | ''>('')
   const [concurrency, setConcurrency] = useState(1)
   const start = useAction<unknown>()
 
-
   useEffect(() => {
     if (metrics.data && selected.length === 0) {
-      const judge = new Set(
+      const judgeMetrics = new Set(
         metrics.data.definitions.filter((d) => d.kind === 'judge').map((d) => d.name),
       )
-      setSelected(metrics.data.computable_for_all.filter((n) => !judge.has(n)))
+      setSelected(metrics.data.computable_for_all.filter((n) => !judgeMetrics.has(n)))
     }
-
   }, [metrics.data])
-
-  useEffect(() => {
-    const latest = providers.data?.[0]
-    if (latest && !(providers.data ?? []).some((provider) => provider.id === providerId)) {
-      setProviderId(latest.id)
-    }
-  }, [providers.data, providerId])
 
   if (metrics.loading) return <Loading what="指标清单" />
   if (metrics.error) return <Failed error={metrics.error} />
@@ -309,18 +299,7 @@ function NewEval({
         </Field>
         {judgeSelected && (
           <>
-            <Field label="评估模型 Judge">
-              <select
-                value={providerId}
-                onChange={(e) => setProviderId(e.target.value === '' ? '' : Number(e.target.value))}
-              >
-                {(providers.data ?? []).map((provider) => (
-                  <option key={provider.id} value={provider.id}>
-                    {provider.label} · {provider.model}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            <ProviderSelect label="评估模型 Judge" provider={judge} />
             <Field label="并发" hint="Judge 调用并发数">
               <input type="number" min={1} max={16} value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))} />
             </Field>
@@ -328,7 +307,7 @@ function NewEval({
         )}
       </div>
 
-      {judgeSelected && (providers.data ?? []).length === 0 && (
+      {judgeSelected && judge.list.length === 0 && (
         <div className="note warn">
           勾了 Judge 指标但还没配 judge 模型端点。
           <button className="action small" style={{ marginLeft: 8 }} onClick={onOpenSettings}>
@@ -347,10 +326,10 @@ function NewEval({
                 query_id: query.id,
                 metrics: selected,
                 ...(name.trim() ? { name: name.trim() } : {}),
-                ...(providerId === '' ? {} : { judge_provider_id: providerId }),
+                ...(judge.id === null ? {} : { judge_provider_id: judge.id }),
                 ...(judgeSelected ? { concurrency } : {}),
               })
-              onStarted()
+              onStarted(task)
               return task
             })
           }
@@ -367,22 +346,7 @@ function Results({ evalId }: { evalId: number }) {
   const detail = useAsync<EvalDetail>(() => api.evalRun(evalId), [evalId])
   const registry = useAsync<MetricsView>(() => api.metrics(), [])
   const [dataset, setDataset] = useState<string>('')
-  const [family, setFamily] = useState<MetricFamily | null>(null)
-  const metricNames = Array.from(
-    new Set(
-      (detail.data?.datasets ?? []).flatMap((entry) =>
-        Object.values(entry.scopes).flatMap((scope) => Object.keys(scope)),
-      ),
-    ),
-  )
-  const availableFamilies = FAMILIES.filter(({ key }) =>
-    metricNames.some((name) => metricFamily(name, registry.data?.definitions ?? []) === key),
-  )
-
-  useEffect(() => {
-    const keys = availableFamilies.map(({ key }) => key)
-    if (keys.length > 0 && (!family || !keys.includes(family))) setFamily(keys[0]!)
-  }, [evalId, family, availableFamilies.map(({ key }) => key).join(',')])
+  const [chosenFamily, setFamily] = useState<MetricFamily | null>(null)
 
   if (detail.loading) return <Loading what="评测结果" />
   if (detail.error) return <Failed error={detail.error} />
@@ -393,6 +357,19 @@ function Results({ evalId }: { evalId: number }) {
 
   const data = detail.data
   const definitions = registry.data.definitions
+  const metricNames = Array.from(
+    new Set(
+      data.datasets.flatMap((entry) =>
+        Object.values(entry.scopes).flatMap((scope) => Object.keys(scope)),
+      ),
+    ),
+  )
+  const availableFamilies = FAMILIES.filter(({ key }) =>
+    metricNames.some((name) => metricFamily(name, definitions) === key),
+  )
+  const family = availableFamilies.some(({ key }) => key === chosenFamily)
+    ? chosenFamily
+    : availableFamilies[0]?.key ?? null
   const shown = dataset ? data.datasets.filter((d) => d.dataset === dataset) : data.datasets
 
   return (
@@ -464,6 +441,7 @@ function Results({ evalId }: { evalId: number }) {
       ))}
 
       <SampleResults
+        key={dataset}
         evalId={evalId}
         dataset={dataset}
         family={family}
@@ -512,14 +490,6 @@ function SampleResults({
     onSelect: (sample) => setOpenSample(sample.sample_id),
     onOffsetChange: setOffset,
   })
-
-  useEffect(() => {
-    setOffset(0)
-    setOpenSample(null)
-    setTerm('')
-    setQ('')
-    setMode('')
-  }, [dataset])
 
   if (openSample) {
     return (
@@ -708,5 +678,3 @@ function ScopeTable({
     </table>
   )
 }
-
-export { Pass }

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import queue
-import random
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -11,13 +9,7 @@ from typing import Any
 
 import httpx
 
-from ..akasha_client import (
-    MAX_RETRIES,
-    RETRY_BASE_DELAY,
-    RETRY_MAX_DELAY,
-    RETRYABLE_STATUSES,
-)
-
+from ..akasha_client import MAX_RETRIES, RETRYABLE_STATUSES, backoff
 
 FAILURE_RATE_LIMIT = "rate_limit"
 FAILURE_TIMEOUT = "timeout"
@@ -45,15 +37,10 @@ class JudgeProvider:
     def resolve_key(self) -> str:
         key = (self.api_key or "").strip()
         if not key:
-            raise JudgeConfigError(
-                "no api key configured for this provider. Akasha's /model-configs only "
-                "reports apiKeySet as a boolean and never returns the key itself, "
-                "so this credential has to be filled in the settings view."
-            )
+            raise JudgeConfigError("模型端点没有 api key，请在配置页填写。")
         return key
 
     def redacted(self) -> dict[str, Any]:
-
         return {
             "base_url": self.base_url,
             "model": self.model,
@@ -69,11 +56,6 @@ class JudgeReply:
     status: int | None
 
     latency_ms: int | None = None
-
-
-def _delay(attempt: int) -> float:
-    base = min(RETRY_BASE_DELAY * (2**attempt), RETRY_MAX_DELAY)
-    return base * (0.75 + random.random() * 0.5)
 
 
 class JudgeClient:
@@ -93,13 +75,12 @@ class JudgeClient:
         self._client.close()
 
     def complete(self, system: str, user: str, *, max_tokens: int = MAX_TOKENS) -> JudgeReply:
-
         started = time.monotonic()
         reply = self._complete(system, user, max_tokens=max_tokens)
         reply.latency_ms = int((time.monotonic() - started) * 1000)
         return reply
 
-    def _complete(self, system: str, user: str, *, max_tokens: int = MAX_TOKENS) -> JudgeReply:
+    def _complete(self, system: str, user: str, *, max_tokens: int) -> JudgeReply:
         url = f"{self.provider.base_url.rstrip('/')}/chat/completions"
         payload = {
             "model": self.provider.model,
@@ -109,7 +90,6 @@ class JudgeClient:
             ],
             "temperature": TEMPERATURE,
             "max_tokens": max_tokens,
-
             "response_format": {"type": "json_object"},
         }
         headers = {"Authorization": f"Bearer {self.provider.resolve_key()}"}
@@ -118,31 +98,19 @@ class JudgeClient:
         while True:
             try:
                 response = self._client.post(url, json=payload, headers=headers)
-            except httpx.TimeoutException as exc:
-                if attempt >= MAX_RETRIES:
-                    return JudgeReply(None, FAILURE_TIMEOUT, f"{type(exc).__name__}: {exc}", None)
-                time.sleep(_delay(attempt))
-                attempt += 1
-                continue
             except httpx.RequestError as exc:
-
                 if attempt >= MAX_RETRIES:
                     return JudgeReply(None, FAILURE_TIMEOUT, f"{type(exc).__name__}: {exc}", None)
-                time.sleep(_delay(attempt))
+                backoff(attempt, MAX_RETRIES, f"judge {type(exc).__name__}")
                 attempt += 1
                 continue
 
             if response.status_code in RETRYABLE_STATUSES and attempt < MAX_RETRIES:
-                print(
-                    f"  judge retry {attempt + 1}/{MAX_RETRIES} after HTTP {response.status_code}",
-                    file=sys.stderr,
-                )
-                time.sleep(_delay(attempt))
+                backoff(attempt, MAX_RETRIES, f"judge HTTP {response.status_code}")
                 attempt += 1
                 continue
 
             if response.status_code == 429:
-
                 return JudgeReply(None, FAILURE_RATE_LIMIT, response.text[:500], 429)
             if not response.is_success:
                 return JudgeReply(None, FAILURE_PARSE, response.text[:500], response.status_code)
@@ -198,7 +166,6 @@ def complete_many(
 
 
 def parse_json_object(content: str) -> dict[str, Any]:
-
     text = content.strip()
     if text.startswith("```"):
         lines = [line for line in text.splitlines() if not line.strip().startswith("```")]

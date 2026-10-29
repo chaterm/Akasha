@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ApiError } from './api'
-import type { Metrics, RootCause, RunStatus, TaskStatus } from './types'
+import { ApiError, api } from './api'
+import type { Metrics, Provider, ProviderRole, RootCause, RunStatus, Task, TaskStatus } from './types'
 
 export function metric(values: Metrics, name: string, digits = 4): string {
   return num(values[name], digits)
@@ -87,10 +87,8 @@ export function useAsync<T>(
   const inFlight = useRef(false)
   const queued = useRef(false)
 
-
   useEffect(() => {
     hasData.current = false
-
   }, deps)
 
   useEffect(() => {
@@ -124,9 +122,7 @@ export function useAsync<T>(
     return () => {
       alive = false
     }
-
   }, [...deps, nonce])
-
 
   const reload = useCallback(() => {
     if (inFlight.current) {
@@ -183,12 +179,80 @@ export function useAction<T>(): {
   }
 }
 
-export function usePoll(active: boolean, reload: () => void, ms = 3000) {
+export function usePoll(active: boolean, reload: () => void) {
   useEffect(() => {
     if (!active) return
-    const timer = setInterval(reload, ms)
+    const timer = setInterval(reload, 3000)
     return () => clearInterval(timer)
-  }, [active, reload, ms])
+  }, [active, reload])
+}
+
+export function useTaskWatch(reload: () => void, ms = 1000) {
+  const [ids, setIds] = useState<number[]>([])
+
+  useEffect(() => {
+    if (!ids.length) return
+    const timer = setInterval(async () => {
+      const settled = await Promise.all(
+        ids.map((id) =>
+          api.task(id).then(
+            (task) =>
+              task.target_id !== null || (task.status !== 'queued' && task.status !== 'running'),
+            () => true,
+          ),
+        ),
+      )
+      setIds((current) => current.filter((id) => !settled[ids.indexOf(id)]))
+      reload()
+    }, ms)
+    return () => clearInterval(timer)
+  }, [ids, reload, ms])
+
+  const watch = useCallback((task: Task) => {
+    if (!task.params.schedule_at) setIds((current) => [...current, task.id])
+    reload()
+  }, [reload])
+
+  return { watch, watching: ids.length > 0 }
+}
+
+export function useProvider(role: ProviderRole) {
+  const { data, error, loading } = useAsync<Provider[]>(() => api.providers(role), [role])
+  const list = data ?? []
+  const [chosen, setChosen] = useState<number | null>(null)
+  const id = list.some((p) => p.id === chosen) ? chosen : list[0]?.id ?? null
+  return { list, error, loading, id, setId: setChosen }
+}
+
+export function ProviderSelect({
+  label,
+  provider,
+}: {
+  label: string
+  provider: ReturnType<typeof useProvider>
+}) {
+  return (
+    <Field label={label}>
+      <select value={provider.id ?? ''} onChange={(e) => provider.setId(Number(e.target.value))}>
+        {provider.list.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.label} · {p.model}
+          </option>
+        ))}
+      </select>
+    </Field>
+  )
+}
+
+export function pickFile(accept: string, onPick: (file: File) => void): void {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = accept
+  input.onchange = () => {
+    const file = input.files?.[0]
+    if (file) onPick(file)
+  }
+  input.click()
 }
 
 export function downloadText(content: string, filename: string, type: string): void {
@@ -370,6 +434,40 @@ export function CauseTag({ cause, plain = false }: { cause: string | null; plain
   return <span className={`tag ${entry?.kind ?? ''}`}>{entry?.text ?? cause}</span>
 }
 
+const ORIGIN_LABELS: Record<string, { text: string; kind: string }> = {
+  direct: { text: '直接召回', kind: '' },
+  graph: { text: '图扩展', kind: 'accent' },
+}
+
+const REASON_LABELS: Record<string, string> = {
+  semantic: '语义',
+  lexical: '词面',
+  'exact-title': '标题精确',
+}
+
+export function SnippetTags({
+  origin,
+  reasons,
+}: {
+  origin?: string | null
+  reasons: string[]
+}) {
+  return (
+    <>
+      {origin && (
+        <span className={`tag ${ORIGIN_LABELS[origin]?.kind ?? ''}`}>
+          {ORIGIN_LABELS[origin]?.text ?? origin}
+        </span>
+      )}
+      {reasons.map((reason) => (
+        <span key={reason} className="tag">
+          {REASON_LABELS[reason] ?? reason}
+        </span>
+      ))}
+    </>
+  )
+}
+
 export function Pager({
   total,
   offset,
@@ -542,15 +640,13 @@ export function RecordNav({
 export function Collapsible({
   title,
   children,
-  open = false,
   compact = false,
 }: {
   title: React.ReactNode
   children: React.ReactNode
-  open?: boolean
   compact?: boolean
 }) {
-  const [shown, setShown] = useState(open)
+  const [shown, setShown] = useState(false)
   return (
     <div className={compact ? 'collapsible compact' : 'collapsible'} style={{ marginBottom: compact ? 3 : 10 }}>
       <button
@@ -588,7 +684,6 @@ export function ConfigPanel({
     try {
       localStorage.setItem(key, next ? 'open' : 'closed')
     } catch {
-
     }
   }
   return (
@@ -696,18 +791,16 @@ export function SecretField({
   onChange,
   hint,
   placeholder,
-  wide,
 }: {
   label: string
   value: string
   onChange: (value: string) => void
   hint?: string
   placeholder?: string
-  wide?: boolean
 }) {
   const [shown, setShown] = useState(false)
   return (
-    <Field label={label} hint={hint} wide={wide}>
+    <Field label={label} hint={hint}>
       <div className="secret-input">
         <input
           type={shown ? 'text' : 'password'}

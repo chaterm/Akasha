@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 from .. import naming
+from ..config import load_config
 from ..datasets import DataDependency, get_adapter
 from ..judge import (
     answer_correctness,
@@ -19,10 +20,16 @@ from ..judge.client import (
     parse_json_object,
 )
 from ..judge.providers import resolve_provider
-from ..config import load_config
 from ..metrics import attribution, multihop, qa, registry, retrieval
 from ..model_configs import feature_of
-from ..store import compile_store, config_store, eval_store, loads, query_store, run_store
+from ..store import (
+    compile_store,
+    config_store,
+    eval_store,
+    loads,
+    query_store,
+    run_store,
+)
 from ..task import TaskContext
 
 DEFAULT_KS = retrieval.DEFAULT_KS
@@ -36,7 +43,6 @@ def _mean(values: list[float]) -> float:
 
 
 def _scalars(source: dict[str, Any]) -> dict[str, float]:
-
     return {k: float(v) for k, v in source.items() if isinstance(v, (int, float, bool))}
 
 
@@ -48,7 +54,6 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, float]:
 
 
 def resolve_metrics(selected: list[str] | None) -> list[str]:
-
     if not selected:
         return sorted(registry.METRIC_REGISTRY)
     unknown = sorted(set(selected) - set(registry.METRIC_REGISTRY))
@@ -62,7 +67,6 @@ def _keep(selected: frozenset[str]):
         try:
             return registry.get_metric(name).name in selected
         except KeyError:
-
             return True
 
     return keep
@@ -109,14 +113,14 @@ def evaluate_dataset(
 
         status = row["http_status"] or 0
         body = row["response"] or {}
-        ok = 200 <= status < 300 and isinstance(body, dict)
-        if not ok:
+        if not (200 <= status < 300 and isinstance(body, dict)):
             http_failures += 1
+            body = {}
 
-        retrieved = body.get("retrievedSources") or [] if ok else []
-        citations = body.get("citations") or [] if ok else []
-        snippets = body.get("snippets") or [] if ok else []
-        answer = (body.get("answer") or "") if ok else ""
+        retrieved = body.get("retrievedSources") or []
+        citations = body.get("citations") or []
+        snippets = body.get("snippets") or []
+        answer = body.get("answer") or ""
 
         scored = qa.score_answer(answer, sample["answers"])
         metrics: dict[str, float] = dict(scored)
@@ -271,6 +275,7 @@ def _answer_relevancy_task(
 def _record_reply(
     ctx: TaskContext, eval_id: int, metric: str, row: dict[str, Any], parse: Any, reply: Any
 ) -> None:
+    raw = {"raw_response": reply.content, "raw_http_response": (reply.raw or "")[:2000]}
     if reply.failure_kind:
         eval_store.record_judge_verdict(
             ctx.db,
@@ -280,16 +285,12 @@ def _record_reply(
             score=None,
             failure_kind=reply.failure_kind,
             latency_ms=reply.latency_ms,
-            detail={
-                "raw_response": reply.content,
-                "raw_http_response": (reply.raw or "")[:2000],
-            },
+            detail=raw,
         )
         return
     try:
         score, reasoning = parse(parse_json_object(reply.content or ""))
     except ValueError as exc:
-
         eval_store.record_judge_verdict(
             ctx.db,
             eval_id,
@@ -297,13 +298,9 @@ def _record_reply(
             metric=metric,
             score=None,
             failure_kind="parse_error",
-            detail={
-                "error": str(exc)[:300],
-                "raw_response": reply.content,
-                "raw_http_response": (reply.raw or "")[:2000],
-            },
+            detail={"error": str(exc)[:300], **raw},
         )
-        ctx.log(f"{metric} parse_error sample={row['sample_id']}: {exc}", level="warning")
+        ctx.log(f"{metric} parse_error sample={row['sample_id']}: {exc}", level="warn")
         return
     eval_store.record_judge_verdict(
         ctx.db,
@@ -312,11 +309,7 @@ def _record_reply(
         metric=metric,
         score=score,
         failure_kind=None,
-        detail={
-            **reasoning,
-            "raw_response": reply.content,
-            "raw_http_response": (reply.raw or "")[:2000],
-        },
+        detail={**reasoning, **raw},
     )
     ctx.log(f"{metric} sample={row['sample_id']} score={score}", level="info")
     if score is not None:
@@ -353,15 +346,15 @@ def _judge(
     query_model_snapshot = loads(query_run.get("model_configs_json"))
     for position, row in enumerate(rows, 1):
         ctx.checkpoint()
-        response = query_store.response_of(ctx.db, query_id, row["sample_id"])
-        body = (response or {}).get("response") or {}
+        response = query_store.response_of(ctx.db, query_id, row["sample_id"]) or {}
+        body = response.get("response") or {}
+        question = response.get("question") or ""
+        answer = row["answer"] or ""
         references = (row["detail"] or {}).get("reference_answers") or []
         pending: list[tuple[str, Any, tuple[str, str]]] = []
         for metric in metrics:
             if row["sample_id"] in already_by_metric[metric]:
                 continue
-            question = (response or {}).get("question") or ""
-            answer = row["answer"] or ""
             if metric == "answer_relevancy":
                 task = _answer_relevancy_task(
                     ctx.db, question, answer, query_model_snapshot
@@ -375,7 +368,6 @@ def _judge(
                     body,
                 )
             if task is None:
-
                 eval_store.record_judge_verdict(
                     ctx.db,
                     eval_id,

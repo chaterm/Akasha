@@ -1,16 +1,25 @@
 from __future__ import annotations
 
-import hashlib
+from collections import Counter
 from typing import Any
 
 from .. import attribution, naming, textdiff
 from ..config import load_config
-from ..datasets import get_adapter, load_corpus, resolve
-from ..io_utils import load_json
-from ..judge.client import REPORT_MAX_TOKENS, JudgeConfigError, complete_many, parse_json_object
+from ..judge.client import (
+    REPORT_MAX_TOKENS,
+    JudgeConfigError,
+    complete_many,
+    parse_json_object,
+)
 from ..judge.providers import resolve_provider
-from ..lineage import BadPageId, LineageReader, LineageUnavailable
-from ..store import attribution_store, compile_store, data_store, eval_store, query_store
+from ..lineage import BadPageId, LineageReader, LineageUnavailable, query_hash
+from ..store import (
+    attribution_store,
+    compile_store,
+    data_store,
+    eval_store,
+    query_store,
+)
 from ..task import TaskContext
 
 
@@ -31,7 +40,6 @@ def _lineage_of(
         try:
             chain = reader.lineage(page_id, chunk_chars=None)
         except LineageUnavailable:
-
             return None
         except BadPageId as exc:
             entries.append({"doc_id": doc_id, "page_id": page_id, "error": str(exc)})
@@ -75,7 +83,6 @@ def run(ctx: TaskContext) -> None:
             provider = resolve_provider(ctx.db, provider_id, "attribution")
             provider_id = provider.provider_id
         except JudgeConfigError as exc:
-
             ctx.log(f"未使用模型：{exc}", "warn")
 
     reader: LineageReader | None = None
@@ -112,13 +119,14 @@ def run(ctx: TaskContext) -> None:
 
     counts = attribution_store.cause_counts(ctx.db, attribution_id)
     ctx.log(f"根因分布：{counts}")
-    chain_counts: dict[str, int] = {}
-    false_negative_candidates = 0
-    for result in attribution_store.attribution_results(ctx.db, attribution_id):
-        chain = (result.get("evidence") or {}).get("evidence_chain") or {}
-        status = str(chain.get("status") or "unavailable")
-        chain_counts[status] = chain_counts.get(status, 0) + 1
-        false_negative_candidates += int(bool(chain.get("model_false_negative_candidate")))
+    chains = [
+        (result.get("evidence") or {}).get("evidence_chain") or {}
+        for result in attribution_store.attribution_results(ctx.db, attribution_id)
+    ]
+    chain_counts = dict(Counter(str(chain.get("status") or "unavailable") for chain in chains))
+    false_negative_candidates = sum(
+        bool(chain.get("model_false_negative_candidate")) for chain in chains
+    )
     ctx.log(
         f"evidence chain counts={chain_counts}; "
         f"false-negative candidates={false_negative_candidates}"
@@ -146,21 +154,6 @@ def _analyze(
 
     page_maps: dict[str, dict[str, str]] = {}
     corpus_maps: dict[str, dict[str, dict[str, Any]]] = {}
-    source_metadata: dict[str, dict[str, Any]] = {}
-    if any(row["dataset"] == "musique" for row in samples):
-        try:
-            resolved = resolve("musique")
-            corpus = load_corpus("musique", resolved.corpus_path)
-            adapter = get_adapter("musique")
-            for index, raw in enumerate(load_json(resolved.qa_path)):
-                parsed = adapter.parse_row(raw, index, corpus)
-                source_metadata[parsed.dataset_sample_id] = parsed.metadata
-        except (FileNotFoundError, KeyError, TypeError, ValueError):
-            source_metadata = {}
-    sample_metadata = {
-        row["sample_id"]: row.get("metadata") or {}
-        for row in compile_store.compile_samples(ctx.db, compile_id)
-    }
     query_audits: dict[str, dict[str, Any]] = {}
     if reader is not None:
         try:
@@ -170,75 +163,65 @@ def _analyze(
         except LineageUnavailable as exc:
             ctx.log(f"PG query audit 不可用：{exc}", "warn")
 
-    def prepare(row: dict[str, Any]) -> dict[str, Any]:
-        dataset = row["dataset"]
-        sample = row
-        sample["metrics"] = eval_store.sample_metrics_of(ctx.db, eval_id, row["sample_id"])
-        metadata = dict(
-            sample_metadata.get(row["sample_id"], sample["detail"].get("metadata") or {})
-        )
-        if dataset == "musique" and not metadata.get("question_decomposition"):
-            native_id = str(row["sample_id"]).split(":", 1)[-1]
-            metadata.update(source_metadata.get(native_id) or {})
-        if dataset == "musique" and metadata.get("question_decomposition"):
-            if dataset not in corpus_maps:
-                corpus_maps[dataset] = {
-                    str(doc["doc_id"]): doc for doc in data_store.corpus_of(ctx.db, dataset)
-                }
-            steps = []
-            for step in metadata["question_decomposition"]:
-                enriched = dict(step)
-                doc = corpus_maps[dataset].get(str(step.get("support_doc_id")))
-                if doc:
-                    enriched["support_text"] = doc.get("text")
-                    enriched["support_title"] = doc.get("title")
-                steps.append(enriched)
-            metadata["question_decomposition"] = steps
+    def musique_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+        if not metadata.get("question_decomposition"):
+            return metadata
+        if "musique" not in corpus_maps:
+            corpus_maps["musique"] = {
+                str(doc["doc_id"]): doc for doc in data_store.corpus_of(ctx.db, "musique")
+            }
+        steps = []
+        for step in metadata["question_decomposition"]:
+            enriched = dict(step)
+            doc = corpus_maps["musique"].get(str(step.get("support_doc_id")))
+            if doc:
+                enriched["support_text"] = doc.get("text")
+                enriched["support_title"] = doc.get("title")
+            steps.append(enriched)
+        metadata["question_decomposition"] = steps
+        return metadata
+
+    def ruling_of(sample: dict[str, Any]) -> dict[str, Any]:
+        dataset = sample["dataset"]
+        sample["metrics"] = eval_store.sample_metrics_of(ctx.db, eval_id, sample["sample_id"])
+        metadata = dict(sample["detail"]["metadata"])
+        if dataset == "musique":
+            metadata = musique_metadata(metadata)
         sample["detail"] = {**sample["detail"], "metadata": metadata}
         if dataset not in page_maps:
             page_to_doc = compile_store.page_to_doc(ctx.db, compile_id, dataset)
             page_maps[dataset] = {doc: page for page, doc in page_to_doc.items()}
+        question = str(sample["detail"].get("question") or "")
         lineage = _lineage_of(
             reader,
             list(sample["detail"].get("gold_doc_ids") or []),
             page_maps[dataset],
-            sample["detail"].get("question") or "",
+            question,
         )
-        response_row = query_store.response_of(ctx.db, query_id, row["sample_id"])
-        response = (response_row or {}).get("response")
-        evidence_chain = attribution.analyze_evidence_chain(sample, response)
-        compiled_answers = attribution.analyze_compiled_answers(sample, lineage)
-        reference_grounding = attribution.analyze_reference_grounding(sample, response)
-        question = str(sample["detail"].get("question") or "")
-        query_hash = "sha256:" + hashlib.sha256(
-            question.encode("utf-8")
-        ).hexdigest()
-        ruling = attribution.classify(
+        response = (query_store.response_of(ctx.db, query_id, sample["sample_id"]) or {}).get("response")
+        return attribution.classify(
             sample,
             lineage,
-            evidence_chain,
-            query_audits.get(query_hash),
-            compiled_answers,
-            reference_grounding,
+            attribution.analyze_evidence_chain(sample, response),
+            query_audits.get(query_hash(question)),
+            attribution.analyze_compiled_answers(sample, lineage),
+            attribution.analyze_reference_grounding(sample, response),
         )
-        return {"row": row, "ruling": ruling}
 
-    done = 0
     for start in range(0, len(todo), 50):
         ctx.checkpoint()
-        batch = [prepare(row) for row in todo[start : start + 50]]
-        for item in batch:
-            ruling = item["ruling"]
+        batch = todo[start : start + 50]
+        rulings = [ruling_of(row) for row in batch]
+        for row, ruling in zip(batch, rulings):
             attribution_store.record_attribution(
                 ctx.db,
                 attribution_id,
-                sample_id=item["row"]["sample_id"],
+                sample_id=row["sample_id"],
                 root_cause=ruling["root_cause"],
                 evidence=ruling["evidence"],
             )
         ctx.db.commit()
-        done += len(batch)
-        ctx.progress(done, len(todo), "归因")
+        ctx.progress(start + len(batch), len(todo), "归因")
 
 
 def _write_report(

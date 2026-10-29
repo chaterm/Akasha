@@ -5,11 +5,11 @@ import pytest
 from akasha_benchmark import attribution
 from akasha_benchmark.datasets import DataDependency, DependencyError
 from akasha_benchmark.metrics import attribution as citation
+from akasha_benchmark.metrics import multihop, qa, registry, retrieval
 from akasha_benchmark.metrics.interpretation import (
     build_metric_evidence,
     interpret_sample_metrics,
 )
-from akasha_benchmark.metrics import multihop, qa, registry, retrieval
 
 
 def test_unmapped_pages_keep_their_rank():
@@ -21,21 +21,16 @@ def test_unmapped_pages_keep_their_rank():
     assert retrieval.unmapped_page_ids(retrieved, {"p1": "d1"}) == ["unknown"]
 
 
-def test_full_coverage_differs_from_recall():
-    ranked = ["d1", "x"]
+def test_recall_precision_and_full_coverage():
     gold = ["d1", "d2"]
-    assert retrieval.recall_at_k(ranked, gold, 2) == pytest.approx(0.5)
-    assert retrieval.full_coverage(ranked, gold, 2) == pytest.approx(0.0)
-    assert retrieval.full_coverage(["d1", "d2"], gold, 2) == pytest.approx(1.0)
-
-
-def test_retrieval_precision_and_f1_at_k_use_actual_result_count():
-    ranked = ["d1", "other"]
-    gold = ["d1", "d2"]
-    assert retrieval.precision_at_k(ranked, gold, 5) == pytest.approx(0.5)
-    assert retrieval.recall_at_k(ranked, gold, 5) == pytest.approx(0.5)
-    assert retrieval.retrieval_f1(ranked, gold) == pytest.approx(0.5)
+    assert retrieval.recall_at_k(["d1", "x"], gold, 2) == pytest.approx(0.5)
+    assert retrieval.full_coverage(["d1", "x"], gold, 2) == pytest.approx(0.0)
+    assert retrieval.full_coverage(gold, gold, 2) == pytest.approx(1.0)
+    assert retrieval.precision_at_k(["d1", "other"], gold, 5) == pytest.approx(0.5)
+    assert retrieval.recall_at_k(["d1", "other"], gold, 5) == pytest.approx(0.5)
     assert retrieval.precision_at_k([], gold, 5) == 0.0
+    with pytest.raises(ValueError):
+        retrieval.recall_at_k(["d1"], [], 2)
 
 
 def test_retrieval_f1_ignores_k_and_order():
@@ -43,6 +38,7 @@ def test_retrieval_f1_ignores_k_and_order():
     early = ["d1", "d2", "x", "y", "z", "w", "v", "u"]
     late = ["x", "y", "z", "w", "v", "u", "d1", "d2"]
 
+    assert retrieval.retrieval_f1(["d1", "other"], gold) == pytest.approx(0.5)
     assert retrieval.retrieval_f1(early, gold) == pytest.approx(0.4)
     assert retrieval.retrieval_f1(late, gold) == pytest.approx(0.4)
     assert retrieval.retrieval_f1(gold, gold) == pytest.approx(1.0)
@@ -60,26 +56,22 @@ def test_ndcg_rewards_earlier_gold():
     assert late < early
 
 
-def test_retrieval_refuses_without_gold():
-    with pytest.raises(ValueError):
-        retrieval.recall_at_k(["d1"], [], 2)
-
-
 def test_registry_gate_is_set_comparison():
     gold = frozenset({DataDependency.GOLD_DOCS, DataDependency.REFERENCE_ANSWERS})
     assert registry.require("hotpotqa", gold, "recall").name == "recall"
     with pytest.raises(DependencyError):
         registry.require("narrativeqa", frozenset({DataDependency.REFERENCE_ANSWERS}), "recall")
     assert registry.require("narrativeqa", frozenset(), "faithfulness").kind == "judge"
+    with pytest.raises(DependencyError):
+        registry.require("narrativeqa", frozenset(), "answer_correctness")
 
 
 def test_uncited_documents_separate_retrieval_from_citation():
-    page_to_doc = {"p1": "gold", "p2": "other"}
     result = citation.evaluate_sample(
         citations=[{"sourcePageId": "p2"}],
         retrieved=[{"sourcePageId": "p1"}, {"sourcePageId": "p2"}],
         gold=["gold"],
-        page_to_doc=page_to_doc,
+        page_to_doc={"p1": "gold", "p2": "other"},
     )
     assert result["uncited_count"] == pytest.approx(1.0)
     assert result["uncited_gold_count"] == pytest.approx(1.0)
@@ -96,66 +88,59 @@ def _snippet(page: str, origin: str, source_page: str, reasons=("semantic",)) ->
     }
 
 
-def test_graph_exclusive_gold_is_net_contribution():
-    result = multihop.evaluate_sample(
-        [_snippet("kp-a", "direct", "p1"), _snippet("kp-b", "graph", "p2")],
-        ["g1", "g2"],
-        {"p1": "g1", "p2": "g2"},
-    )
-    assert result["graph_exclusive_gold_share"] == pytest.approx(0.5)
-
-
-def test_other_chunk_of_same_knowledge_page_counts_as_exclusive():
-    """同一 knowledge page 的不同 chunk 是不同证据，图扩展带来的那个算独占。"""
-    result = multihop.evaluate_sample(
-        [_snippet("kp-1", "graph", "p1"), _snippet("kp-1", "direct", "p1")],
-        ["g1"],
-        {"p1": "g1"},
-    )
-    assert result["graph_exclusive_gold_share"] == pytest.approx(1.0)
-    assert result["graph_neighbor_precision"] == pytest.approx(1.0)
-
-
-def test_same_chunk_hit_both_ways_is_not_graph_exclusive():
-    """同一个 chunk 既来自图扩展也来自直接检索，图没有净贡献。"""
-    shared = _snippet("kp-1", "graph", "p1")
-    duplicate = {**shared, "origin": "direct"}
-    result = multihop.evaluate_sample([shared, duplicate], ["g1"], {"p1": "g1"})
-    assert result["graph_exclusive_gold_share"] == 0.0
-
-
-def test_other_knowledge_page_of_same_gold_still_counts_as_exclusive():
-    """同一篇 gold 原文档，图扩展带来的是另一个 knowledge page，算独占。"""
-    result = multihop.evaluate_sample(
-        [_snippet("kp-direct", "direct", "p1"), _snippet("kp-graph", "graph", "p1")],
-        ["g1"],
-        {"p1": "g1"},
-    )
-    assert result["graph_exclusive_gold_share"] == pytest.approx(1.0)
-
-
-def test_origin_decides_the_path_regardless_of_matching_reasons():
-    """reasons 全是匹配方式，图扩展的片段照样带 semantic，路径只看 origin。"""
-    result = multihop.evaluate_sample(
-        [_snippet("kp-g", "graph", "p1", reasons=("semantic", "lexical"))],
-        ["g1"],
-        {"p1": "g1"},
-    )
-    assert result["graph_exclusive_gold_share"] == pytest.approx(1.0)
-    assert result["origin_doc_counts"] == {"graph": 1}
-
-
-def test_graph_neighbor_precision_deduplicates_documents():
-    page_to_doc = {"gold-page": "gold", "other-page": "other"}
-    snippets = [
-        _snippet("kp-gold", "graph", "gold-page"),
-        *[_snippet(f"kp-other-{index}", "graph", "other-page") for index in range(3)],
-    ]
-
-    result = multihop.evaluate_sample(snippets, ["gold"], page_to_doc)
-
-    assert result["graph_neighbor_precision"] == pytest.approx(0.5)
-    assert result["origin_doc_counts"]["graph"] == 2
+@pytest.mark.parametrize(
+    ("snippets", "gold", "page_to_doc", "expected"),
+    [
+        pytest.param(
+            [_snippet("kp-a", "direct", "p1"), _snippet("kp-b", "graph", "p2")],
+            ["g1", "g2"],
+            {"p1": "g1", "p2": "g2"},
+            {"graph_exclusive_gold_share": 0.5},
+            id="net-contribution",
+        ),
+        pytest.param(
+            [_snippet("kp-1", "graph", "p1"), _snippet("kp-1", "direct", "p1")],
+            ["g1"],
+            {"p1": "g1"},
+            {"graph_exclusive_gold_share": 1.0, "graph_neighbor_precision": 1.0},
+            id="other-chunk-of-same-knowledge-page",
+        ),
+        pytest.param(
+            [_snippet("kp-1", "graph", "p1"), {**_snippet("kp-1", "graph", "p1"), "origin": "direct"}],
+            ["g1"],
+            {"p1": "g1"},
+            {"graph_exclusive_gold_share": 0.0},
+            id="same-chunk-both-ways",
+        ),
+        pytest.param(
+            [_snippet("kp-direct", "direct", "p1"), _snippet("kp-graph", "graph", "p1")],
+            ["g1"],
+            {"p1": "g1"},
+            {"graph_exclusive_gold_share": 1.0},
+            id="other-knowledge-page-of-same-gold",
+        ),
+        pytest.param(
+            [_snippet("kp-g", "graph", "p1", reasons=("semantic", "lexical"))],
+            ["g1"],
+            {"p1": "g1"},
+            {"graph_exclusive_gold_share": 1.0, "origin_doc_counts": {"graph": 1}},
+            id="origin-decides-path",
+        ),
+        pytest.param(
+            [
+                _snippet("kp-gold", "graph", "gold-page"),
+                *[_snippet(f"kp-other-{index}", "graph", "other-page") for index in range(3)],
+            ],
+            ["gold"],
+            {"gold-page": "gold", "other-page": "other"},
+            {"graph_neighbor_precision": 0.5, "origin_doc_counts": {"graph": 2}},
+            id="neighbor-precision-deduplicates-documents",
+        ),
+    ],
+)
+def test_multihop_graph_contribution(snippets, gold, page_to_doc, expected):
+    result = multihop.evaluate_sample(snippets, gold, page_to_doc)
+    assert {key: result[key] for key in expected} == expected
 
 
 def test_answer_scoring_takes_max_over_references():
@@ -215,14 +200,62 @@ def test_sample_metric_interpretations_explain_missing_and_failed_values():
     assert all(row["status"] == "unavailable" for row in rows)
 
 
+def test_citation_precision_evidence_matches_scoring_scope():
+    evidence = build_metric_evidence(
+        ["citation_precision"],
+        [5],
+        {"citation_precision": 0.5},
+        {"gold_doc_ids": ["g1", "g2"], "reference_answers": []},
+        {
+            "citations": [
+                {"sourcePageId": "p-gold", "title": "Gold"},
+                {"sourcePageId": "p-other", "title": "Other"},
+                {"sourcePageId": "p-gold", "title": "duplicate"},
+                {"sourcePageId": "p-missing", "title": "Missing"},
+            ],
+            "snippets": [
+                {
+                    "id": "s1",
+                    "title": "Gold chunk",
+                    "text": "gold evidence text",
+                    "retrievalReasons": ["semantic"],
+                    "sourceWindows": [{"sourcePageId": "p-gold"}],
+                }
+            ],
+            "citationEvidence": [
+                {"sourcePageId": "p-gold", "excerpts": [{"text": "exact cited sentence"}]}
+            ],
+        },
+        {"p-gold": "g1", "p-other": "d2"},
+        {
+            "g1": {"doc_id": "g1", "title": "Gold document"},
+            "g2": {"doc_id": "g2", "title": "Uncited gold"},
+            "d2": {"doc_id": "d2", "title": "Other document"},
+        },
+        [],
+    )["citation_precision"]
+
+    assert evidence["formula"] == "实际引用中命中 Gold（1）/ 实际引用（2）"
+    assert [(doc["doc_id"], doc["is_gold"]) for doc in evidence["documents"]] == [
+        ("g1", True),
+        ("d2", False),
+        (None, False),
+    ]
+    assert evidence["snippets"][0]["text"] == "gold evidence text"
+    assert evidence["citation_excerpts"][0]["excerpts"] == ["exact cited sentence"]
+    assert [(doc["doc_id"], doc["cited"]) for doc in evidence["gold_documents"]] == [
+        ("g1", True),
+        ("g2", False),
+    ]
+
+
 def test_every_registered_metric_has_structured_evidence_and_formula():
     configured = sorted(registry.METRIC_REGISTRY)
     actual_names = [f"{name}@2" if registry.get_metric(name).per_k else name for name in configured]
-    values = {name: 0.5 for name in actual_names}
     evidence = build_metric_evidence(
         configured,
         [2],
-        values,
+        {name: 0.5 for name in actual_names},
         {"gold_doc_ids": ["g1"], "reference_answers": ["reference answer"]},
         {
             "answer": "answer",
@@ -254,64 +287,200 @@ def test_every_registered_metric_has_structured_evidence_and_formula():
     assert all(row.get("formula") for row in evidence.values())
 
 
-def _sample(
-    metrics: dict, mode: str = "knowledge", gold=("g1",), correct: bool = False
-) -> dict:
-    detail = {"gold_doc_ids": list(gold), "question": "q"}
+def _sample(metrics: dict, mode="knowledge", correct=False, references=None, **overrides) -> dict:
+    detail = {"gold_doc_ids": ["g1"], "question": "q"}
     if correct:
         detail["reference_answers"] = ["Rita Moreno"]
-    return {
+    if references is not None:
+        detail["reference_answers"] = references
+    detail.update(overrides.pop("detail", {}))
+    sample = {
         "answer_mode": mode,
         "metrics": metrics,
         "answer": "The answer is Rita Moreno." if correct else "x",
         "detail": detail,
     }
+    return sample | overrides
 
 
-def _musique(metrics: dict, steps: list[dict], mode: str = "general") -> dict:
-    sample = _sample(metrics, mode=mode)
-    sample["dataset"] = "musique"
-    sample["detail"]["metadata"] = {"question_decomposition": steps}
-    return sample
+def _musique(metrics: dict, steps: list[dict], mode="general") -> dict:
+    return _sample(metrics, mode=mode, dataset="musique", detail={"metadata": {"question_decomposition": steps}})
 
 
-def test_correct_answer_has_an_explicit_root_cause():
-    ruling = attribution.classify(_sample({"hit@5": 0.0}, correct=True), [])
-    assert ruling["root_cause"] == attribution.CAUSE_ANSWER_CORRECT
+A = attribution
+TERMS_LOST = [{"question_terms_lost": ["access"]}]
+JUDGE_PERFECT = {"answer_correctness": 1.0, "faithfulness": 1.0, "answer_relevancy": 1.0, "context_relevancy": 1.0}
 
 
-def test_answer_correct_uses_reference_token_coverage():
-    sample = _sample({"hit@5": 1.0}, mode="knowledge")
-    sample["answer"] = "You would not see the Brooklyn Nets play there."
-    sample["detail"]["reference_answers"] = ["Brooklyn Nets"]
-    assert attribution.classify(sample, [])["root_cause"] == attribution.CAUSE_ANSWER_CORRECT
-
-    sample["answer"] = "This is a complete explanation."
-    sample["detail"]["reference_answers"] = ["in"]
-    assert attribution.classify(sample, [])["root_cause"] == attribution.CAUSE_ANSWER_INCORRECT
+def case(id, sample, cause, lineage=(), chain=None, compiled=None, evidence=None, absent=()):
+    lineage = list(lineage) if lineage is not None else None
+    return pytest.param(sample, lineage, chain, compiled, cause, evidence or {}, absent, id=id)
 
 
 @pytest.mark.parametrize(
-    "answer",
-    ["", None, attribution.query_store.ANSWER_GENERATION_UNAVAILABLE_ZH],
+    ("sample", "lineage", "chain", "compiled", "cause", "evidence", "absent"),
+    [
+        case("correct-despite-miss", _sample({"hit@5": 0.0}, correct=True), A.CAUSE_ANSWER_CORRECT),
+        case(
+            "correct-outranks-compiled-away",
+            _sample({"hit@5": 0.0}, correct=True),
+            A.CAUSE_ANSWER_CORRECT,
+            lineage=[{"question_terms_lost": ["grammy"]}],
+        ),
+        case(
+            "correct-outranks-citation-drop",
+            _sample({"hit@5": 0.0, "uncited_gold_count": 1.0}, correct=True),
+            A.CAUSE_ANSWER_CORRECT,
+        ),
+        case(
+            "reference-token-coverage",
+            _sample({"hit@5": 1.0}, answer="You would not see the Brooklyn Nets play there.", references=["Brooklyn Nets"]),
+            A.CAUSE_ANSWER_CORRECT,
+        ),
+        case(
+            "stopword-reference-is-not-coverage",
+            _sample({"hit@5": 1.0}, answer="This is a complete explanation.", references=["in"]),
+            A.CAUSE_ANSWER_INCORRECT,
+        ),
+        case(
+            "fully-supported-long-answer",
+            _sample(
+                {"f1": 0.35, "faithfulness": 1.0, "hit@5": 1.0, "full_coverage@5": 1.0, "uncited_gold_count": 1.0},
+                answer="Roger Capellani died during the Battle of Dunkirk, which was fought between the Allies and Nazi Germany.",
+                references=["the Allies and Nazi Germany"],
+            ),
+            A.CAUSE_ANSWER_CORRECT,
+            evidence={"reference_answer_contained": True},
+        ),
+        *[
+            case(f"empty-answer-{index}", _sample({"hit@5": 1.0}, answer=answer, references=["expected answer"]), A.CAUSE_GENERATION_EMPTY)
+            for index, answer in enumerate(["", None, A.query_store.ANSWER_GENERATION_UNAVAILABLE_ZH])
+        ],
+        case(
+            "knowledge-empty-generation-is-not-citation-drop",
+            _sample(
+                {"hit@5": 1.0, "recall@5": 1.0, "full_coverage@5": 1.0, "uncited_gold_count": 2.0},
+                answer="Relevant knowledge was retrieved, but the answer model did not produce a response.",
+                dataset="musique",
+            ),
+            A.CAUSE_GENERATION_EMPTY,
+            chain={"status": "complete", "steps": []},
+        ),
+        case(
+            "judge-metrics-ignored",
+            _sample({"hit@5": 0.0, **JUDGE_PERFECT}),
+            A.CAUSE_RETRIEVAL_MISS,
+            absent=("faithfulness",),
+        ),
+        case(
+            "weak-metrics-faithful-but-wrong",
+            _sample({"faithfulness": 1.0, "hit@5": 1.0, "full_coverage@5": 1.0}),
+            A.CAUSE_ANSWER_INCORRECT,
+            absent=("f1",),
+        ),
+        case("weak-metrics-high-f1-miss", _sample({"hit@5": 0.0, "f1": 0.9}), A.CAUSE_RETRIEVAL_MISS, absent=("f1",)),
+        case(
+            "weak-metrics-low-f1-hit",
+            _sample({"hit@5": 1.0, "full_coverage@5": 1.0, "f1": 0.1}),
+            A.CAUSE_ANSWER_INCORRECT,
+            absent=("f1",),
+        ),
+        case("general-correct-is-fallback", _sample({"hit@5": 0.0}, mode="general", correct=True), A.CAUSE_GENERATION_FALLBACK, lineage=None),
+        case("general-correct-with-hit", _sample({"hit@5": 1.0}, mode="general", correct=True), A.CAUSE_GENERATION_FALLBACK, lineage=None),
+        case("fallback-before-retrieval", _sample({"hit@5": 0.0}, mode="general"), A.CAUSE_GENERATION_FALLBACK, lineage=None),
+        case(
+            "compiled-away-with-lineage",
+            _sample({"hit@5": 0.0}),
+            A.CAUSE_COMPILED_AWAY,
+            lineage=[{"question_terms_lost": ["grammy"]}],
+        ),
+        case(
+            "no-lineage-is-retrieval-miss",
+            _sample({"hit@5": 0.0}),
+            A.CAUSE_RETRIEVAL_MISS,
+            lineage=None,
+            evidence={"lineage_available": False},
+        ),
+        case(
+            "compiled-away-needs-complete-miss",
+            _sample({"hit@10": 1.0, "full_coverage@10": 1.0}),
+            A.CAUSE_ANSWER_INCORRECT,
+            lineage=TERMS_LOST,
+        ),
+        case(
+            "uncited-gold-outranks-lost-terms",
+            _sample({"hit@10": 1.0, "full_coverage@10": 1.0, "uncited_gold_count": 1.0}),
+            A.CAUSE_CITATION_DROPPED,
+            lineage=TERMS_LOST,
+        ),
+        case(
+            "uncited-gold-outranks-retrieval-miss",
+            _sample({"hit@5": 0.0, "uncited_gold_count": 1.0}),
+            A.CAUSE_CITATION_DROPPED,
+        ),
+        case(
+            "graph-edge-missing",
+            _sample({"hit@5": 1.0, "full_coverage@5": 0.0, "graph_exclusive_gold_share": 0.0}),
+            A.CAUSE_GRAPH_EDGE_MISSING,
+        ),
+        case(
+            "general-with-retrieval-ignored",
+            _sample({"hit@5": 1.0, "recall@5": 1.0, "full_coverage@5": 1.0}, mode="general"),
+            A.CAUSE_GENERATION_IGNORED_RETRIEVAL,
+        ),
+        case(
+            "general-partial-recall",
+            _sample({"hit@5": 1.0, "recall@5": 0.5}, mode="general"),
+            A.CAUSE_RETRIEVAL_EVIDENCE_INCOMPLETE,
+        ),
+        case(
+            "general-uses-full-retrieval-detail",
+            _sample({}, mode="general", detail={"retrieval": {"hit@5": 1.0, "recall@5": 1.0, "full_coverage@5": 1.0}}),
+            A.CAUSE_GENERATION_IGNORED_RETRIEVAL,
+        ),
+        case(
+            "general-incomplete-chain-before-correctness",
+            _sample({"hit@10": 1.0}, mode="general", dataset="musique", answer="The answer is Acme.", references=["Acme"]),
+            A.CAUSE_GENERATION_FALLBACK,
+            chain={"status": "partial", "steps": []},
+            evidence={"answer_correct": True},
+        ),
+        case(
+            "general-complete-chain",
+            _sample({"hit@10": 1.0, "recall@10": 1.0}, mode="general", dataset="musique"),
+            A.CAUSE_GENERATION_IGNORED_RETRIEVAL,
+            chain={"status": "complete", "steps": []},
+        ),
+        case(
+            "compiled-answer-missing-outranks-symptoms",
+            _sample({"hit@5": 1.0, "recall@5": 0.5, "uncited_gold_count": 1.0}),
+            A.CAUSE_COMPILED_ANSWER_MISSING,
+            chain={"status": "partial", "steps": []},
+            compiled={"compiled_missing_count": 1, "steps": []},
+        ),
+    ],
 )
-def test_empty_answers_use_the_same_rule_attribution(answer):
-    sample = _sample({"hit@5": 1.0}, mode="knowledge")
-    sample["answer"] = answer
-    sample["detail"]["reference_answers"] = ["expected answer"]
+def test_rule_attribution(sample, lineage, chain, compiled, cause, evidence, absent):
+    ruling = attribution.classify(sample, lineage, chain, compiled_answers=compiled)
+    assert ruling["root_cause"] == cause
+    assert {key: ruling["evidence"][key] for key in evidence} == evidence
+    assert not set(absent) & set(ruling["evidence"])
 
-    ruling = attribution.classify(sample, [])
 
-    assert ruling["root_cause"] == attribution.CAUSE_GENERATION_EMPTY
+def test_partial_retrieval_is_not_compiled_away():
+    ruling = attribution.classify(_sample({"hit@10": 1.0, "full_coverage@10": 0.0}), TERMS_LOST)
+    assert ruling["root_cause"] != attribution.CAUSE_COMPILED_AWAY
 
 
 def test_token_matching_survives_smart_quotes_and_hyphens():
     steps = [{"answer": "``Hey Jude ''", "support_doc_id": "g1"}]
-    lineage = [{
-        "doc_id": "g1",
-        "source_text": "``Hey Jude '' is a Beatles song.",
-        "compiled_text": "“Hey Jude” is a Beatles song.",
-    }]
+    lineage = [
+        {
+            "doc_id": "g1",
+            "source_text": "``Hey Jude '' is a Beatles song.",
+            "compiled_text": "“Hey Jude” is a Beatles song.",
+        }
+    ]
     report = attribution.analyze_compiled_answers(_musique({}, steps), lineage)
     assert report["steps"][0]["status"] == "preserved"
 
@@ -322,195 +491,32 @@ def test_token_matching_survives_smart_quotes_and_hyphens():
     assert report["steps"][0]["status"] == "preserved"
 
 
-def test_rule_attribution_ignores_judge_metrics():
-    ruling = attribution.classify(
-        _sample(
-            {
-                "hit@5": 0.0,
-                "answer_correctness": 1.0,
-                "faithfulness": 1.0,
-                "answer_relevancy": 1.0,
-                "context_relevancy": 1.0,
-            }
-        ),
-        [],
-    )
-    assert ruling["root_cause"] == attribution.CAUSE_RETRIEVAL_MISS
-    assert "faithfulness" not in ruling["evidence"]
-
-
-def test_answer_correct_outranks_every_failure_cause():
-    for metrics, lineage, mode in (
-        ({"hit@5": 0.0}, [{"question_terms_lost": ["grammy"]}], "knowledge"),
-        ({"hit@5": 0.0, "uncited_gold_count": 1.0}, [], "knowledge"),
-        ({"hit@5": 0.0}, None, "general"),
-    ):
-        ruling = attribution.classify(_sample(metrics, mode=mode, correct=True), lineage)
-        expected = attribution.CAUSE_GENERATION_FALLBACK if mode == "general" else attribution.CAUSE_ANSWER_CORRECT
-        assert ruling["root_cause"] == expected
-
-
-def test_correct_general_answer_is_answer_correct():
-    contained = _sample({"hit@5": 1.0}, mode="general", correct=True)
-    ruling = attribution.classify(contained, None)
-    assert ruling["root_cause"] == attribution.CAUSE_GENERATION_FALLBACK
-
-
-def test_fully_supported_answer_is_correct_even_with_long_context():
-    sample = _sample(
-        {
-            "f1": 0.35,
-            "faithfulness": 1.0,
-            "hit@5": 1.0,
-            "full_coverage@5": 1.0,
-            "uncited_gold_count": 1.0,
-        }
-    )
-    sample["answer"] = (
-        "Roger Capellani died during the Battle of Dunkirk, which was fought "
-        "between the Allies and Nazi Germany."
-    )
-    sample["detail"]["reference_answers"] = ["the Allies and Nazi Germany"]
-    ruling = attribution.classify(sample, [])
-    assert ruling["root_cause"] == attribution.CAUSE_ANSWER_CORRECT
-    assert ruling["evidence"]["reference_answer_contained"] is True
-
-
-@pytest.mark.parametrize(
-    "metrics,expected",
-    [
-        ({"faithfulness": 1.0, "hit@5": 1.0, "full_coverage@5": 1.0}, attribution.CAUSE_ANSWER_INCORRECT),
-        ({"hit@5": 0.0, "f1": 0.9}, attribution.CAUSE_RETRIEVAL_MISS),
-        ({"hit@5": 1.0, "full_coverage@5": 1.0, "f1": 0.1}, attribution.CAUSE_ANSWER_INCORRECT),
-    ],
-)
-def test_weak_answer_metrics_do_not_drive_rule_attribution(metrics, expected):
-    ruling = attribution.classify(_sample(metrics), [])
-    assert ruling["root_cause"] == expected
-    assert "f1" not in ruling["evidence"]
-
-
-def test_fallback_is_judged_before_retrieval():
-    ruling = attribution.classify(_sample({"hit@5": 0.0}, mode="general"), None)
-    assert ruling["root_cause"] == attribution.CAUSE_GENERATION_FALLBACK
-
-
-def test_compiled_away_needs_lineage():
-    lineage = [{"question_terms_lost": ["grammy"]}]
-    assert (
-        attribution.classify(_sample({"hit@5": 0.0}), lineage)["root_cause"]
-        == attribution.CAUSE_COMPILED_AWAY
-    )
-    ruling = attribution.classify(_sample({"hit@5": 0.0}), None)
-    assert ruling["root_cause"] == attribution.CAUSE_RETRIEVAL_MISS
-    assert ruling["evidence"]["lineage_available"] is False
-
-
-def test_compiled_away_requires_a_complete_retrieval_miss():
-    lineage = [{"question_terms_lost": ["access"]}]
-
-    fully_retrieved = attribution.classify(
-        _sample({"hit@10": 1.0, "full_coverage@10": 1.0}), lineage
-    )
-    assert fully_retrieved["root_cause"] == attribution.CAUSE_ANSWER_INCORRECT
-
-    partially_retrieved = attribution.classify(
-        _sample({"hit@10": 1.0, "full_coverage@10": 0.0}), lineage
-    )
-    assert partially_retrieved["root_cause"] != attribution.CAUSE_COMPILED_AWAY
-
-
-def test_uncited_gold_outranks_lost_question_terms():
-    ruling = attribution.classify(
-        _sample(
-            {
-                "hit@10": 1.0,
-                "full_coverage@10": 1.0,
-                "uncited_gold_count": 1.0,
-            }
-        ),
-        [{"question_terms_lost": ["access"]}],
-    )
-    assert ruling["root_cause"] == attribution.CAUSE_CITATION_DROPPED
-
-
-def test_uncited_gold_outranks_retrieval_miss():
-    ruling = attribution.classify(_sample({"hit@5": 0.0, "uncited_gold_count": 1.0}), [])
-    assert ruling["root_cause"] == attribution.CAUSE_CITATION_DROPPED
-
-
-def test_graph_edge_missing_when_coverage_incomplete():
-    ruling = attribution.classify(
-        _sample({"hit@5": 1.0, "full_coverage@5": 0.0, "graph_exclusive_gold_share": 0.0}), []
-    )
-    assert ruling["root_cause"] == attribution.CAUSE_GRAPH_EDGE_MISSING
-
-
-def test_general_with_retrieval_is_not_classified_as_no_evidence_fallback():
-    ruling = attribution.classify(
-        _sample({"hit@5": 1.0, "recall@5": 1.0, "full_coverage@5": 1.0}, mode="general"), []
-    )
-    assert ruling["root_cause"] == attribution.CAUSE_GENERATION_IGNORED_RETRIEVAL
-
-
-def test_general_partial_recall_is_evidence_incomplete():
-    ruling = attribution.classify(
-        _sample({"hit@5": 1.0, "recall@5": 0.5}, mode="general"), []
-    )
-    assert ruling["root_cause"] == attribution.CAUSE_RETRIEVAL_EVIDENCE_INCOMPLETE
-
-
-def test_general_retrieval_uses_full_detail_when_hit_metric_was_not_selected():
-    sample = _sample({}, mode="general")
-    sample["detail"]["retrieval"] = {"hit@5": 1.0, "recall@5": 1.0, "full_coverage@5": 1.0}
-    ruling = attribution.classify(sample, [])
-    assert ruling["root_cause"] == attribution.CAUSE_GENERATION_IGNORED_RETRIEVAL
+def test_attribution_token_normalization_removes_possessives():
+    assert attribution._normalized_tokens("Avicenna's Canon") == ["avicenna", "canon"]
+    assert attribution._normalized_tokens("Avicenna’s Canon") == ["avicenna", "canon"]
+    assert attribution._normalized_tokens("the scholars' libraries") == ["scholars", "libraries"]
 
 
 def test_musique_evidence_chain_marks_complete_context_as_false_negative_candidate():
+    text = "X was made by Acme in 2020."
     sample = _musique(
         {"hit@10": 1.0},
         [
-            {
-                "id": 1,
-                "question": "Who made X?",
-                "answer": "Acme",
-                "support_doc_id": "d1",
-                "support_title": "X",
-                "support_text": "X was made by Acme in 2020.",
-            },
-            {
-                "id": 2,
-                "question": "When?",
-                "answer": "2020",
-                "support_doc_id": "d2",
-                "support_title": "X history",
-                "support_text": "X was made by Acme in 2020.",
-            },
+            {"id": 1, "question": "Who made X?", "answer": "Acme", "support_doc_id": "d1", "support_title": "X", "support_text": text},
+            {"id": 2, "question": "When?", "answer": "2020", "support_doc_id": "d2", "support_title": "X history", "support_text": text},
         ],
     )
     response = {
         "answerMode": "general",
-        "snippets": [
-            {
-                "title": "X",
-                "text": "X was made by Acme in 2020.",
-                "sourceWindows": [
-                    {"title": "X", "text": "X was made by Acme in 2020."},
-                ],
-            }
-        ],
+        "snippets": [{"title": "X", "text": text, "sourceWindows": [{"title": "X", "text": text}]}],
     }
     chain = attribution.analyze_evidence_chain(sample, response)
     assert chain["status"] == "complete"
     assert chain["model_false_negative_candidate"] is True
     assert all(step["status"] == "supported" for step in chain["steps"])
     assert all(step["claim_retrieved"] for step in chain["steps"])
-    assert chain["steps"][0]["retrieved_evidence"]
-    assert {row["source_type"] for row in chain["steps"][0]["retrieved_evidence"]} == {
-        "context",
-        "source_window",
-    }
+    sources = {row["source_type"] for row in chain["steps"][0]["retrieved_evidence"]}
+    assert sources == {"context", "source_window"}
 
 
 def test_musique_evidence_chain_marks_missing_step():
@@ -518,35 +524,34 @@ def test_musique_evidence_chain_marks_missing_step():
         {},
         [
             {"answer": "Acme", "support_title": "X", "support_text": "X was made by Acme."},
-            {
-                "answer": "2020",
-                "support_title": "X history",
-                "support_text": "The year was 2020.",
-            },
+            {"answer": "2020", "support_title": "X history", "support_text": "The year was 2020."},
         ],
     )
-    chain = attribution.analyze_evidence_chain(
-        sample,
-        {"snippets": [{"title": "X", "text": "X was made by Acme."}]},
-    )
+    chain = attribution.analyze_evidence_chain(sample, {"snippets": [{"title": "X", "text": "X was made by Acme."}]})
     assert chain["status"] == "incomplete"
     assert chain["missing_step_count"] == 1
     assert chain["steps"][1]["claim_retrieved"] is False
 
 
-def test_knowledge_empty_generation_is_not_misattributed_as_citation_drop():
-    sample = _sample(
-        {"hit@5": 1.0, "recall@5": 1.0, "full_coverage@5": 1.0, "uncited_gold_count": 2.0},
-        mode="knowledge",
+def test_evidence_chain_does_not_treat_retrieved_source_title_as_claim():
+    sample = _musique({}, [{"answer": "Acme", "support_title": "X", "support_text": "X was made by Acme."}])
+    chain = attribution.analyze_evidence_chain(sample, {"retrievedSources": [{"title": "X was made by Acme."}]})
+    assert chain["steps"][0]["claim_retrieved"] is False
+
+
+def test_evidence_chain_keeps_all_matching_retrieved_evidence():
+    sample = _musique(
+        {}, [{"answer": "Acme", "support_title": "X", "support_text": "Acme was founded in 2020 by Jane."}]
     )
-    sample["answer"] = "Relevant knowledge was retrieved, but the answer model did not produce a response."
-    sample["dataset"] = "musique"
-    ruling = attribution.classify(
-        sample,
-        [],
-        {"status": "complete", "steps": []},
-    )
-    assert ruling["root_cause"] == attribution.CAUSE_GENERATION_EMPTY
+    texts = [
+        "Acme was founded in 2020.",
+        "Acme was founded by Jane.",
+        "The company was founded in 2020 by Jane.",
+        "Acme and Jane founded the company.",
+    ]
+    response = {"snippets": [{"title": f"candidate-{index}", "text": text} for index, text in enumerate(texts, 1)]}
+    chain = attribution.analyze_evidence_chain(sample, response)
+    assert len(chain["steps"][0]["retrieved_evidence"]) == 4
 
 
 def test_compiled_answer_analysis_distinguishes_source_and_compilation_loss():
@@ -568,128 +573,19 @@ def test_compiled_answer_analysis_distinguishes_source_and_compilation_loss():
         ],
     )
     assert analysis["status"] == "compiled_missing"
-    assert analysis["compiled_missing_count"] == 1
-    assert analysis["source_missing_count"] == 1
-    assert [step["status"] for step in analysis["steps"]] == [
-        "preserved",
-        "compiled_missing",
-        "source_missing",
-    ]
+    assert (analysis["compiled_missing_count"], analysis["source_missing_count"]) == (1, 1)
+    assert [step["status"] for step in analysis["steps"]] == ["preserved", "compiled_missing", "source_missing"]
 
 
 def test_compiled_answer_analysis_uses_eighty_percent_token_recall():
     sample = _musique(
-        {},
-        [
-            {
-                "question": "Where?",
-                "answer": "Cairo Illinois river city county",
-                "support_doc_id": "d1",
-            }
-        ],
-        mode="knowledge",
+        {}, [{"question": "Where?", "answer": "Cairo Illinois river city county", "support_doc_id": "d1"}], mode="knowledge"
     )
+    text = "The river meets at Cairo, Illinois city."
     analysis = attribution.analyze_compiled_answers(
-        sample,
-        [
-            {
-                "doc_id": "d1",
-                "source_text": "The river meets at Cairo, Illinois city.",
-                "compiled_text": "The river meets at Cairo, Illinois city.",
-            }
-        ],
+        sample, [{"doc_id": "d1", "source_text": text, "compiled_text": text}]
     )
     step = analysis["steps"][0]
     assert step["source_answer_token_recall"] == 0.8
     assert step["compiled_answer_token_recall"] == 0.8
     assert step["status"] == "preserved"
-
-
-def test_attribution_token_normalization_removes_possessives():
-    assert attribution._normalized_tokens("Avicenna's Canon") == ["avicenna", "canon"]
-    assert attribution._normalized_tokens("Avicenna’s Canon") == ["avicenna", "canon"]
-    assert attribution._normalized_tokens("the scholars' libraries") == [
-        "scholars",
-        "libraries",
-    ]
-
-
-def test_compiled_answer_missing_outranks_retrieval_and_citation_symptoms():
-    sample = _sample(
-        {"hit@5": 1.0, "recall@5": 0.5, "uncited_gold_count": 1.0},
-        mode="knowledge",
-    )
-    ruling = attribution.classify(
-        sample,
-        [],
-        {"status": "partial", "steps": []},
-        compiled_answers={"compiled_missing_count": 1, "steps": []},
-    )
-    assert ruling["root_cause"] == attribution.CAUSE_COMPILED_ANSWER_MISSING
-
-
-def test_evidence_chain_does_not_treat_retrieved_source_title_as_claim():
-    sample = _musique(
-        {}, [{"answer": "Acme", "support_title": "X", "support_text": "X was made by Acme."}]
-    )
-    chain = attribution.analyze_evidence_chain(
-        sample,
-        {"retrievedSources": [{"title": "X was made by Acme."}]},
-    )
-    assert chain["steps"][0]["claim_retrieved"] is False
-
-
-def test_evidence_chain_keeps_all_matching_retrieved_evidence():
-    sample = _musique(
-        {},
-        [
-            {
-                "answer": "Acme",
-                "support_title": "X",
-                "support_text": "Acme was founded in 2020 by Jane.",
-            }
-        ],
-    )
-    response = {
-        "snippets": [
-            {"title": f"candidate-{index}", "text": text}
-            for index, text in enumerate(
-                [
-                    "Acme was founded in 2020.",
-                    "Acme was founded by Jane.",
-                    "The company was founded in 2020 by Jane.",
-                    "Acme and Jane founded the company.",
-                ],
-                1,
-            )
-        ]
-    }
-
-    chain = attribution.analyze_evidence_chain(sample, response)
-
-    assert len(chain["steps"][0]["retrieved_evidence"]) == 4
-
-
-def test_general_routing_uses_evidence_chain_before_answer_correctness():
-    sample = _sample({"hit@10": 1.0}, mode="general")
-    sample["dataset"] = "musique"
-    sample["answer"] = "The answer is Acme."
-    sample["detail"]["reference_answers"] = ["Acme"]
-    incomplete = {
-        "status": "partial",
-        "steps": [],
-    }
-    ruling = attribution.classify(sample, [], incomplete)
-    assert ruling["root_cause"] == attribution.CAUSE_GENERATION_FALLBACK
-    assert ruling["evidence"]["answer_correct"] is True
-
-
-def test_general_complete_evidence_is_generation_ignored_retrieval():
-    sample = _sample({"hit@10": 1.0, "recall@10": 1.0}, mode="general")
-    sample["dataset"] = "musique"
-    ruling = attribution.classify(
-        sample,
-        [],
-        {"status": "complete", "steps": []},
-    )
-    assert ruling["root_cause"] == attribution.CAUSE_GENERATION_IGNORED_RETRIEVAL

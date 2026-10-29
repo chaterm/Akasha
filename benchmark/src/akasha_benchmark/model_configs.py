@@ -9,7 +9,6 @@ _FIELDS = ("feature", "model", "baseUrl", "parameters")
 
 
 def normalize(model_configs: dict[str, Any]) -> list[dict[str, Any]]:
-
     entries = model_configs.get("configs") or []
     cleaned = [
         {field: entry.get(field) for field in _FIELDS}
@@ -31,5 +30,4 @@ def matches(left: dict[str, Any], right: dict[str, Any], feature: str) -> bool:
 
 
 def drift(current: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, bool]:
-
     return {feature: not matches(current, snapshot, feature) for feature in FEATURES}

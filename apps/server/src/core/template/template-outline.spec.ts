@@ -37,6 +37,24 @@ describe('buildOutline', () => {
     expect((outline[0] as any).text).toHaveLength(41);
   });
 
+  it('画布节点生成一行文字占位，避免缩略图缺一行', () => {
+    const outline = buildOutline({
+      type: 'doc',
+      content: [
+        { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: '画布' }] },
+        { type: 'excalidraw', attrs: { initialScene: { elements: [] } } },
+        { type: 'drawio', attrs: { src: '' } },
+        p('说明'),
+      ],
+    });
+    expect(outline).toEqual([
+      { kind: 'heading', level: 2, text: '画布' },
+      { kind: 'text', text: '' },
+      { kind: 'text', text: '' },
+      { kind: 'text', text: '说明' },
+    ]);
+  });
+
   it('空正文返回空数组', () => {
     expect(buildOutline(null)).toEqual([]);
   });

@@ -24,16 +24,14 @@ class CompileRemoteService:
         if task.get("stage") != "compile":
             return []
         run_ids = list(task.get("params", {}).get("remote_compile_run_ids") or [])
-        if not run_ids and task.get("target_kind") != "compile":
-            return []
         space_id = None
-        if not run_ids and task.get("target_kind") == "compile":
-            compile_run = compile_store.get_compile_run(
-                connection, int(task.get("target_id") or 0)
-            )
+        if not run_ids:
+            if task.get("target_kind") != "compile":
+                return []
+            compile_run = compile_store.get_compile_run(connection, int(task["target_id"] or 0))
             space_id = (compile_run or {}).get("space_id")
-        if not run_ids and not space_id:
-            return []
+            if not space_id:
+                return []
         return self.cancel_runs(
             connection,
             run_ids,

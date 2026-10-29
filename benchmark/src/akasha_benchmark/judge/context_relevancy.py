@@ -30,7 +30,6 @@ VERDICTS = ("useful", "useless")
 
 
 def build_context(response: dict[str, Any]) -> tuple[str, int]:
-
     parts: list[str] = []
     for snippet in (response.get("snippets") or [])[:MAX_SNIPPETS]:
         title = snippet.get("title") or ""
@@ -68,7 +67,6 @@ def parse_verdict(
 
 
 def build_prompt(question: str, response: dict[str, Any]) -> tuple[str, str, int] | None:
-
     if not question.strip():
         return None
     context, count = build_context(response)

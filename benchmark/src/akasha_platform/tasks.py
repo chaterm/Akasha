@@ -4,9 +4,9 @@ import threading
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
+from akasha_benchmark import model_configs
 from akasha_benchmark.akasha_client import AkashaClient, AkashaError
 from akasha_benchmark.config import load_config
-from akasha_benchmark import model_configs
 from akasha_benchmark.stages import STAGES, chain, clean_params
 from akasha_benchmark.store import connect, query_store, task_store
 from akasha_benchmark.task import Paused, TaskContext, execute
@@ -14,14 +14,14 @@ from akasha_benchmark.task import Paused, TaskContext, execute
 from .compile_control import CompileRemoteService
 from .settings import Settings
 
-
-EXCLUSIVE = frozenset({"download", "normalize"})
+EXCLUSIVE = frozenset({"download", "normalize", "embed", "generate"})
 
 STAGE_CONCURRENCY: dict[str, int] = {"compile": 16, "query": 16}
 UNLIMITED_CONCURRENCY = frozenset({"attribute"})
 TASK_MODEL_FEATURES: dict[str, tuple[str, ...]] = {
     "compile": ("compiler", "embedding", "image"),
-    "query": ("answer",),
+    "embed": ("embedding",),
+    "query": ("embedding", "answer"),
 }
 BEIJING = timezone(timedelta(hours=8), name="Asia/Shanghai")
 MAX_TIMER_DELAY_SECONDS = 24 * 60 * 60
@@ -40,7 +40,6 @@ class TaskRunner:
         self._compile_remote = CompileRemoteService()
 
     def recover(self) -> int:
-
         connection = connect(self.settings.db_path)
         try:
             active = task_store.active_tasks(connection)
@@ -85,7 +84,6 @@ class TaskRunner:
             connection.close()
 
     def start(self, stage: str, args: dict[str, Any]) -> dict[str, Any]:
-
         if stage not in STAGES:
             raise TaskRejected(f"未知阶段 {stage!r}；可用：{sorted(STAGES)}")
         try:
@@ -142,7 +140,6 @@ class TaskRunner:
         return record
 
     def start_chain(self, args: dict[str, Any]) -> dict[str, Any]:
-
         connection = connect(self.settings.db_path)
         try:
             try:
@@ -165,7 +162,6 @@ class TaskRunner:
         return record
 
     def retry_failed_query(self, query_id: int) -> dict[str, Any]:
-
         connection = connect(self.settings.db_path)
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -206,7 +202,6 @@ class TaskRunner:
         return record
 
     def resume(self, task_id: int) -> dict[str, Any]:
-
         connection = connect(self.settings.db_path)
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -233,7 +228,6 @@ class TaskRunner:
             connection.close()
 
     def pause(self, task_id: int) -> dict[str, Any]:
-
         connection = connect(self.settings.db_path)
         try:
             task = task_store.get_task(connection, task_id)
@@ -265,7 +259,6 @@ class TaskRunner:
             with self._lock:
                 event = self._pauses.get(task_id)
             if event is None:
-
                 task_store.transition(connection, task_id, task_store.PAUSED)
                 connection.commit()
             else:
@@ -283,7 +276,6 @@ class TaskRunner:
             connection.close()
 
     def cleanup(self, task_id: int | None) -> dict[str, int]:
-
         connection = connect(self.settings.db_path)
         try:
             try:
@@ -402,15 +394,7 @@ class TaskRunner:
     @staticmethod
     def _scheduled_at(task: dict[str, Any]) -> datetime | None:
         value = (task.get("params") or {}).get("schedule_at")
-        if not value:
-            return None
-        try:
-            parsed = datetime.fromisoformat(str(value))
-        except ValueError:
-            return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=BEIJING)
-        return parsed.astimezone(UTC)
+        return datetime.fromisoformat(value).astimezone(UTC) if value else None
 
     def _arm_schedule(self, task_id: int, scheduled_at: datetime | None) -> None:
         if scheduled_at is None:
@@ -528,7 +512,6 @@ class TaskRunner:
                 connection.close()
 
     def _verify(self, connection, task_id: int, stage: str) -> None:
-
         chain_id, _, verify = task_store.task_chain(connection, task_id)
         definition = STAGES.get(stage)
         check = definition.verify if definition else None
@@ -549,7 +532,6 @@ class TaskRunner:
         connection.commit()
 
     def _advance_chain(self, connection, task_id: int, stage: str) -> None:
-
         chain_id, remaining, verify = task_store.task_chain(connection, task_id)
         if chain_id is None or not remaining:
             return

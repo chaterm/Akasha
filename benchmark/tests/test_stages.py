@@ -1,12 +1,22 @@
 from __future__ import annotations
 
-import threading
+import json
 
 import pytest
+from conftest import make_compile_run
+from conftest import make_context as context
 
 from akasha_benchmark.datasets import DataDependency, get_adapter
+from akasha_benchmark.datasets.hotpotqa import HotpotQAAdapter
+from akasha_benchmark.judge.client import JudgeProvider, JudgeReply
 from akasha_benchmark.metrics import registry
-from akasha_benchmark.stages import attribute, clean_params, compile, evaluate, normalize
+from akasha_benchmark.stages import (
+    attribute,
+    clean_params,
+    compile,
+    evaluate,
+    normalize,
+)
 from akasha_benchmark.store import (
     attribution_store,
     compile_store,
@@ -14,27 +24,11 @@ from akasha_benchmark.store import (
     eval_store,
     query_store,
     run_store,
+    task_store,
 )
-from akasha_benchmark.task import TaskContext
-from conftest import make_compile_run
+from akasha_benchmark.task import execute
 
-
-def context(connection, params=None) -> TaskContext:
-    return TaskContext(
-        task_id=1,
-        stage="test",
-        params=params or {},
-        connection=connection,
-        pause_event=threading.Event(),
-    )
-
-
-def _task_row(connection) -> None:
-    connection.execute(
-        "INSERT INTO task (id, stage, status, params_json, created_at) "
-        "VALUES (1, 'test', 'running', '{}', 'now')"
-    )
-    connection.commit()
+PROVIDER = JudgeProvider("https://x", "m", "k")
 
 
 def test_normalize_writes_samples_and_corpus(normalized):
@@ -46,239 +40,144 @@ def test_normalize_writes_samples_and_corpus(normalized):
 
 def test_validate_catches_dangling_gold(normalized):
     assert normalize.validate_dataset(normalized, "hotpotqa") == []
-
     normalized.execute("DELETE FROM corpus_doc WHERE dataset='hotpotqa' AND doc_id='0'")
     normalized.commit()
-    problems = normalize.validate_dataset(normalized, "hotpotqa")
-    assert any("gold" in p for p in problems)
+    assert any("gold" in p for p in normalize.validate_dataset(normalized, "hotpotqa"))
 
 
 def test_normalize_rejects_duplicate_sample_ids(db, dataset_dir, monkeypatch):
-    import json
-
-    from akasha_benchmark.datasets.hotpotqa import HotpotQAAdapter
-
     monkeypatch.setattr(HotpotQAAdapter, "expected_qa_rows", lambda self: None)
-    rows = json.loads((dataset_dir / "hotpotqa.json").read_text(encoding="utf-8"))
-    rows.append(rows[0])
-    (dataset_dir / "hotpotqa.json").write_text(json.dumps(rows), encoding="utf-8")
-
+    path = dataset_dir / "hotpotqa.json"
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(json.dumps([*rows, rows[0]]), encoding="utf-8")
     with pytest.raises(ValueError, match="重复"):
         normalize.normalize_dataset(db, "hotpotqa", None, dataset_dir)
 
 
-def test_subset_covers_every_gold(normalized):
-    compile_id = compile_store.create_compile_run(
-        normalized, run_id="r", datasets=["hotpotqa"], seed=7, qa_limit=2, negatives_ratio=1.0
+def _subset(connection, run_id="r", seed=1, qa_limit=2, negatives_ratio=1.0, **options):
+    compile_id = make_compile_run(
+        connection, run_id, ["hotpotqa"], seed=seed, qa_limit=qa_limit, negatives_ratio=negatives_ratio
     )
-    normalized.commit()
     stats = compile.build_subset(
-        normalized, compile_id, "hotpotqa", seed=7, qa_limit=2, negatives_ratio=1.0
+        connection, compile_id, "hotpotqa", seed=seed, qa_limit=qa_limit, negatives_ratio=negatives_ratio, **options
     )
+    return compile_id, stats, compile_store.compile_docs(connection, compile_id)
 
-    docs = {d["doc_id"] for d in compile_store.compile_docs(normalized, compile_id)}
+
+def test_subset_covers_every_gold(normalized):
+    compile_id, stats, docs = _subset(normalized, seed=7)
+    doc_ids = {d["doc_id"] for d in docs}
+    gold = {d["doc_id"] for d in docs if d["is_gold"]}
     samples = compile_store.compile_samples(normalized, compile_id)
     assert stats["samples"] == len(samples) == 2
-    for sample in samples:
-        assert set(sample["gold_doc_ids"]) <= docs
-
-    gold = {d["doc_id"] for d in compile_store.compile_docs(normalized, compile_id) if d["is_gold"]}
+    assert all(set(sample["gold_doc_ids"]) <= doc_ids for sample in samples)
     assert stats["gold"] == len(gold)
-    assert stats["negatives"] == len(docs - gold)
+    assert stats["negatives"] == len(doc_ids - gold)
 
 
 def test_subset_is_seed_stable(normalized):
-    def docs_for(seed: int, run_id: str) -> set[str]:
-        compile_id = compile_store.create_compile_run(
-            normalized,
-            run_id=run_id,
-            datasets=["hotpotqa"],
-            seed=seed,
-            qa_limit=1,
-            negatives_ratio=1.0,
-        )
-        normalized.commit()
-        compile.build_subset(
-            normalized, compile_id, "hotpotqa", seed=seed, qa_limit=1, negatives_ratio=1.0
-        )
-        return {d["doc_id"] for d in compile_store.compile_docs(normalized, compile_id)}
+    def doc_ids(run_id):
+        return {d["doc_id"] for d in _subset(normalized, run_id, seed=7, qa_limit=1)[2]}
 
-    assert docs_for(7, "a") == docs_for(7, "b")
+    assert doc_ids("a") == doc_ids("b")
 
 
 def test_subset_negatives_ratio_zero_keeps_only_gold(normalized):
-    compile_id = make_compile_run(normalized, datasets=["hotpotqa"], negatives_ratio=0.0)
-    normalized.commit()
-    stats = compile.build_subset(
-        normalized, compile_id, "hotpotqa", seed=1, qa_limit=2, negatives_ratio=0.0
-    )
+    _, stats, docs = _subset(normalized, negatives_ratio=0.0)
     assert stats["negatives"] == 0
-    assert all(d["is_gold"] for d in compile_store.compile_docs(normalized, compile_id))
+    assert all(d["is_gold"] for d in docs)
 
 
 def test_subset_can_select_one_exact_sample(normalized):
-    compile_id = make_compile_run(normalized, "exact", ["hotpotqa"], qa_limit=1)
     target = data_store.samples_of(normalized, "hotpotqa")[1]
-
-    stats = compile.build_subset(
-        normalized,
-        compile_id,
-        "hotpotqa",
-        seed=1,
-        qa_limit=1,
-        negatives_ratio=1.0,
-        sample_ids=[target["sample_id"]],
-    )
-
+    compile_id, stats, docs = _subset(normalized, qa_limit=1, sample_ids=[target["sample_id"]])
     assert stats["samples"] == 1
-    assert [row["sample_id"] for row in compile_store.compile_samples(normalized, compile_id)] == [
-        target["sample_id"]
-    ]
-    docs = {row["doc_id"] for row in compile_store.compile_docs(normalized, compile_id)}
-    assert set(target["gold_doc_ids"]) <= docs
+    samples = compile_store.compile_samples(normalized, compile_id)
+    assert [row["sample_id"] for row in samples] == [target["sample_id"]]
+    assert set(target["gold_doc_ids"]) <= {row["doc_id"] for row in docs}
 
 
 def test_full_corpus_keeps_every_document(normalized):
-    compile_id = make_compile_run(normalized, datasets=["hotpotqa"], qa_limit=1)
-    normalized.commit()
-    stats = compile.build_subset(
-        normalized,
-        compile_id,
-        "hotpotqa",
-        seed=1,
-        qa_limit=1,
-        negatives_ratio=1.0,
-        full_corpus=True,
-    )
-
-    docs = compile_store.compile_docs(normalized, compile_id)
+    _, stats, docs = _subset(normalized, qa_limit=1, full_corpus=True)
     assert {doc["doc_id"] for doc in docs} == {"0", "1", "2", "3"}
     assert all(doc["title"] for doc in docs)
     assert stats["docs"] == 4
     assert stats["gold"] + stats["negatives"] == 4
 
 
-def test_markdown_uses_heading_for_title(normalized):
-    markdown = compile.markdown_of(normalized, "hotpotqa", "0")
-    assert markdown.startswith("# Rita Moreno")
-
-
-def test_unsafe_doc_id_is_rejected():
+def test_markdown_and_doc_id_rules(normalized):
+    assert compile.markdown_of(normalized, "hotpotqa", "0").startswith("# Rita Moreno")
     with pytest.raises(ValueError):
         compile._safe_doc_id("../escape")
-
-
-def test_image_only_document_has_no_indexable_text():
     assert not compile._has_indexable_text("# 标题\n\n![image](files/example.png)")
     assert compile._has_indexable_text("# 标题\n\n这里有可检索的正文。")
 
 
 def _fixture_chain(connection, response: dict) -> tuple[int, int, int]:
-    compile_id = make_compile_run(connection, datasets=["hotpotqa"])
-    connection.commit()
-    compile.build_subset(
-        connection, compile_id, "hotpotqa", seed=1, qa_limit=2, negatives_ratio=1.0
-    )
-    for doc in compile_store.compile_docs(connection, compile_id):
+    compile_id, _, docs = _subset(connection)
+    for doc in docs:
         compile_store.record_page(
-            connection,
-            compile_id,
-            doc["dataset"],
-            doc["doc_id"],
-            page_id=f"p{doc['doc_id']}",
-            error=None,
+            connection, compile_id, doc["dataset"], doc["doc_id"], page_id=f"p{doc['doc_id']}", error=None
         )
-    compile_store.update_compile_run(
-        connection, compile_id, space_id="s", status=run_store.STATUS_SUCCEEDED
-    )
+    compile_store.update_compile_run(connection, compile_id, space_id="s", status=run_store.STATUS_SUCCEEDED)
     query_id = query_store.create_query_run(
-        connection,
-        name="q",
-        compile_id=compile_id,
-        concurrency=1,
-        model_configs={},
+        connection, name="q", compile_id=compile_id, concurrency=1, model_configs={}
     )
-    samples = compile_store.compile_samples(connection, compile_id)
-    for sample in samples:
+    for sample in compile_store.compile_samples(connection, compile_id):
+        retrieved = (
+            [{"sourcePageId": f"p{doc}"} for doc in sample["gold_doc_ids"]]
+            if response.get("answerMode") == "knowledge"
+            else []
+        )
         query_store.record_response(
-            connection,
-            query_id,
-            sample_id=sample["sample_id"],
-            dataset="hotpotqa",
-            question=sample["question"],
-            http_status=200,
-            latency_ms=100,
-            error=None,
-            response={
-                **response,
-                "retrievedSources": [{"sourcePageId": f"p{doc}"} for doc in sample["gold_doc_ids"]]
-                if response.get("answerMode") == "knowledge"
-                else [],
-            },
+            connection, query_id, sample_id=sample["sample_id"], dataset="hotpotqa",
+            question=sample["question"], http_status=200, latency_ms=100, error=None,
+            response={**response, "retrievedSources": retrieved},
         )
     run_store.set_run_status(connection, "query", query_id, run_store.STATUS_SUCCEEDED)
     eval_id = eval_store.create_eval_run(
-        connection,
-        name="e",
-        query_id=query_id,
-        ks=[2],
-        metrics=["recall", "hit", "em", "f1"],
-        judge_provider_id=None,
+        connection, name="e", query_id=query_id, ks=[2], metrics=["recall", "hit", "em", "f1"], judge_provider_id=None
     )
     connection.commit()
     return compile_id, query_id, eval_id
 
 
-def test_evaluate_scores_perfect_retrieval(normalized):
-    compile_id, query_id, eval_id = _fixture_chain(
-        normalized, {"answerMode": "knowledge", "answer": "Rita Moreno", "citations": []}
-    )
+def _evaluate(connection, response, metrics=("recall", "hit", "em", "f1")):
+    compile_id, query_id, eval_id = _fixture_chain(connection, response)
     summary = evaluate.evaluate_dataset(
-        normalized, eval_id, query_id, compile_id, "hotpotqa", (2,),
-        frozenset({"recall", "hit", "em", "f1"}),
+        connection, eval_id, query_id, compile_id, "hotpotqa", (2,), frozenset(metrics)
     )
-    assert summary["responses_evaluated"] == 2
-    assert summary["http_failures"] == 0
+    return summary, compile_id, query_id, eval_id
+
+
+KNOWLEDGE = {"answerMode": "knowledge", "answer": "Rita Moreno", "citations": []}
+
+
+def test_evaluate_scores_perfect_retrieval(normalized):
+    summary, *_ = _evaluate(normalized, KNOWLEDGE)
+    assert (summary["responses_evaluated"], summary["http_failures"]) == (2, 0)
     assert summary["overall"]["recall@2"] == pytest.approx(1.0)
     assert summary["overall"]["hit@2"] == pytest.approx(1.0)
 
 
 def test_evaluate_separates_fallback_from_retrieval_failure(normalized):
-    compile_id, query_id, eval_id = _fixture_chain(
-        normalized, {"answerMode": "no_match", "answer": "", "citations": []}
-    )
-    evaluate.evaluate_dataset(
-        normalized, eval_id, query_id, compile_id, "hotpotqa", (2,), frozenset({"recall"})
-    )
-    summaries = {
-        (row["scope"], row["metric"]): row
-        for row in eval_store.metric_summaries(normalized, eval_id)
-    }
+    *_, eval_id = _evaluate(normalized, {"answerMode": "no_match", "answer": "", "citations": []}, ["recall"])
+    summaries = {(row["scope"], row["metric"]): row for row in eval_store.metric_summaries(normalized, eval_id)}
     assert summaries[("overall", "recall@2")]["value"] == pytest.approx(0.0)
-
     assert ("knowledge_only", "recall@2") not in summaries
     modes = eval_store.dataset_evals(normalized, eval_id)[0]["answer_modes"]
     assert modes == {"no_match": pytest.approx(1.0)}
 
 
 def test_evaluate_filters_to_selected_metrics(normalized):
-    compile_id, query_id, eval_id = _fixture_chain(
-        normalized, {"answerMode": "knowledge", "answer": "Rita Moreno", "citations": []}
-    )
-    evaluate.evaluate_dataset(
-        normalized, eval_id, query_id, compile_id, "hotpotqa", (2,), frozenset({"em"})
-    )
+    *_, eval_id = _evaluate(normalized, KNOWLEDGE, ["em"])
     sample = eval_store.sample_evals(normalized, eval_id)[0]
-    metrics = eval_store.sample_metrics_of(normalized, eval_id, sample["sample_id"])
-    assert set(metrics) == {"em"}
-
+    assert set(eval_store.sample_metrics_of(normalized, eval_id, sample["sample_id"])) == {"em"}
     assert "retrieval" in sample["detail"]
 
 
 def test_evaluate_rejects_rebuilt_subset(normalized):
-    compile_id, query_id, eval_id = _fixture_chain(
-        normalized, {"answerMode": "knowledge", "answer": "x", "citations": []}
-    )
+    compile_id, query_id, eval_id = _fixture_chain(normalized, {**KNOWLEDGE, "answer": "x"})
     normalized.execute("UPDATE sample SET question = 'changed' WHERE sample_id LIKE 'hotpotqa%'")
     normalized.commit()
     with pytest.raises(ValueError, match="重建"):
@@ -288,35 +187,21 @@ def test_evaluate_rejects_rebuilt_subset(normalized):
 
 
 def test_attribution_processes_all_eval_samples_without_metric_selection(normalized):
-    compile_id, _, eval_id = _fixture_chain(
-        normalized, {"answerMode": "knowledge", "answer": "Rita Moreno"}
-    )
+    compile_id, _, eval_id = _fixture_chain(normalized, {"answerMode": "knowledge", "answer": "Rita Moreno"})
     samples = compile_store.compile_samples(normalized, compile_id)
     for sample in samples:
         eval_store.record_sample_eval(
-            normalized,
-            eval_id,
-            sample_id=sample["sample_id"],
-            dataset=sample["dataset"],
-            answer_mode="knowledge",
-            http_status=200,
-            answer="Rita Moreno",
-            detail={"question": sample["question"], "gold_doc_ids": sample["gold_doc_ids"]},
+            normalized, eval_id, sample_id=sample["sample_id"], dataset=sample["dataset"],
+            answer_mode="knowledge", http_status=200, answer="Rita Moreno",
+            detail={
+                "metadata": sample["metadata"],
+                "question": sample["question"],
+                "gold_doc_ids": sample["gold_doc_ids"],
+            },
             metrics={},
         )
-    normalized.commit()
-    _task_row(normalized)
-    attribute.run(
-        context(
-            normalized,
-            {
-                "eval_id": eval_id,
-                "metric": "missing_metric",
-                "sample_limit": 1,
-                "use_model": False,
-            },
-        )
-    )
+    params = {"eval_id": eval_id, "metric": "missing_metric", "sample_limit": 1, "use_model": False}
+    attribute.run(context(normalized, params))
 
     run = attribution_store.list_attribution_runs(normalized, eval_id)[0]
     assert "metric" not in run
@@ -325,53 +210,31 @@ def test_attribution_processes_all_eval_samples_without_metric_selection(normali
 
 
 def test_attribution_model_writes_one_overall_report(normalized, monkeypatch):
-    from akasha_benchmark.judge.client import JudgeReply
-
-    compile_id, query_id, eval_id = _fixture_chain(
-        normalized, {"answerMode": "general", "answer": "A general answer", "citations": []}
-    )
-    evaluate.evaluate_dataset(
-        normalized, eval_id, query_id, compile_id, "hotpotqa", (2,),
-        frozenset({"recall", "hit", "em", "f1"}),
-    )
-    _task_row(normalized)
-    provider = type("Provider", (), {"provider_id": None})()
-    monkeypatch.setattr(attribute, "resolve_provider", lambda *args: provider)
+    *_, eval_id = _evaluate(normalized, {"answerMode": "general", "answer": "A general answer", "citations": []})
+    monkeypatch.setattr(attribute, "resolve_provider", lambda *args: type("Provider", (), {"provider_id": None})())
     calls: list[list[tuple[str, str]]] = []
 
     def fake_complete_many(_provider, prompts, concurrency, *, max_tokens):
         calls.append(prompts)
-        assert concurrency == 1
-        assert max_tokens == 4096
+        assert (concurrency, max_tokens) == (1, 4096)
         user_prompt = prompts[0][1]
-        assert "rule_root_cause_counts" not in user_prompt
-        assert "representative_rule_evidence" not in user_prompt
-        assert "root_cause" not in user_prompt
-        assert "sample_id" not in user_prompt
+        for hidden in ("rule_root_cause_counts", "representative_rule_evidence", "root_cause", "sample_id"):
+            assert hidden not in user_prompt
         assert '"general_answer_examples":[' in user_prompt
-        assert '"answer":"A general answer"' in user_prompt
         assert user_prompt.count('"answer":"A general answer"') == 2
-        return [
-            JudgeReply(
-                content='{"report":"整体表现\\n潜在原因\\n验证建议"}',
-                failure_kind=None,
-                raw=None,
-                status=200,
-                latency_ms=123,
-            )
-        ]
+        assert "metric_summaries" in user_prompt
+        content = '{"report":"整体表现\\n潜在原因\\n验证建议"}'
+        return [JudgeReply(content=content, failure_kind=None, raw=None, status=200, latency_ms=123)]
 
     monkeypatch.setattr(attribute, "complete_many", fake_complete_many)
     attribute.run(context(normalized, {"eval_id": eval_id, "use_model": True}))
 
     run = attribution_store.list_attribution_runs(normalized, eval_id)[0]
-    results = attribution_store.attribution_results(normalized, int(run["id"]))
-    assert len(calls) == 1
-    assert len(calls[0]) == 1
-    assert "metric_summaries" in calls[0][0][1]
+    assert [len(prompts) for prompts in calls] == [1]
     assert run["report"] == "整体表现\n潜在原因\n验证建议"
     assert run["report_error"] is None
     assert run["report_latency_ms"] == 123
+    results = attribution_store.attribution_results(normalized, int(run["id"]))
     assert all(set(row) >= {"root_cause", "evidence"} for row in results)
 
 
@@ -394,184 +257,97 @@ def test_resolve_metrics_rejects_unknown():
     [
         ("query", {"compile_id": "3", "retry_failed": True, "evil": "x"}, {"compile_id": 3, "retry_failed": True}),
         ("attribute", {"eval_id": 3, "metric": "em", "sample_limit": 1}, {"eval_id": 3}),
+        ("evaluate", {"ks": ["2", "5"]}, {"ks": [2, 5]}),
+        ("evaluate", {"concurrency": "4"}, {"concurrency": 4}),
     ],
 )
-def test_clean_params_drops_undeclared_keys(stage, payload, expected):
+def test_clean_params_coerces_and_drops_undeclared_keys(stage, payload, expected):
     assert clean_params(stage, payload) == expected
 
 
-def test_clean_params_rejects_wrong_types():
-    with pytest.raises(ValueError):
-        clean_params("query", {"compile_id": "not-a-number"})
-    with pytest.raises(ValueError):
-        clean_params("normalize", {"datasets": "hotpotqa"})
-    with pytest.raises(ValueError):
-        clean_params("bogus-stage", {})
-
-
 @pytest.mark.parametrize(
-    "payload,expected",
-    [({"ks": ["2", "5"]}, {"ks": [2, 5]}), ({"concurrency": "4"}, {"concurrency": 4})],
+    "stage,payload",
+    [("query", {"compile_id": "not-a-number"}), ("normalize", {"datasets": "hotpotqa"}), ("bogus-stage", {})],
 )
-def test_clean_params_coerces_evaluate_values(payload, expected):
-    assert clean_params("evaluate", payload) == expected
+def test_clean_params_rejects_wrong_types(stage, payload):
+    with pytest.raises(ValueError):
+        clean_params(stage, payload)
 
 
 def test_evaluate_resume_restores_judge_scores_and_summary(normalized, monkeypatch):
-    from akasha_benchmark.judge.client import JudgeProvider
-    from akasha_benchmark.store import task_store
-    from akasha_benchmark.task import execute
-
-    compile_id, query_id, eval_id = _fixture_chain(
-        normalized, {"answerMode": "knowledge", "answer": "a"}
-    )
+    compile_id, query_id, eval_id = _fixture_chain(normalized, {"answerMode": "knowledge", "answer": "a"})
     for sample in compile_store.compile_samples(normalized, compile_id):
         eval_store.record_judge_verdict(
-            normalized,
-            eval_id,
-            sample_id=sample["sample_id"],
-            metric="faithfulness",
-            score=0.5,
-            failure_kind=None,
-            detail=None,
+            normalized, eval_id, sample_id=sample["sample_id"], metric="faithfulness",
+            score=0.5, failure_kind=None, detail=None,
         )
     params = {"query_id": query_id, "name": "e", "metrics": ["em", "faithfulness"], "ks": [2]}
     task_id = task_store.create_task(normalized, stage="evaluate", params=params)
     task_store.set_task_target(normalized, task_id, "eval", eval_id)
-    normalized.commit()
-    monkeypatch.setattr(
-        evaluate, "resolve_provider", lambda *args: JudgeProvider("https://x", "m", "k")
-    )
+    monkeypatch.setattr(evaluate, "resolve_provider", lambda *args: PROVIDER)
 
     def no_calls(*args, **kwargs):
         pytest.fail("续跑不应重复调用已完成的 Judge")
 
     monkeypatch.setattr(evaluate, "complete_many", no_calls)
-    ctx = TaskContext(
-        task_id=task_id,
-        stage="evaluate",
-        params=params,
-        connection=normalized,
-        pause_event=threading.Event(),
-    )
-    execute(evaluate.run, ctx)
+    execute(evaluate.run, context(normalized, params, task_id=task_id))
+
     for sample in eval_store.sample_evals(normalized, eval_id):
-        assert (
-            eval_store.sample_metrics_of(normalized, eval_id, sample["sample_id"])["faithfulness"]
-            == 0.5
-        )
-    summaries = [
-        r for r in eval_store.metric_summaries(normalized, eval_id) if r["scope"] == "judge"
-    ]
-    assert len(summaries) == 1
-    assert summaries[0]["value"] == 0.5
-    assert summaries[0]["sample_count"] == 2
+        metrics = eval_store.sample_metrics_of(normalized, eval_id, sample["sample_id"])
+        assert metrics["faithfulness"] == 0.5
+    summaries = [r for r in eval_store.metric_summaries(normalized, eval_id) if r["scope"] == "judge"]
+    assert [(r["value"], r["sample_count"]) for r in summaries] == [(0.5, 2)]
 
 
 def test_judge_runs_all_metrics_for_each_sample_before_next(normalized, monkeypatch):
-    from akasha_benchmark.judge.client import JudgeProvider, JudgeReply
-    from akasha_benchmark.store import task_store
-
-    compile_id, query_id, eval_id = _fixture_chain(
-        normalized, {"answerMode": "knowledge", "answer": "a"}
-    )
-    evaluate.evaluate_dataset(
-        normalized, eval_id, query_id, compile_id, "hotpotqa", (2,), frozenset({"em"})
-    )
-    task_id = task_store.create_task(normalized, stage="evaluate", params={})
-    normalized.commit()
-    ctx = TaskContext(
-        task_id=task_id,
-        stage="evaluate",
-        params={},
-        connection=normalized,
-        pause_event=threading.Event(),
-    )
+    *_, query_id, eval_id = _evaluate(normalized, {"answerMode": "knowledge", "answer": "a"}, ["em"])
+    ctx = context(normalized)
     calls: list[list[tuple[str, str]]] = []
-
-    def fake_task(metric, question, answer, reference, body):
-        return ((metric, question), lambda payload: (1.0, {}))
-
-    def fake_answer_relevancy(connection, question, answer, model_snapshot):
-        return (("answer_relevancy", question), lambda payload: (1.0, {}))
 
     def fake_complete_many(provider, prompts, concurrency):
         calls.append(list(prompts))
-        return [
-            JudgeReply(content="{}", failure_kind=None, raw="SECRET_RAW", status=200)
-            for _ in prompts
-        ]
+        return [JudgeReply(content="{}", failure_kind=None, raw="SECRET_RAW", status=200) for _ in prompts]
 
-    monkeypatch.setattr(evaluate, "_judge_task", fake_task)
-    monkeypatch.setattr(evaluate, "_answer_relevancy_task", fake_answer_relevancy)
-    monkeypatch.setattr(evaluate, "complete_many", fake_complete_many)
-    provider = JudgeProvider("https://x", "m", "k")
-
-    evaluate._judge(
-        ctx,
-        eval_id,
-        query_id,
-        provider,
-        ["faithfulness", "answer_relevancy"],
-        4,
+    monkeypatch.setattr(
+        evaluate, "_judge_task", lambda metric, question, *_: ((metric, question), lambda payload: (1.0, {}))
     )
+    monkeypatch.setattr(
+        evaluate,
+        "_answer_relevancy_task",
+        lambda connection, question, *_: (("answer_relevancy", question), lambda payload: (1.0, {})),
+    )
+    monkeypatch.setattr(evaluate, "complete_many", fake_complete_many)
 
-    rows = eval_store.sample_evals(normalized, eval_id)
-    assert calls == [
-        [("faithfulness", rows[0]["detail"]["question"]), ("answer_relevancy", rows[0]["detail"]["question"])],
-        [("faithfulness", rows[1]["detail"]["question"]), ("answer_relevancy", rows[1]["detail"]["question"])],
-    ]
-    task = task_store.get_task(normalized, task_id)
+    evaluate._judge(ctx, eval_id, query_id, PROVIDER, ["faithfulness", "answer_relevancy"], 4)
+
+    questions = [row["detail"]["question"] for row in eval_store.sample_evals(normalized, eval_id)]
+    assert calls == [[("faithfulness", q), ("answer_relevancy", q)] for q in questions]
+    task = task_store.get_task(normalized, ctx.task_id)
     assert (task["progress_done"], task["progress_total"]) == (2, 2)
-    assert all("SECRET_RAW" not in entry["message"] for entry in task_store.task_logs(normalized, task_id))
+    logs = task_store.task_logs(normalized, ctx.task_id)
+    assert all("SECRET_RAW" not in entry["message"] for entry in logs)
 
 
 def test_judge_resume_retries_failed_verdicts(normalized, monkeypatch):
-    from akasha_benchmark.judge.client import JudgeProvider, JudgeReply
-    from akasha_benchmark.store import task_store
-
-    compile_id, query_id, eval_id = _fixture_chain(
-        normalized, {"answerMode": "knowledge", "answer": "a"}
-    )
-    evaluate.evaluate_dataset(
-        normalized, eval_id, query_id, compile_id, "hotpotqa", (2,), frozenset({"em"})
-    )
+    *_, query_id, eval_id = _evaluate(normalized, {"answerMode": "knowledge", "answer": "a"}, ["em"])
     rows = eval_store.sample_evals(normalized, eval_id)
     for row in rows:
         eval_store.record_judge_verdict(
-            normalized,
-            eval_id,
-            sample_id=row["sample_id"],
-            metric="answer_relevancy",
-            score=None,
-            failure_kind="parse_error",
-            detail={"error": "invalid json"},
+            normalized, eval_id, sample_id=row["sample_id"], metric="answer_relevancy",
+            score=None, failure_kind="parse_error", detail={"error": "invalid json"},
         )
-    task_id = task_store.create_task(normalized, stage="evaluate", params={})
-    normalized.commit()
-    ctx = TaskContext(
-        task_id=task_id, stage="evaluate", params={}, connection=normalized, pause_event=threading.Event()
-    )
-    calls = 0
-
-    def fake_answer_relevancy(connection, question, answer, model_snapshot):
-        return (("system", "user"), lambda payload: (1.0, {}))
+    prompts_sent: list[int] = []
 
     def fake_complete_many(provider, prompts, concurrency):
-        nonlocal calls
-        calls += len(prompts)
+        prompts_sent.append(len(prompts))
         return [JudgeReply("{}", None, "{}", 200) for _ in prompts]
 
-    monkeypatch.setattr(evaluate, "_answer_relevancy_task", fake_answer_relevancy)
+    monkeypatch.setattr(
+        evaluate, "_answer_relevancy_task", lambda *_: (("system", "user"), lambda payload: (1.0, {}))
+    )
     monkeypatch.setattr(evaluate, "complete_many", fake_complete_many)
-    evaluate._judge(
-        ctx, eval_id, query_id, JudgeProvider("https://x", "m", "k"),
-        ["answer_relevancy"], 1
-    )
+    evaluate._judge(context(normalized), eval_id, query_id, PROVIDER, ["answer_relevancy"], 1)
 
-    assert calls == len(rows)
-    assert all(
-        verdict["failure_kind"] is None
-        for verdict in eval_store.judge_verdicts(normalized, eval_id)
-        if verdict["metric"] == "answer_relevancy"
-    )
+    assert sum(prompts_sent) == len(rows)
+    verdicts = eval_store.judge_verdicts(normalized, eval_id)
+    assert all(v["failure_kind"] is None for v in verdicts if v["metric"] == "answer_relevancy")

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import queue
 import sqlite3
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import Any
@@ -9,10 +7,16 @@ from typing import Any
 import httpx
 
 from .. import naming
-from ..akasha_client import AkashaClient, AkashaError
+from ..akasha_client import AkashaClient, AkashaError, client_pool
 from ..config import load_config
-from ..lineage import LineageReader, LineageUnavailable
-from ..model_configs import drift, matches
+from ..lineage import (
+    BadPageId,
+    LineageReader,
+    LineageUnavailable,
+    active_coverage,
+    query_hash,
+)
+from ..model_configs import drift, feature_of, matches
 from ..store import compile_store, loads, query_store
 from ..task import TaskContext
 
@@ -41,13 +45,11 @@ def _query_one(
 
 
 def _collect_timings(ctx: TaskContext, query_id: int, since: str | None) -> None:
-    """从 PG 审计表回填各阶段耗时；缺 database_url 时跳过。"""
     rows = query_store.responses_of(ctx.db, query_id)
     questions = [str(row.get("question") or "") for row in rows]
     samples_by_hash: dict[str, list[str]] = {}
     for row, question in zip(rows, questions, strict=True):
-        digest = "sha256:" + hashlib.sha256(question.encode("utf-8")).hexdigest()
-        samples_by_hash.setdefault(digest, []).append(row["sample_id"])
+        samples_by_hash.setdefault(query_hash(question), []).append(row["sample_id"])
 
     try:
         reader = LineageReader(load_config(ctx.db).database_url)
@@ -69,6 +71,41 @@ def _collect_timings(ctx: TaskContext, query_id: int, since: str | None) -> None
         ctx.log(f"已回填 {updated} / {len(rows)} 条阶段耗时")
     else:
         ctx.log("审计表没有可用的阶段耗时（远端可能未开启 timings）", "warn")
+
+
+def _require_rebuilt_embeddings(
+    ctx: TaskContext, compile_run: dict[str, Any], current: dict[str, Any]
+) -> None:
+    target = str((feature_of(current, "embedding") or {}).get("model") or "")
+    space_id = compile_run["space_id"]
+    try:
+        reader = LineageReader(load_config(ctx.db).database_url)
+        report = reader.space_embedding_generations(str(space_id))
+    except (LineageUnavailable, BadPageId) as exc:
+        raise RuntimeError(
+            f"远端 embedding 配置与编译时不同，无法用 PostgreSQL 确认是否已重建：{exc}。"
+            "请先在查询页点「重建嵌入」，并填好 database_url 以便确认重建结果；"
+            "或重新编译"
+        ) from exc
+
+    coverage = active_coverage(report["generations"], target)
+    if coverage["ready"]:
+        ctx.log(
+            f"embedding 已整体重建为 {target}（{coverage['total']} 个 chunk），"
+            "语料仍是原 compiler 编译的产物",
+            "warn",
+        )
+        return
+    if coverage["matched"]:
+        raise RuntimeError(
+            f"嵌入重建未完成：已重建 {coverage['matched']} / 共 {coverage['total']} 个 chunk，"
+            "新旧向量混在一起，检索结果不可用。请等重建任务跑完"
+        )
+    raise RuntimeError(
+        f"远端 embedding 配置是 {target}，但空间里的 chunk 还是 "
+        f"{', '.join(coverage['models']) or '（无）'}。"
+        "dense 检索按 embedding profile 过滤，会一条都召回不到。请先在查询页点「重建嵌入」"
+    )
 
 
 def _select_samples(
@@ -127,7 +164,7 @@ def run(ctx: TaskContext) -> None:
         snapshot = loads(compile_run["model_configs_json"])
         changed = drift(current, snapshot)
         if changed["embedding"]:
-            raise RuntimeError("远端 embedding 配置与编译时不同，必须重新编译")
+            _require_rebuilt_embeddings(ctx, compile_run, current)
         if resuming:
             existing_query = query_store.get_query_run(ctx.db, query_id) or {}
             query_snapshot = loads(existing_query.get("model_configs_json"))
@@ -140,8 +177,8 @@ def run(ctx: TaskContext) -> None:
                 raise RuntimeError(
                     "远端模型配置已变化，不能继续原查询：" + ", ".join(resume_changed)
                 )
-        for feature in ("compiler", "embedding", "answer", "image"):
-            if changed[feature] and feature != "embedding":
+        for feature in ("compiler", "answer", "image"):
+            if changed[feature]:
                 ctx.log(
                     f"{feature} 配置与编译时不同；允许查询，两次运行不可完全对比",
                     "warn",
@@ -153,7 +190,7 @@ def run(ctx: TaskContext) -> None:
                 ctx.db,
                 str(compile_run["run_id"]),
                 "q",
-                naming.model_slug(ctx.db, current, "answer"),
+                naming.query_slug(ctx.db, current),
             )
         )
         ctx.freeze(
@@ -260,30 +297,15 @@ def _issue(
             emit(_query_one(client, sample, space_id))
         return
 
-    extra = [AkashaClient(client.config) for _ in range(concurrency - 1)]
-    try:
-        for spare in extra:
-            spare.login()
-        pool: queue.Queue[AkashaClient] = queue.Queue()
-        for worker in (client, *extra):
-            pool.put(worker)
-
-        def task(sample: dict[str, Any]) -> dict[str, Any]:
-            borrowed = pool.get()
-            try:
-                return _query_one(borrowed, sample, space_id)
-            finally:
-                pool.put(borrowed)
-
+    with client_pool(client, concurrency, AkashaClient) as call:
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
-
             pending: set[Future[dict[str, Any]]] = set()
             cursor = 0
 
             def fill_window() -> None:
                 nonlocal cursor
                 while cursor < len(todo) and len(pending) < concurrency:
-                    pending.add(executor.submit(task, todo[cursor]))
+                    pending.add(executor.submit(call, _query_one, todo[cursor], space_id))
                     cursor += 1
 
             fill_window()
@@ -293,6 +315,3 @@ def _issue(
                     emit(future.result())
                 ctx.checkpoint()
                 fill_window()
-    finally:
-        for spare in extra:
-            spare.close()

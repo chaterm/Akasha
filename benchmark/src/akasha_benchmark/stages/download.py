@@ -9,8 +9,13 @@ from pathlib import Path
 from huggingface_hub import HfApi, hf_hub_download
 from huggingface_hub.utils import HfHubHTTPError
 
-from ..datasets import DATASET_NAMES, all_adapters
-from ..datasets.resolver import DEFAULT_DATASET_DIR
+from ..datasets import (
+    DATASET_NAMES,
+    all_adapters,
+    dataset_dir,
+    dataset_names,
+    get_adapter,
+)
 from ..task import TaskContext
 
 REPO_ID = "osunlp/HippoRAG_2"
@@ -31,7 +36,6 @@ _ROW_CACHE: dict[tuple[str, int, int], tuple[int | None, str | None]] = {}
 
 
 def _count_rows(path: Path, stat: os.stat_result) -> tuple[int | None, str | None]:
-
     key = (str(path), stat.st_mtime_ns, stat.st_size)
     if key not in _ROW_CACHE:
         try:
@@ -44,9 +48,8 @@ def _count_rows(path: Path, stat: os.stat_result) -> tuple[int | None, str | Non
     return _ROW_CACHE[key]
 
 
-def file_status(dataset_dir: Path | None = None) -> list[dict[str, object]]:
-
-    root = dataset_dir or DEFAULT_DATASET_DIR
+def file_status() -> list[dict[str, object]]:
+    root = dataset_dir()
     entries: list[dict[str, object]] = []
     for adapter in all_adapters():
         for kind, name in (("qa", adapter.qa_filename), ("corpus", adapter.corpus_filename)):
@@ -99,27 +102,24 @@ def _fetch(local: str, endpoint: str, expected: int | None, dest: Path) -> str:
                 endpoint=endpoint,
                 cache_dir=dest / ".hf_cache",
             )
+            break
         except (HfHubHTTPError, OSError):
             if attempt == MAX_ATTEMPTS:
                 raise
             time.sleep(2**attempt)
-            continue
-
-        shutil.copyfile(cached, target)
-        return "downloaded"
-    raise RuntimeError(f"unreachable: {remote}")
+    shutil.copyfile(cached, target)
+    return "downloaded"
 
 
 def run(ctx: TaskContext) -> None:
-
     selected = list(ctx.params.get("datasets") or DATASET_NAMES)
-    unknown = sorted(set(selected) - set(DATASET_NAMES))
+    unknown = sorted(set(selected) - set(dataset_names()))
     if unknown:
         raise ValueError(f"未知数据集：{unknown}")
 
-    dest = DEFAULT_DATASET_DIR
+    dest = dataset_dir()
     dest.mkdir(parents=True, exist_ok=True)
-    chosen = [a for a in all_adapters() if a.name in selected]
+    chosen = [get_adapter(name) for name in selected]
     wanted = [n for a in chosen for n in (a.qa_filename, a.corpus_filename)]
     remote = [
         n for a in chosen if a.downloadable for n in (a.qa_filename, a.corpus_filename)
@@ -137,9 +137,7 @@ def run(ctx: TaskContext) -> None:
             outcome = _fetch(local, endpoint, sizes.get(REMOTE_NAMES.get(local, local)), dest)
             ctx.log(f"{local}: {'已存在，跳过' if outcome == 'skipped' else '下载完成'}")
 
-        cache = dest / ".hf_cache"
-        if cache.exists():
-            shutil.rmtree(cache, ignore_errors=True)
+        shutil.rmtree(dest / ".hf_cache", ignore_errors=True)
 
     ctx.progress(len(remote), len(remote) + 1, "校验原始文件")
     broken = [

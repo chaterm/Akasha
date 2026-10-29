@@ -19,21 +19,17 @@ RUN_TABLES = {
 }
 
 
+RUN_PARENTS: dict[str, tuple[str, str]] = {
+    "query": ("compile", "compile_id"),
+    "eval": ("query", "query_id"),
+    "attribution": ("eval", "eval_id"),
+}
+
+STAGE_RUNS = {"compile": "compile", "query": "query", "evaluate": "eval", "attribute": "attribution"}
+
+
 def stage_input(stage: str) -> tuple[str, str] | None:
-    from ..stages import STAGES
-
-    definition = STAGES.get(stage)
-    return definition.input if definition else None
-
-
-def _run_parents() -> dict[str, tuple[str, str]]:
-    from ..stages import STAGES
-
-    return {
-        definition.run_kind: definition.input
-        for definition in STAGES.values()
-        if definition.run_kind and definition.input
-    }
+    return RUN_PARENTS.get(STAGE_RUNS.get(stage, ""))
 
 
 def get_run(connection: sqlite3.Connection, kind: str, target_id: int) -> dict[str, Any] | None:
@@ -55,12 +51,11 @@ def set_run_status(connection: sqlite3.Connection, kind: str, target_id: int, st
 
 
 def descendants(connection: sqlite3.Connection, kind: str, target_id: int) -> set[tuple[str, int]]:
-
     found = {(kind, target_id)}
     pending = [(kind, target_id)]
     while pending:
         parent_kind, parent_id = pending.pop()
-        for child_kind, (parent, column) in _run_parents().items():
+        for child_kind, (parent, column) in RUN_PARENTS.items():
             if parent != parent_kind:
                 continue
             for row in connection.execute(

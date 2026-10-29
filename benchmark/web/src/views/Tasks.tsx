@@ -15,10 +15,12 @@ import {
 
 const STAGE_LABELS: Record<string, string> = {
   compile: '编译',
+  embed: '嵌入',
   query: '查询',
   evaluate: '评测',
   attribute: '归因',
   download: '下载',
+  generate: '生成样本',
   normalize: '归一化',
 }
 const RUN_LABELS: Record<string, string> = {
@@ -27,6 +29,13 @@ const RUN_LABELS: Record<string, string> = {
   eval: '评测',
   attribution: '归因',
 }
+
+type Navigate = (
+  stage: string,
+  targetKind: string | null,
+  targetId: number | null,
+  params: Record<string, unknown>,
+) => void
 
 function tasksIn(nodes: TaskTreeNode[]): Task[] {
   return nodes.flatMap((node) => [
@@ -39,7 +48,7 @@ function tasksIn(nodes: TaskTreeNode[]): Task[] {
 export function Tasks({
   onNavigate,
 }: {
-  onNavigate?: (stage: string, targetKind: string | null, targetId: number | null, params: Record<string, unknown>) => void
+  onNavigate: Navigate
 }) {
   const tasks = useAsync(() => api.taskTree(), [])
   const [open, setOpen] = useState<number | null>(null)
@@ -88,7 +97,7 @@ export function Tasks({
       {tasks.data?.total_tasks === 0 && !tasks.loading && <p className="muted">还没有任务。</p>}
 
       {(tasks.data?.compiles ?? []).map((node) => (
-        <RunNode key={`${node.kind}-${node.id}`} node={node} depth={0} open={open} onOpen={setOpen} onChanged={tasks.reload} onNavigate={onNavigate} />
+        <RunNode key={`${node.kind}-${node.id}`} node={node} open={open} onOpen={setOpen} onChanged={tasks.reload} onNavigate={onNavigate} />
       ))}
 
       {(tasks.data?.unlinked_tasks.length ?? 0) > 0 && (
@@ -107,18 +116,16 @@ export function Tasks({
 
 function RunNode({
   node,
-  depth,
   open,
   onOpen,
   onChanged,
   onNavigate,
 }: {
   node: TaskTreeNode
-  depth: number
   open: number | null
   onOpen: (id: number | null) => void
   onChanged: () => void
-  onNavigate?: (stage: string, targetKind: string | null, targetId: number | null, params: Record<string, unknown>) => void
+  onNavigate: Navigate
 }) {
   const fixedOpen = node.kind === 'attribution'
   const [expanded, setExpanded] = useState(false)
@@ -138,7 +145,7 @@ function RunNode({
       {(fixedOpen || expanded) && <div className="task-tree-body">
         {node.tasks.length > 0 && <TaskTable tasks={node.tasks} open={open} onOpen={onOpen} onChanged={onChanged} onNavigate={onNavigate} />}
         {node.pending_tasks.length > 0 && <div className="task-tree-pending"><div className="small muted">等待创建下游运行</div><TaskTable tasks={node.pending_tasks} open={open} onOpen={onOpen} onChanged={onChanged} onNavigate={onNavigate} /></div>}
-        {node.children.map((child) => <RunNode key={`${child.kind}-${child.id}`} node={child} depth={depth + 1} open={open} onOpen={onOpen} onChanged={onChanged} onNavigate={onNavigate} />)}
+        {node.children.map((child) => <RunNode key={`${child.kind}-${child.id}`} node={child} open={open} onOpen={onOpen} onChanged={onChanged} onNavigate={onNavigate} />)}
       </div>}
     </section>
   )
@@ -155,7 +162,7 @@ function TaskTable({
   open: number | null
   onOpen: (id: number | null) => void
   onChanged: () => void
-  onNavigate?: (stage: string, targetKind: string | null, targetId: number | null, params: Record<string, unknown>) => void
+  onNavigate: Navigate
 }) {
   return (
     <table className="records-table tasks-table">
@@ -194,7 +201,7 @@ function Row({
   open: boolean
   onToggle: () => void
   onChanged: () => void
-  onNavigate?: (stage: string, targetKind: string | null, targetId: number | null, params: Record<string, unknown>) => void
+  onNavigate: Navigate
 }) {
   const action = useAction<unknown>()
   const active = task.status === 'running' || task.status === 'queued'
@@ -245,7 +252,7 @@ function Row({
           <button className="action small" onClick={onToggle}>
             {open ? '收起' : '日志'}
           </button>
-          {onNavigate && <button className="action small" onClick={() => onNavigate(task.stage, task.target_kind, task.target_id, task.params)}>跳转</button>}
+          <button className="action small" onClick={() => onNavigate(task.stage, task.target_kind, task.target_id, task.params)}>跳转</button>
           {active && (
             <button
               className="action small"

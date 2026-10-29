@@ -14,22 +14,23 @@ FAMILY_LABELS = {
     registry.FAMILY_JUDGE: "模型评判",
 }
 
-COUNT_METRICS = {
-    "uncited_count",
-    "uncited_gold_count",
-    "graph_neighbor_gold_snippets",
-}
-
-
 def requested_metric_names(metrics: list[str], ks: list[int]) -> list[str]:
-
     names: list[str] = []
     for name in metrics:
         try:
             definition = registry.get_metric(name)
         except KeyError:
             continue
-        names.extend(f"{name}@{k}" for k in ks) if definition.per_k else names.append(name)
+        if definition.per_k:
+            names.extend(f"{name}@{k}" for k in ks)
+        else:
+            names.append(name)
+    return names
+
+
+def _metric_names(metrics: list[str], ks: list[int], values: dict[str, float]) -> list[str]:
+    names = requested_metric_names(metrics, ks)
+    names.extend(name for name in values if name not in names and name in registry.METRIC_REGISTRY)
     return names
 
 
@@ -42,12 +43,7 @@ def interpret_sample_metrics(
     omitted_metrics: list[str],
     evidence_by_metric: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    names = requested_metric_names(configured_metrics, ks)
-    names.extend(
-        name
-        for name in values
-        if name not in names and name in registry.METRIC_REGISTRY
-    )
+    names = _metric_names(configured_metrics, ks, values)
     verdict_by_metric = {row["metric"]: row for row in verdicts}
     omitted = set(omitted_metrics)
     return [
@@ -73,10 +69,7 @@ def build_metric_evidence(
     documents: dict[str, dict[str, Any]],
     verdicts: list[dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
-    names = requested_metric_names(configured_metrics, ks)
-    names.extend(
-        name for name in values if name not in names and name in registry.METRIC_REGISTRY
-    )
+    names = _metric_names(configured_metrics, ks, values)
     gold_ids = list(detail.get("gold_doc_ids") or [])
     gold_set = set(gold_ids)
     citations = _document_rows(
@@ -144,13 +137,11 @@ def _evidence_for_metric(
     cited_gold = {row["doc_id"] for row in valid_citations if row["is_gold"]}
     evidence: dict[str, Any] = {"formula": None, "gold_documents": gold_documents}
     if base in {"precision", "recall", "retrieval_f1", "hit", "full_coverage", "ndcg"}:
-
         top = retrieved if k is None else retrieved[:k]
         top_gold = {row["doc_id"] for row in top if row["is_gold"]}
         top_pages = {row["page_id"] for row in top}
         evidence.update(
             documents=top,
-            gold_documents=gold_documents,
             snippets=[row for row in snippets if set(row["page_ids"]) & top_pages],
         )
         if base == "precision":
@@ -199,7 +190,6 @@ def _evidence_for_metric(
                 else "未检索到 Gold"
             ),
             documents=retrieved,
-            gold_documents=gold_documents,
             snippets=snippets,
         )
     elif base in {"em", "f1"}:
@@ -223,30 +213,16 @@ def _evidence_for_metric(
         "uncited_count",
         "uncited_gold_count",
     }:
-        uncited = [
-            row
-            for row in valid_retrieved
-            if row["doc_id"] not in {c["doc_id"] for c in valid_citations}
-        ]
-        uncited_gold = [row for row in uncited if row["is_gold"]]
         cited_ids = {doc["doc_id"] for doc in valid_citations}
-        snippet_ids = (
-            {doc["doc_id"] for doc in uncited_gold}
-            if base == "uncited_gold_count"
-            else {doc["doc_id"] for doc in uncited}
-            if base == "uncited_count"
-            else cited_ids
-        )
+        uncited = [row for row in valid_retrieved if row["doc_id"] not in cited_ids]
+        uncited_gold = [row for row in uncited if row["is_gold"]]
+        difference = {"uncited_count": uncited, "uncited_gold_count": uncited_gold}.get(base)
+        snippet_ids = cited_ids if difference is None else {doc["doc_id"] for doc in difference}
         evidence.update(
             documents=citations,
             retrieved_documents=retrieved,
-            gold_documents=gold_documents,
             citation_excerpts=citation_excerpts,
-            snippets=[
-                row
-                for row in snippets
-                if set(row["doc_ids"]) & snippet_ids
-            ],
+            snippets=[row for row in snippets if set(row["doc_ids"]) & snippet_ids],
         )
         formulas = {
             "citation_precision": f"实际引用中命中 Gold（{len(cited_gold)}）/ 实际引用（{len(valid_citations)}）",
@@ -255,8 +231,8 @@ def _evidence_for_metric(
             "uncited_gold_count": f"已检索但未被引用的 Gold 文档（{len(uncited_gold)}）",
         }
         evidence["formula"] = formulas[base]
-        if base in {"uncited_count", "uncited_gold_count"}:
-            evidence["difference_documents"] = uncited_gold if base == "uncited_gold_count" else uncited
+        if difference is not None:
+            evidence["difference_documents"] = difference
     elif base.startswith("graph_"):
         graph = [row for row in snippets if row["is_graph"]]
         graph_gold = [row for row in graph if row["is_gold"]]
@@ -282,14 +258,13 @@ def _evidence_for_metric(
         evidence.update(
             formula=formulas[base],
             snippets=snippets,
-            gold_documents=gold_documents,
             exclusive_gold_doc_ids=sorted(exclusive),
         )
     elif registry.get_metric(name).kind == registry.KIND_JUDGE:
         judge_detail = (verdict or {}).get("detail") or {}
         formulas = {
             "faithfulness": f"上下文支持的事实陈述（{judge_detail.get('supported', 0)}）/ 全部事实陈述（{judge_detail.get('claim_count', 0)}）",
-            "answer_relevancy": f"直接回答问题的句子（{judge_detail.get('relevant', 0)}）/ 有效句子（{max(0, int(judge_detail.get('sentence_count', 0)) - int(judge_detail.get('ignored', 0)))}）",
+            "answer_relevancy": f"原问题与由答案反推的问题（{judge_detail.get('generated_question', '无')}）的 embedding 余弦相似度",
             "context_relevancy": f"对问题有用的上下文（{judge_detail.get('useful', 0)}）/ 全部上下文段落（{judge_detail.get('passage_count', 0)}）",
             "answer_correctness": f"Judge 判定档位（{judge_detail.get('verdict', '无')}）：正确 1、部分正确 0.5、错误 0",
         }
@@ -328,7 +303,7 @@ def _document_rows(
                 "doc_id": doc_id,
                 "page_id": page_id,
                 "title": doc.get("title") or entry.get("title") or doc_id or page_id,
-                "is_gold": doc_id in gold if doc_id else False,
+                "is_gold": doc_id in gold,
                 "mapped": doc_id is not None,
             }
         )
@@ -340,13 +315,7 @@ def _snippet_rows(
 ) -> list[dict[str, Any]]:
     rows = []
     for index, snippet in enumerate(snippets, 1):
-        doc_ids = sorted(
-            {
-                page_to_doc[window["sourcePageId"]]
-                for window in snippet.get("sourceWindows") or []
-                if window.get("sourcePageId") in page_to_doc
-            }
-        )
+        doc_ids = sorted(multihop.snippet_doc_ids(snippet, page_to_doc))
         page_ids = sorted(
             {
                 window["sourcePageId"]
@@ -396,7 +365,7 @@ def _citation_excerpt_rows(
                 or entry.get("title")
                 or doc_id
                 or page_id,
-                "is_gold": doc_id in gold if doc_id else False,
+                "is_gold": doc_id in gold,
                 "excerpts": [value for value in excerpts if value],
             }
         )
@@ -535,8 +504,7 @@ def _score_reason(
     if base == "faithfulness":
         return _judge_ratio(value, judge_detail, "claim_count", "supported", "事实陈述有检索证据支持")
     if base == "answer_relevancy":
-        total = int(judge_detail.get("sentence_count") or 0) - int(judge_detail.get("ignored") or 0)
-        return _ratio_text(value, total, "实质句子直接回答了问题")
+        return f"由答案反推的问题与原问题的 embedding 余弦相似度为 {_percent(value)}。"
     if base == "context_relevancy":
         return _judge_ratio(value, judge_detail, "passage_count", "useful", "检索片段对回答问题有用")
     if base == "answer_correctness":
@@ -544,17 +512,13 @@ def _score_reason(
         labels = {"correct": "事实一致", "partial": "部分正确", "incorrect": "事实不一致"}
         suffix = f"：{judge_detail['reason']}" if judge_detail.get("reason") else "。"
         return f"Judge 判定答案与参考答案{labels.get(verdict_name, _percent(value))}{suffix}"
-    if base in COUNT_METRICS:
-        labels = {
-            "graph_neighbor_gold_snippets": "命中 gold 的图扩展片段",
-        }
-        return f"本样本有 {_count(value)} 个{labels.get(base, '计数项')}。"
+    if base == "graph_neighbor_gold_snippets":
+        return f"本样本有 {_count(value)} 个命中 gold 的图扩展片段。"
     return f"本样本该指标值为 {value:.4f}。"
 
 
 def _status(name: str, value: float, higher_is_better: bool) -> str:
-    base = name.split("@", 1)[0]
-    if base in COUNT_METRICS and base not in {"uncited_count", "uncited_gold_count"}:
+    if name == "graph_neighbor_gold_snippets":
         return "neutral"
     if not higher_is_better:
         return "good" if value == 0 else "bad"

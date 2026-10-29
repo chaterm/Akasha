@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
 SYSTEM = """You are a strict evaluator of grounding in retrieval-augmented answers.
@@ -35,10 +36,10 @@ ANSWER:
 
 MAX_SNIPPET_CHARS = 1200
 MAX_SNIPPETS = 20
+VERDICTS = ("supported", "unsupported", "contradicted")
 
 
 def build_context(response: dict[str, Any]) -> str:
-
     parts: list[str] = []
     for snippet in (response.get("snippets") or [])[:MAX_SNIPPETS]:
         title = snippet.get("title") or ""
@@ -49,7 +50,6 @@ def build_context(response: dict[str, Any]) -> str:
 
 
 def score_claims(claims: list[dict[str, Any]]) -> float | None:
-
     if not claims:
         return None
     supported = sum(1 for c in claims if c.get("verdict") == "supported")
@@ -57,19 +57,17 @@ def score_claims(claims: list[dict[str, Any]]) -> float | None:
 
 
 def parse_verdict(payload: dict[str, Any]) -> tuple[float | None, dict[str, Any]]:
-
     claims = payload.get("claims")
     if not isinstance(claims, list):
         raise ValueError(f"expected a list under 'claims', got {type(claims).__name__}")
 
-    allowed = {"supported", "unsupported", "contradicted"}
     cleaned: list[dict[str, Any]] = []
     for claim in claims:
         if not isinstance(claim, dict):
             raise ValueError(f"claim entries must be objects, got {type(claim).__name__}")
         verdict = claim.get("verdict")
-        if verdict not in allowed:
-            raise ValueError(f"unknown verdict {verdict!r}; expected one of {sorted(allowed)}")
+        if verdict not in VERDICTS:
+            raise ValueError(f"unknown verdict {verdict!r}; expected one of {sorted(VERDICTS)}")
         cleaned.append(
             {
                 "claim": str(claim.get("claim") or "")[:500],
@@ -78,18 +76,15 @@ def parse_verdict(payload: dict[str, Any]) -> tuple[float | None, dict[str, Any]
             }
         )
 
-    score = score_claims(cleaned)
-    return score, {
+    counts = Counter(c["verdict"] for c in cleaned)
+    return score_claims(cleaned), {
         "claims": cleaned,
         "claim_count": len(cleaned),
-        "supported": sum(1 for c in cleaned if c["verdict"] == "supported"),
-        "unsupported": sum(1 for c in cleaned if c["verdict"] == "unsupported"),
-        "contradicted": sum(1 for c in cleaned if c["verdict"] == "contradicted"),
+        **{verdict: counts[verdict] for verdict in VERDICTS},
     }
 
 
 def build_prompt(question: str, answer: str, response: dict[str, Any]) -> tuple[str, str] | None:
-
     context = build_context(response)
     if not context:
         return None

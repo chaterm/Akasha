@@ -5,7 +5,6 @@ from typing import Any
 
 
 def _page_ids(entries: Sequence[dict[str, Any]]) -> list[str]:
-
     seen: dict[str, None] = {}
     for entry in entries:
         page_id = entry.get("sourcePageId")
@@ -15,7 +14,6 @@ def _page_ids(entries: Sequence[dict[str, Any]]) -> list[str]:
 
 
 def to_doc_ids(entries: Sequence[dict[str, Any]], page_to_doc: dict[str, str]) -> list[str]:
-
     return [page_to_doc[p] for p in _page_ids(entries) if p in page_to_doc]
 
 

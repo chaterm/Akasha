@@ -37,6 +37,10 @@ def create_eval_run(
     return int(cursor.lastrowid or 0)
 
 
+def _with_detail(row: sqlite3.Row, detail: Any) -> dict[str, Any]:
+    return {**{k: v for k, v in dict(row).items() if k != "detail_json"}, "detail": detail}
+
+
 def get_eval_run(connection: sqlite3.Connection, eval_id: int) -> dict[str, Any] | None:
     return get_run(connection, "eval", eval_id)
 
@@ -62,7 +66,6 @@ def delete_eval_run(connection: sqlite3.Connection, eval_id: int) -> int:
 
 
 def clear_eval_results(connection: sqlite3.Connection, eval_id: int, dataset: str) -> None:
-
     for table in ("sample_eval", "metric_summary", "dataset_eval"):
         connection.execute(
             f"DELETE FROM {table} WHERE eval_id = ? AND dataset = ?", (eval_id, dataset)
@@ -214,10 +217,7 @@ def sample_evals(
         sql += " AND answer_mode = ?"
         params.append(answer_mode)
     return [
-        {
-            **{k: v for k, v in dict(row).items() if k != "detail_json"},
-            "detail": loads(row["detail_json"], {}),
-        }
+        _with_detail(row, loads(row["detail_json"], {}))
         for row in connection.execute(sql + " ORDER BY sample_id", params)
     ]
 
@@ -262,10 +262,7 @@ def sample_eval_page(
         connection.execute(f"SELECT COUNT(*) FROM sample_eval WHERE {scope}", params).fetchone()[0]
     )
     rows = [
-        {
-            **{k: v for k, v in dict(row).items() if k != "detail_json"},
-            "detail": loads(row["detail_json"], {}),
-        }
+        _with_detail(row, loads(row["detail_json"], {}))
         for row in connection.execute(
             f"SELECT * FROM sample_eval WHERE {scope} ORDER BY sample_id LIMIT ? OFFSET ?",
             (*params, limit, offset),
@@ -302,11 +299,7 @@ def judge_verdicts_for(
         f"AND sample_id IN ({placeholders}) ORDER BY sample_id, metric",
         (eval_id, *sample_ids),
     ):
-        verdict = {
-            **{k: v for k, v in dict(row).items() if k != "detail_json"},
-            "detail": None,
-        }
-        result.setdefault(row["sample_id"], []).append(verdict)
+        result.setdefault(row["sample_id"], []).append(_with_detail(row, None))
     return result
 
 
@@ -316,12 +309,7 @@ def sample_eval(
     row = connection.execute(
         "SELECT * FROM sample_eval WHERE eval_id = ? AND sample_id = ?", (eval_id, sample_id)
     ).fetchone()
-    if row is None:
-        return None
-    return {
-        **{k: v for k, v in dict(row).items() if k != "detail_json"},
-        "detail": loads(row["detail_json"], {}),
-    }
+    return _with_detail(row, loads(row["detail_json"], {})) if row else None
 
 
 def sample_metrics_of(
@@ -422,10 +410,7 @@ def judge_verdicts(
     connection: sqlite3.Connection, eval_id: int, *, include_detail: bool = True
 ) -> list[dict[str, Any]]:
     return [
-        {
-            **{k: v for k, v in dict(row).items() if k != "detail_json"},
-            "detail": loads(row["detail_json"]) if include_detail else None,
-        }
+        _with_detail(row, loads(row["detail_json"]) if include_detail else None)
         for row in connection.execute(
             "SELECT * FROM judge_verdict WHERE eval_id = ? ORDER BY sample_id", (eval_id,)
         )

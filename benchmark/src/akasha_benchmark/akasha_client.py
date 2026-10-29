@@ -4,12 +4,14 @@ import base64
 import hashlib
 import json
 import os
+import queue
 import random
 import sys
 import tempfile
 import threading
 import time
-from contextlib import suppress
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,7 +29,6 @@ TERMINAL_RUN_STATUSES = frozenset(
 
 
 def validate_cancel_result(run_id: str, result: dict[str, Any]) -> dict[str, str]:
-
     disposition = str(result.get("disposition") or "")
     returned_run_id = str(result.get("runId") or "")
     status = str(result.get("status") or "")
@@ -57,7 +58,6 @@ _AUTH_TOKENS: dict[str, str] = {}
 
 
 def _auth_cache_key(config: AkashaConfig) -> str:
-
     identity = "\0".join(
         (config.base_url.rstrip("/").lower(), config.email.lower(), config.password)
     )
@@ -65,7 +65,6 @@ def _auth_cache_key(config: AkashaConfig) -> str:
 
 
 def _jwt_expiry(token: str) -> float | None:
-
     try:
         payload = token.split(".")[1]
         payload += "=" * (-len(payload) % 4)
@@ -98,7 +97,6 @@ def _read_auth_cache() -> dict[str, str]:
 
 
 def _write_auth_cache(tokens: dict[str, str]) -> None:
-
     temporary: Path | None = None
     try:
         _AUTH_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -115,8 +113,13 @@ def _write_auth_cache(tokens: dict[str, str]) -> None:
                 temporary.unlink(missing_ok=True)
 
 
-def _rewind_files(files: Any) -> None:
+def backoff(attempt: int, max_retries: int, reason: str) -> None:
+    delay = min(RETRY_BASE_DELAY * (2**attempt), RETRY_MAX_DELAY) * (0.75 + random.random() * 0.5)
+    print(f"  retry {attempt + 1}/{max_retries} after {reason} in {delay:.1f}s", file=sys.stderr)
+    time.sleep(delay)
 
+
+def _rewind_files(files: Any) -> None:
     values = files.values() if isinstance(files, dict) else [v for _, v in files]
     for value in values:
         handle = value[1] if isinstance(value, (tuple, list)) and len(value) > 1 else value
@@ -126,8 +129,53 @@ def _rewind_files(files: Any) -> None:
                 seek(0)
 
 
-def unwrap_envelope(body: Any) -> Any:
+def latest_run_pages(client: Any, run_ids: list[str]) -> dict[str, dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for run_id in dict.fromkeys(run_ids):
+        page = 1
+        while True:
+            result = client.run_pages(run_id, page=page, limit=100)
+            items = result.get("items") or []
+            for item in items:
+                page_id = str(item.get("sourcePageId") or "")
+                previous = latest.get(page_id)
+                if page_id and (
+                    previous is None
+                    or str(item.get("updatedAt") or "") >= str(previous.get("updatedAt") or "")
+                ):
+                    latest[page_id] = item
+            if not items or page * int(result.get("limit") or 100) >= int(result.get("total") or 0):
+                break
+            page += 1
+    return latest
 
+
+@contextmanager
+def client_pool(
+    client: Any, size: int, factory: Callable[[AkashaConfig], Any]
+) -> Iterator[Callable[..., Any]]:
+    extras = [factory(client.config) for _ in range(size - 1)]
+    try:
+        for extra in extras:
+            extra.login()
+        idle: queue.Queue[Any] = queue.Queue()
+        for worker in (client, *extras):
+            idle.put(worker)
+
+        def call(fn: Callable[..., Any], *args: Any) -> Any:
+            borrowed = idle.get()
+            try:
+                return fn(borrowed, *args)
+            finally:
+                idle.put(borrowed)
+
+        yield call
+    finally:
+        for extra in extras:
+            extra.close()
+
+
+def unwrap_envelope(body: Any) -> Any:
     if not isinstance(body, dict):
         return body
     if not isinstance(body.get("success"), bool) or not isinstance(body.get("status"), int):
@@ -172,7 +220,6 @@ class AkashaClient:
         self._client.close()
 
     def _throttle(self) -> None:
-
         gap = self.config.request_interval_seconds
         if gap <= 0:
             return
@@ -226,7 +273,6 @@ class AkashaClient:
         max_retries = MAX_RETRIES if retry else 0
         attempt = 0
         while True:
-
             if files and attempt:
                 _rewind_files(files)
             self._throttle()
@@ -236,39 +282,18 @@ class AkashaClient:
                     method, url, json=json_body, files=files, data=data
                 )
             except RETRYABLE_EXCEPTIONS as exc:
-                self._last_request_at = time.monotonic()
                 if attempt >= max_retries:
                     raise
-                delay = self._retry_delay(attempt)
-                print(
-                    f"  retry {attempt + 1}/{max_retries} after {type(exc).__name__} "
-                    f"on {method} {url} in {delay:.1f}s",
-                    file=sys.stderr,
-                )
-                time.sleep(delay)
-                attempt += 1
-                continue
+                reason = type(exc).__name__
+            else:
+                latency_ms = int((time.perf_counter() - started) * 1000)
+                if response.status_code not in RETRYABLE_STATUSES or attempt >= max_retries:
+                    return response, latency_ms
+                reason = f"HTTP {response.status_code}"
             finally:
                 self._last_request_at = time.monotonic()
-            latency_ms = int((time.perf_counter() - started) * 1000)
-
-            if response.status_code in RETRYABLE_STATUSES and attempt < max_retries:
-                delay = self._retry_delay(attempt)
-                print(
-                    f"  retry {attempt + 1}/{max_retries} after HTTP {response.status_code} "
-                    f"on {method} {url} in {delay:.1f}s",
-                    file=sys.stderr,
-                )
-                time.sleep(delay)
-                attempt += 1
-                continue
-            return response, latency_ms
-
-    @staticmethod
-    def _retry_delay(attempt: int) -> float:
-
-        base = min(RETRY_BASE_DELAY * (2**attempt), RETRY_MAX_DELAY)
-        return base * (0.75 + random.random() * 0.5)
+            backoff(attempt, max_retries, f"{reason} on {method} {url}")
+            attempt += 1
 
     def post(self, path: str, json_body: Any | None = None, **kwargs: Any) -> Any:
         return self.request("POST", path, json_body=json_body, **kwargs).body
@@ -277,7 +302,6 @@ class AkashaClient:
         return self.request("GET", path, **kwargs).body
 
     def login(self) -> None:
-
         self.config.require_credentials()
         key = _auth_cache_key(self.config)
         with _AUTH_LOCK:
@@ -310,7 +334,6 @@ class AkashaClient:
         _write_auth_cache(cached)
 
     def _refresh_auth(self, rejected: str | None) -> None:
-
         key = _auth_cache_key(self.config)
         with _AUTH_LOCK:
             current = _AUTH_TOKENS.get(key)
@@ -321,11 +344,9 @@ class AkashaClient:
             self._perform_login(key)
 
     def current_user(self) -> dict[str, Any]:
-
         return self.post("users/me")
 
     def create_space(self, name: str, slug: str, description: str = "") -> dict[str, Any]:
-
         return self.post(
             "spaces/create",
             {"name": name, "slug": slug, "description": description},
@@ -343,8 +364,15 @@ class AkashaClient:
         )
 
     def compile_spaces(self, space_ids: list[str]) -> dict[str, Any]:
-
         return self.post("llm-wiki/admin/compile-spaces", {"spaceIds": space_ids})
+
+    def rebuild_space_embeddings(
+        self, space_ids: list[str], *, embedding_concurrency: int | None = None
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"action": "rebuild_embeddings", "spaceIds": space_ids}
+        if embedding_concurrency is not None:
+            payload["embeddingConcurrency"] = embedding_concurrency
+        return self.post("llm-wiki/admin/space-action", payload, retry=False)
 
     def run_pages(
         self, run_id: str, *, page: int = 1, limit: int = 100
@@ -354,30 +382,9 @@ class AkashaClient:
         )
 
     def retryable_run_page_ids(self, run_ids: list[str]) -> list[str]:
-
-        latest: dict[str, dict[str, Any]] = {}
-        for run_id in dict.fromkeys(run_ids):
-            page = 1
-            while True:
-                result = self.run_pages(run_id, page=page, limit=100)
-                items = result.get("items") or []
-                for item in items:
-                    page_id = item.get("sourcePageId")
-                    if page_id:
-                        key = str(page_id)
-                        previous = latest.get(key)
-                        if previous is None or str(item.get("updatedAt") or "") >= str(
-                            previous.get("updatedAt") or ""
-                        ):
-                            latest[key] = item
-                total = int(result.get("total") or 0)
-                limit = int(result.get("limit") or 100)
-                if page * limit >= total or not items:
-                    break
-                page += 1
         return [
             page_id
-            for page_id, item in latest.items()
+            for page_id, item in latest_run_pages(self, run_ids).items()
             if item.get("status") == "failed"
             or item.get("mergeStatus") == "failed"
             or (
@@ -387,14 +394,12 @@ class AkashaClient:
         ]
 
     def retry_pages(self, page_ids: list[str]) -> dict[str, Any]:
-
         unique = list(dict.fromkeys(page_ids))
         if len(unique) > 100:
             raise ValueError("retry_pages 每次最多 100 篇；调用方必须串行分批")
         return self.post("llm-wiki/admin/retry-pages", {"pageIds": unique})
 
     def cancel_compile_run(self, run_id: str, reason: str) -> dict[str, Any]:
-
         return self.post(
             f"llm-wiki/admin/compilation-runs/{run_id}/cancel",
             {"reason": reason},
@@ -404,20 +409,17 @@ class AkashaClient:
         return self.post("llm-wiki/admin/diagnostics/quality", {"spaceIds": space_ids})
 
     def run_diagnostics(self, space_ids: list[str], *, limit: int = 50) -> dict[str, Any]:
-
         return self.post(
             "llm-wiki/admin/diagnostics/runs", {"spaceIds": space_ids, "limit": limit}
         )
 
     def page_log(self, space_ids: list[str], *, limit: int = 100) -> dict[str, Any]:
-
         return self.post(
             "llm-wiki/admin/diagnostics/page-log",
             {"spaceIds": space_ids, "limit": limit},
         )
 
     def get_model_configs(self) -> dict[str, Any]:
-
         return self.get("llm-wiki/admin/model-configs")
 
     def put_model_config(self, feature: str, payload: dict[str, Any]) -> Any:

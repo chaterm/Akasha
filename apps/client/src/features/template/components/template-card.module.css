@@ -91,11 +91,39 @@
   flex-shrink: 0;
 }
 
+/* 首行与右上角的 icon 同一行：正文只占左侧，icon 那格是固定的，别的内容进不来 */
+.paperTop {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  .thumb[data-compact] & {
+    gap: 8px;
+  }
+}
+
+.paperTopLine {
+  flex: 1;
+  min-width: 0;
+}
+
 .paperIcon {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  /* 留白算在 icon 自己的格里，正文截断线不会贴上来 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 20px;
   line-height: 1;
-  margin-bottom: 2px;
   color: var(--mantine-color-dimmed);
+
+  .thumb[data-compact] & {
+    width: 20px;
+    height: 20px;
+    font-size: 16px;
+  }
 }
 
 .lineHeading {

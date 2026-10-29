@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Collection, Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, Body, HTTPException, Request
 
 from akasha_benchmark.akasha_client import AkashaClient, AkashaError
+from akasha_benchmark.config import AkashaConfig
 from akasha_benchmark.judge import JudgeClient, JudgeConfigError, JudgeProvider
-from akasha_benchmark.judge.providers import resolve_provider
 from akasha_benchmark.model_configs import FEATURES, drift
 from akasha_benchmark.store import compile_store, config_store, loads, task_store
 
@@ -17,9 +19,28 @@ from ._common import config_of, db, writable
 router = APIRouter(prefix="/api")
 
 
+def _require_credentials(config: AkashaConfig) -> None:
+    try:
+        config.require_credentials()
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@contextmanager
+def _akasha(config: AkashaConfig, rejected: str = "") -> Iterator[AkashaClient]:
+    try:
+        with AkashaClient(config) as client:
+            client.login()
+            yield client
+    except AkashaError as exc:
+        raise HTTPException(502, f"{rejected}{exc}") from exc
+    except (httpx.RequestError, OSError) as exc:
+        raise HTTPException(502, f"连不上 {config.base_url}：{exc}") from exc
+
+
 MODEL_FEATURE_STAGES = {
     "compiler": frozenset({"compile"}),
-    "embedding": frozenset({"compile", "query"}),
+    "embedding": frozenset({"compile", "embed", "query"}),
     "answer": frozenset({"query"}),
     "image": frozenset({"compile"}),
 }
@@ -46,7 +67,6 @@ def _reject_model_change_while_running(
 
 @router.get("/connection")
 def get_connection(request: Request) -> dict[str, Any]:
-
     with db(request) as connection:
         row = config_store.get_connection_row(connection)
         compiles = [
@@ -69,7 +89,6 @@ def get_connection(request: Request) -> dict[str, Any]:
 
 @router.put("/connection")
 def put_connection(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-
     try:
         fields = config_store.sanitize_connection(payload)
     except ValueError as exc:
@@ -81,22 +100,11 @@ def put_connection(request: Request, payload: dict[str, Any] = Body(...)) -> dic
 
 @router.post("/connection/test")
 def test_connection(request: Request) -> dict[str, Any]:
-
     config = config_of(request)
-    try:
-        config.require_credentials()
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-
-    try:
-        with AkashaClient(config) as client:
-            client.login()
-            me = client.current_user()
-            model_configs = client.get_model_configs()
-    except AkashaError as exc:
-        raise HTTPException(502, f"Akasha 拒绝了请求：{exc}") from exc
-    except OSError as exc:
-        raise HTTPException(502, f"连不上 {config.base_url}：{exc}") from exc
+    _require_credentials(config)
+    with _akasha(config, "Akasha 拒绝了请求：") as client:
+        me = client.current_user()
+        model_configs = client.get_model_configs()
 
     user = (me or {}).get("user") or {}
     workspace = (me or {}).get("workspace") or {}
@@ -131,20 +139,10 @@ def test_connection(request: Request) -> dict[str, Any]:
 
 @router.get("/model-configs")
 def get_model_configs(request: Request) -> dict[str, Any]:
-
     config = config_of(request)
-    try:
-        config.require_credentials()
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    try:
-        with AkashaClient(config) as client:
-            client.login()
-            live = client.get_model_configs()
-    except AkashaError as exc:
-        raise HTTPException(502, str(exc)) from exc
-    except OSError as exc:
-        raise HTTPException(502, f"连不上 {config.base_url}：{exc}") from exc
+    _require_credentials(config)
+    with _akasha(config) as client:
+        live = client.get_model_configs()
 
     with db(request) as connection:
         compiles = [
@@ -167,34 +165,28 @@ def put_model_config(
         raise HTTPException(422, f"未知配置项 {feature!r}；可用：{list(FEATURES)}")
     payload = {"provider": "openai-compatible", **payload}
     config = config_of(request)
-    try:
-        config.require_credentials()
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    try:
-        with writable(request) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            _reject_model_change_while_running(connection, feature)
-            with AkashaClient(config) as client:
-                client.login()
-                result = client.put_model_config(feature, payload)
-    except AkashaError as exc:
-        raise HTTPException(502, str(exc)) from exc
-    except OSError as exc:
-        raise HTTPException(502, f"连不上 {config.base_url}：{exc}") from exc
+    _require_credentials(config)
+    with writable(request) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        _reject_model_change_while_running(connection, feature)
+        with _akasha(config) as client:
+            result = client.put_model_config(feature, payload)
 
-    requires_rebuild = feature in {"compiler", "embedding"}
+    impact = {
+        "compiler": "需要重新编译",
+        "embedding": "已有编译可用「重建嵌入」复用，不必重新编译",
+    }.get(feature, "不影响已有编译")
     return {
         "feature": feature,
         "result": result,
-        "requires_new_compile": requires_rebuild,
-        "impact": "需要重新编译" if requires_rebuild else "不影响已有编译",
+        "requires_new_compile": feature == "compiler",
+        "requires_embedding_rebuild": feature == "embedding",
+        "impact": impact,
     }
 
 
 @router.get("/providers")
 def list_providers(request: Request, role: str | None = None) -> list[dict[str, Any]]:
-
     if role is not None and role not in config_store.MODEL_ROLES:
         raise HTTPException(422, f"role 必须是 {list(config_store.MODEL_ROLES)} 之一")
     with db(request) as connection:
@@ -213,6 +205,111 @@ def list_providers(request: Request, role: str | None = None) -> list[dict[str, 
     ]
 
 
+def _save_model(
+    request: Request,
+    purpose: str,
+    payload: dict[str, Any],
+    *,
+    label: str,
+    base_url: str,
+    model: str,
+    not_found: str,
+    parameters: dict[str, Any] | None = None,
+) -> tuple[int, str]:
+    try:
+        model_id = None if payload.get("id") is None else int(payload["id"])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, f"id 必须是整数，收到 {payload['id']!r}") from exc
+
+    with writable(request) as connection:
+        rows = config_store.list_model_providers(connection, purpose)
+        by_id = {int(row["id"]): row for row in rows}
+        if model_id is not None and model_id not in by_id:
+            raise HTTPException(404, not_found.format(id=model_id))
+        clash = next((r for r in rows if r["label"] == label and int(r["id"]) != model_id), None)
+        if clash is not None and model_id is not None:
+            raise HTTPException(409, f"{purpose} 下已经有一个叫 {label!r} 的端点")
+
+        existing = (by_id.get(model_id) if model_id is not None else clash) or {}
+        api_key = str(payload.get("api_key") or "") or str(existing.get("api_key") or "")
+        if parameters is None:
+            parameters = loads(existing.get("parameters_json"), {})
+        model_id = config_store.upsert_model_provider(
+            connection,
+            purpose=purpose,
+            label=label,
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
+            parameters=parameters,
+            model_id=model_id,
+        )
+    return model_id, api_key
+
+
+def _model_record(
+    request: Request, model_id: int, purposes: Collection[str], not_found: str
+) -> dict[str, Any]:
+    with db(request) as connection:
+        record = config_store.get_model_provider(connection, model_id)
+    if record is None or record["purpose"] not in purposes:
+        raise HTTPException(404, not_found.format(id=model_id))
+    return record
+
+
+def _probe(request: Request, record: dict[str, Any]) -> dict[str, Any]:
+    provider = JudgeProvider(
+        provider_id=int(record["id"]),
+        base_url=str(record["base_url"]),
+        model=str(record["model"]),
+        api_key=str(record["api_key"] or ""),
+        timeout_seconds=config_of(request).timeout_seconds,
+    )
+
+    def result(ok: bool, failure: str | None, status: int | None, reply: str, detail: str | None):
+        return {
+            "ok": ok,
+            "failure": failure,
+            "status": status,
+            "reply": reply,
+            "detail": detail,
+            "provider": provider.redacted(),
+        }
+
+    try:
+        key = provider.resolve_key()
+    except JudgeConfigError as exc:
+        return result(False, "config", None, "", str(exc))
+
+    if record["purpose"] != "embedding":
+        with JudgeClient(provider) as client:
+            reply = client.complete(
+                "You reply with a single JSON object.",
+                'hi — reply as JSON: {"reply": "<your greeting>"}',
+            )
+        failed = reply.failure_kind is not None
+        detail = (reply.raw or "")[:600] if failed else None
+        return result(not failed, reply.failure_kind, reply.status, (reply.content or "")[:400], detail)
+
+    try:
+        with httpx.Client(timeout=httpx.Timeout(provider.timeout_seconds)) as client:
+            response = client.post(
+                f"{provider.base_url.rstrip('/')}/embeddings",
+                json={"model": provider.model, "input": "hi"},
+                headers={"Authorization": f"Bearer {key}"},
+            )
+        if not response.is_success:
+            return result(False, "http_error", response.status_code, "", response.text[:600])
+        vector = ((response.json().get("data") or [{}])[0]).get("embedding")
+    except httpx.TimeoutException as exc:
+        return result(False, "timeout", None, "", f"{type(exc).__name__}: {exc}")
+    except (httpx.RequestError, ValueError, TypeError, KeyError, IndexError, AttributeError) as exc:
+        return result(False, "request_error", None, "", f"{type(exc).__name__}: {exc}")
+    if not isinstance(vector, list) or not vector:
+        return result(False, "invalid_response", response.status_code, "", "响应没有返回 embedding 向量")
+    return result(True, None, response.status_code, f"embedding 成功，维度 {len(vector)}", None)
+
+
 @router.put("/providers/{role}")
 def put_provider(
     request: Request, role: str, payload: dict[str, Any] = Body(...)
@@ -224,37 +321,15 @@ def put_provider(
     model = str(payload.get("model") or "").strip()
     if not base_url or not model:
         raise HTTPException(422, "base_url 与 model 必填")
-    try:
-        provider_id = None if payload.get("id") is None else int(payload["id"])
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(422, f"id 必须是整数，收到 {payload['id']!r}") from exc
-
-    api_key = str(payload.get("api_key") or "")
-    with writable(request) as connection:
-        rows = config_store.list_model_providers(connection, role)
-        by_id = {int(row["id"]): row for row in rows}
-        if provider_id is not None and provider_id not in by_id:
-            raise HTTPException(404, f"{role} 端点 #{provider_id} 不存在")
-
-        clash = next((r for r in rows if r["label"] == label and int(r["id"]) != provider_id), None)
-        if clash is not None and provider_id is not None:
-            raise HTTPException(409, f"{role} 下已经有一个叫 {label!r} 的端点")
-
-        existing = by_id.get(provider_id) if provider_id is not None else clash
-        if not api_key:
-            api_key = (existing or {}).get("api_key", "")
-        try:
-            provider_id = config_store.upsert_model_provider(
-                connection,
-                purpose=role,
-                label=label,
-                base_url=base_url,
-                model=model,
-                api_key=api_key,
-                model_id=provider_id,
-            )
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(422, str(exc)) from exc
+    provider_id, api_key = _save_model(
+        request,
+        role,
+        payload,
+        label=label,
+        base_url=base_url,
+        model=model,
+        not_found=f"{role} 端点 #{{id}} 不存在",
+    )
     return {
         "id": provider_id,
         "role": role,
@@ -265,32 +340,8 @@ def put_provider(
 
 @router.post("/providers/{provider_id}/probe")
 def probe_provider(request: Request, provider_id: int) -> dict[str, Any]:
-
-    with db(request) as connection:
-        record = config_store.get_model_provider(connection, provider_id)
-        if record is None:
-            raise HTTPException(404, f"端点 #{provider_id} 不存在")
-        try:
-            provider = resolve_provider(connection, provider_id, record["purpose"])
-        except JudgeConfigError as exc:
-            return {"ok": False, "failure": "config", "detail": str(exc)}
-
-    with JudgeClient(provider) as client:
-
-        reply = client.complete(
-            "You reply with a single JSON object.",
-            'hi — reply as JSON: {"reply": "<your greeting>"}',
-        )
-
-    return {
-        "ok": reply.failure_kind is None,
-        "failure": reply.failure_kind,
-        "status": reply.status,
-        "reply": (reply.content or "")[:400],
-
-        "detail": None if reply.failure_kind is None else (reply.raw or "")[:600],
-        "provider": provider.redacted(),
-    }
+    record = _model_record(request, provider_id, config_store.MODEL_PURPOSES, "端点 #{id} 不存在")
+    return _probe(request, record)
 
 
 @router.delete("/providers/{provider_id}")
@@ -304,7 +355,6 @@ def delete_provider(request: Request, provider_id: int) -> dict[str, Any]:
 
 @router.get("/config/export")
 def export_config(request: Request) -> dict[str, Any]:
-
     with db(request) as connection:
         row = config_store.get_connection_row(connection)
         connection_data = {
@@ -329,7 +379,6 @@ def export_config(request: Request) -> dict[str, Any]:
 
 @router.post("/config/import")
 def import_config(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-
     connection_data = payload.get("connection") or {}
     models = payload.get("models") or []
     try:
@@ -388,32 +437,22 @@ def put_akasha_model(request: Request, payload: dict[str, Any] = Body(...)) -> d
     model = str(payload.get("model") or "").strip()
     if feature not in FEATURES or not label or not base_url or not model:
         raise HTTPException(422, "feature、label、base_url 与 model 必填")
-    try:
-        model_id = None if payload.get("id") is None else int(payload["id"])
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(422, "id 必须是整数") from exc
-    with writable(request) as connection:
-        existing = config_store.get_model_provider(connection, model_id) if model_id else None
-        if model_id is not None and existing is None:
-            raise HTTPException(404, f"Akasha 模型配置 #{model_id} 不存在")
-        api_key = str(payload.get("api_key") or "") or str((existing or {}).get("api_key") or "")
-        parameters = (
-            payload["parameters"]
-            if isinstance(payload.get("parameters"), dict)
-            else loads((existing or {}).get("parameters_json"), {})
-        )
-        dimension = parameters.get("dimension") if feature == "embedding" else None
-        if dimension is not None and (
-            isinstance(dimension, bool) or not isinstance(dimension, int) or dimension <= 0
-        ):
-            raise HTTPException(422, "embedding parameters.dimension 必须是正整数")
-        try:
-            model_id = config_store.upsert_model_provider(
-                connection, purpose=feature, label=label, base_url=base_url, model=model,
-                api_key=api_key, parameters=parameters, model_id=model_id,
-            )
-        except sqlite3.IntegrityError as exc:
-            raise HTTPException(409, f"{feature} 下已经有一个叫 {label!r} 的端点") from exc
+    parameters = payload.get("parameters") if isinstance(payload.get("parameters"), dict) else None
+    dimension = (parameters or {}).get("dimension") if feature == "embedding" else None
+    if dimension is not None and (
+        isinstance(dimension, bool) or not isinstance(dimension, int) or dimension <= 0
+    ):
+        raise HTTPException(422, "embedding parameters.dimension 必须是正整数")
+    model_id, _ = _save_model(
+        request,
+        feature,
+        payload,
+        label=label,
+        base_url=base_url,
+        model=model,
+        not_found="Akasha 模型配置 #{id} 不存在",
+        parameters=parameters,
+    )
     return {"id": model_id, "feature": feature, "label": label}
 
 
@@ -428,133 +467,32 @@ def delete_akasha_model(request: Request, model_id: int) -> dict[str, Any]:
 
 @router.post("/akasha-models/{model_id}/probe")
 def probe_akasha_model(request: Request, model_id: int) -> dict[str, Any]:
-
-    config = config_of(request)
-    with db(request) as connection:
-        record = config_store.get_model_provider(connection, model_id)
-        if record is None or record["purpose"] not in FEATURES:
-            raise HTTPException(404, f"Akasha 模型配置 #{model_id} 不存在")
-
-    feature = str(record["purpose"])
-    provider = JudgeProvider(
-        provider_id=int(record["id"]),
-        base_url=str(record["base_url"]),
-        model=str(record["model"]),
-        api_key=str(record["api_key"] or ""),
-        timeout_seconds=config.timeout_seconds,
-    )
-    redacted = provider.redacted()
-
-    try:
-        key = provider.resolve_key()
-    except JudgeConfigError as exc:
-        return {
-            "ok": False,
-            "failure": "config",
-            "status": None,
-            "reply": "",
-            "detail": str(exc),
-            "provider": redacted,
-        }
-
-    if feature != "embedding":
-        with JudgeClient(provider) as client:
-            reply = client.complete(
-                "You reply with a single JSON object.",
-                'hi — reply as JSON: {"reply": "<your greeting>"}',
-            )
-        return {
-            "ok": reply.failure_kind is None,
-            "failure": reply.failure_kind,
-            "status": reply.status,
-            "reply": (reply.content or "")[:400],
-            "detail": None if reply.failure_kind is None else (reply.raw or "")[:600],
-            "provider": redacted,
-        }
-
-    try:
-        with httpx.Client(timeout=httpx.Timeout(config.timeout_seconds)) as client:
-            response = client.post(
-                f"{provider.base_url.rstrip('/')}/embeddings",
-                json={"model": provider.model, "input": "hi"},
-                headers={"Authorization": f"Bearer {key}"},
-            )
-        if not response.is_success:
-            return {
-                "ok": False,
-                "failure": "http_error",
-                "status": response.status_code,
-                "reply": "",
-                "detail": response.text[:600],
-                "provider": redacted,
-            }
-        body = response.json()
-        vector = ((body.get("data") or [{}])[0]).get("embedding")
-        if not isinstance(vector, list) or not vector:
-            return {
-                "ok": False,
-                "failure": "invalid_response",
-                "status": response.status_code,
-                "reply": "",
-                "detail": "响应没有返回 embedding 向量",
-                "provider": redacted,
-            }
-        return {
-            "ok": True,
-            "failure": None,
-            "status": response.status_code,
-            "reply": f"embedding 成功，维度 {len(vector)}",
-            "detail": None,
-            "provider": redacted,
-        }
-    except httpx.TimeoutException as exc:
-        return {
-            "ok": False,
-            "failure": "timeout",
-            "status": None,
-            "reply": "",
-            "detail": f"{type(exc).__name__}: {exc}",
-            "provider": redacted,
-        }
-    except (httpx.RequestError, ValueError, TypeError, KeyError, IndexError, AttributeError) as exc:
-        return {
-            "ok": False,
-            "failure": "request_error",
-            "status": None,
-            "reply": "",
-            "detail": f"{type(exc).__name__}: {exc}",
-            "provider": redacted,
-        }
+    record = _model_record(request, model_id, FEATURES, "Akasha 模型配置 #{id} 不存在")
+    return _probe(request, record)
 
 
 @router.post("/akasha-models/{model_id}/apply")
 def apply_akasha_model(request: Request, model_id: int) -> dict[str, Any]:
     config = config_of(request)
-    try:
-        config.require_credentials()
-        with writable(request) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            record = config_store.get_model_provider(connection, model_id)
-            if record is None:
-                raise HTTPException(404, f"Akasha 模型配置 #{model_id} 不存在")
-            feature = str(record["purpose"])
-            if feature not in FEATURES:
-                raise HTTPException(422, f"模型配置 #{model_id} 不能应用到 Akasha")
-            _reject_model_change_while_running(connection, feature)
-            with AkashaClient(config) as client:
-                client.login()
-                client.put_model_config(
-                    feature,
-                    {
-                        "provider": "openai-compatible",
-                        "model": record["model"],
-                        "baseUrl": record["base_url"],
-                        "apiKey": record["api_key"],
-                        "parameters": loads(record["parameters_json"], {}),
-                    },
-                )
-    except AkashaError as exc:
-        raise HTTPException(502, str(exc)) from exc
-    except OSError as exc:
-        raise HTTPException(502, f"连不上 {config.base_url}：{exc}") from exc
+    _require_credentials(config)
+    with writable(request) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        record = config_store.get_model_provider(connection, model_id)
+        if record is None:
+            raise HTTPException(404, f"Akasha 模型配置 #{model_id} 不存在")
+        feature = str(record["purpose"])
+        if feature not in FEATURES:
+            raise HTTPException(422, f"模型配置 #{model_id} 不能应用到 Akasha")
+        _reject_model_change_while_running(connection, feature)
+        with _akasha(config) as client:
+            client.put_model_config(
+                feature,
+                {
+                    "provider": "openai-compatible",
+                    "model": record["model"],
+                    "baseUrl": record["base_url"],
+                    "apiKey": record["api_key"],
+                    "parameters": loads(record["parameters_json"], {}),
+                },
+            )
     return {"applied": feature}

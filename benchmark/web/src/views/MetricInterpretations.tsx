@@ -1,6 +1,11 @@
 import { useState, type ReactNode } from 'react'
-import type { EvalSampleDetail } from '../types'
-import { Collapsible } from '../ui'
+import type {
+  EvalSampleDetail,
+  MetricEvidenceDocument,
+  MetricEvidenceSnippet,
+  MetricInterpretation as MetricItem,
+} from '../types'
+import { Collapsible, SnippetTags } from '../ui'
 
 export function MetricInterpretations({
   items,
@@ -54,34 +59,42 @@ export function MetricInterpretations({
   )
 }
 
-type MetricItem = EvalSampleDetail['metric_interpretations'][number]
-type MetricProps = { item: MetricItem; response: Record<string, unknown> }
-
 function renderMetric(item: MetricItem, response: Record<string, unknown>) {
-  const base = item.name.split('@', 1)[0] ?? item.name
-  const props = { key: item.name, item, response }
-  switch (base) {
-    case 'recall': return <UnknownMetric {...props} />
-    case 'precision': return <UnknownMetric {...props} />
-    case 'retrieval_f1': return <UnknownMetric {...props} />
-    case 'ndcg': return <NdcgMetric {...props} />
-    case 'hit': return <HitMetric {...props} />
-    case 'full_coverage': return <HitMetric {...props} />
-    case 'mrr': return <MrrMetric {...props} />
-    case 'em': return <AnswerMetric {...props} />
-    case 'f1': return <AnswerMetric {...props} />
-    case 'citation_precision': return <CitationPrecisionMetric {...props} />
-    case 'citation_recall': return <CitationRecallMetric {...props} />
-    case 'uncited_count': return <UncitedCountMetric {...props} />
-    case 'uncited_gold_count': return <UncitedGoldMetric {...props} />
-    case 'graph_neighbor_precision': return <GraphMetric {...props} />
-    case 'graph_exclusive_gold_share': return <GraphMetric {...props} />
-    case 'graph_neighbor_gold_snippets': return <GraphMetric {...props} />
-    case 'faithfulness': return <FaithfulnessMetric {...props} />
-    case 'answer_relevancy': return <AnswerRelevancyMetric {...props} />
-    case 'context_relevancy': return <ContextRelevancyMetric {...props} />
-    case 'answer_correctness': return <AnswerCorrectnessMetric {...props} />
-    default: return <UnknownMetric {...props} />
+  const snippets = item.evidence?.snippets ?? []
+  switch (item.name.split('@', 1)[0]) {
+    case 'ndcg': return <NdcgMetric item={item} />
+    case 'hit':
+    case 'full_coverage':
+      return <HitMetric item={item} />
+    case 'mrr': return <MrrMetric item={item} />
+    case 'em':
+    case 'f1':
+      return <AnswerMetric item={item} response={response} />
+    case 'citation_precision':
+      return <CitationMetric item={item} title="Citation 文档片段" empty="没有 citation 文档片段。" />
+    case 'citation_recall':
+      return <CitationMetric item={item} title="实际引用的所有文档" empty="没有引用文档。" />
+    case 'uncited_count':
+      return <DifferenceMetric item={item} title="已检索但未进入引用的文档" />
+    case 'uncited_gold_count':
+      return <DifferenceMetric item={item} title="已检索但未进入引用的 Gold 文档" />
+    case 'graph_neighbor_precision':
+    case 'graph_exclusive_gold_share':
+    case 'graph_neighbor_gold_snippets':
+      return <GraphMetric item={item} />
+    case 'faithfulness':
+      return <JudgeMetric item={item} label="上下文片段" mode="claims" snippets={snippets} />
+    case 'answer_relevancy':
+      return <MetricCard item={item}><GeneratedQuestion item={item} /></MetricCard>
+    case 'context_relevancy':
+      return <JudgeMetric item={item} label="上下文段落" mode="passages" snippets={snippets} />
+    case 'answer_correctness':
+      return (
+        <AnswerMetric item={item} response={response}>
+          <JudgeVerdict item={item} />
+        </AnswerMetric>
+      )
+    default: return <MetricCard item={item} />
   }
 }
 
@@ -97,7 +110,7 @@ function MetricHeading({ item }: { item: MetricItem }) {
   )
 }
 
-function MetricCard({ item, children }: { item: MetricItem; children: ReactNode }) {
+function MetricCard({ item, children }: { item: MetricItem; children?: ReactNode }) {
   return (
     <article className={`metric-interpretation-card ${item.status}`}>
       <MetricHeading item={item} />
@@ -112,8 +125,6 @@ function MetricCard({ item, children }: { item: MetricItem; children: ReactNode 
   )
 }
 
-type EvidenceDocument = NonNullable<NonNullable<MetricItem['evidence']>['documents']>[number]
-
 function DocumentList({
   title,
   documents,
@@ -122,10 +133,10 @@ function DocumentList({
   badge,
 }: {
   title: string
-  documents: EvidenceDocument[]
-  snippets?: NonNullable<NonNullable<MetricItem['evidence']>['snippets']>
+  documents: MetricEvidenceDocument[]
+  snippets?: MetricEvidenceSnippet[]
   empty?: string
-  badge?: (document: EvidenceDocument) => ReactNode
+  badge?: (document: MetricEvidenceDocument) => ReactNode
 }) {
   return (
     <>
@@ -153,18 +164,7 @@ function DocumentList({
   )
 }
 
-const RETRIEVAL_REASON_LABELS: Record<string, { label: string; kind?: string }> = {
-  semantic: { label: '语义' },
-  lexical: { label: '词面' },
-  'exact-title': { label: '标题精确' },
-}
-
-const ORIGIN_LABELS: Record<string, { label: string; kind?: string }> = {
-  direct: { label: '直接召回' },
-  graph: { label: '图扩展', kind: 'accent' },
-}
-
-function MetricSnippetList({ snippets }: { snippets: NonNullable<NonNullable<MetricItem['evidence']>['snippets']> }) {
+function MetricSnippetList({ snippets }: { snippets: MetricEvidenceSnippet[] }) {
   return (
     <div className="metric-snippet-list">
       {snippets.map((snippet) => (
@@ -176,15 +176,7 @@ function MetricSnippetList({ snippets }: { snippets: NonNullable<NonNullable<Met
             <span className="mono small muted">#{snippet.rank}</span>
             <strong>{snippet.title || '（无标题）'}</strong>
             {snippet.is_gold && <span className="tag ok">gold</span>}
-            {snippet.origin && (
-              <span className={`tag ${ORIGIN_LABELS[snippet.origin]?.kind ?? ''}`}>
-                {ORIGIN_LABELS[snippet.origin]?.label ?? snippet.origin}
-              </span>
-            )}
-            {snippet.retrieval_reasons.map((reason) => {
-              const entry = RETRIEVAL_REASON_LABELS[reason]
-              return <span key={reason} className={`tag ${entry?.kind ?? ''}`}>{entry?.label ?? reason}</span>
-            })}
+            <SnippetTags origin={snippet.origin} reasons={snippet.retrieval_reasons} />
             </span>
           }
         >
@@ -194,7 +186,7 @@ function MetricSnippetList({ snippets }: { snippets: NonNullable<NonNullable<Met
     </div>
   )
 }
-function NdcgMetric({ item }: MetricProps) {
+function NdcgMetric({ item }: { item: MetricItem }) {
   const gains = new Map((item.evidence?.contributions ?? []).map((row) => [row.rank, row.gain]))
   return (
     <MetricCard item={item}>
@@ -209,7 +201,7 @@ function NdcgMetric({ item }: MetricProps) {
     </MetricCard>
   )
 }
-function HitMetric({ item }: MetricProps) {
+function HitMetric({ item }: { item: MetricItem }) {
   return (
     <MetricCard item={item}>
       <DocumentList
@@ -220,7 +212,7 @@ function HitMetric({ item }: MetricProps) {
     </MetricCard>
   )
 }
-function MrrMetric({ item }: MetricProps) {
+function MrrMetric({ item }: { item: MetricItem }) {
   const documents = item.evidence?.documents ?? []
   const firstGoldRank = documents.find((document) => document.is_gold)?.rank
   return (
@@ -236,20 +228,23 @@ function MrrMetric({ item }: MetricProps) {
     </MetricCard>
   )
 }
-function AnswerMetric({ item, response }: MetricProps) {
+function AnswerMetric({
+  item,
+  response,
+  children,
+}: {
+  item: MetricItem
+  response: Record<string, unknown>
+  children?: ReactNode
+}) {
   return (
     <MetricCard item={item}>
       <h5>系统答案</h5>
       <div className="metric-text-block">{String(response.answer ?? '') || '（空）'}</div>
       <ReferenceAnswers item={item} />
+      {children}
     </MetricCard>
   )
-}
-function CitationPrecisionMetric({ item }: MetricProps) {
-  return <CitationMetric item={item} title="Citation 文档片段" empty="没有 citation 文档片段。" />
-}
-function CitationRecallMetric({ item }: MetricProps) {
-  return <CitationMetric item={item} title="实际引用的所有文档" empty="没有引用文档。" />
 }
 
 function CitationMetric({ item, title, empty }: { item: MetricItem; title: string; empty: string }) {
@@ -281,43 +276,25 @@ function CitationMetric({ item, title, empty }: { item: MetricItem; title: strin
     </MetricCard>
   )
 }
-function UncitedCountMetric({ item }: MetricProps) {
-  return (
-    <MetricCard item={item}>
-      <DocumentList
-        title="已检索但未进入引用的文档"
-        documents={item.evidence?.difference_documents ?? []}
-        snippets={item.evidence?.snippets ?? []}
-        empty="没有文档。"
-      />
-    </MetricCard>
-  )
-}
-function UncitedGoldMetric({ item }: MetricProps) {
-  return (
-    <MetricCard item={item}>
-      <DocumentList
-        title="已检索但未进入引用的 Gold 文档"
-        documents={item.evidence?.difference_documents ?? []}
-        snippets={item.evidence?.snippets ?? []}
-        empty="没有文档。"
-      />
-    </MetricCard>
-  )
-}
-function GraphMetric({ item }: MetricProps) {
-  return (
-    <MetricCard item={item}>
-      <GraphDocumentList item={item} documents={graphHitDocuments(item)} />
-    </MetricCard>
-  )
-}
-type GraphDocument = { docId: string; title: string; isGold: boolean; rank: number; pageIds: string[] }
 
-function graphHitDocuments(item: MetricItem): GraphDocument[] {
+function DifferenceMetric({ item, title }: { item: MetricItem; title: string }) {
+  return (
+    <MetricCard item={item}>
+      <DocumentList
+        title={title}
+        documents={item.evidence?.difference_documents ?? []}
+        snippets={item.evidence?.snippets ?? []}
+        empty="没有文档。"
+      />
+    </MetricCard>
+  )
+}
+
+type GraphDocument = { docId: string; title: string; isGold: boolean; rank: number }
+
+function graphHitDocuments(snippets: MetricEvidenceSnippet[]): GraphDocument[] {
   const documents = new Map<string, GraphDocument>()
-  for (const snippet of item.evidence?.snippets ?? []) {
-    if (!snippet.is_graph) continue
+  for (const snippet of snippets) {
     for (const docId of snippet.doc_ids) {
       const previous = documents.get(docId)
       documents.set(docId, {
@@ -325,17 +302,17 @@ function graphHitDocuments(item: MetricItem): GraphDocument[] {
         title: previous?.title || snippet.title || docId,
         isGold: previous?.isGold || snippet.gold_doc_ids.includes(docId),
         rank: Math.min(previous?.rank ?? snippet.rank, snippet.rank),
-        pageIds: [...(previous?.pageIds ?? []), ...snippet.page_ids],
       })
     }
   }
   return [...documents.values()].sort((left, right) => left.rank - right.rank)
 }
 
-function GraphDocumentList({ item, documents }: { item: MetricItem; documents: GraphDocument[] }) {
-  const snippets = item.evidence?.snippets ?? []
+function GraphMetric({ item }: { item: MetricItem }) {
+  const snippets = (item.evidence?.snippets ?? []).filter((snippet) => snippet.is_graph)
+  const documents = graphHitDocuments(snippets)
   return (
-    <>
+    <MetricCard item={item}>
       <h5>图扩展命中的文档（{documents.length}）</h5>
       {documents.length === 0 && <p className="small muted">没有图扩展命中的文档。</p>}
       {documents.map((document) => (
@@ -347,36 +324,12 @@ function GraphDocumentList({ item, documents }: { item: MetricItem; documents: G
             {document.isGold && <span className="tag ok">gold</span>}
           </div>
           <MetricSnippetList
-            snippets={snippets.filter((snippet) =>
-              snippet.doc_ids.includes(document.docId) && snippet.is_graph,
-            )}
+            snippets={snippets.filter((snippet) => snippet.doc_ids.includes(document.docId))}
           />
         </div>
       ))}
-    </>
-  )
-}
-function FaithfulnessMetric({ item }: MetricProps) {
-  return <JudgeMetric item={item} label="上下文片段" mode="claims" snippets={item.evidence?.snippets ?? []} />
-}
-function AnswerRelevancyMetric({ item }: MetricProps) {
-  return <JudgeMetric item={item} label="答案句子" mode="sentences" />
-}
-function ContextRelevancyMetric({ item }: MetricProps) {
-  return <JudgeMetric item={item} label="上下文段落" mode="passages" snippets={item.evidence?.snippets ?? []} />
-}
-function AnswerCorrectnessMetric({ item, response }: MetricProps) {
-  return (
-    <MetricCard item={item}>
-      <h5>系统答案</h5>
-      <div className="metric-text-block">{String(response.answer ?? '') || '（空）'}</div>
-      <ReferenceAnswers item={item} />
-      <JudgeVerdict item={item} />
     </MetricCard>
   )
-}
-function UnknownMetric({ item }: MetricProps) {
-  return <MetricCard item={item}>{null}</MetricCard>
 }
 
 function MetricFormula({ item }: { item: MetricItem }) {
@@ -393,7 +346,12 @@ function ReferenceAnswers({ item }: { item: MetricItem }) {
   return <><h5>参考答案（{references.length}）</h5><div className="metric-document-list">{references.length === 0 && <span className="small muted">无参考答案</span>}{references.map((reference, index) => <div key={index} className="metric-text-block">{typeof reference === 'string' ? reference : reference.text}</div>)}</div></>
 }
 
-function JudgeMetric({ item, label, mode, snippets = [] }: { item: MetricItem; label: string; mode: 'claims' | 'sentences' | 'passages'; snippets?: NonNullable<NonNullable<MetricItem['evidence']>['snippets']> }) {
+function GeneratedQuestion({ item }: { item: MetricItem }) {
+  const detail = item.evidence?.judge_detail ?? {}
+  return <><h5>由答案反推的问题</h5><div className="metric-text-block">{String(detail.generated_question ?? '无')}</div></>
+}
+
+function JudgeMetric({ item, label, mode, snippets = [] }: { item: MetricItem; label: string; mode: 'claims' | 'passages'; snippets?: MetricEvidenceSnippet[] }) {
   const detail = item.evidence?.judge_detail ?? {}
   const entries = Array.isArray(detail[mode]) ? detail[mode] as Record<string, unknown>[] : []
   return (
@@ -410,7 +368,7 @@ function JudgeMetric({ item, label, mode, snippets = [] }: { item: MetricItem; l
         <div key={index} className="metric-evidence-document">
           <div><span className="tag">{String(entry.verdict ?? '')}</span></div>
           <div className="metric-text-block">
-            {String(entry.claim ?? entry.sentence ?? `段落 ${String(entry.index ?? index + 1)}`)}
+            {String(entry.claim ?? `段落 ${String(entry.index ?? index + 1)}`)}
           </div>
         </div>
       ))}

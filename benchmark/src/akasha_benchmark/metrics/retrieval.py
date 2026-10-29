@@ -8,7 +8,6 @@ DEFAULT_KS: tuple[int, ...] = (2, 5, 10, 20)
 
 
 def ranked_doc_ids(retrieved: Sequence[dict[str, Any]], page_to_doc: dict[str, str]) -> list[str]:
-
     seen: set[str] = set()
     ordered: list[str] = []
     for source in retrieved:
@@ -37,7 +36,6 @@ def unmapped_page_ids(
 
 
 def recall_at_k(ranked: Sequence[str], gold: Sequence[str], k: int) -> float:
-
     gold_set = set(gold)
     if not gold_set:
         raise ValueError("recall_at_k requires at least one gold document")
@@ -45,7 +43,6 @@ def recall_at_k(ranked: Sequence[str], gold: Sequence[str], k: int) -> float:
 
 
 def precision_at_k(ranked: Sequence[str], gold: Sequence[str], k: int) -> float:
-
     if not set(gold):
         raise ValueError("precision_at_k requires at least one gold document")
     top = list(ranked[:k])
@@ -55,7 +52,6 @@ def precision_at_k(ranked: Sequence[str], gold: Sequence[str], k: int) -> float:
 
 
 def retrieval_f1(ranked: Sequence[str], gold: Sequence[str]) -> float:
-
     gold_set = set(gold)
     if not gold_set:
         raise ValueError("retrieval_f1 requires at least one gold document")
@@ -69,12 +65,10 @@ def retrieval_f1(ranked: Sequence[str], gold: Sequence[str]) -> float:
 
 
 def hit_at_k(ranked: Sequence[str], gold: Sequence[str], k: int) -> float:
-
     return 1.0 if set(gold) & set(ranked[:k]) else 0.0
 
 
 def mrr(ranked: Sequence[str], gold: Sequence[str]) -> float:
-
     gold_set = set(gold)
     for position, doc_id in enumerate(ranked, 1):
         if doc_id in gold_set:
@@ -83,7 +77,6 @@ def mrr(ranked: Sequence[str], gold: Sequence[str]) -> float:
 
 
 def ndcg_at_k(ranked: Sequence[str], gold: Sequence[str], k: int) -> float:
-
     gold_set = set(gold)
     if not gold_set:
         raise ValueError("ndcg_at_k requires at least one gold document")
@@ -93,7 +86,6 @@ def ndcg_at_k(ranked: Sequence[str], gold: Sequence[str], k: int) -> float:
 
 
 def full_coverage(ranked: Sequence[str], gold: Sequence[str], k: int) -> float:
-
     gold_set = set(gold)
     return 1.0 if gold_set and gold_set <= set(ranked[:k]) else 0.0
 

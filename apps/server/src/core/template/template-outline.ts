@@ -54,6 +54,11 @@ export function buildOutline(doc: any): OutlineItem[] {
       case 'codeBlock':
         items.push({ kind: 'block', label: 'code' });
         return;
+      // 画布类节点在缩略图里渲染不出内容，用一行普通占位补上，别让结构断开
+      case 'excalidraw':
+      case 'drawio':
+        items.push({ kind: 'text', text: '' });
+        return;
       case 'blockquote':
       case 'callout':
         items.push({ kind: 'text', text: clip(textOf(node)) });

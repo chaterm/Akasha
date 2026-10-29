@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -12,8 +13,9 @@ from akasha_benchmark.store import (
     eval_store,
     init_db,
     query_store,
+    task_store,
 )
-
+from akasha_benchmark.task import TaskContext
 
 QA_ROWS = [
     {
@@ -58,7 +60,6 @@ def db(db_path: Path):
 
 @pytest.fixture
 def dataset_dir(tmp_path: Path) -> Path:
-
     directory = tmp_path / "dataset"
     directory.mkdir()
     (directory / "hotpotqa.json").write_text(json.dumps(QA_ROWS), encoding="utf-8")
@@ -66,28 +67,37 @@ def dataset_dir(tmp_path: Path) -> Path:
     return directory
 
 
-ITFAQ_QA_ROWS = [
-    {"id": "qa_001", "question": "怎么申请手机？", "answer": "走 IT 设备申请流程。"},
-    {"id": "qa_002", "question": "显卡坏了怎么换？", "answer": "到 IT 现场登记后更换。"},
-    {"id": "qa_003", "question": "邮箱客户端登不上？", "answer": "改用客户端专用密码。"},
+LOCAL_QA_ROWS = [
+    {
+        "id": "doc_001-q1",
+        "question": "怎么申请设备？",
+        "answer": "填写申请单。",
+        "evidence": [{"doc_id": "doc_001", "quote": "填写申请单即可。"}],
+    },
+    {
+        "id": "doc_002-q1",
+        "question": "IMAP 用哪个端口？",
+        "answer": "993",
+        "evidence": [{"doc_id": "doc_002", "quote": "IMAP 用 993 端口。"}],
+    },
 ]
 
-ITFAQ_CORPUS_ROWS = [
+LOCAL_CORPUS_ROWS = [
     {"id": "doc_001", "title": "设备申请说明", "text": "# 设备申请说明\n\n填写申请单即可。"},
     {"id": "doc_002", "title": "邮箱配置说明", "text": "# 邮箱配置说明\n\nIMAP 用 993 端口。"},
+    {"id": "doc_003", "title": "打印机", "text": "# 打印机\n\n三楼有彩色打印机。"},
 ]
 
 
 @pytest.fixture
-def itfaq_dataset_dir(tmp_path: Path) -> Path:
-
-    directory = tmp_path / "itfaq"
+def local_dataset_dir(tmp_path: Path) -> Path:
+    directory = tmp_path / "local"
     directory.mkdir()
-    (directory / "itfaq.json").write_text(
-        json.dumps(ITFAQ_QA_ROWS, ensure_ascii=False), encoding="utf-8"
+    (directory / "kb.json").write_text(
+        json.dumps(LOCAL_QA_ROWS, ensure_ascii=False), encoding="utf-8"
     )
-    (directory / "itfaq_corpus.json").write_text(
-        json.dumps(ITFAQ_CORPUS_ROWS, ensure_ascii=False), encoding="utf-8"
+    (directory / "kb_corpus.json").write_text(
+        json.dumps(LOCAL_CORPUS_ROWS, ensure_ascii=False), encoding="utf-8"
     )
     return directory
 
@@ -103,13 +113,27 @@ def _normalize(db, name: str, directory: Path, monkeypatch):
 
 
 @pytest.fixture
-def itfaq_normalized(db, itfaq_dataset_dir: Path, monkeypatch):
-    return _normalize(db, "itfaq", itfaq_dataset_dir, monkeypatch)
+def local_normalized(db, local_dataset_dir: Path, monkeypatch):
+    return _normalize(db, "kb", local_dataset_dir, monkeypatch)
 
 
 @pytest.fixture
 def normalized(db, dataset_dir: Path, monkeypatch):
     return _normalize(db, "hotpotqa", dataset_dir, monkeypatch)
+
+
+def make_context(connection, params=None, task_id=None, stage="test") -> TaskContext:
+    params = params or {}
+    if task_id is None:
+        task_id = task_store.create_task(connection, stage=stage, params=params)
+    connection.commit()
+    return TaskContext(
+        task_id=task_id,
+        stage=stage,
+        params=params,
+        connection=connection,
+        pause_event=threading.Event(),
+    )
 
 
 def make_compile_run(connection, run_id="r", datasets=("d",), **overrides) -> int:

@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from akasha_benchmark.store import init_db
 
 from .api import router
 from .settings import Settings, load_settings
-from .tasks import TaskRunner
+from .tasks import TaskRejected, TaskRunner
+
+
+def _task_rejected(_request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse({"detail": str(exc)}, status_code=409)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -33,6 +38,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    app.add_exception_handler(TaskRejected, _task_rejected)
     app.include_router(router)
     return app
 

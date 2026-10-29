@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -20,7 +21,8 @@ from akasha_benchmark.store import (
     query_store,
 )
 
-from ._common import db, public_run, reject_if_busy, writable
+from ..run_tree import public_run
+from ._common import db, reject_if_busy, writable
 
 router = APIRouter(prefix="/api")
 
@@ -75,7 +77,6 @@ def eval_samples(
 
 @router.get("/evals/{eval_id}")
 def eval_detail(request: Request, eval_id: int) -> dict[str, Any]:
-
     with db(request) as connection:
         row = eval_store.get_eval_run(connection, eval_id)
         if row is None:
@@ -104,7 +105,6 @@ def eval_detail(request: Request, eval_id: int) -> dict[str, Any]:
 
 @router.get("/evals/{eval_id}/samples/{sample_id}")
 def sample_detail(request: Request, eval_id: int, sample_id: str) -> dict[str, Any]:
-
     with db(request) as connection:
         eval_run = eval_store.get_eval_run(connection, eval_id)
         if eval_run is None:
@@ -170,7 +170,6 @@ def sample_detail(request: Request, eval_id: int, sample_id: str) -> dict[str, A
 
 @router.delete("/evals/{eval_id}")
 def delete_eval(request: Request, eval_id: int) -> dict[str, Any]:
-
     with writable(request) as connection:
         if eval_store.get_eval_run(connection, eval_id) is None:
             raise HTTPException(404, f"评测 #{eval_id} 不存在")
@@ -181,7 +180,6 @@ def delete_eval(request: Request, eval_id: int) -> dict[str, Any]:
 
 @router.get("/attributions/{attribution_id}")
 def attribution_detail(request: Request, attribution_id: int) -> dict[str, Any]:
-
     with db(request) as connection:
         row = attribution_store.get_attribution_run(connection, attribution_id)
         if row is None:
@@ -189,10 +187,7 @@ def attribution_detail(request: Request, attribution_id: int) -> dict[str, Any]:
         results = attribution_store.attribution_results(connection, attribution_id)
     return {
         **public_run(row),
-        "count_by_root_cause": {
-            cause: sum(1 for r in results if r["root_cause"] == cause)
-            for cause in sorted({r["root_cause"] for r in results})
-        },
+        "count_by_root_cause": dict(sorted(Counter(r["root_cause"] for r in results).items())),
         "results": results,
     }
 
@@ -209,7 +204,6 @@ def delete_attribution(request: Request, attribution_id: int) -> dict[str, Any]:
 
 @router.get("/lineage/{page_id}")
 def lineage(request: Request, page_id: str, question: str = "") -> dict[str, Any]:
-
     with db(request) as connection:
         config = load_config(connection)
     try:
