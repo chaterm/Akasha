@@ -41,7 +41,6 @@ import {
   BUILTIN_TEMPLATE_DATE,
   BUILTIN_TEMPLATES,
   BuiltinTemplate,
-  builtinLang,
   findBuiltinTemplate,
 } from './builtin-templates';
 
@@ -118,7 +117,7 @@ export class TemplateService {
       scope === 'space' || dto.cursor || dto.beforeCursor
         ? []
         : this.matchBuiltins(dto.query).map((tpl) =>
-            this.builtinRow(tpl, user, workspace),
+            this.builtinRow(tpl, workspace),
           );
 
     return {
@@ -351,7 +350,7 @@ export class TemplateService {
     const builtin = findBuiltinTemplate(templateId);
     if (builtin) {
       const userSpaceIds = await this.spaceMemberRepo.getUserSpaceIds(user.id);
-      return { template: this.builtinRow(builtin, user, workspace), userSpaceIds };
+      return { template: this.builtinRow(builtin, workspace), userSpaceIds };
     }
 
     const template = await this.templateRepo.findById(templateId, workspace.id, {
@@ -478,32 +477,27 @@ export class TemplateService {
   private matchBuiltins(query?: string): BuiltinTemplate[] {
     const q = query?.trim().toLowerCase();
     if (!q) return BUILTIN_TEMPLATES;
-    // 中英文任一语言命中都算，避免切换语言后搜不到
-    return BUILTIN_TEMPLATES.filter((tpl) =>
-      Object.values(tpl.locales).some(
-        (l) =>
-          l.title.toLowerCase().includes(q) ||
-          l.description.toLowerCase().includes(q),
-      ),
+    return BUILTIN_TEMPLATES.filter(
+      (tpl) =>
+        tpl.title.toLowerCase().includes(q) ||
+        tpl.description.toLowerCase().includes(q),
     );
   }
 
-  /** 把内置模板转成与数据库行同形的结构，按用户语言取内容。 */
+  /** 把内置模板转成与数据库行同形的结构。 */
   private builtinRow(
     tpl: BuiltinTemplate,
-    user: User,
     workspace: Workspace,
   ): ResolvedTemplate {
-    const locale = tpl.locales[builtinLang(user.locale)];
     return {
       id: tpl.id,
-      title: locale.title,
-      description: locale.description,
+      title: tpl.title,
+      description: tpl.description,
       icon: tpl.icon,
       allSpaces: true,
       spaceIds: [],
       // 复制一份，避免调用方改动共享的模块级对象
-      content: structuredClone(locale.content),
+      content: structuredClone(tpl.content),
       workspaceId: workspace.id,
       creatorId: null,
       lastUpdatedById: null,

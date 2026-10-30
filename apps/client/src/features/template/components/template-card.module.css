@@ -1,21 +1,23 @@
 .card {
   position: relative;
-  border-radius: var(--mantine-radius-md);
+  border-radius: var(--mantine-radius-lg);
   border: 1px solid
-    light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+    light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
   background: var(--mantine-color-body);
+  overflow: hidden;
   transition:
-    border-color 120ms ease,
-    box-shadow 120ms ease,
-    transform 120ms ease;
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
 
   &:hover,
   &:focus-within {
     border-color: light-dark(
-      var(--mantine-color-gray-4),
-      var(--mantine-color-dark-3)
+      var(--mantine-color-gray-3),
+      var(--mantine-color-dark-4)
     );
-    box-shadow: var(--mantine-shadow-sm);
+    box-shadow: 0 6px 20px
+      light-dark(rgba(31, 35, 41, 0.08), rgba(0, 0, 0, 0.35));
   }
 
   &:hover .actions,
@@ -23,9 +25,14 @@
     opacity: 1;
   }
 
+  &:hover .paper,
+  &:focus-within .paper {
+    transform: translateY(-3px) rotate(-1deg);
+  }
+
   @media (prefers-reduced-motion: no-preference) {
     &:hover {
-      transform: translateY(-1px);
+      transform: translateY(-2px);
     }
   }
 }
@@ -40,168 +47,300 @@
 
   &:focus-visible {
     outline: 2px solid var(--mantine-color-blue-filled);
-    outline-offset: 2px;
+    outline-offset: -2px;
   }
 }
+
+/* ---- 缩略图 ---- */
 
 .thumb {
-  height: 132px;
-  padding: 14px 18px 0;
+  --tone: var(--mantine-color-blue-6);
+  position: relative;
+  height: 148px;
   overflow: hidden;
-  border-radius: var(--mantine-radius-md) var(--mantine-radius-md) 0 0;
-  background: light-dark(
-    var(--mantine-color-gray-0),
-    var(--mantine-color-dark-6)
-  );
-  border-bottom: 1px solid
-    light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+  /* 主色很淡地铺满，右下角更亮，接近飞书模板卡片的渐变底 */
+  background:
+    radial-gradient(
+      120% 90% at 100% 100%,
+      color-mix(in srgb, var(--tone) 6%, var(--mantine-color-body)) 0%,
+      transparent 70%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--tone) 16%, var(--mantine-color-body)) 0%,
+      color-mix(in srgb, var(--tone) 7%, var(--mantine-color-body)) 100%
+    );
+
+  &[data-tone="violet"] {
+    --tone: var(--mantine-color-violet-6);
+  }
+  &[data-tone="teal"] {
+    --tone: var(--mantine-color-teal-6);
+  }
+  &[data-tone="orange"] {
+    --tone: var(--mantine-color-orange-6);
+  }
+  &[data-tone="pink"] {
+    --tone: var(--mantine-color-pink-6);
+  }
+  &[data-tone="indigo"] {
+    --tone: var(--mantine-color-indigo-6);
+  }
 
   &[data-compact] {
-    height: 96px;
-    padding: 10px 12px 0;
+    height: 108px;
   }
 }
 
-.paper {
-  height: 100%;
+.thumbHead {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  width: 44%;
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding: 14px 16px;
-  border-radius: 6px 6px 0 0;
-  background: light-dark(
-    var(--mantine-color-white),
-    var(--mantine-color-dark-7)
-  );
-  box-shadow: 0 1px 3px light-dark(rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.4));
-  font-size: 11px;
-  line-height: 1.3;
-  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1));
-  /* 底部渐隐，暗示还有更多内容 */
-  mask-image: linear-gradient(to bottom, #000 70%, transparent);
+  gap: 8px;
 
   .thumb[data-compact] & {
-    padding: 10px 12px;
+    top: 10px;
+    left: 12px;
     gap: 6px;
   }
 }
 
-/* 纸张高度固定，行元素不能被 flex 压缩（overflow:hidden 会让 min-height 变 0） */
+.thumbIcon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--tone);
+  background: light-dark(rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.08));
+  box-shadow: 0 1px 2px light-dark(rgba(31, 35, 41, 0.08), rgba(0, 0, 0, 0.3));
+
+  .thumb[data-compact] & {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    font-size: 14px;
+  }
+}
+
+.thumbTitle {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: light-dark(var(--mantine-color-dark-8), var(--mantine-color-gray-0));
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-all;
+
+  .thumb[data-compact] & {
+    font-size: 13px;
+  }
+}
+
+/* 右侧露出半张纸，底部超出卡片被裁掉 */
+.paper {
+  position: absolute;
+  top: 18px;
+  right: -6px;
+  width: 52%;
+  height: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 12px;
+  border-radius: 6px;
+  background: light-dark(
+    var(--mantine-color-white),
+    var(--mantine-color-dark-7)
+  );
+  box-shadow:
+    0 0 0 1px light-dark(rgba(31, 35, 41, 0.05), rgba(255, 255, 255, 0.06)),
+    0 8px 24px light-dark(rgba(31, 35, 41, 0.1), rgba(0, 0, 0, 0.45));
+  transform: rotate(-2deg);
+  transform-origin: bottom left;
+  transition: transform 200ms ease;
+  overflow: hidden;
+
+  .thumb[data-compact] & {
+    top: 12px;
+    padding: 9px;
+    gap: 5px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+}
+
+/* 纸张高度固定，行元素不能被 flex 压缩 */
 .paper > * {
   flex-shrink: 0;
 }
 
-/* 首行与右上角的 icon 同一行：正文只占左侧，icon 那格是固定的，别的内容进不来 */
-.paperTop {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-
-  .thumb[data-compact] & {
-    gap: 8px;
-  }
-}
-
-.paperTopLine {
-  flex: 1;
-  min-width: 0;
-}
-
-.paperIcon {
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  /* 留白算在 icon 自己的格里，正文截断线不会贴上来 */
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 20px;
-  line-height: 1;
-  color: var(--mantine-color-dimmed);
-
-  .thumb[data-compact] & {
-    width: 20px;
-    height: 20px;
-    font-size: 16px;
-  }
-}
-
-.lineHeading {
-  font-weight: 700;
-  color: light-dark(var(--mantine-color-dark-7), var(--mantine-color-gray-1));
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-top: 2px;
-
-  &[data-level="1"] {
-    font-size: 13px;
-  }
-  &[data-level="2"] {
-    font-size: 12px;
-  }
-  &[data-level="3"] {
-    font-size: 11px;
-  }
-}
-
-.lineText,
-.lineItem {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.lineItem {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.dot {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: currentColor;
-  flex-shrink: 0;
-}
-
-.checkbox {
-  width: 9px;
-  height: 9px;
-  border: 1px solid currentColor;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-
-.bar {
-  display: inline-block;
-  height: 6px;
+.bar,
+.headingBar {
+  display: block;
+  height: 5px;
   border-radius: 3px;
   background: light-dark(
     var(--mantine-color-gray-2),
     var(--mantine-color-dark-4)
   );
+}
+
+.headingBar {
+  height: 7px;
+  margin-top: 3px;
+  background: light-dark(
+    var(--mantine-color-gray-5),
+    var(--mantine-color-dark-2)
+  );
+
+  &[data-level="1"] {
+    height: 9px;
+  }
+}
+
+.lineItem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+
+  .bar {
+    flex: none;
+  }
+}
+
+.dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: light-dark(
+    var(--mantine-color-gray-5),
+    var(--mantine-color-dark-2)
+  );
   flex-shrink: 0;
 }
 
-.blockStub {
-  height: 18px;
-  border-radius: 3px;
-  background:
-    repeating-linear-gradient(
-      to right,
-      light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4)) 0 1px,
-      transparent 1px 25%
-    ),
-    light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
+.checkbox {
+  width: 7px;
+  height: 7px;
   border: 1px solid
-    light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
+    light-dark(var(--mantine-color-gray-5), var(--mantine-color-dark-2));
+  border-radius: 2px;
+  flex-shrink: 0;
 }
 
+.caret {
+  width: 0;
+  height: 0;
+  border-left: 4px solid
+    light-dark(var(--mantine-color-gray-5), var(--mantine-color-dark-2));
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  flex-shrink: 0;
+}
+
+/* 高亮块：左侧色条 + 浅色底，颜色和编辑器里的 callout 类型对应 */
+.callout {
+  --c: var(--mantine-color-blue-5);
+  padding: 4px 6px;
+  border-radius: 3px;
+  border-left: 2px solid var(--c);
+  background: color-mix(in srgb, var(--c) 12%, transparent);
+
+  .bar {
+    background: color-mix(in srgb, var(--c) 35%, transparent);
+  }
+
+  &[data-tone="warning"] {
+    --c: var(--mantine-color-yellow-6);
+  }
+  &[data-tone="danger"] {
+    --c: var(--mantine-color-red-5);
+  }
+  &[data-tone="success"] {
+    --c: var(--mantine-color-green-5);
+  }
+  &[data-tone="note"] {
+    --c: var(--mantine-color-violet-5);
+  }
+  &[data-tone="default"] {
+    --c: var(--mantine-color-gray-5);
+  }
+}
+
+/* 表格：首行深一点当表头 */
+.table {
+  display: grid;
+  grid-template-rows: repeat(4, 6px);
+  gap: 1px;
+  padding: 1px;
+  border-radius: 2px;
+  background: light-dark(
+    var(--mantine-color-gray-2),
+    var(--mantine-color-dark-4)
+  );
+
+  span {
+    background: light-dark(
+      var(--mantine-color-white),
+      var(--mantine-color-dark-7)
+    );
+  }
+  span:first-child {
+    background: light-dark(
+      var(--mantine-color-gray-1),
+      var(--mantine-color-dark-5)
+    );
+  }
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+
+  span {
+    height: 22px;
+    border-radius: 3px;
+    border: 1px solid
+      light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
+  }
+}
+
+.code {
+  height: 18px;
+  border-radius: 3px;
+  background: light-dark(
+    var(--mantine-color-gray-1),
+    var(--mantine-color-dark-5)
+  );
+}
+
+/* 预览头部横幅：沿用缩略图的渐变底，高度随内容 */
+.banner {
+  height: auto;
+  overflow: visible;
+}
+
+/* ---- 卡片信息区 ---- */
+
 .meta {
-  padding: 10px 12px 12px;
+  padding: 12px 14px 14px;
   min-width: 0;
+
+  .card[data-compact] & {
+    padding: 8px 10px 10px;
+  }
 }
 
 .desc {
@@ -222,6 +361,7 @@
   position: absolute;
   top: 8px;
   right: 8px;
+  z-index: 1;
   display: flex;
   gap: 4px;
   opacity: 0;

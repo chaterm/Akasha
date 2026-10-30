@@ -1,8 +1,9 @@
 import "@/features/editor/styles/index.css";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActionIcon,
   Anchor,
+  Button,
   Group,
   Loader,
   Menu,
@@ -23,7 +24,13 @@ import {
 import { Editor, EditorContent, useEditor } from "@tiptap/react";
 import { Helmet } from "react-helmet-async";
 import { useTranslation } from "react-i18next";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import {
+  Link,
+  useBlocker,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 import { getAppName } from "@/lib/config.ts";
 import EmojiPicker from "@/components/ui/emoji-picker";
 import { templateExtensions } from "@/features/editor/extensions/extensions";
@@ -33,6 +40,7 @@ import TableMenu from "@/features/editor/components/table/table-menu.tsx";
 import CalloutMenu from "@/features/editor/components/callout/callout-menu.tsx";
 import { TransclusionLookupProvider } from "@/features/editor/components/transclusion/transclusion-lookup-context";
 import {
+  useCreateTemplate,
   useRemoveTemplate,
   useSaveTemplate,
   useTemplate,
@@ -50,11 +58,26 @@ import classes from "./template-workbench.module.css";
 
 const AUTOSAVE_DELAY = 1200;
 const DIRTY_KINDS = ["meta", "body"] as const;
+/** 新建模板的路由参数；此时模板还不存在，点"创建"才落库 */
+const NEW_ID = "new";
 
 export default function TemplateWorkbench() {
   const { templateId } = useParams<{ templateId: string }>();
+  const [searchParams] = useSearchParams();
   const { t } = useTranslation();
-  const { data: template, isLoading, isError } = useTemplate(templateId);
+  const isNew = templateId === NEW_ID;
+  const {
+    data: template,
+    isLoading,
+    isError,
+  } = useTemplate(isNew ? undefined : templateId);
+
+  if (isNew) {
+    const spaceId = searchParams.get("spaceId");
+    return (
+      <Workbench key={NEW_ID} isNew template={newTemplateDraft(spaceId)} />
+    );
+  }
 
   if (isLoading) {
     return (
@@ -76,6 +99,27 @@ export default function TemplateWorkbench() {
   return <Workbench key={template.id} template={template} />;
 }
 
+/** 新建页的初始模板：默认"所有空间"，从某个空间筛选进来时默认指定该空间 */
+function newTemplateDraft(spaceId: string | null): PageTemplate {
+  const now = new Date().toISOString();
+  return {
+    id: NEW_ID,
+    title: "",
+    description: null,
+    icon: null,
+    allSpaces: !spaceId,
+    spaceIds: spaceId ? [spaceId] : [],
+    otherSpaceCount: 0,
+    workspaceId: "",
+    creatorId: null,
+    lastUpdatedById: null,
+    creator: null,
+    canManage: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 function Notice({ text }: { text: string }) {
   const { t } = useTranslation();
   return (
@@ -88,11 +132,59 @@ function Notice({ text }: { text: string }) {
   );
 }
 
-function Workbench({ template }: { template: PageTemplate }) {
+function Workbench({
+  template,
+  isNew = false,
+}: {
+  template: PageTemplate;
+  /** 新建模式：不自动保存，点"创建"（或 Mod+S）才落库 */
+  isNew?: boolean;
+}) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const save = useSaveTemplate(template.id);
+  const createTemplate = useCreateTemplate();
   const removeTemplate = useRemoveTemplate();
+  // 新建模式下是否改过内容，用于离开时确认
+  const draftDirty = useRef(false);
+  const createInFlight = useRef(false);
+  const isCreating = isNew && createTemplate.isPending;
+
+  const navigationBlocker = useBlocker(
+    () => isNew && (draftDirty.current || createInFlight.current),
+  );
+
+  useEffect(() => {
+    if (navigationBlocker.state !== "blocked") return;
+    // 创建请求不可取消，等待完成后再跳转，避免请求回调把用户拉回编辑页。
+    if (createInFlight.current) {
+      navigationBlocker.reset();
+      return;
+    }
+    let resolved = false;
+    const modalId = modals.openConfirmModal({
+      title: t("Discard this template?"),
+      centered: true,
+      children: (
+        <Text size="sm">
+          {t("The template has not been created. Your changes will be lost.")}
+        </Text>
+      ),
+      labels: { confirm: t("Discard"), cancel: t("Keep editing") },
+      confirmProps: { color: "red" },
+      onConfirm: () => {
+        resolved = true;
+        navigationBlocker.proceed();
+      },
+      onClose: () => {
+        if (!resolved) navigationBlocker.reset();
+      },
+    });
+    return () => {
+      resolved = true;
+      modals.close(modalId);
+    };
+  }, [navigationBlocker, t]);
 
   const [title, setTitle] = useState(template.title ?? "");
   const [description, setDescription] = useState(template.description ?? "");
@@ -104,6 +196,12 @@ function Workbench({ template }: { template: PageTemplate }) {
   const latest = useRef({ title, description, icon, availability });
   latest.current = { title, description, icon, availability };
   const editorRef = useRef<Editor | null>(null);
+
+  const blocker = !title.trim()
+    ? t("Enter a name to save")
+    : isAvailabilityEmpty(availability, template.otherSpaceCount)
+      ? t("Select at least one space to save")
+      : null;
 
   const { saveState, markDirty, flush, discard, hasUnsaved } = useAutosave(
     DIRTY_KINDS,
@@ -135,21 +233,74 @@ function Workbench({ template }: { template: PageTemplate }) {
     },
   );
 
+  /** 记录改动：已有模板走自动保存，新建模板只标记为未保存 */
+  const touch = (kind: (typeof DIRTY_KINDS)[number]) => {
+    if (isNew) draftDirty.current = true;
+    else markDirty(kind);
+  };
+
+  const create = async () => {
+    if (
+      blocker ||
+      createInFlight.current ||
+      navigationBlocker.state === "blocked"
+    )
+      return;
+    createInFlight.current = true;
+    editorRef.current?.setEditable(false, false);
+    const current = latest.current;
+    try {
+      const tpl = await createTemplate.mutateAsync({
+        title: current.title.trim(),
+        description: current.description.trim() || undefined,
+        icon: current.icon ?? undefined,
+        allSpaces: current.availability.allSpaces,
+        spaceIds: current.availability.spaceIds,
+        content: editorRef.current?.getJSON(),
+      });
+      draftDirty.current = false;
+      createInFlight.current = false;
+      // 替换掉 /templates/new，返回时不会回到空白新建页
+      navigate(`/templates/${tpl.id}`, { replace: true });
+    } finally {
+      createInFlight.current = false;
+      if (!editorRef.current?.isDestroyed) {
+        editorRef.current?.setEditable(true, false);
+      }
+    }
+  };
+
+  const leave = () => navigate("/templates");
+
   const editor = useEditor({
     extensions: templateExtensions,
     content: template.content ?? "",
     immediatelyRender: true,
+    editable: !isCreating,
     editorProps: {
       attributes: { "aria-label": t("Template content") },
     },
-    onUpdate: () => markDirty("body"),
+    onUpdate: () => touch("body"),
   });
   editorRef.current = editor;
 
-  useHotkeys([["mod+s", () => void flush()]], [], true);
+  // 快捷键只注册一次，通过 ref 调到最新的 create（闭包里有当前标题等状态）
+  const createRef = useRef(create);
+  createRef.current = create;
+  useHotkeys(
+    [
+      [
+        "mod+s",
+        () =>
+          void (isNew ? createRef.current().catch(() => undefined) : flush()),
+      ],
+    ],
+    [],
+    true,
+  );
 
   useWindowEvent("beforeunload", (e) => {
-    if (hasUnsaved()) {
+    if (isNew ? draftDirty.current : hasUnsaved()) {
       e.preventDefault();
       e.returnValue = "";
     }
@@ -201,38 +352,52 @@ function Workbench({ template }: { template: PageTemplate }) {
           </Text>
         </nav>
 
-        <Group gap="sm" wrap="nowrap">
-          <SaveIndicator
-            state={saveState}
-            blocker={
-              !title.trim()
-                ? t("Enter a name to save")
-                : isAvailabilityEmpty(availability, template.otherSpaceCount)
-                  ? t("Select at least one space to save")
-                  : null
-            }
-          />
-          <Menu position="bottom-end" shadow="md" withinPortal>
-            <Menu.Target>
-              <ActionIcon
-                variant="subtle"
-                color="gray"
-                aria-label={t("More actions")}
+        {isNew ? (
+          <Group gap="xs" wrap="nowrap">
+            <Button
+              variant="default"
+              size="xs"
+              onClick={leave}
+              disabled={isCreating}
+            >
+              {t("Cancel")}
+            </Button>
+            <Tooltip label={blocker} disabled={!blocker} withArrow>
+              <Button
+                size="xs"
+                disabled={!!blocker}
+                loading={createTemplate.isPending}
+                onClick={() => create().catch(() => undefined)}
               >
-                <IconDots size={18} />
-              </ActionIcon>
-            </Menu.Target>
-            <Menu.Dropdown>
-              <Menu.Item
-                color="red"
-                leftSection={<IconTrash size={14} />}
-                onClick={confirmDelete}
-              >
-                {t("Delete template")}
-              </Menu.Item>
-            </Menu.Dropdown>
-          </Menu>
-        </Group>
+                {t("Create template")}
+              </Button>
+            </Tooltip>
+          </Group>
+        ) : (
+          <Group gap="sm" wrap="nowrap">
+            <SaveIndicator state={saveState} blocker={blocker} />
+            <Menu position="bottom-end" shadow="md" withinPortal>
+              <Menu.Target>
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  aria-label={t("More actions")}
+                >
+                  <IconDots size={18} />
+                </ActionIcon>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Item
+                  color="red"
+                  leftSection={<IconTrash size={14} />}
+                  onClick={confirmDelete}
+                >
+                  {t("Delete template")}
+                </Menu.Item>
+              </Menu.Dropdown>
+            </Menu>
+          </Group>
+        )}
       </header>
 
       <div className={classes.canvas}>
@@ -240,14 +405,16 @@ function Workbench({ template }: { template: PageTemplate }) {
           <div className={classes.iconRow}>
             <EmojiPicker
               onEmojiSelect={(emoji) => {
+                if (createInFlight.current) return;
                 setIcon(emoji.native);
-                markDirty("meta");
+                touch("meta");
               }}
               removeEmojiAction={() => {
+                if (createInFlight.current) return;
                 setIcon(null);
-                markDirty("meta");
+                touch("meta");
               }}
-              readOnly={false}
+              readOnly={isCreating}
               icon={
                 icon ? (
                   <span className={classes.iconGlyph}>{icon}</span>
@@ -268,13 +435,14 @@ function Workbench({ template }: { template: PageTemplate }) {
           <input
             className={classes.titleInput}
             value={title}
+            disabled={isCreating}
             maxLength={200}
             placeholder={t("Untitled template")}
             aria-label={t("Template name")}
             aria-invalid={!title.trim() || undefined}
             onChange={(e) => {
               setTitle(e.currentTarget.value);
-              markDirty("meta");
+              touch("meta");
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.nativeEvent.isComposing) {
@@ -293,39 +461,50 @@ function Workbench({ template }: { template: PageTemplate }) {
             )}
             aria-label={t("Description")}
             value={description}
+            disabled={isCreating}
             onChange={(e) => {
               setDescription(e.currentTarget.value);
-              markDirty("meta");
+              touch("meta");
             }}
             classNames={{ input: classes.descriptionInput }}
           />
           <div className={classes.metaRow}>
-            <TemplateCreator template={template} size="sm" />
-            <span className={classes.metaDot} aria-hidden>
-              ·
-            </span>
+            {!isNew && (
+              <>
+                <TemplateCreator template={template} size="sm" />
+                <span className={classes.metaDot} aria-hidden>
+                  ·
+                </span>
+              </>
+            )}
             <Text size="sm" c="dimmed">
               {t("Available in")}
             </Text>
             <TemplateAvailabilityPicker
+              disabled={isCreating}
               size="xs"
               value={availability}
               otherSpaceCount={template.otherSpaceCount}
               onChange={(next) => {
+                if (createInFlight.current) return;
                 setAvailability(next);
-                markDirty("meta");
+                touch("meta");
               }}
             />
           </div>
           <div className={classes.hint}>
-            {t("Type / to insert blocks. Changes are saved automatically.")}
+            {isNew
+              ? t(
+                  "Type / to insert blocks. Click “Create template” when you are done.",
+                )
+              : t("Type / to insert blocks. Changes are saved automatically.")}
           </div>
         </div>
 
         <TransclusionLookupProvider>
           <div className="editor-container" style={{ position: "relative" }}>
             <EditorContent editor={editor} />
-            {editor && (
+            {editor && !isCreating && (
               <>
                 <EditorBubbleMenu editor={editor} templateMode />
                 <EditorLinkMenu editor={editor} />

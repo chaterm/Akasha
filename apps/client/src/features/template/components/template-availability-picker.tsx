@@ -27,6 +27,7 @@ interface Props {
   fullWidth?: boolean;
   /** 在触发器下方显示"至少选择一个空间"的错误（表单场景） */
   showError?: boolean;
+  disabled?: boolean;
 }
 
 /** 选择模板可用范围：所有空间，或多个指定空间。 */
@@ -38,6 +39,7 @@ export function TemplateAvailabilityPicker({
   size = "sm",
   fullWidth,
   showError,
+  disabled = false,
 }: Props) {
   const { t } = useTranslation();
   const { spaces, availabilityLabel } = useSpaceDirectory();
@@ -69,7 +71,8 @@ export function TemplateAvailabilityPicker({
         </Text>
       )}
       <Popover
-        opened={opened}
+        opened={opened && !disabled}
+        disabled={disabled}
         onChange={setOpened}
         position="bottom-start"
         width={300}
@@ -79,6 +82,7 @@ export function TemplateAvailabilityPicker({
       >
         <Popover.Target>
           <UnstyledButton
+            disabled={disabled}
             className={classes.trigger}
             data-size={size}
             data-full={fullWidth || undefined}

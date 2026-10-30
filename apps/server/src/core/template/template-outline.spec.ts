@@ -55,6 +55,24 @@ describe('buildOutline', () => {
     ]);
   });
 
+  it('高亮块带色调，分栏 / 目录 / 折叠块各自生成块占位', () => {
+    const outline = buildOutline({
+      type: 'doc',
+      content: [
+        { type: 'callout', attrs: { type: 'warning' }, content: [p('注意')] },
+        { type: 'toc', attrs: {} },
+        { type: 'columns', content: [{ type: 'column', content: [p('左')] }] },
+        { type: 'details', content: [] },
+      ],
+    });
+    expect(outline).toEqual([
+      { kind: 'callout', tone: 'warning', text: '注意' },
+      { kind: 'block', label: 'toc' },
+      { kind: 'block', label: 'columns' },
+      { kind: 'block', label: 'details' },
+    ]);
+  });
+
   it('空正文返回空数组', () => {
     expect(buildOutline(null)).toEqual([]);
   });

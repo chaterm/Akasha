@@ -27,3 +27,7 @@
   max-height: 60vh;
   overflow-y: auto;
 }
+
+.section + .section {
+  margin-top: var(--mantine-spacing-xl);
+}
