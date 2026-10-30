@@ -1,3 +1,4 @@
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import {
   resolveModelCallOptions,
   stableCallOptionsKey,
@@ -7,17 +8,25 @@ import type { ResolvedAiModelConfig } from './ai-model-config.service';
 const PROVIDER = 'akashaAnswer';
 
 describe('resolveModelCallOptions', () => {
-  it('sends nothing when the config carries no parameters', () => {
-    expect(
-      resolveModelCallOptions(config(), { providerOptionsName: PROVIDER }),
-    ).toEqual({});
-  });
+  it.each(['qwen3.8-27b', 'deepseek', 'glm', 'office-model', 'gpt-4o'])(
+    'disables thinking by default for %s without requiring a model-name match',
+    (model) => {
+      expect(
+        resolveModelCallOptions(config({}, model), {
+          providerOptionsName: PROVIDER,
+        }),
+      ).toEqual({
+        providerOptions: {
+          [PROVIDER]: { chat_template_kwargs: { enable_thinking: false } },
+        },
+      });
+    },
+  );
 
-  it('sends the feature thinking default when the config omits it', () => {
+  it('does not let reasoningEffort implicitly enable thinking', () => {
     expect(
-      resolveModelCallOptions(config(), {
+      resolveModelCallOptions(config({ reasoningEffort: 'high' }), {
         providerOptionsName: PROVIDER,
-        defaultThinkingEnabled: false,
       }),
     ).toEqual({
       providerOptions: {
@@ -26,11 +35,10 @@ describe('resolveModelCallOptions', () => {
     });
   });
 
-  it('prefers the configured thinking flag over the feature default', () => {
+  it('enables thinking only when explicitly configured', () => {
     expect(
       resolveModelCallOptions(config({ thinkingEnabled: true }), {
         providerOptionsName: PROVIDER,
-        defaultThinkingEnabled: false,
       }),
     ).toEqual({
       providerOptions: {
@@ -39,36 +47,67 @@ describe('resolveModelCallOptions', () => {
     });
   });
 
-  it('keeps the OpenAI dialect when the model is a reasoning model', () => {
+  it.each([undefined, false])(
+    'explicitly disables OpenAI reasoning when thinkingEnabled is %s',
+    (thinkingEnabled) => {
+      expect(
+        resolveModelCallOptions(config({ thinkingEnabled }), {
+          providerOptionsName: PROVIDER,
+          defaultThinkingMode: 'openai',
+          defaultTemperature: 0.1,
+        }),
+      ).toEqual({
+        providerOptions: { openaiCompatible: { reasoningEffort: 'none' } },
+      });
+    },
+  );
+
+  it('does not let reasoningEffort implicitly enable OpenAI thinking', () => {
     expect(
-      resolveModelCallOptions(config({ thinkingEnabled: false }), {
-        providerOptionsName: PROVIDER,
-        defaultThinkingMode: 'openai',
-        defaultTemperature: 0.1,
-      }),
-    ).toEqual({});
+      resolveModelCallOptions(
+        config({ thinkingMode: 'openai', reasoningEffort: 'high' }),
+        { providerOptionsName: PROVIDER },
+      ),
+    ).toEqual({
+      providerOptions: { openaiCompatible: { reasoningEffort: 'none' } },
+    });
   });
 
   it('applies the feature default temperature only when unset', () => {
     expect(
-      resolveModelCallOptions(config(), {
+      resolveModelCallOptions(config({}, 'gpt-4o'), {
         providerOptionsName: PROVIDER,
         defaultTemperature: 0,
       }),
-    ).toEqual({ temperature: 0 });
+    ).toEqual({
+      temperature: 0,
+      providerOptions: {
+        [PROVIDER]: { chat_template_kwargs: { enable_thinking: false } },
+      },
+    });
 
     expect(
-      resolveModelCallOptions(config({ temperature: 0.7 }), {
+      resolveModelCallOptions(config({ temperature: 0.7 }, 'gpt-4o'), {
         providerOptionsName: PROVIDER,
         defaultTemperature: 0,
       }),
-    ).toEqual({ temperature: 0.7 });
+    ).toEqual({
+      temperature: 0.7,
+      providerOptions: {
+        [PROVIDER]: { chat_template_kwargs: { enable_thinking: false } },
+      },
+    });
   });
 
   it('keys Qwen thinking under the provider name so the SDK passes it through', () => {
     expect(
       resolveModelCallOptions(
-        config({ thinkingMode: 'qwen', reasoningEffort: 'medium', seed: 7 }),
+        config({
+          thinkingMode: 'qwen',
+          thinkingEnabled: true,
+          reasoningEffort: 'medium',
+          seed: 7,
+        }),
         { providerOptionsName: PROVIDER, defaultTemperature: 0 },
       ),
     ).toEqual({
@@ -85,7 +124,7 @@ describe('resolveModelCallOptions', () => {
     });
   });
 
-  it('turns Qwen thinking off explicitly, which is not the same as omitting it', () => {
+  it('keeps Qwen thinking off when explicitly disabled', () => {
     expect(
       resolveModelCallOptions(
         config({ thinkingMode: 'qwen', thinkingEnabled: false }),
@@ -96,13 +135,14 @@ describe('resolveModelCallOptions', () => {
     });
   });
 
-  it('applies a feature default for Qwen thinking without changing other callers', () => {
+  it('defaults explicitly selected Qwen mode to thinking off for model aliases', () => {
     expect(
-      resolveModelCallOptions(config(), {
-        providerOptionsName: PROVIDER,
-        defaultThinkingMode: 'qwen',
-        defaultThinkingEnabled: false,
-      }),
+      resolveModelCallOptions(
+        config({ thinkingMode: 'qwen' }, 'office-model'),
+        {
+          providerOptionsName: PROVIDER,
+        },
+      ),
     ).toEqual({
       providerOptions: {
         [PROVIDER]: {
@@ -112,14 +152,13 @@ describe('resolveModelCallOptions', () => {
     });
   });
 
-  it('lets an explicit thinking setting override the feature default', () => {
+  it('lets an explicit mode override the feature protocol default', () => {
     expect(
       resolveModelCallOptions(
         config({ thinkingMode: 'qwen', thinkingEnabled: true }),
         {
           providerOptionsName: PROVIDER,
           defaultThinkingMode: 'openai',
-          defaultThinkingEnabled: false,
         },
       ),
     ).toEqual({
@@ -151,6 +190,7 @@ describe('resolveModelCallOptions', () => {
       resolveModelCallOptions(
         config({
           thinkingMode: 'openai',
+          thinkingEnabled: true,
           reasoningEffort: 'low',
           temperature: 0.5,
           seed: 7,
@@ -163,17 +203,22 @@ describe('resolveModelCallOptions', () => {
     });
   });
 
-  it('ignores thinking for callers that share another feature config row', () => {
+  it('disables thinking for callers that share another feature config row', () => {
     expect(
       resolveModelCallOptions(
         config({ thinkingMode: 'qwen', reasoningEffort: 'high', seed: 7 }),
         {
           providerOptionsName: PROVIDER,
           defaultTemperature: 0,
-          ignoreThinking: true,
         },
       ),
-    ).toEqual({ temperature: 0, seed: 7 });
+    ).toEqual({
+      temperature: 0,
+      seed: 7,
+      providerOptions: {
+        [PROVIDER]: { chat_template_kwargs: { enable_thinking: false } },
+      },
+    });
   });
 
   it('still sends sampling for a non-reasoning OpenAI model', () => {
@@ -181,7 +226,12 @@ describe('resolveModelCallOptions', () => {
       resolveModelCallOptions(config({ temperature: 0.3 }, 'gpt-4o'), {
         providerOptionsName: PROVIDER,
       }),
-    ).toEqual({ temperature: 0.3 });
+    ).toEqual({
+      temperature: 0.3,
+      providerOptions: {
+        [PROVIDER]: { chat_template_kwargs: { enable_thinking: false } },
+      },
+    });
   });
 
   it('drops unusable values from a hand-edited row', () => {
@@ -195,8 +245,58 @@ describe('resolveModelCallOptions', () => {
         }),
         { providerOptionsName: PROVIDER },
       ),
-    ).toEqual({});
+    ).toEqual({
+      providerOptions: {
+        [PROVIDER]: { chat_template_kwargs: { enable_thinking: false } },
+      },
+    });
   });
+});
+
+describe('thinking options in the SDK request body', () => {
+  it.each([
+    {
+      parameters: {},
+      expected: { chat_template_kwargs: { enable_thinking: false } },
+    },
+    {
+      parameters: { thinkingMode: 'openai', reasoningEffort: 'high' },
+      expected: { reasoning_effort: 'none' },
+    },
+  ])(
+    'sends the disabled intent for $parameters',
+    async ({ parameters, expected }) => {
+      const requests: Record<string, unknown>[] = [];
+      const model = createOpenAICompatible({
+        name: PROVIDER,
+        baseURL: 'https://llm.example/v1',
+        fetch: async (_url, init) => {
+          requests.push(JSON.parse(init?.body as string));
+          return new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: { role: 'assistant', content: 'OK' },
+                  finish_reason: 'stop',
+                },
+              ],
+            }),
+            { headers: { 'content-type': 'application/json' } },
+          );
+        },
+      })('office-model');
+
+      await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'ping' }] }],
+        ...resolveModelCallOptions(config(parameters, 'office-model'), {
+          providerOptionsName: PROVIDER,
+        }),
+      });
+
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toMatchObject({ model: 'office-model', ...expected });
+    },
+  );
 });
 
 describe('stableCallOptionsKey', () => {
@@ -221,9 +321,10 @@ describe('stableCallOptionsKey', () => {
   });
 
   it('changes when thinking is retuned, so cached output is invalidated', () => {
-    const on = resolveModelCallOptions(config({ thinkingMode: 'qwen' }), {
-      providerOptionsName: PROVIDER,
-    });
+    const on = resolveModelCallOptions(
+      config({ thinkingMode: 'qwen', thinkingEnabled: true }),
+      { providerOptionsName: PROVIDER },
+    );
     const off = resolveModelCallOptions(
       config({ thinkingMode: 'qwen', thinkingEnabled: false }),
       { providerOptionsName: PROVIDER },

@@ -25,8 +25,6 @@ export type ResolveModelCallOptionsInput = {
   providerOptionsName: string;
   defaultTemperature?: number;
   defaultThinkingMode?: ThinkingMode;
-  defaultThinkingEnabled?: boolean;
-  ignoreThinking?: boolean;
 };
 
 export function resolveModelCallOptions(
@@ -34,13 +32,11 @@ export function resolveModelCallOptions(
   input: ResolveModelCallOptionsInput,
 ): ModelCallOptions {
   const parameters = readParameters(config);
-  const thinkingIntent =
-    parameters.thinkingEnabled ?? input.defaultThinkingEnabled;
-  const thinkingMode = input.ignoreThinking
-    ? undefined
-    : (parameters.thinkingMode ??
-      input.defaultThinkingMode ??
-      (thinkingIntent === undefined ? undefined : 'qwen'));
+  // Every generation feature defaults to thinking off, regardless of model name.
+  // The mode only selects how to encode that intent for the configured endpoint.
+  const thinkingEnabled = parameters.thinkingEnabled ?? false;
+  const thinkingMode =
+    parameters.thinkingMode ?? input.defaultThinkingMode ?? 'qwen';
 
   const samplingAllowed = thinkingMode !== 'openai';
 
@@ -58,37 +54,36 @@ export function resolveModelCallOptions(
       thinkingMode,
       parameters,
       input.providerOptionsName,
-      input.defaultThinkingEnabled,
+      thinkingEnabled,
     ),
   };
 }
 
 function buildProviderOptions(
-  thinkingMode: ThinkingMode | undefined,
+  thinkingMode: ThinkingMode,
   parameters: AiModelCallParameters,
   providerOptionsName: string,
-  defaultThinkingEnabled?: boolean,
+  thinkingEnabled: boolean,
 ): { providerOptions?: ProviderOptions } {
-  if (thinkingMode === undefined) return {};
-
   if (thinkingMode === 'openai') {
-    return parameters.reasoningEffort === undefined
+    const reasoningEffort = thinkingEnabled
+      ? parameters.reasoningEffort
+      : 'none';
+    return reasoningEffort === undefined
       ? {}
       : {
           providerOptions: {
-            openaiCompatible: { reasoningEffort: parameters.reasoningEffort },
+            openaiCompatible: { reasoningEffort },
           },
         };
   }
 
-  const enableThinking =
-    parameters.thinkingEnabled ?? defaultThinkingEnabled ?? true;
   return {
     providerOptions: {
       [providerOptionsName]: {
         chat_template_kwargs: {
-          enable_thinking: enableThinking,
-          ...(enableThinking && parameters.reasoningEffort !== undefined
+          enable_thinking: thinkingEnabled,
+          ...(thinkingEnabled && parameters.reasoningEffort !== undefined
             ? { reasoning_effort: parameters.reasoningEffort }
             : {}),
         },

@@ -18,6 +18,7 @@ import { Link } from "react-router-dom";
 import { useTemplate, useTemplateList } from "../api/template-hooks";
 import { PageTemplate } from "../api/template.types";
 import { useSpaceDirectory } from "../lib/use-space-names";
+import { TemplateToneBanner } from "./template-card";
 import { TemplatePreview } from "./template-preview";
 import { TemplateCreator } from "./template-creator";
 import classes from "./template-quick-picker.module.css";
@@ -239,15 +240,26 @@ export function TemplateQuickPicker({
           {active ? (
             <div className={classes.previewInner}>
               <div className={classes.previewPaper}>
-                <div className={classes.previewHead}>
-                  <Group gap="xs" mb={6}>
-                    <Badge variant="light" size="xs" radius="sm">
+                <TemplateToneBanner
+                  templateId={active.id}
+                  className={classes.previewHead}
+                >
+                  <Group gap="xs" mb={10}>
+                    <span className={classes.previewIcon} aria-hidden>
+                      {active.icon || <IconFileText size={20} stroke={1.5} />}
+                    </span>
+                    <Badge
+                      variant="white"
+                      size="sm"
+                      radius="sm"
+                      tt="none"
+                      fw={500}
+                    >
                       {availabilityLabel(active)}
                     </Badge>
                     {previewLoading && <Loader size="xs" />}
                   </Group>
                   <Text fw={700} size="xl">
-                    {active.icon ? `${active.icon} ` : ""}
                     {active.title || t("Untitled")}
                   </Text>
                   {active.description && (
@@ -258,7 +270,7 @@ export function TemplateQuickPicker({
                   <div style={{ marginTop: 8 }}>
                     <TemplateCreator template={active} withUpdated />
                   </div>
-                </div>
+                </TemplateToneBanner>
                 <div className={classes.previewBody}>
                   <TemplatePreview content={active.content} />
                 </div>

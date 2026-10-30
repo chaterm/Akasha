@@ -9,6 +9,7 @@ import {
   createEmbeddingModelFromConfig,
   createLanguageModelFromConfig,
 } from './ai-model-factory';
+import { resolveModelCallOptions } from './ai-model-call-options';
 
 // Values the admin currently has in the form. apiKey omitted/blank means "reuse
 // the stored key" — the same write-only rule as saving.
@@ -55,6 +56,9 @@ export class AiModelConfigTestService {
         await generateText({
           model,
           prompt: 'ping',
+          ...resolveModelCallOptions(config, {
+            providerOptionsName: FACTORY_NAME,
+          }),
           maxOutputTokens: 1,
           abortSignal: signal,
         });

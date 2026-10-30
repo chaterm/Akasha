@@ -1564,5 +1564,11 @@
   "Night compile window {{start}}–{{end}} is closed: due pages wait until {{time}}.": "夜间编译时段 {{start}}–{{end}} 未开始：到期页面将等到 {{time}} 再编译。",
   "Waiting for night window": "等待夜间时段",
   "Compiles at": "预计编译时间",
-  "Automatic page creates and updates compile in the night compile window, without the one-hour wait. Manual page publish, retries and force rebuild remain immediate.": "开启夜间编译时段后，页面新建和编辑不再等待 1 小时，统一在夜间时段内编译；页面手动发布、重试和强制重建仍会立即执行。"
+  "Automatic page creates and updates compile in the night compile window, without the one-hour wait. Manual page publish, retries and force rebuild remain immediate.": "开启夜间编译时段后，页面新建和编辑不再等待 1 小时，统一在夜间时段内编译；页面手动发布、重试和强制重建仍会立即执行。",
+  "Team templates": "团队模板",
+  "Create template": "创建模板",
+  "Discard this template?": "放弃这个模板？",
+  "The template has not been created. Your changes will be lost.": "模板还没有创建，离开后填写的内容会丢失。",
+  "Keep editing": "继续编辑",
+  "Type / to insert blocks. Click “Create template” when you are done.": "输入 / 插入内容块，填写完成后点击“创建模板”。"
 }

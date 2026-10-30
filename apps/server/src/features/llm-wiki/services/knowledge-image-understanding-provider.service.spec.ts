@@ -100,6 +100,9 @@ describe('ConfiguredKnowledgeImageUnderstandingProvider', () => {
         },
       ],
       temperature: 0,
+      providerOptions: {
+        akashaImage: { chat_template_kwargs: { enable_thinking: false } },
+      },
       maxOutputTokens: 8_000,
       abortSignal: expect.any(AbortSignal),
       output: expect.objectContaining({
@@ -121,7 +124,11 @@ describe('ConfiguredKnowledgeImageUnderstandingProvider', () => {
 
     await createProvider({
       visionModel: 'o4-mini',
-      parameters: { thinkingMode: 'openai', reasoningEffort: 'low' },
+      parameters: {
+        thinkingMode: 'openai',
+        thinkingEnabled: true,
+        reasoningEffort: 'low',
+      },
     }).describe({
       bytes: imageBytes,
       mimeType: 'image/png',

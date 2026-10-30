@@ -3,6 +3,8 @@ export type OutlineItem =
   | { kind: 'text'; text: string }
   | { kind: 'bullet'; text: string }
   | { kind: 'task'; text: string }
+  | { kind: 'callout'; tone: string; text: string }
+  /** table / code / columns / toc / details */
   | { kind: 'block'; label: string };
 
 const MAX_ITEMS = 9;
@@ -54,13 +56,24 @@ export function buildOutline(doc: any): OutlineItem[] {
       case 'codeBlock':
         items.push({ kind: 'block', label: 'code' });
         return;
+      case 'columns':
+        items.push({ kind: 'block', label: 'columns' });
+        return;
+      case 'toc':
+        items.push({ kind: 'block', label: 'toc' });
+        return;
+      case 'details':
+        items.push({ kind: 'block', label: 'details' });
+        return;
+      case 'callout':
+        items.push({ kind: 'callout', tone: node.attrs?.type ?? 'info', text: clip(textOf(node)) });
+        return;
       // 画布类节点在缩略图里渲染不出内容，用一行普通占位补上，别让结构断开
       case 'excalidraw':
       case 'drawio':
         items.push({ kind: 'text', text: '' });
         return;
       case 'blockquote':
-      case 'callout':
         items.push({ kind: 'text', text: clip(textOf(node)) });
         return;
       default:

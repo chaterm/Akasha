@@ -34,25 +34,29 @@
 
   &[aria-selected="true"] {
     background: light-dark(
-      var(--mantine-color-gray-1),
+      var(--mantine-color-blue-0),
       var(--mantine-color-dark-5)
+    );
+  }
+
+  &[aria-selected="true"] .optionIcon {
+    border-color: light-dark(
+      var(--mantine-color-blue-2),
+      var(--mantine-color-dark-3)
     );
   }
 }
 
 .optionIcon {
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   border-radius: 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
+  font-size: 18px;
   color: var(--mantine-color-dimmed);
-  background: light-dark(
-    var(--mantine-color-gray-0),
-    var(--mantine-color-dark-6)
-  );
+  background: var(--mantine-color-body);
   border: 1px solid
     light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
   flex-shrink: 0;
@@ -87,15 +91,30 @@
 /* 预览放在一张"纸"上，并整体缩小，和真正的编辑器区分开 */
 .previewPaper {
   background: var(--mantine-color-body);
-  border-radius: var(--mantine-radius-md);
-  box-shadow: var(--mantine-shadow-xs);
-  padding: 20px 0 8px;
+  border-radius: var(--mantine-radius-lg);
+  box-shadow:
+    0 0 0 1px light-dark(rgba(31, 35, 41, 0.05), rgba(255, 255, 255, 0.06)),
+    0 4px 16px light-dark(rgba(31, 35, 41, 0.06), rgba(0, 0, 0, 0.35));
+  overflow: hidden;
+  padding-bottom: 8px;
   zoom: 0.85;
 }
 
 .previewHead {
   /* 与编辑器正文的左右留白对齐 */
-  padding: 0 3rem;
+  padding: 24px 3rem 20px;
+}
+
+.previewIcon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  color: var(--mantine-color-dimmed);
+  background: light-dark(rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.08));
 }
 
 .previewBody {

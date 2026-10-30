@@ -8,6 +8,8 @@ export type TemplateOutlineItem =
   | { kind: "text"; text: string }
   | { kind: "bullet"; text: string }
   | { kind: "task"; text: string }
+  | { kind: "callout"; tone: string; text: string }
+  /** table / code / columns / toc / details */
   | { kind: "block"; label: string };
 
 export interface PageTemplate {

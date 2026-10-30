@@ -1543,5 +1543,11 @@
   "Night compile window {{start}}–{{end}} is closed: due pages wait until {{time}}.": "Night compile window {{start}}–{{end}} is closed: due pages wait until {{time}}.",
   "Waiting for night window": "Waiting for night window",
   "Compiles at": "Compiles at",
-  "Automatic page creates and updates compile in the night compile window, without the one-hour wait. Manual page publish, retries and force rebuild remain immediate.": "Automatic page creates and updates compile in the night compile window, without the one-hour wait. Manual page publish, retries and force rebuild remain immediate."
+  "Automatic page creates and updates compile in the night compile window, without the one-hour wait. Manual page publish, retries and force rebuild remain immediate.": "Automatic page creates and updates compile in the night compile window, without the one-hour wait. Manual page publish, retries and force rebuild remain immediate.",
+  "Team templates": "Team templates",
+  "Create template": "Create template",
+  "Discard this template?": "Discard this template?",
+  "The template has not been created. Your changes will be lost.": "The template has not been created. Your changes will be lost.",
+  "Keep editing": "Keep editing",
+  "Type / to insert blocks. Click “Create template” when you are done.": "Type / to insert blocks. Click “Create template” when you are done."
 }

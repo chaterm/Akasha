@@ -17,11 +17,11 @@ const [WEEKLY_ID, CHECKLIST_ID, FLOWCHART_ID, MANUAL_ID, DESIGN_ID] =
 const BUILTIN_IDS = BUILTIN_TEMPLATES.map((t) => t.id);
 /** 每个内置模板必须保留下来的块（未知节点会被静默剥掉） */
 const EXPECTED_BLOCKS: Record<string, string[]> = {
-  [WEEKLY_ID]: ['heading', 'taskList', 'bulletList'],
-  [CHECKLIST_ID]: ['heading', 'taskList', 'taskItem', 'bulletList'],
-  [FLOWCHART_ID]: ['heading', 'excalidraw', 'callout', 'bulletList'],
-  [MANUAL_ID]: ['heading', 'callout', 'orderedList', 'bulletList'],
-  [DESIGN_ID]: ['heading', 'callout', 'codeBlock', 'mathBlock', 'mathInline', 'taskList', 'bulletList'],
+  [WEEKLY_ID]: ['table', 'tableHeader', 'status', 'callout', 'heading', 'taskList'],
+  [CHECKLIST_ID]: ['callout', 'columns', 'column', 'status', 'taskList', 'taskItem', 'bulletList'],
+  [FLOWCHART_ID]: ['callout', 'heading', 'excalidraw', 'table'],
+  [MANUAL_ID]: ['table', 'heading', 'callout', 'details', 'detailsSummary', 'bulletList'],
+  [DESIGN_ID]: ['table', 'status', 'callout', 'toc', 'heading', 'codeBlock', 'mathBlock', 'mathInline', 'taskList', 'bulletList'],
 };
 
 const DOC = {
@@ -295,7 +295,7 @@ describe('TemplateService', () => {
   });
 
   describe('内置模板', () => {
-    it('列表首页把内置模板排在最前，并按用户语言返回', async () => {
+    it('列表首页把内置模板排在最前，内容只有中文', async () => {
       const { service, templateRepo } = createSubject();
       templateRepo.findTemplates.mockResolvedValue({ items: [row()], meta: {} });
 
@@ -311,7 +311,7 @@ describe('TemplateService', () => {
       expect(zh.items[zh.items.length - 1].builtin).toBe(false);
 
       const en = await service.list({ ...member, locale: 'en-US' }, ws(), {} as any);
-      expect(en.items[0].title).toBe('Weekly report');
+      expect(en.items[0].title).toBe('周报');
     });
 
     it('翻页、按指定空间筛选或搜索不命中时不返回内置模板', async () => {
@@ -322,15 +322,10 @@ describe('TemplateService', () => {
       expect(await ids({ cursor: 'next' })).toEqual([]);
       expect(await ids({ scope: 'space', spaceId: 'space-1' })).toEqual([]);
       expect(await ids({ query: '不存在的模板' })).toEqual([]);
-      // 中英文任一语言命中都返回
-      expect(await ids({ query: 'weekly' })).toEqual([WEEKLY_ID]);
       expect(await ids({ query: '周报' })).toEqual([WEEKLY_ID]);
       expect(await ids({ query: '清单' })).toEqual([CHECKLIST_ID]);
-      expect(await ids({ query: 'checklist' })).toEqual([CHECKLIST_ID]);
       expect(await ids({ query: '手册' })).toEqual([MANUAL_ID]);
-      expect(await ids({ query: 'manual' })).toEqual([MANUAL_ID]);
       expect(await ids({ query: '技术方案' })).toEqual([DESIGN_ID]);
-      expect(await ids({ query: 'technical design' })).toEqual([DESIGN_ID]);
       expect(await ids({ scope: 'available', spaceId: 'space-1' })).toEqual(BUILTIN_IDS);
     });
 
@@ -339,42 +334,42 @@ describe('TemplateService', () => {
       const view = await service.getById(WEEKLY_ID, admin, ws());
       expect(templateRepo.findById).not.toHaveBeenCalled();
       expect(view.builtin).toBe(true);
-      expect(view.content).toEqual(BUILTIN_TEMPLATES[0].locales.en.content);
-      // 每种语言的正文都要能被编辑器 schema 解析
+      expect(view.content).toEqual(BUILTIN_TEMPLATES[0].content);
+      // 正文要能被编辑器 schema 解析
       for (const tpl of BUILTIN_TEMPLATES) {
-        for (const locale of Object.values(tpl.locales)) {
-          const node = jsonToNode(locale.content);
-          expect(() => node.check()).not.toThrow();
-          // 未知节点会被静默剥掉，这里确认关键块都还在
-          const types = new Set<string>();
-          node.descendants((n) => {
-            types.add(n.type.name);
-          });
-          for (const type of EXPECTED_BLOCKS[tpl.id]) {
-            expect(types).toContain(type);
-          }
+        const node = jsonToNode(tpl.content);
+        expect(() => node.check()).not.toThrow();
+        // 未知节点会被静默剥掉，这里确认关键块都还在
+        const types = new Set<string>();
+        node.descendants((n) => {
+          types.add(n.type.name);
+        });
+        for (const type of EXPECTED_BLOCKS[tpl.id]) {
+          expect(types).toContain(type);
         }
       }
     });
 
-    it('所有内置模板的二级标题都以 emoji 开头', () => {
+    it('内置模板的状态标签和高亮块属性完整，转换后不丢', () => {
       for (const tpl of BUILTIN_TEMPLATES) {
-        for (const locale of Object.values(tpl.locales)) {
-          jsonToNode(locale.content).descendants((n) => {
-            if (n.type.name === 'heading' && n.attrs.level === 2) {
-              expect(n.textContent).toMatch(/^\p{Extended_Pictographic}/u);
-            }
-          });
-        }
+        jsonToNode(tpl.content).descendants((n) => {
+          if (n.type.name === 'status') {
+            expect(n.attrs.text.length).toBeGreaterThan(0);
+            expect(['gray', 'blue', 'green', 'yellow', 'red', 'purple']).toContain(n.attrs.color);
+          }
+          if (n.type.name === 'callout') {
+            expect(n.attrs.icon).toBeTruthy();
+          }
+        });
       }
     });
 
     it('技术方案模板：代码块带语言（含 Mermaid 流程图），公式不为空', () => {
       const tpl = BUILTIN_TEMPLATES.find((t) => t.id === DESIGN_ID)!;
-      for (const locale of Object.values(tpl.locales)) {
+      {
         const languages: string[] = [];
         const formulas: string[] = [];
-        jsonToNode(locale.content).descendants((n) => {
+        jsonToNode(tpl.content).descendants((n) => {
           if (n.type.name === 'codeBlock') {
             languages.push(n.attrs.language);
             expect(n.textContent.trim().length).toBeGreaterThan(0);
@@ -391,8 +386,8 @@ describe('TemplateService', () => {
 
     it('流程图模板的示例画布：标准图形，文字和连线都绑定在图形上，引用互相一致', () => {
       const tpl = BUILTIN_TEMPLATES.find((t) => t.id === FLOWCHART_ID)!;
-      for (const locale of Object.values(tpl.locales)) {
-        const excalidraw = locale.content.content.find((n: any) => n.type === 'excalidraw');
+      {
+        const excalidraw = tpl.content.content.find((n: any) => n.type === 'excalidraw');
         const elements: any[] = excalidraw.attrs.initialScene.elements;
         const byId = new Map(elements.map((e) => [e.id, e]));
         expect(byId.size).toBe(elements.length);

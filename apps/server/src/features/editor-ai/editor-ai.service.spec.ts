@@ -71,9 +71,11 @@ describe('EditorAiService', () => {
         temperature: 0,
       }),
     );
-    expect(
-      (generateText as jest.Mock).mock.calls[0][0],
-    ).not.toHaveProperty('providerOptions');
+    expect((generateText as jest.Mock).mock.calls[0][0].providerOptions).toEqual({
+      [EDITOR_PROVIDER_NAME]: {
+        chat_template_kwargs: { enable_thinking: false },
+      },
+    });
   });
 
   it('streams chunks using the same answer model configuration', async () => {
@@ -115,12 +117,14 @@ describe('EditorAiService', () => {
         temperature: 0,
       }),
     );
-    expect((streamText as jest.Mock).mock.calls[0][0]).not.toHaveProperty(
-      'providerOptions',
-    );
+    expect((streamText as jest.Mock).mock.calls[0][0].providerOptions).toEqual({
+      [EDITOR_PROVIDER_NAME]: {
+        chat_template_kwargs: { enable_thinking: false },
+      },
+    });
   });
 
-  it('does not inherit thinking configured for knowledge answers', async () => {
+  it('defaults thinking off while inheriting configured sampling', async () => {
     (generateText as jest.Mock).mockResolvedValue({
       text: 'Improved text',
       usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
@@ -147,7 +151,11 @@ describe('EditorAiService', () => {
     });
 
     const request = (generateText as jest.Mock).mock.calls[0][0];
-    expect(request).not.toHaveProperty('providerOptions');
+    expect(request.providerOptions).toEqual({
+      [EDITOR_PROVIDER_NAME]: {
+        chat_template_kwargs: { enable_thinking: false },
+      },
+    });
     expect(request.temperature).toBe(0.2);
     expect(request.seed).toBe(5);
   });

@@ -31,7 +31,6 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { getAppName } from "@/lib/config.ts";
 import {
-  useCreateTemplate,
   useRemoveTemplate,
   useTemplate,
   useTemplateList,
@@ -71,21 +70,17 @@ export default function TemplateLibrary() {
     isFetchingNextPage,
   } = useTemplateList({ ...listParams, query: debouncedQuery || undefined });
 
-  const createTemplate = useCreateTemplate();
   const removeTemplate = useRemoveTemplate();
 
   const isSpaceFilter = filter !== ALL && filter !== ALL_SPACES;
-  const handleCreate = async () => {
-    // 默认"所有空间"；正在按某个空间筛选时默认指定该空间
-    const availability = isSpaceFilter
-      ? { allSpaces: false, spaceIds: [filter] }
-      : { allSpaces: true, spaceIds: [] };
-    const tpl = await createTemplate.mutateAsync({
-      title: t("Untitled template"),
-      ...availability,
-    });
-    navigate(`/templates/${tpl.id}`);
-  };
+  // 只进入新建页，不落库；用户在新建页点"创建"才生成模板。
+  // 正在按某个空间筛选时，新建页默认指定该空间
+  const handleCreate = () =>
+    navigate(
+      isSpaceFilter
+        ? `/templates/new?spaceId=${encodeURIComponent(filter)}`
+        : "/templates/new",
+    );
 
   const scopeLabel = availabilityLabel;
 
@@ -111,6 +106,72 @@ export default function TemplateLibrary() {
 
   const isFiltered = filter !== ALL || !!debouncedQuery;
 
+  // 公共模板和团队自建模板分两组展示；某组为空时不显示组标题
+  const sections = [
+    {
+      key: "builtin",
+      label: t("Built-in templates"),
+      items: templates.filter((tpl) => tpl.builtin),
+    },
+    {
+      key: "custom",
+      label: t("Team templates"),
+      items: templates.filter((tpl) => !tpl.builtin),
+    },
+  ].filter((section) => section.items.length > 0);
+
+  const renderCard = (tpl: PageTemplate) => (
+    <TemplateCard
+      key={tpl.id}
+      template={tpl}
+      scopeLabel={scopeLabel(tpl)}
+      onClick={() => open(tpl)}
+      ariaLabel={
+        tpl.canManage
+          ? t("Edit template {{title}}", { title: tpl.title })
+          : t("Preview template {{title}}", { title: tpl.title })
+      }
+      footer={<CardFooter template={tpl} scope={scopeLabel(tpl)} />}
+      actions={
+        tpl.canManage && (
+          <Menu position="bottom-end" withinPortal shadow="md">
+            <Menu.Target>
+              <ActionIcon
+                variant="default"
+                size="sm"
+                aria-label={t("Template actions")}
+              >
+                <IconDots size={14} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item
+                leftSection={<IconEdit size={14} />}
+                onClick={() => navigate(`/templates/${tpl.id}`)}
+              >
+                {t("Edit")}
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<IconEye size={14} />}
+                onClick={() => setPreviewId(tpl.id)}
+              >
+                {t("Preview")}
+              </Menu.Item>
+              <Menu.Divider />
+              <Menu.Item
+                color="red"
+                leftSection={<IconTrash size={14} />}
+                onClick={() => confirmDelete(tpl)}
+              >
+                {t("Delete")}
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
+        )
+      }
+    />
+  );
+
   return (
     <>
       <Helmet>
@@ -135,11 +196,7 @@ export default function TemplateLibrary() {
               )}
             </Text>
           </div>
-          <Button
-            leftSection={<IconPlus size={16} />}
-            loading={createTemplate.isPending}
-            onClick={() => handleCreate().catch(() => undefined)}
-          >
+          <Button leftSection={<IconPlus size={16} />} onClick={handleCreate}>
             {t("New template")}
           </Button>
         </Group>
@@ -202,66 +259,28 @@ export default function TemplateLibrary() {
                 mt="lg"
                 variant="light"
                 leftSection={<IconPlus size={16} />}
-                onClick={() => handleCreate().catch(() => undefined)}
+                onClick={handleCreate}
               >
                 {t("Create the first template")}
               </Button>
             )}
           </div>
         ) : (
-          <SimpleGrid cols={{ base: 1, xs: 2, md: 3, lg: 4 }} spacing="md">
-            {templates.map((tpl) => (
-              <TemplateCard
-                key={tpl.id}
-                template={tpl}
-                scopeLabel={scopeLabel(tpl)}
-                onClick={() => open(tpl)}
-                ariaLabel={
-                  tpl.canManage
-                    ? t("Edit template {{title}}", { title: tpl.title })
-                    : t("Preview template {{title}}", { title: tpl.title })
-                }
-                footer={<CardFooter template={tpl} scope={scopeLabel(tpl)} />}
-                actions={
-                  tpl.canManage && (
-                    <Menu position="bottom-end" withinPortal shadow="md">
-                      <Menu.Target>
-                        <ActionIcon
-                          variant="default"
-                          size="sm"
-                          aria-label={t("Template actions")}
-                        >
-                          <IconDots size={14} />
-                        </ActionIcon>
-                      </Menu.Target>
-                      <Menu.Dropdown>
-                        <Menu.Item
-                          leftSection={<IconEdit size={14} />}
-                          onClick={() => navigate(`/templates/${tpl.id}`)}
-                        >
-                          {t("Edit")}
-                        </Menu.Item>
-                        <Menu.Item
-                          leftSection={<IconEye size={14} />}
-                          onClick={() => setPreviewId(tpl.id)}
-                        >
-                          {t("Preview")}
-                        </Menu.Item>
-                        <Menu.Divider />
-                        <Menu.Item
-                          color="red"
-                          leftSection={<IconTrash size={14} />}
-                          onClick={() => confirmDelete(tpl)}
-                        >
-                          {t("Delete")}
-                        </Menu.Item>
-                      </Menu.Dropdown>
-                    </Menu>
-                  )
-                }
-              />
-            ))}
-          </SimpleGrid>
+          sections.map((section) => (
+            <section key={section.key} className={classes.section}>
+              <Group gap={8} mb="sm">
+                <Text fw={600} size="sm">
+                  {section.label}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  {section.items.length}
+                </Text>
+              </Group>
+              <SimpleGrid cols={{ base: 1, xs: 2, md: 3, lg: 4 }} spacing="md">
+                {section.items.map(renderCard)}
+              </SimpleGrid>
+            </section>
+          ))
         )}
 
         {hasNextPage && (

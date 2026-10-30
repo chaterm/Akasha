@@ -1235,6 +1235,14 @@ export class KnowledgeSpaceCompilationRepo {
   }) {
     return executeTx(this.db, async (trx) => {
       const now = new Date();
+      // Match deferred promotion's lock order: intent -> schedules -> Space.
+      const deferredCompile = await trx
+        .selectFrom('knowledgeSpaceDeferredCompiles')
+        .select('id')
+        .where('workspaceId', '=', input.workspaceId)
+        .where('spaceId', '=', input.spaceId)
+        .forUpdate()
+        .executeTakeFirst();
       await trx
         .selectFrom('knowledgePageCompileSchedules')
         .select('id')
@@ -1260,6 +1268,15 @@ export class KnowledgeSpaceCompilationRepo {
           reset: false as const,
           reason: 'space_name_mismatch' as const,
         };
+      }
+
+      // The rebuild supersedes the intent locked above. Clear only that ID so
+      // requests inserted concurrently after the lookup remain queued.
+      if (deferredCompile) {
+        await trx
+          .deleteFrom('knowledgeSpaceDeferredCompiles')
+          .where('id', '=', deferredCompile.id)
+          .execute();
       }
 
       // The immediate rebuild covers the latest version of every page in the

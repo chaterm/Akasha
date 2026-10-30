@@ -86,7 +86,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     },
   );
 
-  it('disables Qwen thinking by default for an unconfigured compiler row', async () => {
+  it('disables thinking by default for a compiler model alias', async () => {
     (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
@@ -133,6 +133,28 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     });
   });
 
+  it.each([undefined, { reasoningEffort: 'high' }])(
+    'disables OpenAI thinking by default even when parameters are %s',
+    async (parameters) => {
+      (createOpenAICompatible as jest.Mock).mockReturnValue(
+        jest.fn().mockReturnValue('compiler-model'),
+      );
+      (generateText as jest.Mock).mockResolvedValue({
+        output: JSON.parse(analysisJson),
+      });
+
+      await createProvider({
+        aiDriver: 'openai-compatible',
+        compilerModel: 'gpt-5.6-luna',
+        parameters,
+      }).analyze({ system: 'system', prompt: 'prompt' });
+
+      expect((generateText as jest.Mock).mock.calls[0][0].providerOptions).toEqual({
+        openaiCompatible: { reasoningEffort: 'none' },
+      });
+    },
+  );
+
   it('omits temperature when the OpenAI reasoning dialect is configured', async () => {
     (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
@@ -144,7 +166,11 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     await createProvider({
       aiDriver: 'openai-compatible',
       compilerModel: 'o3-mini',
-      parameters: { thinkingMode: 'openai', reasoningEffort: 'low' },
+      parameters: {
+        thinkingMode: 'openai',
+        thinkingEnabled: true,
+        reasoningEffort: 'low',
+      },
     }).analyze({ system: 'system', prompt: 'prompt' });
 
     const request = (generateText as jest.Mock).mock.calls[0][0];
