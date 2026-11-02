@@ -6,6 +6,7 @@ import {
   type DatabaseColumn,
   type DatabaseRowData,
   type DatabaseSelectOption,
+  type DatabaseTimelineScale,
 } from "@docmost/editor-ext";
 
 /**
@@ -183,4 +184,100 @@ export function summarizeRow(
       .filter(Boolean)
       .join(" · "),
   };
+}
+
+// ---------------------------------------------------------------- timeline
+
+/** Pixels per day at each zoom level. */
+export const TIMELINE_DAY_WIDTH: Record<DatabaseTimelineScale, number> = {
+  day: 40,
+  week: 20,
+  month: 5,
+};
+
+const TIMELINE_PADDING: Record<DatabaseTimelineScale, number> = {
+  day: 7,
+  week: 14,
+  month: 45,
+};
+
+/** The axis never gets shorter than this, so a nearly empty view still fills the width. */
+const TIMELINE_MIN_DAYS: Record<DatabaseTimelineScale, number> = {
+  day: 42,
+  week: 140,
+  month: 365,
+};
+
+function shiftDays(key: string, days: number): string {
+  const date = parseDateKey(key);
+  date.setDate(date.getDate() + days);
+  return toDateKey(date);
+}
+
+function daysBetween(from: string, to: string): number {
+  return Math.round(
+    (parseDateKey(to).getTime() - parseDateKey(from).getTime()) / 86_400_000,
+  );
+}
+
+/**
+ * Days shown on the time axis: every row date plus today, padded on both
+ * sides and aligned to whole weeks (week scale) or months (month scale).
+ */
+export function getTimelineWindow(
+  dates: string[],
+  today: string,
+  scale: DatabaseTimelineScale,
+  weekStart: number,
+): { start: string; days: number } {
+  const all = [...dates, today].sort();
+  let start = shiftDays(all[0], -TIMELINE_PADDING[scale]);
+  let end = shiftDays(all[all.length - 1], TIMELINE_PADDING[scale]);
+  if (scale === "week") {
+    start = shiftDays(
+      start,
+      -((parseDateKey(start).getDay() - weekStart + 7) % 7),
+    );
+  } else if (scale === "month") {
+    start = `${start.slice(0, 7)}-01`;
+  }
+  const minEnd = shiftDays(start, TIMELINE_MIN_DAYS[scale] - 1);
+  if (end < minEnd) end = minEnd;
+  if (scale === "week") {
+    end = shiftDays(end, (weekStart + 6 - parseDateKey(end).getDay() + 7) % 7);
+  } else if (scale === "month") {
+    const date = parseDateKey(end);
+    end = toDateKey(new Date(date.getFullYear(), date.getMonth() + 1, 0));
+  }
+  return { start, days: daysBetween(start, end) + 1 };
+}
+
+export interface TimelineSpan {
+  /** First date of the span. */
+  date: string;
+  /** Day offset from the window start. */
+  offset: number;
+  days: number;
+}
+
+/** Splits the window into consecutive days, weeks (starting on `weekStart`), months or years. */
+export function splitTimeline(
+  start: string,
+  days: number,
+  unit: "day" | "week" | "month" | "year",
+  weekStart: number,
+): TimelineSpan[] {
+  const spans: TimelineSpan[] = [];
+  for (let offset = 0; offset < days; offset++) {
+    const key = shiftDays(start, offset);
+    const date = parseDateKey(key);
+    const boundary =
+      unit === "day" ||
+      (unit === "week" && date.getDay() === weekStart) ||
+      (unit === "month" && date.getDate() === 1) ||
+      (unit === "year" && date.getMonth() === 0 && date.getDate() === 1);
+    if (boundary || !spans.length) spans.push({ date: key, offset, days: 0 });
+    spans[spans.length - 1].days++;
+  }
+  return spans;
 }

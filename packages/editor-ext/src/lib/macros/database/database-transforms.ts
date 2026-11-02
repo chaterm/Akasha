@@ -248,6 +248,7 @@ function placeColumnInViews(
       width: null,
       align: null,
       hidden: false,
+      wrap: false,
     });
     return { ...view, columns: entries };
   });
@@ -305,7 +306,7 @@ export function duplicateDatabaseColumn(
   return id;
 }
 
-/** Changes the column type and converts every existing value (see convertDatabaseColumn). */
+/** Changes the column type and converts every existing value (see convertDatabaseColumn). The title stays text. */
 export function changeDatabaseColumnType(
   tr: Transaction,
   dbPos: number,
@@ -315,7 +316,8 @@ export function changeDatabaseColumnType(
   const db = getDatabase(tr, dbPos);
   const columns = getColumns(db);
   const column = columns.find((item) => item.id === columnId);
-  if (!column || column.type === type) return tr;
+  if (!column || column.type === type || column.id === columns[0].id)
+    return tr;
   const rows = readDatabaseRows(db);
   const { column: next, convert } = convertDatabaseColumn(
     column,
@@ -359,7 +361,7 @@ export function updateDatabaseColumn(
   return writeSchema(tr, dbPos, columns, getViews(db));
 }
 
-/** Removes the column, its cells in every row, and view references to it. The last column cannot be deleted. */
+/** Removes the column, its cells in every row, and view references to it. The title column cannot be deleted. */
 export function deleteDatabaseColumn(
   tr: Transaction,
   dbPos: number,
@@ -368,7 +370,7 @@ export function deleteDatabaseColumn(
   const db = getDatabase(tr, dbPos);
   const columns = getColumns(db);
   const target = columns.find((column) => column.id === columnId);
-  if (!target || columns.length <= 1) return tr;
+  if (!target || target.id === columns[0].id) return tr;
 
   const cellPositions: { from: number; to: number }[] = [];
   for (const row of findRows(tr, dbPos)) {
@@ -419,6 +421,7 @@ export function updateDatabaseView(
     if (patch.groupBy !== undefined && patch.groupBy !== view.groupBy) {
       next.groupOrder = [];
       next.hiddenGroups = [];
+      next.collapsedGroups = [];
       next.cardOrder = {};
     }
     return next;

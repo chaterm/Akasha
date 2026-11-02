@@ -3,6 +3,7 @@ import { ActionIcon, Menu, UnstyledButton } from "@mantine/core";
 import {
   IconCalendar,
   IconLayoutKanban,
+  IconListDetails,
   IconTimeline,
   IconUserCheck,
   IconPlus,
@@ -28,6 +29,7 @@ export const VIEW_ICONS: Record<DatabaseViewType, Icon> = {
   kanban: IconLayoutKanban,
   calendar: IconCalendar,
   timeline: IconTimeline,
+  agenda: IconListDetails,
   mine: IconUserCheck,
 };
 
@@ -37,6 +39,7 @@ export const VIEW_LABELS: Record<DatabaseViewType, string> = {
   kanban: "Kanban",
   calendar: "Calendar",
   timeline: "Timeline",
+  agenda: "Agenda",
   mine: "Mine",
 };
 

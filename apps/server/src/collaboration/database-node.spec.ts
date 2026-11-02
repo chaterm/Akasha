@@ -181,21 +181,37 @@ describe('database node', () => {
           id: 'v',
           name: 'x',
           type: 'table',
-          columns: [{ id: 'due' }, { id: 'name', hidden: true }],
+          columns: [{ id: 'status' }, { id: 'due', hidden: true }],
         },
       ],
       columns,
     );
     expect(view.columns.map((entry) => entry.id)).toEqual([
-      'due',
       'name',
       'status',
+      'due',
       'tags',
       'end',
       'points',
     ]);
-    expect(view.columns[1].hidden).toBe(true);
+    expect(view.columns[2].hidden).toBe(true);
     expect(view.showRowNumbers).toBe(true);
+  });
+
+  it('keeps the title column first and shown in every view', () => {
+    const [view] = normalizeDatabaseViews(
+      [
+        {
+          id: 'v',
+          name: 'x',
+          type: 'table',
+          columns: [{ id: 'due' }, { id: 'name', hidden: true }],
+        },
+      ],
+      columns,
+    );
+    expect(view.columns[0]).toMatchObject({ id: 'name', hidden: false });
+    expect(view.columns[1].id).toBe('due');
   });
 
   it('reads an old title column as text', () => {
@@ -280,13 +296,23 @@ describe('database row and column transforms', () => {
         .columns.map((entry: any) => entry.id)
         .slice(0, 3),
     ).toEqual(['name', id, 'status']);
+    // Nothing goes before the title column.
     const first = addDatabaseColumn(
       tr,
       0,
       { name: 'X', type: 'text' },
       { anchorId: 'name', side: 'left' },
     );
-    expect(viewOf(tr, 'v1').columns[0].id).toBe(first);
+    const ids = viewOf(tr, 'v1').columns.map((entry: any) => entry.id);
+    expect(ids.slice(0, 2)).toEqual(['name', first]);
+  });
+
+  it('never deletes the title column or changes its type', () => {
+    const tr = makeState().tr;
+    deleteDatabaseColumn(tr, 0, 'name');
+    changeDatabaseColumnType(tr, 0, 'name', 'number');
+    const db = tr.doc.child(0);
+    expect(db.attrs.columns[0]).toMatchObject({ id: 'name', type: 'text' });
   });
 
   it('duplicates a column with its values', () => {
@@ -504,7 +530,8 @@ describe('default database', () => {
 
 describe('document columns', () => {
   it('store only page ids, so no title reaches the document or its search text', () => {
-    const [doc] = normalizeDatabaseColumns([
+    // Index 0 is the title column added for a database without text columns.
+    const [, doc] = normalizeDatabaseColumns([
       {
         id: 'doc',
         name: 'Doc',

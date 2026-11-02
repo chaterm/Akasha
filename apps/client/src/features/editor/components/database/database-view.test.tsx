@@ -13,6 +13,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
   buildDatabaseJSON,
   Database,
+  insertDatabaseRow,
   DatabaseCell,
   DatabaseRow,
   readDatabaseRows,
@@ -94,7 +95,8 @@ const doc = {
         { id: "t", name: "Grid", type: "table" },
         { id: "k", name: "Board", type: "kanban", groupBy: "status" },
         { id: "c", name: "Cal", type: "calendar", dateColumnId: "due" },
-        { id: "l", name: "Plan", type: "timeline", dateColumnId: "due" },
+        { id: "l", name: "Plan", type: "agenda", dateColumnId: "due" },
+        { id: "g", name: "Gantt", type: "timeline", dateColumnId: "due" },
         { id: "m", name: "Me", type: "mine" },
       ],
       rows: [
@@ -175,6 +177,8 @@ beforeAll(() => {
     disconnect() {}
   } as any;
   Element.prototype.scrollIntoView = vi.fn();
+  // jsdom does not implement CSS.escape; the fixture database id is alphanumeric.
+  vi.stubGlobal("CSS", { escape: (value: string) => value });
 });
 
 describe("DatabaseView", () => {
@@ -327,7 +331,10 @@ describe("DatabaseView", () => {
     const header = screen.getByText("Name").closest("th")!;
     expect(header.hasAttribute("data-selected")).toBe(true);
     fireEvent.keyDown(grid, { key: "Enter" });
-    expect(await screen.findByText("Hide in view")).toBeTruthy();
+    // The title column's menu has no hide, delete or type change.
+    expect(await screen.findByText("Insert right")).toBeTruthy();
+    expect(screen.queryByText("Hide in view")).toBeNull();
+    expect(screen.queryByText("Delete column")).toBeNull();
   });
 
   it("hides a column from the column menu", async () => {
@@ -342,14 +349,13 @@ describe("DatabaseView", () => {
     expect(screen.queryByText("Due")).toBeNull();
   });
 
-  it("opens a row in the detail modal and steps to the next row", async () => {
+  it("opens a row in the side peek and steps to the next row", async () => {
     renderEditor();
     await screen.findByText("Write spec");
     fireEvent.click(screen.getAllByLabelText("Expand")[0]);
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("Write spec")).toBeTruthy();
+    expect(within(dialog).getByDisplayValue("Write spec")).toBeTruthy();
     fireEvent.click(within(dialog).getByLabelText("Next"));
-    fireEvent.click(await within(dialog).findByText("Ship it"));
     const input = await within(dialog).findByDisplayValue("Ship it");
     fireEvent.change(input, { target: { value: "Ship it now" } });
     fireEvent.blur(input);
@@ -610,5 +616,129 @@ describe("DatabaseView", () => {
     });
     expect(screen.queryByText("Write spec")).toBeNull();
     expect(document.querySelector("mark")?.textContent).toBe("Ship");
+  });
+
+  it("pastes a block of tab-separated cells, creating rows past the end", async () => {
+    renderEditor();
+    const cell = (await screen.findByText("Not mine")).closest("td")!;
+    fireEvent.mouseDown(cell, { button: 0 });
+    const sink = document.querySelector("textarea[aria-hidden]")!;
+    fireEvent.paste(sink, {
+      clipboardData: { getData: () => "Third\tDone\nFourth\tBlocked" },
+    });
+    const all = rows();
+    expect(all).toHaveLength(4);
+    expect(all[2].values).toMatchObject({ name: "Third", status: "done" });
+    expect(all[3].values.name).toBe("Fourth");
+    const status = editor!.state.doc
+      .child(0)
+      .attrs.columns.find((column: any) => column.id === "status");
+    expect(status.options.map((option: any) => option.name)).toContain(
+      "Blocked",
+    );
+  });
+
+  it("checks rows and deletes them from the bulk bar", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    const boxes = screen.getAllByLabelText("Select row");
+    fireEvent.click(boxes[0]);
+    fireEvent.click(boxes[2], { shiftKey: true });
+    expect(screen.getByText("3 selected")).toBeTruthy();
+    fireEvent.click(screen.getByText("Delete"));
+    expect(rows()).toHaveLength(0);
+    expect(screen.queryByText("3 selected")).toBeNull();
+  });
+
+  it("shows 50 rows at first and the rest on Load more", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    act(() => {
+      editor!.commands.command(({ tr }) => {
+        for (let i = 0; i < 55; i++)
+          insertDatabaseRow(tr, 0, { values: { name: `Row ${i}` } });
+        return true;
+      });
+    });
+    expect(document.querySelectorAll("tr[data-row-id]")).toHaveLength(50);
+    fireEvent.click(screen.getByText("Load more (8 remaining)"));
+    expect(document.querySelectorAll("tr[data-row-id]")).toHaveLength(58);
+  });
+
+  it("draws timeline bars and schedules an undated row by clicking its track", async () => {
+    renderEditor();
+    fireEvent.click(await screen.findByText("Gantt"));
+    const bars = [...document.querySelectorAll('[role="button"][title]')];
+    expect(bars.map((bar) => bar.getAttribute("title"))).toEqual([
+      expect.stringContaining("Ship it"),
+    ]);
+    const label = screen.getByText("Write spec").closest("button")!;
+    const track = label.nextElementSibling as HTMLElement;
+    fireEvent.click(track, { clientX: 0 });
+    expect(rows()[0].values.due).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("collapses a kanban group into a strip and expands it again", async () => {
+    renderEditor();
+    fireEvent.click(await screen.findByText("Board"));
+    const lane = document.querySelector('[data-lane-key="done"]') as HTMLElement;
+    fireEvent.click(within(lane).getAllByLabelText("More")[0]);
+    fireEvent.click(await screen.findByText("Collapse group"));
+    const view = () =>
+      editor!.state.doc.child(0).attrs.views.find((v: any) => v.id === "k");
+    expect(view().collapsedGroups).toEqual(["done"]);
+    fireEvent.click(screen.getByTitle("Expand group"));
+    expect(view().collapsedGroups).toEqual([]);
+  });
+
+  it("commits a title draft before closing the side peek from outside", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    fireEvent.click(screen.getAllByLabelText("Expand")[0]);
+    const dialog = await screen.findByRole("dialog");
+    const input = within(dialog).getByDisplayValue(
+      "Write spec",
+    ) as HTMLTextAreaElement;
+    act(() => input.focus());
+    fireEvent.change(input, { target: { value: "Updated title" } });
+    fireEvent.pointerDown(document.body);
+    expect(rows()[0].values.name).toBe("Updated title");
+    expect(screen.queryByDisplayValue("Updated title")).toBeNull();
+  });
+
+  it("discards a title draft on Escape even when the side peek is later closed", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    fireEvent.click(screen.getAllByLabelText("Expand")[0]);
+    const dialog = await screen.findByRole("dialog");
+    const input = within(dialog).getByDisplayValue(
+      "Write spec",
+    ) as HTMLTextAreaElement;
+    act(() => input.focus());
+    fireEvent.change(input, { target: { value: "Discard this" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(rows()[0].values.name).toBe("Write spec");
+    expect(within(dialog).getByDisplayValue("Write spec")).toBeTruthy();
+    fireEvent.pointerDown(document.body);
+    expect(rows()[0].values.name).toBe("Write spec");
+  });
+
+  it("lets a read-only viewer expand a group without changing shared configuration", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    act(() => {
+      editor!.view.dispatch(
+        updateDatabaseView(editor!.state.tr, 0, "k", {
+          collapsedGroups: ["done"],
+        }),
+      );
+      editor!.setEditable(false);
+    });
+    fireEvent.click(screen.getByText("Board"));
+    expect(screen.queryByText("Ship it")).toBeNull();
+    const before = editor!.getJSON();
+    fireEvent.click(await screen.findByTitle("Expand group"));
+    expect(screen.getByText("Ship it")).toBeTruthy();
+    expect(editor!.getJSON()).toEqual(before);
   });
 });

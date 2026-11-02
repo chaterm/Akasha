@@ -1,6 +1,11 @@
 import { useState, type PointerEvent } from "react";
 import { ActionIcon, Group, Popover, Text } from "@mantine/core";
-import { IconDots, IconEyeOff, IconPlus } from "@tabler/icons-react";
+import {
+  IconChevronsLeft,
+  IconDots,
+  IconEyeOff,
+  IconPlus,
+} from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import {
   isDatabaseReference,
@@ -51,15 +56,17 @@ interface GroupHeaderProps {
   column: DatabaseColumn;
   group: DatabaseGroup;
   onAddCard: () => void;
+  onCollapse: () => void;
   onPointerDown?: (event: PointerEvent<HTMLDivElement>) => void;
 }
 
-/** Lane header: option badge (rename/recolor/delete), count, add card, hide group. */
+/** Lane header: option badge (rename/recolor/delete), count, add card, collapse / hide group. */
 export function KanbanGroupHeader({
   db,
   column,
   group,
   onAddCard,
+  onCollapse,
   onPointerDown,
 }: GroupHeaderProps) {
   const { t } = useTranslation();
@@ -153,6 +160,14 @@ export function KanbanGroupHeader({
               </ActionIcon>
             </Popover.Target>
             <Popover.Dropdown {...stopBubbling} p={4} className={classes.menu}>
+              <MenuRow
+                icon={IconChevronsLeft}
+                label={t("Collapse group")}
+                onClick={() => {
+                  setMenuOpen(false);
+                  onCollapse();
+                }}
+              />
               <MenuRow
                 icon={IconEyeOff}
                 label={t("Hide group")}

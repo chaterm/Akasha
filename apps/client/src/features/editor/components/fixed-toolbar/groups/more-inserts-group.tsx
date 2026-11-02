@@ -6,6 +6,7 @@ import {
   IconCalendar,
   IconCaretRightFilled,
   IconChevronDown,
+  IconDatabase,
   IconInfoCircle,
   IconLayoutGrid,
   IconList,
@@ -32,6 +33,7 @@ import {
 } from "@/components/icons";
 import { useTranslation } from "react-i18next";
 import { insertDateAction } from "@/features/editor/components/date/insert-date-action.tsx";
+import { insertDefaultDatabase } from "@/features/editor/macros/insert-database";
 
 interface Props {
   editor: Editor;
@@ -208,6 +210,12 @@ export const MoreInsertsGroup: FC<Props> = ({ editor, templateMode }) => {
 
         <Menu.Divider />
         <Menu.Label>{t("Utility")}</Menu.Label>
+        <Menu.Item
+          leftSection={<IconDatabase size={16} />}
+          onClick={() => insertDefaultDatabase(editor)}
+        >
+          {t("Database")}
+        </Menu.Item>
         <Menu.Item
           leftSection={<IconCalendar size={16} />}
           onClick={insertDate}
