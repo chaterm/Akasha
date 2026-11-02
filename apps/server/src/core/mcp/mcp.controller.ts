@@ -15,6 +15,7 @@ import { McpService } from './mcp.service';
 import { McpDisabledException } from './mcp.errors';
 import { AnalyticsEventRepo } from '@akasha/db/repos/analytics/analytics-event.repo';
 import { extractMcpToolCalls } from '../analytics/agent-op-category';
+import { readWeeklyReportDefaults } from '../weekly-report/weekly-report-defaults';
 
 @Controller('mcp')
 export class McpController {
@@ -62,6 +63,10 @@ export class McpController {
       });
     }
 
+    ctx = {
+      ...ctx,
+      weeklyReportDefaults: readWeeklyReportDefaults(req.headers),
+    };
     this.recordAgentToolCalls(ctx, body);
 
     reply.hijack();

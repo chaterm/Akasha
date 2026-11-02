@@ -1549,5 +1549,9 @@
   "Discard this template?": "Discard this template?",
   "The template has not been created. Your changes will be lost.": "The template has not been created. Your changes will be lost.",
   "Keep editing": "Keep editing",
-  "Type / to insert blocks. Click “Create template” when you are done.": "Type / to insert blocks. Click “Create template” when you are done."
+  "Type / to insert blocks. Click “Create template” when you are done.": "Type / to insert blocks. Click “Create template” when you are done.",
+  "Copy template ID": "Copy template ID",
+  "Template ID copied": "Template ID copied",
+  "Could not copy template ID. Select the ID below and copy it manually.": "Could not copy template ID. Select the ID below and copy it manually.",
+  "Template ID": "Template ID"
 }

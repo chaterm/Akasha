@@ -308,14 +308,16 @@ export class PageRepo {
     updatablePage: UpdatablePage,
     pageId: string,
     trx?: KyselyTransaction,
+    options?: { skipKnowledgeCompile?: boolean },
   ) {
-    return this.updatePages(updatablePage, [pageId], trx);
+    return this.updatePages(updatablePage, [pageId], trx, options);
   }
 
   async updatePages(
     updatePageData: UpdatablePage,
     pageIds: string[],
     trx?: KyselyTransaction,
+    options?: { skipKnowledgeCompile?: boolean },
   ) {
     const updatedPages = await dbOrTx(this.db, trx)
       .updateTable('pages')
@@ -338,9 +340,11 @@ export class PageRepo {
     // Collaboration persistence publishes PAGE_CONTENT_UPDATED only after its
     // transaction succeeds. Let that durable queue job schedule compilation so
     // one content save is not counted twice and a rolled-back save is not queued.
-    const skipKnowledgeCompile = ['content', 'textContent', 'ydoc'].some(
-      (field) => Object.prototype.hasOwnProperty.call(updatePageData, field),
-    );
+    const skipKnowledgeCompile =
+      options?.skipKnowledgeCompile ||
+      ['content', 'textContent', 'ydoc'].some((field) =>
+        Object.prototype.hasOwnProperty.call(updatePageData, field),
+      );
     for (const [workspaceId, updatedPageIds] of pageIdsByWorkspace) {
       this.eventEmitter.emit(EventName.PAGE_UPDATED, {
         pageIds: updatedPageIds,
@@ -355,6 +359,7 @@ export class PageRepo {
   async insertPage(
     insertablePage: InsertablePage,
     trx?: KyselyTransaction,
+    options?: { deferCreatedEvent?: boolean },
   ): Promise<Page> {
     const db = dbOrTx(this.db, trx);
     const result = await db
@@ -363,10 +368,11 @@ export class PageRepo {
       .returning(this.baseFields)
       .executeTakeFirst();
 
-    this.eventEmitter.emit(EventName.PAGE_CREATED, {
-      pageIds: [result.id],
-      workspaceId: result.workspaceId,
-    });
+    if (!options?.deferCreatedEvent)
+      this.eventEmitter.emit(EventName.PAGE_CREATED, {
+        pageIds: [result.id],
+        workspaceId: result.workspaceId,
+      });
 
     return result;
   }

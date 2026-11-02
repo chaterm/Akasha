@@ -26,10 +26,14 @@ import {
   vi,
 } from "vitest";
 import TemplateWorkbench from "./template-workbench";
+import { PageTemplate } from "../api/template.types";
+import { notifications } from "@mantine/notifications";
 
 const mocks = vi.hoisted(() => ({
   t: (key: string) => key,
   create: vi.fn(),
+  template: undefined as PageTemplate | undefined,
+  writeText: vi.fn(),
   editor: {
     isDestroyed: false,
     isEditable: true,
@@ -40,6 +44,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: mocks.t }) }));
 vi.mock("react-helmet-async", () => ({ Helmet: () => null }));
+vi.mock("@mantine/notifications", () => ({ notifications: { show: vi.fn() } }));
 vi.mock("@/lib/config.ts", () => ({ getAppName: () => "Test" }));
 vi.mock("@/features/editor/extensions/extensions", () => ({
   templateExtensions: [],
@@ -83,7 +88,11 @@ vi.mock("../components/template-availability-picker", () => ({
   ),
 }));
 vi.mock("../api/template-hooks", () => ({
-  useTemplate: () => ({ data: undefined, isLoading: false, isError: false }),
+  useTemplate: () => ({
+    data: mocks.template,
+    isLoading: false,
+    isError: false,
+  }),
   useSaveTemplate: () => ({ mutateAsync: vi.fn() }),
   useRemoveTemplate: () => ({ mutate: vi.fn() }),
   useCreateTemplate: () => {
@@ -102,7 +111,7 @@ vi.mock("../api/template-hooks", () => ({
   },
 }));
 
-function setup() {
+function setup(path = "/templates/new") {
   // 与入口一致：数据路由包裹现有的后代 Routes。
   const router = createMemoryRouter(
     [
@@ -126,10 +135,10 @@ function setup() {
         ),
       },
     ],
-    { initialEntries: ["/templates", "/templates/new"], initialIndex: 1 },
+    { initialEntries: ["/templates", path], initialIndex: 1 },
   );
   render(
-    <MantineProvider>
+    <MantineProvider env="test">
       <ModalsProvider>
         <RouterProvider router={router} />
       </ModalsProvider>
@@ -143,8 +152,12 @@ const nameInput = () =>
 const edit = () =>
   fireEvent.change(nameInput(), { target: { value: "My template" } });
 
-describe("new template draft", () => {
+describe("template workbench", () => {
   beforeAll(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: mocks.writeText },
+    });
     window.matchMedia = vi.fn().mockImplementation((query) => ({
       matches: false,
       media: query,
@@ -158,10 +171,77 @@ describe("new template draft", () => {
     } as any;
   });
   beforeEach(() => {
+    mocks.template = undefined;
+    mocks.writeText.mockReset().mockResolvedValue(undefined);
+    vi.mocked(notifications.show).mockClear();
     mocks.create.mockReset();
     mocks.editor.setEditable.mockClear();
   });
   afterEach(cleanup);
+
+  it("does not offer copy for a new draft, including while creation is pending", async () => {
+    let resolve!: (value: { id: string }) => void;
+    mocks.create.mockReturnValue(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    setup();
+    expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
+    expect(screen.queryByText("Copy template ID")).toBeNull();
+    edit();
+    fireEvent.click(screen.getByRole("button", { name: "Create template" }));
+    expect(screen.queryByText("Copy template ID")).toBeNull();
+    expect(mocks.writeText).not.toHaveBeenCalled();
+    await act(async () => resolve({ id: "saved" }));
+  });
+
+  it("copies the saved ID from More actions even after a local rename", async () => {
+    const id = "1c9753ac-5990-4b55-b00e-8a688b24d2a0";
+    mocks.template = {
+      id,
+      title: "Saved report",
+      description: null,
+      icon: null,
+      allSpaces: true,
+      spaceIds: [],
+      otherSpaceCount: 0,
+      workspaceId: "workspace",
+      creatorId: null,
+      lastUpdatedById: null,
+      canManage: true,
+      createdAt: "2026-10-30",
+      updatedAt: "2026-10-30",
+    };
+    setup(`/templates/${id}`);
+    edit();
+    expect(screen.queryByText(id)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Copy template ID" }),
+    );
+    await waitFor(() => expect(mocks.writeText).toHaveBeenCalledWith(id));
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith({
+        message: "Template ID copied",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(
+      await screen.findByRole("menuitem", { name: "Delete template" }),
+    ).toBeTruthy();
+    expect(screen.queryByText("Discard this template?")).toBeNull();
+  });
+
+  it("continues to deny workbench editing to a read-only template", () => {
+    mocks.template = { id: "readonly", canManage: false } as PageTemplate;
+    setup("/templates/readonly");
+    expect(
+      screen.getByText("You don't have permission to edit this template"),
+    ).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "Template name" })).toBeNull();
+    expect(screen.queryByText("Copy template ID")).toBeNull();
+  });
 
   it("browser back keeps the draft on cancel and leaves on discard", async () => {
     const router = setup();

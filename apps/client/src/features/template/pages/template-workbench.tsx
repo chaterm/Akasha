@@ -52,6 +52,7 @@ import {
 } from "../api/template.types";
 import { TemplateAvailabilityPicker } from "../components/template-availability-picker";
 import { TemplateCreator } from "../components/template-creator";
+import { CopyTemplateId } from "../components/copy-template-id";
 import { isAvailabilityEmpty } from "../lib/availability";
 import { SaveState, useAutosave } from "../lib/use-autosave";
 import classes from "./template-workbench.module.css";
@@ -387,6 +388,8 @@ function Workbench({
                 </ActionIcon>
               </Menu.Target>
               <Menu.Dropdown>
+                <CopyTemplateId templateId={template.id} />
+                <Menu.Divider />
                 <Menu.Item
                   color="red"
                   leftSection={<IconTrash size={14} />}

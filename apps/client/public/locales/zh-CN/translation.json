@@ -1570,5 +1570,9 @@
   "Discard this template?": "放弃这个模板？",
   "The template has not been created. Your changes will be lost.": "模板还没有创建，离开后填写的内容会丢失。",
   "Keep editing": "继续编辑",
-  "Type / to insert blocks. Click “Create template” when you are done.": "输入 / 插入内容块，填写完成后点击“创建模板”。"
+  "Type / to insert blocks. Click “Create template” when you are done.": "输入 / 插入内容块，填写完成后点击“创建模板”。",
+  "Copy template ID": "复制模板 ID",
+  "Template ID copied": "模板 ID 已复制",
+  "Could not copy template ID. Select the ID below and copy it manually.": "无法复制模板 ID。请选择下方 ID 并手动复制。",
+  "Template ID": "模板 ID"
 }

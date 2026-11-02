@@ -4,7 +4,10 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { fingerprintTemplate } from './template-fingerprint';
+import { SpaceRepo } from '@akasha/db/repos/space/space.repo';
 import { InjectKysely } from 'nestjs-kysely';
 import {
   TemplateRepo,
@@ -85,10 +88,31 @@ export class TemplateService {
     private readonly pageService: PageService,
     @Inject(AUDIT_SERVICE) private readonly auditService: IAuditService,
     @InjectKysely() private readonly db: KyselyDB,
+    @Optional() private readonly spaceRepo?: SpaceRepo,
   ) {}
 
   async list(user: User, workspace: Workspace, dto: ListTemplatesDto) {
     const userSpaceIds = await this.spaceMemberRepo.getUserSpaceIds(user.id);
+    return this.listVisible(user, workspace, dto, userSpaceIds);
+  }
+
+  /** MCP listing validates its target before exposing any template metadata. */
+  async listForMcp(user: User, workspace: Workspace, dto: ListTemplatesDto) {
+    const userSpaceIds = await this.spaceMemberRepo.getUserSpaceIds(user.id);
+    if (dto.spaceId) {
+      await this.assertCanReadSpace(dto.spaceId, user, workspace);
+      // Workspace administrators can read spaces without explicit membership.
+      if (!userSpaceIds.includes(dto.spaceId)) userSpaceIds.push(dto.spaceId);
+    }
+    return this.listVisible(user, workspace, dto, userSpaceIds);
+  }
+
+  private async listVisible(
+    user: User,
+    workspace: Workspace,
+    dto: ListTemplatesDto,
+    userSpaceIds: string[],
+  ) {
     const scope = dto.scope ?? 'all';
 
     const filter: TemplateSpaceFilter =
@@ -148,6 +172,55 @@ export class TemplateService {
       { includeContent: true },
     );
     return this.toView(template, user, workspace, userSpaceIds);
+  }
+
+  /** Read a visible template only after checking the intended target space. */
+  async getForSpace(
+    templateId: string,
+    spaceId: string,
+    user: User,
+    workspace: Workspace,
+  ): Promise<TemplateView & { templateFingerprint: string }> {
+    await this.assertCanReadSpace(spaceId, user, workspace);
+    const { template, userSpaceIds } = await this.findVisibleOrThrow(
+      templateId,
+      user,
+      workspace,
+      { includeContent: true },
+    );
+    if (!template.allSpaces && !template.spaceIds.includes(spaceId)) {
+      throw new BadRequestException({
+        code: 'TEMPLATE_NOT_APPLICABLE',
+        message: 'Template is not available in this space',
+      });
+    }
+    // Normalize a copy: parsing legacy template JSON may mutate its input.
+    const node = jsonToNode(
+      structuredClone(template.content ?? EMPTY_DOC) as Record<string, any>,
+    );
+    node.check();
+    const content = node.toJSON();
+    const templateFingerprint = fingerprintTemplate({ ...template, content });
+    return {
+      ...this.toView(template, user, workspace, userSpaceIds),
+      content,
+      templateFingerprint,
+    };
+  }
+
+  private async assertCanReadSpace(
+    spaceId: string,
+    user: User,
+    workspace: Workspace,
+  ) {
+    const space = await this.spaceRepo?.findById(spaceId, workspace.id);
+    if (!space || space.deletedAt || space.workspaceId !== workspace.id) {
+      throw new NotFoundException('Space not found');
+    }
+    const ability = await this.spaceAbility.createForUser(user, space.id);
+    if (ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page)) {
+      throw new NotFoundException('Space not found');
+    }
   }
 
   async create(
