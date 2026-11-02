@@ -15,6 +15,7 @@ describe('buildOutline', () => {
         { type: 'bulletList', content: [{ type: 'listItem', content: [p('A')] }] },
         { type: 'taskList', content: [{ type: 'taskItem', content: [p('待办')] }] },
         { type: 'table', content: [] },
+        { type: 'database', attrs: {}, content: [] },
         p(),
         p(),
       ],
@@ -24,6 +25,7 @@ describe('buildOutline', () => {
       { kind: 'text', text: '第一项' },
       { kind: 'bullet', text: 'A' },
       { kind: 'task', text: '待办' },
+      { kind: 'block', label: 'table' },
       { kind: 'block', label: 'table' },
     ]);
   });

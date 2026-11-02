@@ -51,6 +51,7 @@ export function buildOutline(doc: any): OutlineItem[] {
         }
         return;
       case 'table':
+      case 'database':
         items.push({ kind: 'block', label: 'table' });
         return;
       case 'codeBlock':

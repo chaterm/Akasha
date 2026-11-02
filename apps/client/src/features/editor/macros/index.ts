@@ -1,6 +1,12 @@
-import { Panel, Toc } from "@docmost/editor-ext";
+import {
+  Database,
+  macroNodesWithoutView,
+  Panel,
+  Toc,
+} from "@docmost/editor-ext";
 import TocView from "@/features/editor/components/toc/toc-view.tsx";
 import PanelView from "@/features/editor/components/panel/panel-view.tsx";
+import DatabaseView from "@/features/editor/components/database/database-view.tsx";
 
 /**
  * Confluence-parity macro extensions, pre-configured with their React views.
@@ -15,4 +21,8 @@ export const macroExtensions = [
   Panel.configure({
     view: PanelView,
   }),
+  Database.configure({
+    view: DatabaseView,
+  }),
+  ...macroNodesWithoutView,
 ];
