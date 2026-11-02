@@ -495,13 +495,16 @@ export class KnowledgeSpaceCompilationRepo {
    * is the durable trailing-debounce state, so every later edit moves the
    * eligibility time forward without creating a Space Run or Redis job.
    */
-  async scheduleIncrementalCompileForPages(input: {
-    workspaceId: string;
-    sourcePageIds: string[];
-    trigger: KnowledgePageCompileScheduleTrigger;
-    quietPeriodMs: number;
-    changedAt?: Date;
-  }): Promise<number> {
+  async scheduleIncrementalCompileForPages(
+    input: {
+      workspaceId: string;
+      sourcePageIds: string[];
+      trigger: KnowledgePageCompileScheduleTrigger;
+      quietPeriodMs: number;
+      changedAt?: Date;
+    },
+    trx?: KyselyTransaction,
+  ): Promise<number> {
     const sourcePageIds = [...new Set(input.sourcePageIds)];
     if (sourcePageIds.length === 0) return 0;
     const quietPeriodMs = Math.max(0, input.quietPeriodMs);
@@ -562,7 +565,7 @@ export class KnowledgeSpaceCompilationRepo {
             EXCLUDED.updated_at
           )
       RETURNING id
-    `.execute(this.db);
+    `.execute(trx ?? this.db);
     return scheduled.rows.length;
   }
 

@@ -435,8 +435,10 @@ const flowchartScene = (labels: FlowchartLabels) => {
 
 // ---- 模板 ----
 
+export const BUILTIN_WEEKLY_REPORT_ID = '0b6f8a3e-5c1d-4e2a-9f47-1a2b3c4d5e01';
+
 const weeklyReport: BuiltinTemplate = {
-  id: '0b6f8a3e-5c1d-4e2a-9f47-1a2b3c4d5e01',
+  id: BUILTIN_WEEKLY_REPORT_ID,
   icon: '📅',
   pageTitlePattern: '{date}-{title}',
   title: '周报',

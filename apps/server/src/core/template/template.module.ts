@@ -7,5 +7,6 @@ import { TemplateService } from './template.service';
   imports: [PageModule],
   controllers: [TemplateController],
   providers: [TemplateService],
+  exports: [TemplateService],
 })
 export class TemplateModule {}

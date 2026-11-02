@@ -39,6 +39,7 @@ import { PageTemplate } from "../api/template.types";
 import { TemplateCard } from "../components/template-card";
 import { TemplatePreview } from "../components/template-preview";
 import { TemplateCreator } from "../components/template-creator";
+import { CopyTemplateId } from "../components/copy-template-id";
 import { useSpaceDirectory } from "../lib/use-space-names";
 import classes from "./template-library.module.css";
 
@@ -133,31 +134,34 @@ export default function TemplateLibrary() {
       }
       footer={<CardFooter template={tpl} scope={scopeLabel(tpl)} />}
       actions={
-        tpl.canManage && (
-          <Menu position="bottom-end" withinPortal shadow="md">
-            <Menu.Target>
-              <ActionIcon
-                variant="default"
-                size="sm"
-                aria-label={t("Template actions")}
-              >
-                <IconDots size={14} />
-              </ActionIcon>
-            </Menu.Target>
-            <Menu.Dropdown>
+        <Menu position="bottom-end" withinPortal shadow="md">
+          <Menu.Target>
+            <ActionIcon
+              variant="default"
+              size="sm"
+              aria-label={t("Template actions")}
+            >
+              <IconDots size={14} />
+            </ActionIcon>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <CopyTemplateId templateId={tpl.id} />
+            {tpl.canManage && (
               <Menu.Item
                 leftSection={<IconEdit size={14} />}
                 onClick={() => navigate(`/templates/${tpl.id}`)}
               >
                 {t("Edit")}
               </Menu.Item>
-              <Menu.Item
-                leftSection={<IconEye size={14} />}
-                onClick={() => setPreviewId(tpl.id)}
-              >
-                {t("Preview")}
-              </Menu.Item>
-              <Menu.Divider />
+            )}
+            <Menu.Item
+              leftSection={<IconEye size={14} />}
+              onClick={() => setPreviewId(tpl.id)}
+            >
+              {t("Preview")}
+            </Menu.Item>
+            {tpl.canManage && <Menu.Divider />}
+            {tpl.canManage && (
               <Menu.Item
                 color="red"
                 leftSection={<IconTrash size={14} />}
@@ -165,9 +169,9 @@ export default function TemplateLibrary() {
               >
                 {t("Delete")}
               </Menu.Item>
-            </Menu.Dropdown>
-          </Menu>
-        )
+            )}
+          </Menu.Dropdown>
+        </Menu>
       }
     />
   );
@@ -376,8 +380,9 @@ function PreviewModal({
           <div className={classes.previewBody}>
             <TemplatePreview content={tpl.content} />
           </div>
-          {tpl.canManage && (
-            <Group justify="flex-end" mt="md">
+          <Group justify="flex-end" mt="md">
+            <CopyTemplateId templateId={tpl.id} variant="button" />
+            {tpl.canManage && (
               <Button
                 variant="light"
                 leftSection={<IconEdit size={16} />}
@@ -385,8 +390,8 @@ function PreviewModal({
               >
                 {t("Edit template")}
               </Button>
-            </Group>
-          )}
+            )}
+          </Group>
         </>
       ) : (
         <Skeleton height={240} />

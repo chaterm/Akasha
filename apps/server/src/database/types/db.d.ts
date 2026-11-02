@@ -1115,6 +1115,42 @@ export interface Watchers {
   workspaceId: string;
 }
 
+export interface WeeklyReportOutbox {
+  attempts: Generated<number>;
+  availableAt: Generated<Timestamp>;
+  createdAt: Generated<Timestamp>;
+  deliveredAt: Timestamp | null;
+  effect: string;
+  id: string;
+  pageId: string;
+  userId: string;
+  workspaceId: string;
+}
+
+export interface WeeklyReportRecords {
+  createdAt: Generated<Timestamp>;
+  id: string;
+  pageId: string;
+  parentPageId: string;
+  periodEnd: Timestamp;
+  periodStart: Timestamp;
+  spaceId: string;
+  templateFingerprint: string;
+  templateId: string;
+  timezone: string;
+  userId: string;
+  workspaceId: string;
+}
+
+export interface WeeklyReportSaveReceipts {
+  createdAt: Generated<Timestamp>;
+  parentCreated: Generated<boolean>;
+  reportRecordId: string;
+  saveId: string;
+  userId: string;
+  workspaceId: string;
+}
+
 export interface WorkspaceInvitations {
   createdAt: Generated<Timestamp>;
   email: string | null;
@@ -1223,6 +1259,9 @@ export interface DB {
   userSessions: UserSessions;
   userTokens: UserTokens;
   watchers: Watchers;
+  weeklyReportOutbox: WeeklyReportOutbox;
+  weeklyReportRecords: WeeklyReportRecords;
+  weeklyReportSaveReceipts: WeeklyReportSaveReceipts;
   workspaceInvitations: WorkspaceInvitations;
   workspaces: Workspaces;
 }

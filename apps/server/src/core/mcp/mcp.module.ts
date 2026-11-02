@@ -10,6 +10,8 @@ import { SpaceModule } from '../space/space.module';
 import { CommentModule } from '../comment/comment.module';
 import { WorkspaceModule } from '../workspace/workspace.module';
 import { McpToolRegistry } from './mcp-tool-registry';
+import { TemplateModule } from '../template/template.module';
+import { WeeklyReportModule } from '../weekly-report/weekly-report.module';
 import { AttachmentModule } from '../attachment/attachment.module';
 
 @Module({
@@ -21,6 +23,8 @@ import { AttachmentModule } from '../attachment/attachment.module';
     CommentModule,
     WorkspaceModule,
     AttachmentModule,
+    TemplateModule,
+    WeeklyReportModule,
   ],
   controllers: [McpController],
   providers: [McpService, McpAuthService, ApiKeyRepo, McpToolRegistry],

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -15,12 +16,14 @@ import {
   executeWithCursorPagination,
 } from '@akasha/db/pagination/cursor-pagination';
 import { InjectKysely } from 'nestjs-kysely';
-import { KyselyDB } from '@akasha/db/types/kysely.types';
+import { KyselyDB, KyselyTransaction } from '@akasha/db/types/kysely.types';
 import { generateJitteredKeyBetween } from 'fractional-indexing-jittered';
 import { MovePageDto } from '../dto/move-page.dto';
 import { generateSlugId } from '../../../common/helpers';
 import { getPageTitle } from '../../../common/helpers';
-import { executeTx } from '@akasha/db/utils';
+import { executeTx, dbOrTx } from '@akasha/db/utils';
+import { isWeeklyReportDraft } from '../../weekly-report/weekly-report-draft';
+import { normalizeWeeklyReportContent } from '../../weekly-report/weekly-report-content';
 import { AttachmentRepo } from '@akasha/db/repos/attachment/attachment.repo';
 import { v7 as uuid7 } from 'uuid';
 import {
@@ -91,6 +94,7 @@ export class PageService {
     userId: string,
     workspaceId: string,
     createPageDto: CreatePageDto,
+    options?: { trx: KyselyTransaction; deferCreatedEffects: true },
   ): Promise<Page> {
     let parentPageId = undefined;
 
@@ -98,6 +102,7 @@ export class PageService {
     if (createPageDto.parentPageId) {
       const parentPage = await this.pageRepo.findById(
         createPageDto.parentPageId,
+        { trx: options?.trx },
       );
 
       if (
@@ -126,42 +131,52 @@ export class PageService {
       ydoc = createYdocFromJson(prosemirrorJson);
     }
 
-    const page = await this.pageRepo.insertPage({
-      slugId: generateSlugId(),
-      title: createPageDto.title,
-      position: await this.nextPagePosition(
-        createPageDto.spaceId,
-        parentPageId,
-      ),
-      icon: createPageDto.icon,
-      parentPageId: parentPageId,
-      spaceId: createPageDto.spaceId,
-      creatorId: userId,
-      workspaceId: workspaceId,
-      lastUpdatedById: userId,
-      content,
-      textContent,
-      ydoc,
-    });
-
-    this.generalQueue
-      .add(QueueJob.ADD_PAGE_WATCHERS, {
-        userIds: [userId],
-        pageId: page.id,
+    const page = await this.pageRepo.insertPage(
+      {
+        slugId: generateSlugId(),
+        title: createPageDto.title,
+        position: await this.nextPagePosition(
+          createPageDto.spaceId,
+          parentPageId,
+          options?.trx,
+        ),
+        icon: createPageDto.icon,
+        parentPageId: parentPageId,
         spaceId: createPageDto.spaceId,
-        workspaceId,
-      })
-      .catch((err) =>
-        this.logger.warn(`Failed to queue add-page-watchers: ${err.message}`),
-      );
+        creatorId: userId,
+        workspaceId: workspaceId,
+        lastUpdatedById: userId,
+        content,
+        textContent,
+        ydoc,
+      },
+      options?.trx,
+      options?.deferCreatedEffects ? { deferCreatedEvent: true } : undefined,
+    );
+
+    if (!options?.deferCreatedEffects)
+      this.generalQueue
+        .add(QueueJob.ADD_PAGE_WATCHERS, {
+          userIds: [userId],
+          pageId: page.id,
+          spaceId: createPageDto.spaceId,
+          workspaceId,
+        })
+        .catch((err) =>
+          this.logger.warn(`Failed to queue add-page-watchers: ${err.message}`),
+        );
 
     return page;
   }
 
-  async nextPagePosition(spaceId: string, parentPageId?: string) {
+  async nextPagePosition(
+    spaceId: string,
+    parentPageId?: string,
+    trx?: KyselyTransaction,
+  ) {
     let pagePosition: string;
 
-    const lastPageQuery = this.db
+    const lastPageQuery = dbOrTx(this.db, trx)
       .selectFrom('pages')
       .select(['position'])
       .where('spaceId', '=', spaceId)
@@ -204,21 +219,40 @@ export class PageService {
     updatePageDto: UpdatePageDto,
     user: User,
   ): Promise<Page> {
+    const fillingWeeklyDraft =
+      isWeeklyReportDraft(page.content as any) &&
+      updatePageDto.content !== undefined &&
+      updatePageDto.operation === 'replace' &&
+      updatePageDto.format === 'json';
+    if (fillingWeeklyDraft) {
+      if (page.isLocked)
+        throw new ForbiddenException('The draft page is locked');
+      updatePageDto = {
+        ...updatePageDto,
+        content: normalizeWeeklyReportContent(updatePageDto.content as any),
+      };
+    }
     const contributors = new Set<string>(page.contributorIds);
     contributors.add(user.id);
     const contributorIds = Array.from(contributors);
 
-    await this.pageRepo.updatePage(
-      {
-        title: updatePageDto.title,
-        icon: updatePageDto.icon,
-        lastUpdatedById: user.id,
-        sourceLastUpdatedByName: null,
-        updatedAt: new Date(),
-        contributorIds: contributorIds,
-      },
-      page.id,
-    );
+    const metadata = {
+      title: updatePageDto.title,
+      icon: updatePageDto.icon,
+      lastUpdatedById: user.id,
+      sourceLastUpdatedByName: null,
+      updatedAt: new Date(),
+      contributorIds: contributorIds,
+    };
+    if (fillingWeeklyDraft) {
+      // The collaboration content commit owns ACL reindexing and compilation;
+      // do not compile the placeholder from this preliminary metadata update.
+      await this.pageRepo.updatePage(metadata, page.id, undefined, {
+        skipKnowledgeCompile: true,
+      });
+    } else {
+      await this.pageRepo.updatePage(metadata, page.id);
+    }
 
     this.generalQueue
       .add(QueueJob.ADD_PAGE_WATCHERS, {
@@ -480,7 +514,6 @@ export class PageService {
             trx,
           },
         );
-
       }
     });
 
@@ -1047,7 +1080,9 @@ export class PageService {
     }
 
     try {
-      jsonToNode(prosemirrorJson);
+      const node = jsonToNode(JSON.parse(JSON.stringify(prosemirrorJson)));
+      node.check();
+      prosemirrorJson = node.toJSON();
     } catch (err) {
       throw new BadRequestException('Invalid content format');
     }

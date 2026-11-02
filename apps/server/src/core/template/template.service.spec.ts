@@ -17,7 +17,7 @@ import {
   readDatabaseRows,
 } from '@docmost/editor-ext';
 import { jsonToNode } from '../../collaboration/collaboration.util';
-import { BUILTIN_TEMPLATES } from './builtin-templates';
+import { BUILTIN_WEEKLY_REPORT_ID, BUILTIN_TEMPLATES } from './builtin-templates';
 
 const [WEEKLY_ID, CHECKLIST_ID, BOARD_ID, FLOWCHART_ID, MANUAL_ID, DESIGN_ID, PLAN_ID] =
   BUILTIN_TEMPLATES.map((t) => t.id);
@@ -62,6 +62,7 @@ describe('TemplateService', () => {
     userSpaceIds?: string[];
     cannotCreateIn?: string[];
     page?: any;
+    targetSpace?: any;
   }) => {
     const templateRepo = {
       findById: jest.fn().mockResolvedValue(opts?.template),
@@ -97,6 +98,10 @@ describe('TemplateService', () => {
       transaction: () => ({ execute: (cb: any) => cb('trx') }),
     };
 
+    const spaceRepo = {
+      findById: jest.fn().mockImplementation(async (id: string) =>
+        opts?.targetSpace === null ? undefined : opts?.targetSpace ?? { id, workspaceId: 'ws-1' }),
+    };
     const service = new TemplateService(
       templateRepo as any,
       pageRepo as any,
@@ -106,9 +111,89 @@ describe('TemplateService', () => {
       pageService as any,
       auditService as any,
       db as any,
+      spaceRepo as any,
     );
-    return { service, templateRepo, pageService, pageAccessService };
+    return { service, templateRepo, pageService, pageAccessService, spaceRepo };
   };
+
+  describe('MCP template reads', () => {
+    it('uses the semantic builtin ID and returns normalized JSON plus a fingerprint', async () => {
+      const { service } = createSubject();
+      expect(BUILTIN_WEEKLY_REPORT_ID).toBe(WEEKLY_ID);
+      const result = await service.getForSpace(WEEKLY_ID, 'space-1', member, ws());
+      expect(result.builtin).toBe(true);
+      expect(result.templateFingerprint).toMatch(/^[0-9a-f]{64}$/);
+      expect(result.content).toEqual(jsonToNode(structuredClone(BUILTIN_TEMPLATES[0].content)).toJSON());
+    });
+
+    it('checks target access before looking up a template', async () => {
+      const { service, templateRepo } = createSubject({ targetSpace: null });
+      await expect(service.getForSpace('t1', 'missing', member, ws()))
+        .rejects.toBeInstanceOf(NotFoundException);
+      expect(templateRepo.findById).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { id: 'space-1', workspaceId: 'other' },
+      { id: 'space-1', workspaceId: 'ws-1', deletedAt: new Date() },
+    ])('rejects foreign or deleted target spaces', async (targetSpace) => {
+      const { service, templateRepo } = createSubject({ targetSpace });
+      await expect(service.getForSpace('t1', 'space-1', member, ws()))
+        .rejects.toBeInstanceOf(NotFoundException);
+      expect(templateRepo.findById).not.toHaveBeenCalled();
+    });
+
+    it('does not disclose a template when the target is inaccessible', async () => {
+      const { service, templateRepo } = createSubject({ cannotCreateIn: ['space-1'] });
+      await expect(service.getForSpace('t1', 'space-1', member, ws()))
+        .rejects.toBeInstanceOf(NotFoundException);
+      expect(templateRepo.findById).not.toHaveBeenCalled();
+    });
+
+    it('distinguishes visible but inapplicable templates without exposing hidden space IDs', async () => {
+      const { service } = createSubject({ template: row({ spaceIds: ['hidden'] }) });
+      await expect(service.getForSpace('t1', 'space-1', member, ws()))
+        .rejects.toMatchObject({ response: { code: 'TEMPLATE_NOT_APPLICABLE' } });
+      const visible = createSubject({ template: row({ spaceIds: ['space-1', 'hidden'] }) });
+      const result = await visible.service.getForSpace('t1', 'space-1', member, ws());
+      expect(result.spaceIds).toEqual(['space-1']);
+      expect(result.otherSpaceCount).toBe(1);
+    });
+
+    it('hides inaccessible templates behind not-found', async () => {
+      const { service } = createSubject({ template: row({ creatorId: 'other', spaceIds: ['hidden'] }) });
+      await expect(service.getForSpace('t1', 'space-1', member, ws()))
+        .rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('validates listing target and filters usability, including admin spaces without membership', async () => {
+      const { service, templateRepo } = createSubject({ userSpaceIds: [] });
+      await service.listForMcp(admin, ws(), { scope: 'available', spaceId: 'space-1' } as any);
+      expect(templateRepo.findTemplates).toHaveBeenCalledWith('ws-1', ['space-1'],
+        expect.anything(), { mode: 'availableIn', spaceId: 'space-1' }, expect.anything());
+      const hidden = createSubject({ targetSpace: null });
+      await expect(hidden.service.listForMcp(member, ws(), { spaceId: 'missing' } as any))
+        .rejects.toBeInstanceOf(NotFoundException);
+      expect(hidden.templateRepo.findTemplates).not.toHaveBeenCalled();
+    });
+
+    it('fingerprints change with generation content but ignore timestamps and JSON key order', async () => {
+      const template: any = row({ title: 'weekly' });
+      const { service } = createSubject({ template });
+      const read = () => service.getForSpace('t1', 'space-1', member, ws());
+      const first = await read();
+      template.updatedAt = new Date();
+      template.content = { content: DOC.content, type: 'doc' };
+      expect((await read()).templateFingerprint).toBe(first.templateFingerprint);
+      template.title = 'changed';
+      expect((await read()).templateFingerprint).not.toBe(first.templateFingerprint);
+      template.title = 'weekly';
+      template.content = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'New facts' }] }] };
+      const snapshot = structuredClone(template.content);
+      expect((await read()).templateFingerprint).not.toBe(first.templateFingerprint);
+      expect(template.content).toEqual(snapshot);
+    });
+  });
 
   describe('create', () => {
     it('管理员可创建"所有空间"模板，并提取纯文本', async () => {
