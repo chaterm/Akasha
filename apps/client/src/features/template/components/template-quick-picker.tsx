@@ -151,6 +151,7 @@ export function TemplateQuickPicker({
       withCloseButton={false}
       yOffset="8vh"
       aria-label={title}
+      classNames={{ content: classes.content, body: classes.modalBody }}
     >
       <div className={classes.header}>
         <TextInput

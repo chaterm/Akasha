@@ -9,10 +9,17 @@ import {
 } from '@nestjs/common';
 import { TemplateService } from './template.service';
 import { UserRole } from '../../common/helpers/types/permission';
+import { Node } from '@tiptap/pm/model';
+import {
+  countDatabaseFilterConditions,
+  normalizeDatabaseColumns,
+  normalizeDatabaseViews,
+  readDatabaseRows,
+} from '@docmost/editor-ext';
 import { jsonToNode } from '../../collaboration/collaboration.util';
 import { BUILTIN_WEEKLY_REPORT_ID, BUILTIN_TEMPLATES } from './builtin-templates';
 
-const [WEEKLY_ID, CHECKLIST_ID, FLOWCHART_ID, MANUAL_ID, DESIGN_ID] =
+const [WEEKLY_ID, CHECKLIST_ID, BOARD_ID, FLOWCHART_ID, MANUAL_ID, DESIGN_ID, PLAN_ID] =
   BUILTIN_TEMPLATES.map((t) => t.id);
 const BUILTIN_IDS = BUILTIN_TEMPLATES.map((t) => t.id);
 /** 每个内置模板必须保留下来的块（未知节点会被静默剥掉） */
@@ -22,7 +29,12 @@ const EXPECTED_BLOCKS: Record<string, string[]> = {
   [FLOWCHART_ID]: ['callout', 'heading', 'excalidraw', 'table'],
   [MANUAL_ID]: ['table', 'heading', 'callout', 'details', 'detailsSummary', 'bulletList'],
   [DESIGN_ID]: ['table', 'status', 'callout', 'toc', 'heading', 'codeBlock', 'mathBlock', 'mathInline', 'taskList', 'bulletList'],
+  [BOARD_ID]: ['callout', 'database', 'databaseRow', 'databaseCell', 'heading', 'bulletList'],
+  [PLAN_ID]: ['callout', 'database', 'databaseRow', 'databaseCell', 'heading', 'bulletList', 'taskList'],
 };
+
+/** 正文里的第一个数据库块 */
+const findDatabase = (content: any) => content.content.find((n: any) => n.type === 'database');
 
 const DOC = {
   type: 'doc',
@@ -411,6 +423,8 @@ describe('TemplateService', () => {
       expect(await ids({ query: '清单' })).toEqual([CHECKLIST_ID]);
       expect(await ids({ query: '手册' })).toEqual([MANUAL_ID]);
       expect(await ids({ query: '技术方案' })).toEqual([DESIGN_ID]);
+      expect(await ids({ query: '任务看板' })).toEqual([BOARD_ID]);
+      expect(await ids({ query: '项目计划' })).toEqual([PLAN_ID]);
       expect(await ids({ scope: 'available', spaceId: 'space-1' })).toEqual(BUILTIN_IDS);
     });
 
@@ -524,6 +538,31 @@ describe('TemplateService', () => {
       }
     });
 
+    it('项目计划模板：视图配置经编辑器解析后不丢', () => {
+      const tpl = BUILTIN_TEMPLATES.find((t) => t.id === PLAN_ID)!;
+      let db: Node | undefined;
+      jsonToNode(tpl.content).descendants((n) => {
+        if (n.type.name === 'database') db = n;
+      });
+      const columns = normalizeDatabaseColumns(db!.attrs.columns);
+      const views = normalizeDatabaseViews(db!.attrs.views, columns);
+      const byId = new Map(views.map((v) => [v.id, v]));
+
+      expect(views.map((v) => v.type)).toEqual(['table', 'kanban', 'kanban', 'calendar', 'timeline', 'table', 'mine']);
+      expect(byId.get('by-status')).toMatchObject({ groupBy: 'status' });
+      expect(byId.get('by-priority')).toMatchObject({ groupBy: 'priority', orientation: 'horizontal' });
+      expect(byId.get('calendar')).toMatchObject({ dateColumnId: 'start', endDateColumnId: 'end' });
+      expect(countDatabaseFilterConditions(byId.get('focus')!.filter)).toBe(3);
+      // 每种列类型都用上（关联页面列需要真实页面，不放）
+      expect(new Set(columns.map((c) => c.type))).toEqual(
+        new Set(['text', 'person', 'select', 'multiSelect', 'date', 'number', 'checkbox', 'url', 'progress']),
+      );
+      // 每行的日期都合法，结束不早于开始
+      for (const row of readDatabaseRows(db!)) {
+        expect(row.values.end >= row.values.start).toBe(true);
+      }
+    });
+
     it('管理员也不能修改或删除内置模板', async () => {
       const { service, templateRepo } = createSubject();
       await expect(
@@ -586,6 +625,37 @@ describe('TemplateService', () => {
           'ws-1',
           expect.objectContaining({ title: '2026/10/27-周报' }),
         );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('内置数据库模板建页时：日期平移到用户的今天，"我"换成创建人，每页 id 独立', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-12-01T02:00:00.000Z'));
+      try {
+        const { service, pageService } = createSubject();
+        const user = { ...member, name: '小明', avatarUrl: 'a.png', timezone: 'Asia/Shanghai' };
+        await service.use({ templateId: PLAN_ID, spaceId: 'space-1' }, user, ws());
+        await service.use({ templateId: PLAN_ID, spaceId: 'space-1' }, user, ws());
+        const [first, second] = pageService.create.mock.calls.map(([, , dto]: any) => findDatabase(dto.content));
+
+        const owner = first.attrs.columns.find((c: any) => c.id === 'owner');
+        expect(owner.options).toEqual([{ id: 'member-1', name: '小明', color: 'blue', avatarUrl: 'a.png' }]);
+
+        const cell = (row: any, columnId: string) =>
+          row.content.find((c: any) => c.attrs.columnId === columnId)?.attrs.value;
+        // 模板基准日 2026-11-02 平移到 2026-12-01（+29 天）
+        const source = findDatabase(BUILTIN_TEMPLATES.find((t) => t.id === PLAN_ID)!.content);
+        expect(cell(source.content[4], 'start')).toBe('2026-11-02');
+        expect(cell(first.content[4], 'start')).toBe('2026-12-01');
+        expect(cell(first.content[0], 'owner')).toEqual(['member-1']);
+        expect(cell(first.content[1], 'owner')).toEqual([]);
+
+        expect(first.attrs.id).not.toBe(second.attrs.id);
+        expect(first.content[0].attrs.id).not.toBe(second.content[0].attrs.id);
+        // 模板对象本身不变
+        expect(source.attrs.id).toBe('database');
+        expect(cell(source.content[0], 'owner')).toEqual(['$me']);
       } finally {
         jest.useRealTimers();
       }

@@ -3,6 +3,18 @@
  * 随版本统一更新；需要改动的用户可以先用它建页，再"另存为模板"。
  */
 
+import {
+  addDatabaseDays,
+  buildDatabaseJSON,
+  diffDatabaseDays,
+  generateNodeId,
+  type DatabaseCellValue,
+  type DatabaseColumn,
+  type DatabaseRowInput,
+  type DatabaseSelectOption,
+  type DatabaseViewInput,
+} from '@docmost/editor-ext';
+
 export interface BuiltinTemplate {
   /** 固定 UUID，便于复用现有按 id 的接口与校验 */
   id: string;
@@ -143,6 +155,100 @@ const details = (summary: string, ...content: any[]) => ({
 const toc = () => ({ type: 'toc', attrs: { minLevel: 2, maxLevel: 3 } });
 
 const doc = (...content: any[]) => ({ type: 'doc', content });
+
+// ---- 数据库块 ----
+
+/** 示例日期的基准日，建页时整体平移到用户的今天。 */
+const SAMPLE_TODAY = '2026-11-02';
+
+/** 相对基准日期第 n 天。 */
+const day = (n: number) => addDatabaseDays(SAMPLE_TODAY, n);
+
+/** 人员列里的"我"，建页时换成创建人。 */
+const ME = '$me';
+
+const database = (
+  title: string,
+  columns: DatabaseColumn[],
+  views: DatabaseViewInput[],
+  rows: Array<Record<string, DatabaseCellValue>>,
+) =>
+  buildDatabaseJSON({
+    id: 'database',
+    title,
+    columns,
+    views,
+    rows: rows.map((values, i): DatabaseRowInput => ({ id: `row-${i + 1}`, values })),
+  });
+
+/** 视图里隐藏这些列。 */
+const hide = (...ids: string[]) =>
+  ids.map((id) => ({ id, width: null, align: null, hidden: true, wrap: false }));
+
+const option = (id: string, name: string, color: DatabaseSelectOption['color']) => ({ id, name, color });
+
+const ownerColumn: DatabaseColumn = {
+  id: 'owner',
+  name: '负责人',
+  type: 'person',
+  options: [option(ME, '我', 'blue')],
+};
+
+const priorityColumn: DatabaseColumn = {
+  id: 'priority',
+  name: '优先级',
+  type: 'select',
+  options: [option('p0', 'P0 紧急', 'red'), option('p1', 'P1 重要', 'orange'), option('p2', 'P2 一般', 'gray')],
+};
+
+export interface BuiltinTemplateContext {
+  /** 用户本地日期，YYYY-MM-DD */
+  today: string;
+  user: { id: string; name: string; avatarUrl?: string };
+}
+
+/** 建页时实例化：数据库和行换新 id，日期平移到今天，"我"换成创建人。不改动入参。 */
+export function instantiateBuiltinContent(content: Record<string, any>, ctx: BuiltinTemplateContext) {
+  const shift = diffDatabaseDays(SAMPLE_TODAY, ctx.today);
+  const me: DatabaseSelectOption = {
+    id: ctx.user.id,
+    name: ctx.user.name,
+    color: 'blue',
+    ...(ctx.user.avatarUrl ? { avatarUrl: ctx.user.avatarUrl } : {}),
+  };
+
+  const visit = (node: any): any => {
+    if (node?.type !== 'database') {
+      return node?.content ? { ...node, content: node.content.map(visit) } : node;
+    }
+    const columns: DatabaseColumn[] = node.attrs.columns.map((column: DatabaseColumn) =>
+      column.type === 'person'
+        ? { ...column, options: column.options!.map((o) => (o.id === ME ? me : o)) }
+        : column,
+    );
+    const types = new Map(columns.map((column) => [column.id, column.type]));
+    const value = (columnId: string, v: any) => {
+      const type = types.get(columnId);
+      if (type === 'date' && typeof v === 'string') return addDatabaseDays(v, shift);
+      if (type === 'person' && Array.isArray(v)) return v.map((id) => (id === ME ? me.id : id));
+      return v;
+    };
+    return {
+      ...node,
+      attrs: { ...node.attrs, id: generateNodeId(), columns },
+      content: (node.content ?? []).map((row: any) => ({
+        ...row,
+        attrs: { ...row.attrs, id: generateNodeId() },
+        content: (row.content ?? []).map((cell: any) => ({
+          ...cell,
+          attrs: { ...cell.attrs, value: value(cell.attrs.columnId, cell.attrs.value) },
+        })),
+      })),
+    };
+  };
+
+  return visit(structuredClone(content));
+}
 
 // ---- Excalidraw scene 构造（模板预置画布） ----
 
@@ -538,12 +644,209 @@ const techDesign: BuiltinTemplate = {
   ),
 };
 
+const taskBoard: BuiltinTemplate = {
+  id: '0b6f8a3e-5c1d-4e2a-9f47-1a2b3c4d5e08',
+  icon: '📋',
+  title: '任务看板',
+  description: '待办、进行中、受阻、已完成四栏看板，拖动卡片更新状态，按负责人和截止日期跟进。',
+  content: doc(
+    callout(
+      'info',
+      '💡',
+      p(b('怎么用：'), '拖动卡片改状态，双击卡片上的字段直接修改；点卡片在右侧打开详情，填负责人、截止日期和进度。'),
+      '切到"按负责人"看每个人手上的事，切到"我的任务"只看分给自己的。',
+    ),
+    database(
+      '任务',
+      [
+        { id: 'title', name: '任务', type: 'text' },
+        ownerColumn,
+        {
+          id: 'status',
+          name: '状态',
+          type: 'select',
+          options: [
+            option('todo', '待办', 'gray'),
+            option('doing', '进行中', 'blue'),
+            option('blocked', '受阻', 'red'),
+            option('done', '已完成', 'green'),
+          ],
+        },
+        priorityColumn,
+        { id: 'due', name: '截止日期', type: 'date' },
+        { id: 'progress', name: '进度', type: 'progress' },
+        { id: 'note', name: '备注', type: 'text' },
+      ],
+      [
+        { id: 'board', name: '看板', type: 'kanban', groupBy: 'status', columns: hide('status', 'note') },
+        { id: 'by-owner', name: '按负责人', type: 'kanban', groupBy: 'owner', columns: hide('owner', 'note') },
+        {
+          id: 'list',
+          name: '列表',
+          type: 'table',
+          sorts: [{ columnId: 'due', direction: 'asc' }],
+          columns: [{ id: 'note', width: null, align: null, hidden: false, wrap: true }],
+        },
+        { id: 'calendar', name: '日历', type: 'calendar', dateColumnId: 'due' },
+        { id: 'mine', name: '我的任务', type: 'mine' },
+      ],
+      [
+        { title: '整理需求清单', owner: [ME], status: 'todo', priority: 'p1', due: day(3), progress: 0, note: '' },
+        { title: '确认排期', owner: [], status: 'todo', priority: 'p2', due: day(5), progress: 0, note: '' },
+        { title: '完成方案初稿', owner: [ME], status: 'doing', priority: 'p0', due: day(1), progress: 60, note: '' },
+        { title: '准备评审材料', owner: [], status: 'doing', priority: 'p1', due: day(2), progress: 30, note: '' },
+        { title: '采购物料', owner: [], status: 'blocked', priority: 'p1', due: day(4), progress: 20, note: '等待预算审批' },
+        { title: '同步项目目标', owner: [ME], status: 'done', priority: 'p1', due: day(-2), progress: 100, note: '' },
+        { title: '建立沟通群', owner: [], status: 'done', priority: 'p2', due: day(-3), progress: 100, note: '' },
+      ],
+    ),
+    h(2, '一、状态约定'),
+    bullets(
+      [b('待办：'), '已经确认要做、还没开始的事。'],
+      [b('进行中：'), '有人正在做；同一个人手上的进行中任务最好不超过 3 件。'],
+      [b('受阻：'), '卡住了做不下去，在备注里写清卡在哪里、需要谁帮忙。'],
+      [b('已完成：'), '已经交付并确认，不再需要跟进。'],
+    ),
+    h(2, '二、使用建议'),
+    bullets(
+      '每天或每次例会花几分钟过一遍看板，先看"受阻"，再看快到期的任务。',
+      '在"列表"里按截止日期排序，在"日历"里看本周和下周的安排。',
+      '已完成的卡片太多时，在看板列的菜单里折叠或隐藏"已完成"这一栏。',
+      '在"列表"里勾选多行，可以一次改负责人、状态，或批量删除；也可以从 Excel、飞书表格复制多行直接粘贴进来。',
+    ),
+  ),
+};
+
+const projectPlan: BuiltinTemplate = {
+  id: '0b6f8a3e-5c1d-4e2a-9f47-1a2b3c4d5e09',
+  icon: '🗂️',
+  title: '项目计划',
+  description: '从启动到验收排好项目任务，用表格、看板、日历、时间线等视图跟进，改一处各视图同步。',
+  content: doc(
+    callout(
+      'info',
+      '📌',
+      p(b('一份数据，多种看法：'), '下面每个视图都是同一张任务表，在任何一个视图里改动，其他视图同步更新。'),
+      '示例任务是一个通用的项目流程，换成自己的任务和类型即可，活动策划、市场推广、产品研发都适用。',
+    ),
+    database(
+      '项目任务',
+      [
+        { id: 'title', name: '任务', type: 'text' },
+        ownerColumn,
+        {
+          id: 'status',
+          name: '状态',
+          type: 'select',
+          options: [
+            option('todo', '未开始', 'gray'),
+            option('doing', '进行中', 'blue'),
+            option('review', '待确认', 'purple'),
+            option('done', '已完成', 'green'),
+          ],
+        },
+        priorityColumn,
+        {
+          id: 'tags',
+          name: '类型',
+          type: 'multiSelect',
+          options: [
+            option('plan', '规划', 'pink'),
+            option('research', '调研', 'purple'),
+            option('execute', '执行', 'cyan'),
+            option('communicate', '沟通协调', 'teal'),
+            option('review', '评审验收', 'yellow'),
+          ],
+        },
+        { id: 'start', name: '开始', type: 'date' },
+        { id: 'end', name: '结束', type: 'date' },
+        { id: 'progress', name: '进度', type: 'progress' },
+        { id: 'budget', name: '预算', type: 'number', format: 'CNY', decimals: 0 },
+        { id: 'risk', name: '有风险', type: 'checkbox' },
+        { id: 'link', name: '相关链接', type: 'url' },
+      ],
+      [
+        { id: 'all', name: '全部任务', type: 'table', sorts: [{ columnId: 'start', direction: 'asc' }] },
+        {
+          id: 'by-status',
+          name: '按状态',
+          type: 'kanban',
+          groupBy: 'status',
+          columns: hide('status', 'start', 'budget', 'link'),
+        },
+        {
+          id: 'by-priority',
+          name: '按优先级',
+          type: 'kanban',
+          groupBy: 'priority',
+          orientation: 'horizontal',
+          columns: hide('priority', 'tags', 'start', 'budget', 'risk', 'link'),
+        },
+        { id: 'calendar', name: '日历', type: 'calendar', dateColumnId: 'start', endDateColumnId: 'end' },
+        { id: 'timeline', name: '时间线', type: 'timeline', dateColumnId: 'start', endDateColumnId: 'end' },
+        {
+          id: 'focus',
+          name: '重点关注',
+          type: 'table',
+          sorts: [{ columnId: 'end', direction: 'asc' }],
+          filter: {
+            type: 'group',
+            mode: 'and',
+            conditions: [
+              { type: 'condition', columnId: 'status', op: 'isNoneOf', value: ['done'] },
+              {
+                type: 'group',
+                mode: 'or',
+                conditions: [
+                  { type: 'condition', columnId: 'priority', op: 'isAnyOf', value: ['p0'] },
+                  { type: 'condition', columnId: 'risk', op: 'isChecked', value: null },
+                ],
+              },
+            ],
+          },
+        },
+        { id: 'mine', name: '我的任务', type: 'mine' },
+      ],
+      [
+        { title: '项目启动会', owner: [ME], status: 'done', priority: 'p0', tags: ['communicate'], start: day(-10), end: day(-10), progress: 100, budget: 1000, risk: false, link: 'https://example.com/projects/2026/kickoff-meeting-notes-and-action-items' },
+        { title: '现状调研', owner: [], status: 'done', priority: 'p1', tags: ['research'], start: day(-9), end: day(-5), progress: 100, budget: 5000, risk: false, link: '' },
+        { title: '制定方案', owner: [ME], status: 'review', priority: 'p0', tags: ['plan'], start: day(-4), end: day(1), progress: 90, budget: 2000, risk: false, link: '' },
+        { title: '方案评审', owner: [], status: 'doing', priority: 'p0', tags: ['review'], start: day(-1), end: day(2), progress: 50, budget: 500, risk: false, link: '' },
+        { title: '资源与预算申请', owner: [], status: 'doing', priority: 'p1', tags: ['communicate'], start: day(0), end: day(4), progress: 30, budget: 0, risk: false, link: '' },
+        { title: '执行落地', owner: [ME], status: 'todo', priority: 'p1', tags: ['execute'], start: day(3), end: day(12), progress: 0, budget: 30000, risk: true, link: '' },
+        { title: '中期复盘', owner: [], status: 'todo', priority: 'p2', tags: ['review', 'communicate'], start: day(8), end: day(8), progress: 0, budget: 500, risk: false, link: '' },
+        { title: '验收与总结', owner: [ME], status: 'todo', priority: 'p0', tags: ['review'], start: day(13), end: day(15), progress: 0, budget: 1000, risk: false, link: 'https://example.com/projects/2026/acceptance-checklist-and-final-report' },
+      ],
+    ),
+    h(2, '一、视图说明'),
+    bullets(
+      [b('全部任务：'), '表格，按开始日期排序；点列名可以排序、改列类型或隐藏列，筛选在视图上方的工具栏里。'],
+      [b('按状态：'), '看板，拖动卡片就会修改状态。'],
+      [b('按优先级：'), '横向泳道，每个优先级一行。'],
+      [b('日历：'), '按开始和结束日期画出跨天的任务条，拖动可以改日期。'],
+      [b('时间线：'), '甘特图，横向看每个任务从开始到结束的时间段；拖动任务条改日期，拖两端改起止，可切换日、周、月。'],
+      [b('重点关注：'), '筛选出未完成、且是 P0 或有风险的任务。'],
+      [b('我的任务：'), '只显示负责人包含自己的任务。'],
+    ),
+    h(2, '二、试一试'),
+    tasks(
+      '在"按状态"里把一张卡片拖到"已完成"',
+      '在"时间线"里拖动"执行落地"的右端，把结束日期延后两天',
+      '点开一行，拖动进度条或直接输入数字，再填上预算',
+      '把"执行落地"的"有风险"取消勾选，看它从"重点关注"里消失',
+      '新建一个看板视图，在视图设置里改成按"类型"分组',
+    ),
+  ),
+};
+
 export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
   weeklyReport,
   todoChecklist,
+  taskBoard,
   flowchart,
   operationManual,
   techDesign,
+  projectPlan,
 ];
 
 export function findBuiltinTemplate(id: string): BuiltinTemplate | undefined {

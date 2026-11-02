@@ -1,4 +1,5 @@
-import { IconList, IconLayoutGrid } from "@tabler/icons-react";
+import { IconDatabase, IconList, IconLayoutGrid } from "@tabler/icons-react";
+import { insertDefaultDatabase } from "./insert-database";
 import {
   CommandProps,
   SlashMenuItemType,
@@ -34,5 +35,20 @@ export const macroMenuItems: SlashMenuItemType[] = [
     command: ({ editor, range }: CommandProps) => {
       editor.chain().focus().deleteRange(range).insertPanel().run();
     },
+  },
+  {
+    title: "Database",
+    description:
+      "Insert a database with table, kanban, calendar and timeline views.",
+    searchTerms: [
+      "database",
+      "kanban",
+      "board",
+      "calendar",
+      "table view",
+    ],
+    icon: IconDatabase,
+    command: ({ editor, range }: CommandProps) =>
+      insertDefaultDatabase(editor, range),
   },
 ];

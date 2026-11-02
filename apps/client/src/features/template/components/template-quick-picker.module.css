@@ -1,4 +1,20 @@
+/* 弹窗本身不滚动，只有列表和预览各自滚动。 */
+.content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modalBody {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .header {
+  flex-shrink: 0;
   padding: 10px var(--mantine-spacing-md);
   border-bottom: 1px solid
     light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
@@ -6,6 +22,8 @@
 
 .body {
   display: flex;
+  flex: 0 1 auto;
+  min-height: 0;
   height: min(62vh, 540px);
 }
 
@@ -123,6 +141,7 @@
 }
 
 .footer {
+  flex-shrink: 0;
   padding: 8px var(--mantine-spacing-md);
   border-top: 1px solid
     light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));

@@ -45,6 +45,7 @@ import {
   BUILTIN_TEMPLATES,
   BuiltinTemplate,
   findBuiltinTemplate,
+  instantiateBuiltinContent,
 } from './builtin-templates';
 
 const EMPTY_DOC = { type: 'doc', content: [{ type: 'paragraph' }] };
@@ -423,7 +424,7 @@ export class TemplateService {
     const builtin = findBuiltinTemplate(templateId);
     if (builtin) {
       const userSpaceIds = await this.spaceMemberRepo.getUserSpaceIds(user.id);
-      return { template: this.builtinRow(builtin, workspace), userSpaceIds };
+      return { template: this.builtinRow(builtin, workspace, user), userSpaceIds };
     }
 
     const template = await this.templateRepo.findById(templateId, workspace.id, {
@@ -526,7 +527,7 @@ export class TemplateService {
   ): string | undefined {
     if (!template.pageTitlePattern) return template.title ?? undefined;
     return template.pageTitlePattern
-      .replace('{date}', localDate(user.timezone))
+      .replace('{date}', localDate(user.timezone).replace(/-/g, '/'))
       .replace('{title}', template.title ?? '');
   }
 
@@ -557,10 +558,11 @@ export class TemplateService {
     );
   }
 
-  /** 把内置模板转成与数据库行同形的结构。 */
+  /** 把内置模板转成与数据库行同形的结构；给了 user 时按该用户实例化正文。 */
   private builtinRow(
     tpl: BuiltinTemplate,
     workspace: Workspace,
+    user?: User,
   ): ResolvedTemplate {
     return {
       id: tpl.id,
@@ -570,7 +572,16 @@ export class TemplateService {
       allSpaces: true,
       spaceIds: [],
       // 复制一份，避免调用方改动共享的模块级对象
-      content: structuredClone(tpl.content),
+      content: user
+        ? instantiateBuiltinContent(tpl.content, {
+            today: localDate(user.timezone),
+            user: {
+              id: user.id,
+              name: user.name ?? '',
+              avatarUrl: user.avatarUrl ?? undefined,
+            },
+          })
+        : structuredClone(tpl.content),
       workspaceId: workspace.id,
       creatorId: null,
       lastUpdatedById: null,
@@ -587,7 +598,7 @@ function sameSet(a: string[], b: string[]) {
   return a.length === b.length && a.every((x) => b.includes(x));
 }
 
-/** 按用户时区取当天日期（YYYY/MM/DD）；时区缺失或非法时退回服务器时区。 */
+/** 按用户时区取当天日期（YYYY-MM-DD）；时区缺失或非法时退回服务器时区。 */
 function localDate(timeZone: string | null | undefined): string {
   const now = new Date();
   const options: Intl.DateTimeFormatOptions = {
@@ -600,9 +611,8 @@ function localDate(timeZone: string | null | undefined): string {
     const parts = new Intl.DateTimeFormat('en-US', options).formatToParts(now);
     const get = (type: string) =>
       parts.find((part) => part.type === type)?.value ?? '';
-    return `${get('year')}/${get('month')}/${get('day')}`;
+    return `${get('year')}-${get('month')}-${get('day')}`;
   } catch {
-    const iso = now.toISOString().slice(0, 10);
-    return iso.replace(/-/g, '/');
+    return now.toISOString().slice(0, 10);
   }
 }
