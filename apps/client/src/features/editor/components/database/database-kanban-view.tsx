@@ -27,7 +27,7 @@ import { KanbanCard } from "./database-kanban-card";
 import { KanbanGroupHeader, groupLabel } from "./database-kanban-group";
 import { MenuRow, OptionLabel } from "./database-ui";
 import { elementAt, hitTestList, usePointerDrag } from "./use-pointer-drag";
-import { moveItem } from "./database-utils";
+import { focusWithoutScroll, moveItem } from "./database-utils";
 import classes from "./database.module.css";
 
 interface CardDrag {
@@ -499,7 +499,7 @@ function AddGroupButton({
       <Popover.Dropdown {...stopBubbling} p="xs">
         <TextInput
           size="xs"
-          autoFocus
+          ref={focusWithoutScroll}
           placeholder={t("Group name")}
           value={name}
           onChange={(event) => setName(event.currentTarget.value)}

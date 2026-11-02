@@ -5,6 +5,7 @@ import {
   CloseButton,
   Group,
   Popover,
+  SegmentedControl,
   Select,
   Stack,
   Text,
@@ -20,6 +21,7 @@ import {
 import { useTranslation } from "react-i18next";
 import {
   countDatabaseFilterConditions,
+  isDatabaseSortable,
   type DatabaseSort,
 } from "@docmost/editor-ext";
 import {
@@ -91,7 +93,7 @@ function FilterButton({ db }: { db: DatabaseContext }) {
   const { t } = useTranslation();
   const count = countDatabaseFilterConditions(db.view.filter);
   return (
-    <Popover position="bottom-end" width={560} shadow="md" withinPortal>
+    <Popover position="bottom-end" width={600} shadow="md" withinPortal>
       <Popover.Target>
         <Button
           size="compact-xs"
@@ -140,8 +142,9 @@ function SortButton({ db }: { db: DatabaseContext }) {
   const { t } = useTranslation();
   const { sorts } = db.view;
   const used = new Set(sorts.map((sort) => sort.columnId));
-  const available = db.columns.filter((column) => !used.has(column.id));
-  const columnData = db.columns.map((column) => ({
+  const sortable = db.columns.filter((column) => isDatabaseSortable(column.type));
+  const available = sortable.filter((column) => !used.has(column.id));
+  const columnData = sortable.map((column) => ({
     value: column.id,
     label: column.name || t("Untitled"),
   }));
@@ -167,7 +170,7 @@ function SortButton({ db }: { db: DatabaseContext }) {
           getKey={(sort) => sort.columnId}
           onMove={(from, to) => write(moveItem(sorts, from, to))}
           renderItem={(sort, index) => (
-            <Group gap={6} wrap="nowrap">
+            <Group gap={6} wrap="nowrap" className={classes.sortRow}>
               <Select
                 size="xs"
                 flex={1}
@@ -187,10 +190,10 @@ function SortButton({ db }: { db: DatabaseContext }) {
                 }
                 comboboxProps={NO_PORTAL}
               />
-              <Select
+              <SegmentedControl
                 size="xs"
                 w={110}
-                allowDeselect={false}
+                aria-label={t("Sort direction")}
                 data={[
                   { value: "asc", label: t("Ascending") },
                   { value: "desc", label: t("Descending") },
@@ -208,7 +211,6 @@ function SortButton({ db }: { db: DatabaseContext }) {
                     ),
                   )
                 }
-                comboboxProps={NO_PORTAL}
               />
               <ActionIcon
                 size="sm"
@@ -222,6 +224,11 @@ function SortButton({ db }: { db: DatabaseContext }) {
             </Group>
           )}
         />
+        {sortable.length === 0 && (
+          <Text size="xs" c="dimmed" p={4}>
+            {t("No fields can be sorted")}
+          </Text>
+        )}
         {available.length > 0 && (
           // Insets match the sort rows: grip on the left, delete button on the right.
           <div

@@ -327,7 +327,7 @@ function UndatedList({
     <Popover position="bottom-end" width={260} shadow="md" withinPortal>
       <Popover.Target>
         <Button size="compact-xs" variant="subtle" color="gray">
-          {t("No date ({{count}})", { count: rows.length })}
+          {t("Unassigned ({{count}})", { count: rows.length })}
         </Button>
       </Popover.Target>
       <Popover.Dropdown {...stopBubbling} p={6}>

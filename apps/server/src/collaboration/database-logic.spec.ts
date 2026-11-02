@@ -1,6 +1,11 @@
 import {
   DATABASE_EMPTY_GROUP,
+  convertDatabaseColumn,
+  getDatabaseCellText,
   matchDatabaseSearch,
+  isDatabaseSortable,
+  normalizeDatabaseCellValue,
+  normalizeDatabaseViews,
   formatDatabaseNumber,
   getDatabaseFilterDefaults,
   getDatabaseUrlHref,
@@ -315,5 +320,72 @@ describe('person columns', () => {
   it('shows and searches member names', () => {
     expect(matchDatabaseSearch('bob', [owner], people[0])).toBe(true);
     expect(matchDatabaseSearch('u2', [owner], people[0])).toBe(false);
+  });
+});
+
+describe('progress columns', () => {
+  const progress: DatabaseColumn = { id: 'done', name: 'Done', type: 'progress' };
+  const rows: DatabaseRowData[] = [
+    { id: 'r1', values: { done: 80 } },
+    { id: 'r2', values: { done: 20 } },
+    { id: 'r3', values: {} },
+  ];
+
+  it('stores a whole number from 0 to 100', () => {
+    expect(normalizeDatabaseCellValue('progress', 42.6)).toBe(43);
+    expect(normalizeDatabaseCellValue('progress', 150)).toBe(100);
+    expect(normalizeDatabaseCellValue('progress', -5)).toBe(0);
+    expect(normalizeDatabaseCellValue('progress', '30')).toBe(30);
+    expect(normalizeDatabaseCellValue('progress', '')).toBeNull();
+    expect(normalizeDatabaseCellValue('progress', 'abc')).toBeNull();
+  });
+
+  it('shows as a percentage, sorts and filters as a number', () => {
+    expect(getDatabaseCellText(progress, 80)).toBe('80%');
+    expect(getDatabaseCellText(progress, null)).toBe('');
+    expect(ids(sortDatabaseRows(rows, [progress], [{ columnId: 'done', direction: 'asc' }]))).toEqual([
+      'r2',
+      'r1',
+      'r3',
+    ]);
+    const filter: DatabaseFilterGroup = {
+      type: 'group',
+      mode: 'and',
+      conditions: [{ type: 'condition', columnId: 'done', op: 'gte', value: 50 }],
+    };
+    expect(ids(rows.filter((row) => matchDatabaseFilter(filter, [progress], row)))).toEqual(['r1']);
+  });
+
+  it('converts from and to numbers, clamping to the range', () => {
+    const number: DatabaseColumn = { id: 'done', name: 'Done', type: 'number' };
+    const toProgress = convertDatabaseColumn(number, 'progress', []);
+    expect(toProgress.column).toEqual({ id: 'done', name: 'Done', type: 'progress' });
+    expect([12.4, 250, null].map(toProgress.convert)).toEqual([12, 100, null]);
+    expect(convertDatabaseColumn(progress, 'number', []).convert(65)).toBe(65);
+    expect(convertDatabaseColumn(progress, 'text', []).convert(65)).toBe('65');
+  });
+});
+
+describe('sortable columns', () => {
+  it('drops sorts on columns without an order (tags, members, documents, urls)', () => {
+    const cols: DatabaseColumn[] = [
+      { id: 'name', name: 'Name', type: 'text' },
+      tags,
+      { id: 'owner', name: 'Owner', type: 'person', options: [] },
+      { id: 'link', name: 'Link', type: 'url' },
+    ];
+    const [view] = normalizeDatabaseViews(
+      [
+        {
+          id: 'v',
+          name: 'x',
+          type: 'table',
+          sorts: ['tags', 'owner', 'link', 'name'].map((columnId) => ({ columnId, direction: 'asc' })),
+        },
+      ],
+      cols,
+    );
+    expect(view.sorts).toEqual([{ columnId: 'name', direction: 'asc' }]);
+    expect(cols.filter((c) => isDatabaseSortable(c.type)).map((c) => c.id)).toEqual(['name']);
   });
 });

@@ -8,6 +8,30 @@ import {
   type DatabaseSelectOption,
 } from "@docmost/editor-ext";
 
+/**
+ * Use instead of `autoFocus` in popovers: they mount before being positioned,
+ * so a plain focus scrolls the page.
+ */
+export function focusWithoutScroll(element: HTMLElement | null) {
+  element?.focus({ preventScroll: true });
+}
+
+/** Scrolls `item` into view within `list` only, not the page. */
+export function scrollIntoList(
+  list: HTMLElement | null,
+  item: HTMLElement | null,
+) {
+  if (!list || !item) return;
+  const top =
+    item.getBoundingClientRect().top -
+    list.getBoundingClientRect().top +
+    list.scrollTop;
+  if (top < list.scrollTop) list.scrollTop = top;
+  else if (top + item.offsetHeight > list.scrollTop + list.clientHeight) {
+    list.scrollTop = top + item.offsetHeight - list.clientHeight;
+  }
+}
+
 /** Mantine palette name for each database color. */
 export const DATABASE_COLOR_MAP: Record<DatabaseColor, string> = {
   gray: "gray",

@@ -25,7 +25,12 @@ import {
 } from "@docmost/editor-ext";
 import { MenuBack, OptionBadge } from "./database-ui";
 import { SortableList } from "./sortable-list";
-import { DATABASE_COLOR_MAP, moveItem } from "./database-utils";
+import {
+  DATABASE_COLOR_MAP,
+  focusWithoutScroll,
+  moveItem,
+  scrollIntoList,
+} from "./database-utils";
 import classes from "./database.module.css";
 
 interface TagSelectProps {
@@ -76,16 +81,21 @@ export function TagSelect({
 
   useEffect(() => setActive(0), [trimmed]);
   useEffect(() => {
-    listRef.current
-      ?.querySelector("[data-active]")
-      ?.scrollIntoView({ block: "nearest" });
+    scrollIntoList(
+      listRef.current,
+      listRef.current?.querySelector<HTMLElement>("[data-active]") ?? null,
+    );
   }, [active]);
+  // Also refocus when returning from option settings.
+  useEffect(() => {
+    if (!editingId) focusWithoutScroll(inputRef.current);
+  }, [editingId]);
 
   const choose = (id: string) => {
     if (multiple) {
       if (!selected.includes(id)) onChange([...selected, id]);
       setQuery("");
-      inputRef.current?.focus();
+      focusWithoutScroll(inputRef.current);
     } else {
       onChange([id]);
       onClose();
@@ -144,10 +154,7 @@ export function TagSelect({
           setEditingId(null);
           onOptionsChange(options.filter((option) => option.id !== editing.id));
         }}
-        onBack={() => {
-          setEditingId(null);
-          setTimeout(() => inputRef.current?.focus(), 0);
-        }}
+        onBack={() => setEditingId(null)}
       />
     );
   }
@@ -197,7 +204,6 @@ export function TagSelect({
         ))}
         <input
           ref={inputRef}
-          autoFocus
           className={classes.tagInput}
           value={query}
           placeholder={selected.length ? "" : t("Search or create an option")}
@@ -280,7 +286,7 @@ export function OptionSettings({
       )}
       <TextInput
         size="xs"
-        autoFocus
+        ref={focusWithoutScroll}
         value={name}
         onChange={(event) => setName(event.currentTarget.value)}
         onBlur={commit}

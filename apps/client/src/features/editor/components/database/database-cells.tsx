@@ -2,10 +2,18 @@ import {
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { Button, Checkbox, Group, Popover } from "@mantine/core";
+import {
+  Button,
+  Checkbox,
+  Group,
+  NumberInput,
+  Popover,
+  Slider,
+} from "@mantine/core";
 import { DatePicker, DatesProvider } from "@mantine/dates";
 import { IconCheck } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
@@ -60,6 +68,34 @@ export function formatDateValue(value: string, locale: string): string {
   });
 }
 
+/** Bar color by how far along: red → orange → yellow → blue, green when done. */
+export function progressColor(value: number): string {
+  if (value >= 100) return "green";
+  if (value >= 70) return "blue";
+  if (value >= 40) return "yellow";
+  if (value >= 10) return "orange";
+  return "red";
+}
+
+function ProgressBar({ value }: { value: number }) {
+  return (
+    <span
+      className={classes.progress}
+      style={
+        {
+          "--progress": `${value}%`,
+          "--progress-color": `var(--mantine-color-${progressColor(value)}-6)`,
+        } as CSSProperties
+      }
+    >
+      <span className={classes.progressTrack}>
+        <span className={classes.progressFill} />
+      </span>
+      <span className={classes.progressNumber}>{value}%</span>
+    </span>
+  );
+}
+
 /** Read-only rendering; returns null for empty values so callers can show a placeholder. */
 export function CellDisplay({
   db,
@@ -112,6 +148,8 @@ export function CellDisplay({
     }
     case "checkbox":
       return value ? <IconCheck size={15} /> : null;
+    case "progress":
+      return value === null ? null : <ProgressBar value={value as number} />;
     case "date":
       return value ? (
         <span>
@@ -130,13 +168,14 @@ export function CellDisplay({
           href={href}
           target="_blank"
           rel="noopener noreferrer"
+          title={text}
           className={classes.link}
           onClick={(event) => event.stopPropagation()}
         >
           <Highlighted text={text} search={db.search} />
         </a>
       ) : (
-        <span>
+        <span title={text} className={classes.ellipsis}>
           <Highlighted text={text} search={db.search} />
         </span>
       );
@@ -335,6 +374,139 @@ function DateEditor({ db, row, column, onDone, anchor }: PopoverEditorProps) {
   );
 }
 
+/** Slider and number box share one draft, written when the popover closes. */
+function ProgressEditor({
+  db,
+  row,
+  column,
+  initialText,
+  onDone,
+  anchor,
+}: PopoverEditorProps) {
+  const { t } = useTranslation();
+  const original = normalizeDatabaseCellValue(
+    "progress",
+    row.values[column.id] ?? null,
+  ) as number | null;
+  const typed =
+    initialText === undefined
+      ? undefined
+      : (normalizeDatabaseCellValue("progress", initialText) as number | null);
+  const [draft, setDraft] = useState<number>(typed ?? original ?? 0);
+  // Raw box text; may be empty while typing.
+  const [text, setText] = useState<string | number>(
+    initialText ?? original ?? 0,
+  );
+  const done = useRef(false);
+
+  const finish = (reason: EditDoneReason, save = true) => {
+    if (done.current) return;
+    done.current = true;
+    if (save && draft !== original) writeCell(db, row.id, column.id, draft);
+    onDone(reason);
+  };
+  const set = (next: number) => {
+    const value = normalizeDatabaseCellValue("progress", next) as number;
+    setDraft(value);
+    setText(value);
+  };
+
+  return (
+    <Popover
+      opened
+      onChange={(opened) => !opened && finish("blur")}
+      position="bottom-start"
+      width={260}
+      shadow="md"
+      trapFocus
+      // Mantine's Escape would close and save; ours discards the draft.
+      closeOnEscape={false}
+      withinPortal
+    >
+      <Popover.Target>
+        <div className={classes.editorAnchor}>{anchor}</div>
+      </Popover.Target>
+      <Popover.Dropdown
+        {...stopBubbling}
+        p="xs"
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.key === "Escape") {
+            event.preventDefault();
+            finish("escape", false);
+          }
+        }}
+      >
+        <Group gap="xs" wrap="nowrap">
+          <Slider
+            flex={1}
+            min={0}
+            max={100}
+            step={1}
+            value={draft}
+            color={progressColor(draft)}
+            label={null}
+            aria-label={column.name || t("Progress")}
+            onChange={set}
+          />
+          <NumberInput
+            data-autofocus
+            size="xs"
+            w={72}
+            min={0}
+            max={100}
+            clampBehavior="strict"
+            allowDecimal={false}
+            allowNegative={false}
+            suffix="%"
+            value={text}
+            onChange={(next) => {
+              setText(next);
+              if (typeof next === "number") setDraft(next);
+            }}
+            onFocus={(event) => {
+              if (initialText === undefined) event.currentTarget.select();
+            }}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
+              if (event.key === "Enter" || event.key === "Tab") {
+                event.preventDefault();
+                finish(
+                  event.key === "Enter"
+                    ? "enter"
+                    : event.shiftKey
+                      ? "shiftTab"
+                      : "tab",
+                );
+              }
+            }}
+          />
+        </Group>
+        <Group gap={4} mt={6}>
+          {[0, 25, 50, 75, 100].map((step) => (
+            <Button
+              key={step}
+              size="compact-xs"
+              variant={draft === step ? "light" : "subtle"}
+              color="gray"
+              onClick={() => set(step)}
+            >
+              {step}%
+            </Button>
+          ))}
+          <Button
+            size="compact-xs"
+            ml="auto"
+            onClick={() => finish("done")}
+          >
+            {t("Confirm")}
+          </Button>
+        </Group>
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
 /** The editor for one cell. Checkbox has none: callers toggle it directly. */
 export function CellEditor(props: PopoverEditorProps) {
   switch (props.column.type) {
@@ -348,6 +520,8 @@ export function CellEditor(props: PopoverEditorProps) {
       return <DateEditor {...props} />;
     case "number":
       return <TextEditor {...props} numeric />;
+    case "progress":
+      return <ProgressEditor {...props} />;
     case "checkbox":
       return <>{props.anchor}</>;
     default:
@@ -402,12 +576,15 @@ export function FieldValue({
 
   if (column.type === "checkbox") {
     return (
-      <Checkbox
-        size="xs"
-        checked={row.values[column.id] === true}
-        disabled={!db.editable}
-        onChange={() => toggleCheckbox(db, row, column)}
-      />
+      <div className={classes.fieldDisplay}>
+        <Checkbox
+          size="xs"
+          checked={row.values[column.id] === true}
+          disabled={!db.editable}
+          aria-label={column.name}
+          onChange={() => toggleCheckbox(db, row, column)}
+        />
+      </div>
     );
   }
 

@@ -88,6 +88,7 @@ const doc = {
             { id: "p2", name: "", color: "blue" },
           ],
         },
+        { id: "progress", name: "Progress", type: "progress" },
       ],
       views: [
         { id: "t", name: "Grid", type: "table" },
@@ -114,6 +115,7 @@ const doc = {
             owner: ["u1"],
             doc: ["p2"],
             due: "2026-11-03",
+            progress: 100,
           },
         },
         {
@@ -226,7 +228,7 @@ describe("DatabaseView", () => {
       document.querySelectorAll("[data-day]").length,
     ).toBeGreaterThanOrEqual(28);
     // Both rows have no date yet.
-    expect(screen.getByText("No date (2)")).toBeTruthy();
+    expect(screen.getByText("Unassigned (2)")).toBeTruthy();
   });
 
   it("creates and selects a new option from the tag picker", async () => {
@@ -253,6 +255,32 @@ describe("DatabaseView", () => {
     const created = column.options.find((o: any) => o.name === "Blocked");
     expect(created).toBeTruthy();
     expect(rows()[0].values.status).toBe(created.id);
+  });
+
+  it("opens popover editors without scrolling the page", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView);
+    scrollIntoView.mockClear();
+    const cell = document.querySelector(
+      'tr[data-row-id="r1"] td[data-type="select"]',
+    ) as HTMLElement;
+    fireEvent.mouseDown(cell, { button: 0 });
+    fireEvent.keyDown(cell.closest("[data-db-focus]")!, { key: "Enter" });
+    const hint = await screen.findByText("Select an option or create one");
+    const input = hint.parentElement!.querySelector("input")!;
+    expect(document.activeElement).toBe(input);
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    const calls = focus.mock.calls.filter(
+      (_, i) => focus.mock.contexts[i] === input,
+    );
+    expect(calls.length).toBeGreaterThan(0);
+    for (const [options] of calls) {
+      expect(options).toEqual({ preventScroll: true });
+    }
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    focus.mockRestore();
   });
 
   it("edits a table cell on double-click, single click only selects", async () => {
@@ -455,7 +483,7 @@ describe("DatabaseView", () => {
     expect(dates).toEqual(["2026-11-03"]);
     const dated = document.querySelector('[data-timeline-date="2026-11-03"]')!;
     expect(within(dated as HTMLElement).getByText("Ship it")).toBeTruthy();
-    expect(screen.getByText("No date (2)")).toBeTruthy();
+    expect(screen.getByText("Unassigned (2)")).toBeTruthy();
   });
 
   it("drops Expand from the row menu while the row number shows its own", async () => {
@@ -482,6 +510,94 @@ describe("DatabaseView", () => {
       .map((label) => label.textContent);
     expect(names).toEqual(["Due", "Owner", "Doc"]);
     expect(within(card).getByText("Ann")).toBeTruthy();
+  });
+
+  it("shows progress as a colored bar and edits it with the number box or the slider", async () => {
+    renderEditor();
+    const done = (await screen.findByText("Ship it"))
+      .closest("tr")!
+      .querySelector('td[data-type="progress"]')!;
+    expect(done.textContent).toBe("100%");
+    expect(
+      (done.querySelector("[style]") as HTMLElement).style.getPropertyValue(
+        "--progress-color",
+      ),
+    ).toContain("green");
+
+    // Typing a digit opens the editor with it; Enter writes the number.
+    const cell = screen
+      .getByText("Write spec")
+      .closest("tr")!
+      .querySelector('td[data-type="progress"]')!;
+    fireEvent.mouseDown(cell, { button: 0 });
+    fireEvent.keyDown(cell.closest("[data-db-focus]")!, { key: "7" });
+    const input = await screen.findByDisplayValue("7%");
+    fireEvent.change(input, { target: { value: "45%" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(rows()[0].values.progress).toBe(45);
+
+    // The slider moves the same draft; Escape throws it away.
+    fireEvent.doubleClick(cell);
+    const slider = await screen.findByRole("slider");
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    expect(screen.getByDisplayValue("46%")).toBeTruthy();
+    fireEvent.keyDown(slider, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("slider")).toBeNull());
+    expect(rows()[0].values.progress).toBe(45);
+
+    // Confirm writes the draft and closes.
+    fireEvent.doubleClick(cell);
+    fireEvent.keyDown(await screen.findByRole("slider"), { key: "ArrowLeft" });
+    fireEvent.click(screen.getByText("Confirm"));
+    await waitFor(() => expect(screen.queryByRole("slider")).toBeNull());
+    expect(rows()[0].values.progress).toBe(44);
+  });
+
+  it("labels a nested filter group and drops it with its last condition", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    fireEvent.click(screen.getByText("Filter"));
+    const menu = (await screen.findByText("Filter by")).parentElement!;
+    fireEvent.click(within(menu).getByText("Name"));
+    fireEvent.click(await screen.findByText("Add filter group"));
+    const filterOf = () =>
+      editor!.state.doc
+        .child(0)
+        .attrs.views.find((view: any) => view.id === "t").filter;
+    expect(filterOf().conditions.map((c: any) => c.type)).toEqual([
+      "condition",
+      "group",
+    ]);
+    expect(screen.getByLabelText("Delete filter group")).toBeTruthy();
+    // The last Delete is the group's only condition.
+    const deletes = screen.getAllByLabelText("Delete");
+    fireEvent.click(deletes[deletes.length - 1]);
+    expect(filterOf().conditions.map((c: any) => c.type)).toEqual([
+      "condition",
+    ]);
+    expect(screen.queryByLabelText("Delete filter group")).toBeNull();
+  });
+
+  it("only offers sortable fields and toggles the sort direction", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    fireEvent.click(screen.getByText("Sort"));
+    fireEvent.click(
+      await screen.findByPlaceholderText("Add sort; manual ordering turns off"),
+    );
+    const offered = (await screen.findAllByRole("option", { hidden: true })).map(
+      (option) => option.textContent,
+    );
+    // Members and documents have no order.
+    expect(offered).toEqual(["Name", "Status", "Due", "Progress"]);
+    fireEvent.click(screen.getByRole("option", { name: "Due", hidden: true }));
+    const sortsOf = () =>
+      editor!.state.doc
+        .child(0)
+        .attrs.views.find((view: any) => view.id === "t").sorts;
+    expect(sortsOf()).toEqual([{ columnId: "due", direction: "asc" }]);
+    fireEvent.click(await screen.findByText("Descending"));
+    expect(sortsOf()).toEqual([{ columnId: "due", direction: "desc" }]);
   });
 
   it("filters rows with the search box", async () => {

@@ -15,7 +15,8 @@ export type DatabaseColumnType =
   | 'page'
   | 'date'
   | 'checkbox'
-  | 'url';
+  | 'url'
+  | 'progress';
 
 export const DATABASE_COLUMN_TYPES: readonly DatabaseColumnType[] = [
   'text',
@@ -27,6 +28,7 @@ export const DATABASE_COLUMN_TYPES: readonly DatabaseColumnType[] = [
   'date',
   'checkbox',
   'url',
+  'progress',
 ];
 
 export type DatabaseColor =
@@ -137,7 +139,8 @@ export interface DatabaseColumn {
 /**
  * Value stored per type:
  * text/url: string, number: number,
- * select: option id, multiSelect: option ids, person: user ids, date: YYYY-MM-DD, checkbox: boolean.
+ * select: option id, multiSelect: option ids, person: user ids, date: YYYY-MM-DD, checkbox: boolean,
+ * progress: integer 0–100.
  */
 export type DatabaseCellValue = string | number | boolean | string[] | null;
 
@@ -270,6 +273,23 @@ export const DATABASE_GROUPABLE_TYPES: readonly DatabaseColumnType[] = [
   'page',
   'checkbox',
 ];
+
+/**
+ * Types with a meaningful order. Lists of tags, members, documents and urls
+ * have none, so they are not offered for sorting and their sorts are dropped.
+ */
+export const DATABASE_SORTABLE_TYPES: readonly DatabaseColumnType[] = [
+  'text',
+  'number',
+  'progress',
+  'select',
+  'date',
+  'checkbox',
+];
+
+export function isDatabaseSortable(type: DatabaseColumnType): boolean {
+  return DATABASE_SORTABLE_TYPES.includes(type);
+}
 
 export const DATABASE_MIN_COLUMN_WIDTH = 80;
 const MAX_COLUMN_WIDTH = 1200;
@@ -405,6 +425,13 @@ export function normalizeDatabaseCellValue(
       const number = typeof value === 'number' ? value : Number(value);
       return Number.isFinite(number) ? number : null;
     }
+    case 'progress': {
+      if (value === '' || value === null || value === undefined) return null;
+      const number = typeof value === 'number' ? value : Number(value);
+      return Number.isFinite(number)
+        ? Math.min(Math.max(Math.round(number), 0), 100)
+        : null;
+    }
     case 'select':
       return typeof value === 'string' && value ? value : null;
     case 'multiSelect':
@@ -480,6 +507,7 @@ export function getDatabaseFilterOperators(
 ): DatabaseFilterOperator[] {
   switch (type) {
     case 'number':
+    case 'progress':
       return NUMBER_OPERATORS;
     case 'date':
       return DATE_OPERATORS;
@@ -507,7 +535,8 @@ function normalizeFilterValue(
 ): DatabaseFilterCondition['value'] {
   if (!databaseFilterNeedsValue(op)) return null;
   switch (type) {
-    case 'number': {
+    case 'number':
+    case 'progress': {
       if (value === '' || value === null || value === undefined) return null;
       const number = Number(value);
       return Number.isFinite(number) ? number : null;
@@ -615,7 +644,11 @@ function normalizeViewColumns(
 }
 
 function normalizeSorts(raw: any, columns: DatabaseColumn[]): DatabaseSort[] {
-  const ids = new Set(columns.map((column) => column.id));
+  const ids = new Set(
+    columns
+      .filter((column) => isDatabaseSortable(column.type))
+      .map((column) => column.id),
+  );
   const list = Array.isArray(raw?.sorts)
     ? raw.sorts
     : raw?.sort

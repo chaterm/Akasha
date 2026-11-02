@@ -25,6 +25,7 @@ import {
 } from "@docmost/editor-ext";
 import { getDayjsLocale } from "@/lib/dayjs-locale.ts";
 import type { DatabaseContext } from "./database-context";
+import { COLUMN_TYPE_ICONS } from "./database-ui";
 import classes from "./database.module.css";
 
 const OPERATOR_LABELS: Record<DatabaseFilterOperator, string> = {
@@ -98,7 +99,7 @@ function BufferedInput({
       if (event.key === "Enter") commit();
     },
   };
-  if (type === "number") {
+  if (type === "number" || type === "progress") {
     return (
       <NumberInput
         {...shared}
@@ -211,48 +212,70 @@ export function FilterGroupEditor({
     else conditions.splice(index, 1);
     onChange({ ...group, conditions });
   };
-  const modeSelect = (
-    <Select
-      size="xs"
-      w={72}
-      allowDeselect={false}
-      data={[
-        { value: "and", label: t("And") },
-        { value: "or", label: t("Or") },
-      ]}
-      value={group.mode}
-      onChange={(mode) =>
-        onChange({ ...group, mode: mode === "or" ? "or" : "and" })
-      }
-      comboboxProps={NO_PORTAL}
-    />
+  const prefix = (index: number) => (
+    <div className={classes.filterPrefix}>
+      {index === 0 ? (
+        <Text size="xs" c="dimmed">
+          {t("Where")}
+        </Text>
+      ) : index === 1 ? (
+        <Select
+          size="xs"
+          allowDeselect={false}
+          aria-label={t("Match")}
+          data={[
+            { value: "and", label: t("And") },
+            { value: "or", label: t("Or") },
+          ]}
+          value={group.mode}
+          onChange={(mode) =>
+            onChange({ ...group, mode: mode === "or" ? "or" : "and" })
+          }
+          comboboxProps={NO_PORTAL}
+        />
+      ) : (
+        <Text size="xs" c="dimmed">
+          {t(group.mode === "or" ? "Or" : "And")}
+        </Text>
+      )}
+    </div>
+  );
+  const deleteButton = (onClick: () => void, label: string) => (
+    <ActionIcon
+      size="sm"
+      variant="subtle"
+      color="gray"
+      aria-label={label}
+      onClick={onClick}
+    >
+      <IconTrash size={14} />
+    </ActionIcon>
   );
 
   return (
     <Stack gap={6} className={depth > 1 ? classes.filterGroup : undefined}>
+      {onRemove && (
+        <Group gap={6} wrap="nowrap" justify="space-between">
+          <Text size="xs" c="dimmed">
+            {t("Filter group")}
+          </Text>
+          {deleteButton(onRemove, t("Delete filter group"))}
+        </Group>
+      )}
       {group.conditions.map((item, index) => {
-        const prefix =
-          index === 0 ? (
-            <Text size="xs" c="dimmed" w={72}>
-              {t("Where")}
-            </Text>
-          ) : index === 1 ? (
-            modeSelect
-          ) : (
-            <Text size="xs" c="dimmed" w={72}>
-              {t(group.mode === "or" ? "Or" : "And")}
-            </Text>
-          );
         if (item.type === "group") {
           return (
             <Group key={index} gap={6} wrap="nowrap" align="flex-start">
-              {prefix}
+              {prefix(index)}
               <div className={classes.flexFill}>
                 <FilterGroupEditor
                   db={db}
                   group={item}
                   depth={depth + 1}
-                  onChange={(next) => setAt(index, next)}
+                  // An emptied group is removed.
+                  onChange={(next) =>
+                    setAt(index, next.conditions.length ? next : null)
+                  }
                   onRemove={() => setAt(index, null)}
                 />
               </div>
@@ -260,13 +283,16 @@ export function FilterGroupEditor({
           );
         }
         const column = byId.get(item.columnId)!;
+        const TypeIcon = COLUMN_TYPE_ICONS[column.type];
         return (
           <Group key={index} gap={6} wrap="nowrap">
-            {prefix}
+            {prefix(index)}
             <Select
               size="xs"
-              w={130}
+              w={128}
               allowDeselect={false}
+              aria-label={t("Field")}
+              leftSection={<TypeIcon size={13} />}
               data={columnData}
               value={item.columnId}
               onChange={(columnId) =>
@@ -276,7 +302,8 @@ export function FilterGroupEditor({
             />
             <Select
               size="xs"
-              w={130}
+              w={112}
+              aria-label={t("Condition")}
               allowDeselect={false}
               data={getDatabaseFilterOperators(column.type).map((op) => ({
                 value: op,
@@ -300,19 +327,11 @@ export function FilterGroupEditor({
                 })
               }
             />
-            <ActionIcon
-              size="sm"
-              variant="subtle"
-              color="gray"
-              aria-label={t("Delete")}
-              onClick={() => setAt(index, null)}
-            >
-              <IconTrash size={14} />
-            </ActionIcon>
+            {deleteButton(() => setAt(index, null), t("Delete"))}
           </Group>
         );
       })}
-      <Group gap={4}>
+      <Group gap={4} className={depth === 1 ? classes.filterActions : undefined}>
         <Button
           size="compact-xs"
           variant="subtle"
@@ -348,16 +367,6 @@ export function FilterGroupEditor({
             }
           >
             {t("Add filter group")}
-          </Button>
-        )}
-        {onRemove && (
-          <Button
-            size="compact-xs"
-            variant="subtle"
-            color="red"
-            onClick={onRemove}
-          >
-            {t("Delete group")}
           </Button>
         )}
       </Group>

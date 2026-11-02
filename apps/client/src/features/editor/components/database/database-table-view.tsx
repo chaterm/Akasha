@@ -264,8 +264,12 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
       );
     } else if (event.key.length === 1 && !mod && !event.altKey) {
       const column = columns.find((item) => item.id === selection.columnId);
-      // Typing starts editing text-like cells with the typed character.
-      if (column && ["text", "number", "url"].includes(column.type)) {
+      // Typing starts editing text-like cells with the typed character; progress takes digits.
+      if (
+        column &&
+        (["text", "number", "url"].includes(column.type) ||
+          (column.type === "progress" && /\d/.test(event.key)))
+      ) {
         handled();
         startEdit(selection, event.key);
       } else if (event.key === " ") {

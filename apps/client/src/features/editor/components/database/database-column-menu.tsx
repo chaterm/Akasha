@@ -22,6 +22,7 @@ import {
   deleteDatabaseColumn,
   duplicateDatabaseColumn,
   formatDatabaseNumber,
+  isDatabaseSortable,
   updateDatabaseColumn,
   DATABASE_NUMBER_FORMATS,
   type DatabaseColumn,
@@ -42,6 +43,7 @@ import {
   MenuDivider,
   MenuRow,
 } from "./database-ui";
+import { focusWithoutScroll } from "./database-utils";
 import classes from "./database.module.css";
 
 const NUMBER_FORMAT_LABELS: Record<DatabaseNumberFormat, string> = {
@@ -137,7 +139,7 @@ export function ColumnMenu({
     <>
       <TextInput
         size="xs"
-        autoFocus
+        ref={focusWithoutScroll}
         mb={4}
         value={name}
         leftSection={<TypeIcon size={14} />}
@@ -181,28 +183,32 @@ export function ColumnMenu({
         </Group>
       )}
       <MenuDivider />
-      <MenuRow
-        icon={IconSortAscending}
-        label={t("Sort ascending")}
-        onClick={() =>
-          run(() =>
-            patchView(db, {
-              sorts: [{ columnId: column.id, direction: "asc" }],
-            }),
-          )
-        }
-      />
-      <MenuRow
-        icon={IconSortDescending}
-        label={t("Sort descending")}
-        onClick={() =>
-          run(() =>
-            patchView(db, {
-              sorts: [{ columnId: column.id, direction: "desc" }],
-            }),
-          )
-        }
-      />
+      {isDatabaseSortable(column.type) && (
+        <>
+          <MenuRow
+            icon={IconSortAscending}
+            label={t("Sort ascending")}
+            onClick={() =>
+              run(() =>
+                patchView(db, {
+                  sorts: [{ columnId: column.id, direction: "asc" }],
+                }),
+              )
+            }
+          />
+          <MenuRow
+            icon={IconSortDescending}
+            label={t("Sort descending")}
+            onClick={() =>
+              run(() =>
+                patchView(db, {
+                  sorts: [{ columnId: column.id, direction: "desc" }],
+                }),
+              )
+            }
+          />
+        </>
+      )}
       <MenuRow
         icon={IconEyeOff}
         label={t("Hide in view")}

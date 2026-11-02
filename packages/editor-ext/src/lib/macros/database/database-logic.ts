@@ -120,6 +120,8 @@ export function getDatabaseCellText(
       return normalized === null
         ? ''
         : formatDatabaseNumber(normalized as number, column, locale);
+    case 'progress':
+      return normalized === null ? '' : `${normalized}%`;
     default:
       return (normalized as string | null) ?? '';
   }
@@ -194,6 +196,7 @@ function compareValues(
 ): number {
   switch (column.type) {
     case 'number':
+    case 'progress':
       return (left as number) - (right as number);
     case 'checkbox':
       return Number(left === true) - Number(right === true);
@@ -294,7 +297,8 @@ function matchCondition(
   }
 
   switch (column.type) {
-    case 'number': {
+    case 'number':
+    case 'progress': {
       if (value === null) return condition.op === 'neq';
       const a = value as number;
       const b = target as number;
@@ -630,8 +634,8 @@ function valueToPlainText(
   if (column.type === 'checkbox') {
     return normalizeDatabaseCellValue('checkbox', value) ? 'Yes' : 'No';
   }
-  if (column.type === 'number') {
-    const number = normalizeDatabaseCellValue('number', value);
+  if (column.type === 'number' || column.type === 'progress') {
+    const number = normalizeDatabaseCellValue(column.type, value);
     return number === null ? '' : String(number);
   }
   return getDatabaseCellText(column, value);
@@ -713,6 +717,7 @@ export function convertDatabaseColumn(
       case 'url':
         return text;
       case 'number':
+      case 'progress':
         return normalizeDatabaseCellValue(
           type,
           parseDatabaseNumber(text, 'en-US'),

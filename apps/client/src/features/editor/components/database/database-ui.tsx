@@ -14,6 +14,7 @@ import {
   IconAlignRight,
   IconFileDescription,
   IconLock,
+  IconProgress,
   IconUser,
   type Icon,
 } from "@tabler/icons-react";
@@ -39,6 +40,7 @@ export const COLUMN_TYPE_ICONS: Record<DatabaseColumnType, Icon> = {
   date: IconCalendar,
   checkbox: IconCheckbox,
   url: IconLink,
+  progress: IconProgress,
 };
 
 /** i18n keys. */
@@ -52,6 +54,7 @@ export const COLUMN_TYPE_LABELS: Record<DatabaseColumnType, string> = {
   date: "Date",
   checkbox: "Checkbox",
   url: "URL",
+  progress: "Progress",
 };
 
 /** Types offered when creating or converting a column. */
@@ -65,6 +68,7 @@ export const ADDABLE_COLUMN_TYPES: DatabaseColumnType[] = [
   "date",
   "checkbox",
   "url",
+  "progress",
 ];
 
 /** `text` with case-insensitive matches of `search` marked. */

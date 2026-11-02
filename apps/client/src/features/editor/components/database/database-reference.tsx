@@ -13,6 +13,7 @@ import {
 import { stopBubbling, type DatabaseContext } from "./database-context";
 import { OptionLabel } from "./database-ui";
 import { rememberPage } from "./use-page-info";
+import { focusWithoutScroll } from "./database-utils";
 import classes from "./database.module.css";
 
 /** A member or document as cached in a reference column's options. */
@@ -133,7 +134,7 @@ export function ReferenceEditor({
       </Popover.Target>
       <Popover.Dropdown {...stopBubbling} p={4} className={classes.menu}>
         <input
-          autoFocus
+          ref={focusWithoutScroll}
           className={classes.tagInput}
           style={{ padding: "4px 6px" }}
           placeholder={

@@ -251,11 +251,53 @@
   }
 }
 
+/* Progress cell: colored bar with the number beside it. */
+.progress {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.progressTrack {
+  flex: 1;
+  min-width: 24px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--mantine-color-default-border);
+}
+
+.progressFill {
+  display: block;
+  width: var(--progress);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--progress-color);
+  transition:
+    width 150ms,
+    background-color 150ms;
+}
+
+.progressNumber {
+  flex: 0 0 auto;
+  min-width: 3.2em;
+  color: var(--mantine-color-dimmed);
+  font-size: var(--mantine-font-size-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* Single line; the full address is in the tooltip. */
 .link {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--mantine-color-anchor);
   text-decoration: underline;
   text-underline-offset: 2px;
-  overflow-wrap: anywhere;
 }
 
 /* Revealed when the row / card / lane is hovered or the menu is open. */
@@ -357,6 +399,10 @@
   color: var(--mantine-color-dimmed);
   cursor: grab;
   touch-action: none;
+}
+
+.sortRow {
+  padding: 4px 0;
 }
 
 /* The "add sort" box spans from the field select's left edge to the direction select's right edge. */
@@ -1013,6 +1059,20 @@
 }
 
 /* ---------------------------------------------------------------- filter */
+
+/* Fixed width so the field selects line up. */
+.filterPrefix {
+  display: flex;
+  flex: 0 0 64px;
+  align-items: center;
+  min-height: 30px;
+}
+
+.filterActions {
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--mantine-color-default-border);
+}
 
 .filterGroup {
   padding: 6px;

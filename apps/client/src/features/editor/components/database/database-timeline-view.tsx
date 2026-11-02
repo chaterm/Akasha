@@ -214,7 +214,7 @@ export default function DatabaseTimelineView({ db }: { db: DatabaseContext }) {
       {undated.length > 0 && (
         <section>
           <div className={classes.timelineMonthLabel}>
-            {t("No date ({{count}})", { count: undated.length })}
+            {t("Unassigned ({{count}})", { count: undated.length })}
           </div>
           <div className={classes.timelineDate} data-undated>
             <div className={classes.timelineDateLabel} />

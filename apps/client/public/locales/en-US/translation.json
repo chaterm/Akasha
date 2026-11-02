@@ -1577,7 +1577,7 @@
   "Next month": "Next month",
   "Untitled database": "Untitled database",
   "Add view": "Add view",
-  "No date ({{count}})": "No date ({{count}})",
+  "Unassigned ({{count}})": "Unassigned ({{count}})",
   "Drag onto a day to schedule.": "Drag onto a day to schedule.",
   "Calendar needs a date field.": "Calendar needs a date field.",
   "Create date field": "Create date field",
@@ -1688,5 +1688,13 @@
   "is unchecked": "is unchecked",
   "is empty": "is empty",
   "is not empty": "is not empty",
-  "URL": "URL"
+  "URL": "URL",
+  "Progress": "Progress",
+  "Field": "Field",
+  "Condition": "Condition",
+  "Match": "Match",
+  "Filter group": "Filter group",
+  "Delete filter group": "Delete filter group",
+  "Sort direction": "Sort direction",
+  "No fields can be sorted": "No fields can be sorted"
 }

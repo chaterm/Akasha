@@ -1598,7 +1598,7 @@
   "Next month": "下个月",
   "Untitled database": "未命名数据库",
   "Add view": "添加视图",
-  "No date ({{count}})": "无日期（{{count}}）",
+  "Unassigned ({{count}})": "未分配（{{count}}）",
   "Drag onto a day to schedule.": "拖到某一天即可设置日期。",
   "Calendar needs a date field.": "日历视图需要一个日期字段。",
   "Create date field": "创建日期字段",
@@ -1645,7 +1645,7 @@
   "Value": "值",
   "And": "且",
   "Or": "或",
-  "Where": "条件",
+  "Where": "当",
   "Add filter": "添加筛选条件",
   "Add filter group": "添加条件组",
   "Insert before": "在前面插入",
@@ -1709,5 +1709,13 @@
   "is unchecked": "未勾选",
   "is empty": "为空",
   "is not empty": "不为空",
-  "URL": "网址"
+  "URL": "网址",
+  "Progress": "进度",
+  "Field": "字段",
+  "Condition": "条件",
+  "Match": "匹配方式",
+  "Filter group": "条件组",
+  "Delete filter group": "删除条件组",
+  "Sort direction": "排序方向",
+  "No fields can be sorted": "没有可排序的字段"
 }

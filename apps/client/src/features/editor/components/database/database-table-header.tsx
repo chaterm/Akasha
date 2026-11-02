@@ -28,6 +28,7 @@ const DEFAULT_WIDTHS: Record<DatabaseColumnType, number> = {
   date: 140,
   checkbox: 90,
   url: 200,
+  progress: 160,
 };
 
 export function columnWidth(
