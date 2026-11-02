@@ -107,10 +107,10 @@ WorkBuddy 实测出现长 Token 与完整 Tiptap JSON 合并调用时反复缺�
 在仓库根执行（开发者需要 Python 3、已安装的 pnpm 工作区依赖；Skill 使用者不需要）：
 
 ```bash
-python3 scripts/package-weekly-report-skill.py --check-source
+python3 skills/scripts/package-weekly-report-skill.py --check-source
 (cd apps/server && npx jest src/core/weekly-report/weekly-report-examples.spec.ts)
-python3 scripts/package-weekly-report-skill.py
-python3 scripts/package-weekly-report-skill.py --verify-only
+python3 skills/scripts/package-weekly-report-skill.py
+python3 skills/scripts/package-weekly-report-skill.py --verify-only
 ```
 
 节点检查是服务端 jest 用例 `apps/server/src/core/weekly-report/weekly-report-examples.spec.ts`，随服务端测试自动运行。它直接提取 content-rules.md 中 JSON，以真实服务端 `jsonToNode` + `node.check()` 及专用 `normalizeWeeklyReportContent` 验证，确认显式节点/文本/marks/属性不丢失、表格网格有效，并验证 Y.Doc 同 schema 规范化回读和 textContent；同时检查仓库内置周报模板、12 种节点和 2 种 marks。
@@ -131,6 +131,6 @@ python3 scripts/package-weekly-report-skill.py --verify-only
 - `0.1.0-preview.6`：将版本号移到 frontmatter 顶层，补齐中英文展示名、描述与 author，增加 WorkBuddy 专用打包前校验；不改变周报生成或服务端行为。
 - 本轮服务端 153 项测试和类型检查通过，含 16 项隔离 PostgreSQL 测试；验证短标识解析、占位页恢复、编译抑制及已完成页不被当作占位页。真实 WorkBuddy 的二步工具参数生成仍需重新测试。
 - `weekly-report-examples.spec.ts`（原 `skills/validate-weekly-report-examples.ts`，已迁入服务端 jest）：示例及仓库内置周报均通过 schema、专用严格规范化、显式值保留、表格网格、Y.Doc 与文本回读；覆盖 12 种节点、2 种 marks。
-- `python3 scripts/package-weekly-report-skill.py` 及 `--verify-only`：通过。临时目录中重复打包字节一致；额外归档项、正文篡改、意外源文件和源符号链接均被拒绝。`dist/skills/akasha-weekly-report.zip` 受现有根 `.gitignore` 忽略。
+- `python3 skills/scripts/package-weekly-report-skill.py` 及 `--verify-only`：通过。临时目录中重复打包字节一致；额外归档项、正文篡改、意外源文件和源符号链接均被拒绝。`dist/skills/akasha-weekly-report.zip` 受现有根 `.gitignore` 忽略。
 - 服务端 PostgreSQL 集成测试：在隔离容器的临时 schema 执行实际新增迁移，覆盖双连接并发保存、正文变化的 Token 重放、默认/指定父页面、数据库异常后全量回滚、锁定变化、结果移动/删除、模板普通编辑、JSON/文本/Y.Doc 一致性及提交后索引、ACL 和编译任务；测试 schema 用后删除。
 - 未调用生产 MCP、未读取用户 Key。WorkBuddy 版本/模型尚未登记；ZIP 导入、辅助文件可读性、真实自定义模板、三份素材连续首轮通过及实际保存/编辑均为**未测，待用户联调**。

@@ -591,6 +591,9 @@ describePostgres(
         pageId: created.pageId,
         parentPageId: destination,
         locationChanged: true,
+        // date columns come back from the driver as Dates; results stay calendar dates.
+        periodStart: period.periodStart,
+        periodEnd: period.periodEnd,
       });
       expect(
         await first.weekly.save(ctx, {

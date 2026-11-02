@@ -12,7 +12,7 @@ import { KyselyDB, KyselyTransaction } from '../../database/types/kysely.types';
 import { dbOrTx } from '../../database/utils';
 import { SpaceRepo } from '../../database/repos/space/space.repo';
 import { PageRepo } from '../../database/repos/page/page.repo';
-import { WeeklyReportRecords } from '../../database/types/weekly-report.types';
+import { WeeklyReportRecords } from '../../database/types/db';
 import { Page, Space } from '../../database/types/entity.types';
 import { PageService } from '../page/services/page.service';
 import { PageAccessService } from '../page/page-access/page-access.service';
@@ -42,6 +42,10 @@ import {
 type Target = { space: Space; parent: Page | null };
 type Report = Selectable<WeeklyReportRecords>;
 const TOKEN_TTL_SECONDS = 30 * 60;
+
+/** postgres.js parses `date` columns as UTC-midnight Dates; keep the plain calendar date. */
+const calendarDate = (value: Date | string) =>
+  value instanceof Date ? value.toISOString().slice(0, 10) : value;
 
 @Injectable()
 export class WeeklyReportService {
@@ -204,8 +208,9 @@ export class WeeklyReportService {
       .where('userId', '=', ctx.user.id)
       .where('spaceId', '=', spaceId)
       .where('parentPageId', '=', parentId)
-      .where('periodStart', '=', start)
-      .where('periodEnd', '=', end)
+      // Codegen types `date` as Timestamp; PostgreSQL infers this text parameter as a date.
+      .where('periodStart', '=', start as unknown as Date)
+      .where('periodEnd', '=', end as unknown as Date)
       .executeTakeFirst();
   }
 
@@ -224,8 +229,8 @@ export class WeeklyReportService {
       parentPageId: page.parentPageId,
       parentCreated,
       templateId: report.templateId,
-      periodStart: String(report.periodStart),
-      periodEnd: String(report.periodEnd),
+      periodStart: calendarDate(report.periodStart),
+      periodEnd: calendarDate(report.periodEnd),
       timezone: report.timezone,
       status,
       replayed: status === 'replayed',

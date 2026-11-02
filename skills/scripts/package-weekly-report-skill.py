@@ -11,7 +11,7 @@ import tempfile
 import zipfile
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 NAME = "akasha-weekly-report"
 SOURCE = ROOT / "skills" / NAME
 FILES = (
