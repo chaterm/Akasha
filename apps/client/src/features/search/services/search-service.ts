@@ -7,6 +7,7 @@ import {
   ISuggestionResult,
   SearchSuggestionParams,
 } from "@/features/search/types/search.types";
+import type { IPage } from "@/features/page/types/page.types";
 
 export async function searchPage(
   params: IPageSearchParams,
@@ -27,6 +28,14 @@ export async function searchSuggestions(
 ): Promise<ISuggestionResult> {
   const req = await api.post<ISuggestionResult>("/search/suggest", params);
   return req.data;
+}
+
+/** Title, icon and link of the pages the current user can read; others are left out. */
+export async function resolvePages(pageIds: string[]): Promise<IPage[]> {
+  const req = await api.post<{ pages: IPage[] }>("/search/resolve-pages", {
+    pageIds,
+  });
+  return req.data.pages;
 }
 
 export async function searchShare(

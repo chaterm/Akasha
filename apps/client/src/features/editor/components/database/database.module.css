@@ -1,0 +1,1471 @@
+/* ---------------------------------------------------------------- frame */
+
+/* Popovers and the row detail modal render in portals outside .wrapper, so
+   every class used there defines the variables too. */
+.wrapper,
+.menu,
+.fieldValue,
+.fieldEditing,
+.detailLabel,
+.tagList {
+  --db-border: var(--mantine-color-default-border);
+  --db-hover: light-dark(
+    var(--mantine-color-gray-0),
+    var(--mantine-color-dark-6)
+  );
+  --db-selected: var(--mantine-color-blue-5);
+  --db-row-height: 34px;
+}
+
+.wrapper {
+  margin: var(--mantine-spacing-sm) 0;
+  outline: none;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+/* Shown while the title row is hovered or focused. */
+.titleAlign {
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity 100ms;
+}
+
+.titleRow:hover .titleAlign,
+.titleRow:focus-within .titleAlign {
+  opacity: 1;
+}
+
+.title {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--mantine-font-size-xl);
+  font-weight: 700;
+}
+
+.viewBar {
+  min-height: 32px;
+  margin-bottom: 6px;
+}
+
+.viewTabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.viewTab {
+  position: relative;
+  display: inline-flex;
+  touch-action: none;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 2px solid transparent;
+  font-size: var(--mantine-font-size-sm);
+  color: var(--mantine-color-dimmed);
+  white-space: nowrap;
+
+  &:hover {
+    color: var(--mantine-color-text);
+  }
+
+  &[data-active] {
+    border-bottom-color: var(--mantine-color-text);
+    color: var(--mantine-color-text);
+    font-weight: 600;
+  }
+
+  &[data-dragging] {
+    opacity: 0.4;
+  }
+
+  &[data-drop-before]::before,
+  &[data-drop-after]::after {
+    content: "";
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    width: 2px;
+    background: var(--mantine-color-blue-5);
+    pointer-events: none;
+  }
+
+  &[data-drop-before]::before {
+    left: -2px;
+  }
+
+  &[data-drop-after]::after {
+    right: -2px;
+  }
+}
+
+.viewTabInput {
+  min-width: 2ch;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+/* Faint until the database is hovered. */
+.toolbar {
+  flex: 0 0 auto;
+  opacity: 0.6;
+  transition: opacity 120ms;
+}
+
+.wrapper:hover .toolbar,
+.toolbar:focus-within {
+  opacity: 1;
+}
+
+.searchBox {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 160px;
+  padding: 0 4px;
+  border: 1px solid var(--db-border);
+  border-radius: var(--mantine-radius-sm);
+}
+
+.searchInput {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--mantine-font-size-xs);
+}
+
+.placeholder {
+  color: var(--mantine-color-placeholder);
+}
+
+.ellipsis {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flexSpacer {
+  flex: 1;
+}
+
+.flexFill {
+  flex: 1;
+  min-width: 0;
+}
+
+.searchMatch {
+  padding: 0;
+  border-radius: 2px;
+  background: light-dark(var(--mantine-color-yellow-2), rgba(250, 176, 5, 0.35));
+  color: inherit;
+}
+
+/* Member / document chip: the icon never shrinks, the name gives way first. */
+.personChip {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  font-size: var(--mantine-font-size-sm);
+  white-space: nowrap;
+
+  > :first-child {
+    flex: 0 0 auto;
+  }
+}
+
+.chipName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A document keeps at least one character of its title visible. */
+.personChip[data-kind="page"] .chipName {
+  min-width: calc(1em + 0.6em);
+}
+
+.personChip[data-unavailable] {
+  color: var(--mantine-color-dimmed);
+}
+
+.chipList {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+
+  &[data-wrap] {
+    flex-wrap: wrap;
+  }
+}
+
+.chipMore {
+  flex: 0 0 auto;
+  color: var(--mantine-color-dimmed);
+  font-size: var(--mantine-font-size-sm);
+}
+
+.pageIcon {
+  flex: 0 0 auto;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.pageLink {
+  color: inherit;
+  text-decoration: none;
+
+  &:hover > span:last-child {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+}
+
+.link {
+  color: var(--mantine-color-anchor);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+
+/* Revealed when the row / card / lane is hovered or the menu is open. */
+.hoverAction {
+  opacity: 0;
+  transition: opacity 100ms;
+
+  &[data-visible] {
+    opacity: 1;
+  }
+}
+
+/* ---------------------------------------------------------------- menus */
+
+.menu {
+  display: flex;
+  flex-direction: column;
+}
+
+.menuRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border-radius: var(--mantine-radius-sm);
+  color: var(--mantine-color-text);
+
+  &:hover,
+  &[data-active] {
+    background: var(
+      --db-hover,
+      light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))
+    );
+  }
+
+  &[data-danger] {
+    color: var(--mantine-color-red-6);
+  }
+}
+
+/* A view-settings row laid out like the field labels above it. */
+.optionRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--mantine-color-blue-6);
+  }
+}
+
+.menuIcon {
+  flex: 0 0 auto;
+  color: var(--mantine-color-dimmed);
+}
+
+.menuBack {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 4px;
+}
+
+.menuDivider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--mantine-color-default-border);
+}
+
+.sortableList {
+  display: flex;
+  flex-direction: column;
+}
+
+.sortableItem {
+  position: relative;
+  display: flex;
+  align-items: center;
+
+  &[data-dragging] {
+    opacity: 0.4;
+  }
+}
+
+.sortableContent {
+  flex: 1;
+  min-width: 0;
+}
+
+.grip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--mantine-color-dimmed);
+  cursor: grab;
+  touch-action: none;
+}
+
+/* The "add sort" box spans from the field select's left edge to the direction select's right edge. */
+.sortAdd {
+  margin-top: 6px;
+
+  &[data-indented] {
+    /* grip (14px) / delete button (22px) + row gap (6px) */
+    padding-left: 14px;
+    padding-right: 28px;
+  }
+}
+
+.sortIndicator,
+.sortIndicatorAfter {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--mantine-color-blue-5);
+  pointer-events: none;
+}
+
+.sortIndicator {
+  top: -1px;
+}
+
+.sortIndicatorAfter {
+  bottom: -1px;
+}
+
+/* ---------------------------------------------------------------- tags */
+
+.optionBadge {
+  max-width: 100%;
+  flex: 0 1 auto;
+}
+
+.badges {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.badgeRemove {
+  margin-left: 2px;
+  cursor: pointer;
+  opacity: 0.7;
+
+  &:hover {
+    opacity: 1;
+  }
+}
+
+.tagInputBox {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  cursor: text;
+}
+
+.tagInput {
+  flex: 1;
+  min-width: 80px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--mantine-font-size-sm);
+}
+
+.tagList {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.tagOption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  min-height: 28px;
+  padding: 2px 6px;
+  border-radius: var(--mantine-radius-sm);
+
+  &[data-active] {
+    background: light-dark(
+      var(--mantine-color-gray-1),
+      var(--mantine-color-dark-5)
+    );
+  }
+}
+
+.tagOptionMore {
+  opacity: 0;
+}
+
+.tagOption:hover .tagOptionMore,
+.tagOption[data-active] .tagOptionMore {
+  opacity: 1;
+}
+
+/* ---------------------------------------------------------------- table */
+
+/* Pulled left by the gutter width so the table's left edge lines up with the view tabs. */
+.tableScroll {
+  position: relative;
+  overflow-x: auto;
+  outline: none;
+  padding-bottom: 2px;
+  margin-left: -52px;
+}
+
+/* Overrides the editor's `.ProseMirror table` styles. */
+.wrapper table.table {
+  table-layout: fixed;
+  border-collapse: collapse;
+  min-width: 0;
+  margin: 0;
+
+  th,
+  td {
+    height: var(--db-row-height);
+    padding: 0;
+    border: 0;
+    border-bottom: 1px solid var(--db-border);
+    vertical-align: middle;
+    background: transparent;
+    font-weight: normal;
+  }
+
+  th {
+    position: relative;
+  }
+
+  th:not(.gutterCell),
+  td:not(.gutterCell) {
+    border-right: 1px solid var(--db-border);
+  }
+
+  /* Left edge of the first data column. */
+  .gutterCell + th,
+  .gutterCell + td {
+    border-left: 1px solid var(--db-border);
+  }
+
+  thead th:not(.gutterCell) {
+    border-top: 1px solid var(--db-border);
+  }
+}
+
+/* The gutter sits outside the table frame. */
+.gutterCell {
+  width: 52px;
+  border-bottom-color: transparent !important;
+}
+
+/* Beats the editor's `.ProseMirror table th { text-align: left }`. */
+.wrapper table.table .rowNumberCell {
+  text-align: center;
+}
+
+.rowNumberCell {
+  position: relative;
+  text-align: center;
+
+  &:hover .hoverAction {
+    opacity: 1;
+  }
+}
+
+.rowNumber,
+.rowNumberHeader {
+  font-size: var(--mantine-font-size-xs);
+  color: var(--mantine-color-dimmed);
+  font-variant-numeric: tabular-nums;
+}
+
+.rowNumberHeader {
+  font-weight: 500;
+}
+
+/* Header row of a group in a grouped table. */
+.groupRow > td:not(.gutterCell) {
+  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-7));
+}
+
+.groupRow:hover .hoverAction {
+  opacity: 1;
+}
+
+.groupHeader {
+  height: var(--db-row-height);
+  padding: 0 8px;
+}
+
+.groupToggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+/* The expand button covers the number while the row is hovered. */
+.row:hover .rowNumber {
+  visibility: hidden;
+}
+
+/* Table plus its add strips; auto margins place it inside the scroll area. */
+.tableBlock {
+  position: relative;
+
+  &[data-align="center"] {
+    margin-inline: auto;
+  }
+
+  &[data-align="right"] {
+    margin-left: auto;
+  }
+}
+
+.tableFrame {
+  display: flex;
+  align-items: stretch;
+}
+
+/* Add-column strip: spans the table's height, starts at its right edge. */
+.addColumnStrip,
+.newRowStrip {
+  display: flex;
+  align-items: center;
+  color: var(--mantine-color-dimmed);
+  border-radius: 0 var(--mantine-radius-sm) var(--mantine-radius-sm) 0;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--db-hover);
+    color: var(--mantine-color-text);
+  }
+}
+
+.addColumnStrip {
+  flex: 0 0 auto;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: calc(var(--db-row-height) / 2 - 7px);
+}
+
+/* New-row strip: from the table's left edge to its right edge. */
+.newRowStrip {
+  height: 30px;
+  margin-left: 52px;
+  padding-left: 8px;
+  border-radius: 0 0 var(--mantine-radius-sm) var(--mantine-radius-sm);
+}
+
+.gutter {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding-right: 4px;
+}
+
+.row {
+  &:hover .hoverAction {
+    opacity: 1;
+  }
+
+  &:hover > td:not(.gutterCell) {
+    background: var(--db-hover);
+  }
+
+  &[data-dragging] {
+    opacity: 0.4;
+  }
+
+  &[data-drop-before] > td:not(.gutterCell) {
+    box-shadow: inset 0 2px 0 var(--mantine-color-blue-5);
+  }
+}
+
+.grip[data-disabled] {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.rowDropEnd {
+  height: 2px;
+  margin-left: 52px;
+  margin-top: -1px;
+  background: var(--mantine-color-blue-5);
+}
+
+.columnDrop {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--mantine-color-blue-5);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.headerButton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: var(--db-row-height);
+  padding: 0 8px;
+  color: var(--mantine-color-dimmed);
+
+  &:not(:disabled):hover {
+    background: var(--db-hover);
+  }
+
+  &[data-draggable] {
+    cursor: grab;
+    touch-action: none;
+  }
+
+  &[data-align="center"] {
+    justify-content: center;
+  }
+
+  &[data-align="right"] {
+    justify-content: flex-end;
+  }
+}
+
+.wrapper table.table th[data-selected]::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border: 2px solid var(--db-selected);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.wrapper table.table th[data-dragging] {
+  opacity: 0.4;
+}
+
+.resizeHandle {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  width: 8px;
+  z-index: 2;
+  cursor: col-resize;
+  touch-action: none;
+
+  &::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 3px;
+    width: 2px;
+    background: var(--mantine-color-blue-5);
+    opacity: 0;
+  }
+
+  &:hover::after,
+  &[data-active]::after {
+    opacity: 1;
+  }
+}
+
+.cell {
+  position: relative;
+  cursor: default;
+
+  &[data-selected]::after {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border: 2px solid var(--db-selected);
+    border-radius: 2px;
+    pointer-events: none;
+  }
+
+  &[data-align="center"] .cellContent {
+    justify-content: center;
+  }
+
+  &[data-align="right"] .cellContent {
+    justify-content: flex-end;
+  }
+
+  &[data-align] .cellInput {
+    text-align: inherit;
+  }
+
+  &[data-align="left"] {
+    text-align: left;
+  }
+
+  &[data-align="center"] {
+    text-align: center;
+  }
+
+  &[data-align="right"] {
+    text-align: right;
+  }
+
+  &:hover .hoverAction {
+    opacity: 1;
+  }
+}
+
+.cellContent {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: var(--db-row-height);
+  padding: 0 8px;
+  overflow: hidden;
+  font-size: var(--mantine-font-size-sm);
+}
+
+.cellInput {
+  width: 100%;
+  height: var(--db-row-height);
+  padding: 0 8px;
+  border: 0;
+  outline: 0;
+  background: var(--mantine-color-body);
+  color: inherit;
+  font: inherit;
+  font-size: var(--mantine-font-size-sm);
+}
+
+.editorAnchor {
+  min-width: 0;
+}
+
+.openButton {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+}
+
+.rowNumberCell .openButton {
+  right: auto;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* ---------------------------------------------------------------- timeline */
+
+/* A vertical axis: date label | node on the line | the entries of that date. */
+.timeline {
+  --axis: 76px;
+  position: relative;
+  padding: 4px 0 6px;
+}
+
+.tilePeople {
+  margin-left: auto;
+}
+
+.timelineMonthLabel {
+  margin: 10px 0 4px calc(var(--axis) + 22px);
+  font-size: var(--mantine-font-size-xs);
+  font-weight: 600;
+  color: var(--mantine-color-dimmed);
+}
+
+.timelineDate {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--axis) 22px minmax(0, 1fr);
+  align-items: start;
+  border-radius: var(--mantine-radius-sm);
+
+  /* The axis line runs through every date. */
+  &::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc(var(--axis) + 10px);
+    width: 2px;
+    background: var(--db-border);
+  }
+
+  &[data-drop-target] {
+    background: light-dark(var(--mantine-color-blue-0), rgba(34, 139, 230, 0.12));
+  }
+
+  &:hover .hoverAction {
+    opacity: 1;
+  }
+}
+
+.timelineDateLabel {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 6px 4px 0 0;
+}
+
+.timelineDayNumber {
+  font-size: var(--mantine-font-size-md);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.timelineWeekday {
+  font-size: var(--mantine-font-size-xs);
+  color: var(--mantine-color-dimmed);
+}
+
+.timelineNode {
+  position: relative;
+  z-index: 1;
+  justify-self: center;
+  width: 10px;
+  height: 10px;
+  margin-top: 11px;
+  border: 2px solid var(--mantine-color-blue-5);
+  border-radius: 50%;
+  background: var(--mantine-color-body);
+}
+
+.timelineDate[data-past] {
+  .timelineNode {
+    border-color: var(--db-border);
+  }
+
+  .timelineDayNumber {
+    color: var(--mantine-color-dimmed);
+  }
+}
+
+.timelineDate[data-today] {
+  .timelineNode {
+    background: var(--mantine-color-blue-5);
+  }
+
+  .timelineDayNumber,
+  .timelineWeekday {
+    color: var(--mantine-color-blue-6);
+  }
+}
+
+.timelineDate[data-undated] .timelineNode {
+  border-style: dashed;
+  border-color: var(--db-border);
+}
+
+.timelineItems {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  padding: 4px 0 8px 4px;
+}
+
+.timelineItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: var(--mantine-radius-sm);
+  cursor: pointer;
+  touch-action: none;
+
+  &:hover {
+    background: var(--db-hover);
+  }
+
+  &[data-dragging] {
+    opacity: 0.4;
+  }
+}
+
+.timelineItemTitle {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--mantine-font-size-sm);
+}
+
+.timelineItemMeta {
+  flex: 0 0 auto;
+  font-size: var(--mantine-font-size-xs);
+  color: var(--mantine-color-dimmed);
+  white-space: nowrap;
+}
+
+.timelineNew {
+  display: flex;
+  align-items: center;
+  margin-left: calc(var(--axis) + 26px);
+  padding: 4px 8px;
+  border-radius: var(--mantine-radius-sm);
+  color: var(--mantine-color-dimmed);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--db-hover);
+    color: var(--mantine-color-text);
+  }
+}
+
+/* ---------------------------------------------------------------- cells & fields */
+
+.fieldValue {
+  min-width: 0;
+  border-radius: var(--mantine-radius-sm);
+  cursor: pointer;
+  outline: none;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--db-hover);
+  }
+}
+
+.fieldEditing {
+  min-width: 0;
+  border-radius: var(--mantine-radius-sm);
+  box-shadow: 0 0 0 1px var(--db-selected);
+
+  .cellInput {
+    height: 28px;
+    border-radius: var(--mantine-radius-sm);
+  }
+}
+
+.fieldDisplay {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 2px 6px;
+  font-size: var(--mantine-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------- filter */
+
+.filterGroup {
+  padding: 6px;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-sm);
+  background: light-dark(
+    var(--mantine-color-gray-0),
+    var(--mantine-color-dark-6)
+  );
+}
+
+/* ---------------------------------------------------------------- row detail */
+
+.detailRow {
+  min-height: 32px;
+}
+
+.detailLabel {
+  display: flex;
+  flex: 0 0 160px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 6px;
+  border-radius: var(--mantine-radius-sm);
+
+  &:not(:disabled):hover {
+    background: var(--db-hover);
+  }
+}
+
+.detailValue {
+  flex: 1;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+/* ---------------------------------------------------------------- kanban */
+
+.kanban {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+
+  /* Auto margins (not justify-content) keep overflowing lanes scrollable. */
+  &[data-align="center"] > :first-child,
+  &[data-align="right"] > :first-child {
+    margin-left: auto;
+  }
+
+  &[data-align="center"] > :last-child {
+    margin-right: auto;
+  }
+}
+
+.lane {
+  position: relative;
+  flex: 0 0 260px;
+  padding: 4px;
+  border-radius: var(--mantine-radius-md);
+  background: light-dark(
+    var(--mantine-color-gray-0),
+    var(--mantine-color-dark-7)
+  );
+
+  /* Only the lane header's actions; card actions show on card hover. */
+  &:hover .laneHeader .hoverAction {
+    opacity: 1;
+  }
+
+  &[data-drop-target] {
+    box-shadow: 0 0 0 1px var(--mantine-color-blue-4);
+  }
+
+  &[data-dragging] {
+    opacity: 0.4;
+  }
+
+  &[data-drop-before]::before,
+  &[data-drop-after]::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--mantine-color-blue-5);
+  }
+
+  &[data-drop-before]::before {
+    left: -7px;
+  }
+
+  &[data-drop-after]::after {
+    right: -7px;
+  }
+}
+
+.laneLabel {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.laneHeader {
+  min-height: 30px;
+  padding: 0 4px;
+  cursor: grab;
+}
+
+.laneCards {
+  display: flex;
+  flex-direction: column;
+  min-height: 8px;
+}
+
+/* Horizontal board: one group per row; its cards sit side by side and scroll sideways. */
+.kanban[data-orientation="horizontal"] {
+  flex-direction: column;
+  align-items: stretch;
+  overflow-x: visible;
+
+  .lane {
+    flex: 0 0 auto;
+  }
+
+  .laneCards {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 6px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding-bottom: 4px;
+
+    > * {
+      position: relative;
+      flex: 0 0 240px;
+    }
+
+    .card {
+      margin-bottom: 0;
+    }
+
+    /* Vertical bar at the left edge of the card it lands before. */
+    > * > .dropIndicator {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: -5px;
+      width: 3px;
+      height: auto;
+      margin: 0;
+    }
+
+    /* After the last card. */
+    > .dropIndicator {
+      flex: 0 0 3px;
+      align-self: stretch;
+      width: 3px;
+      height: auto;
+      margin: 0;
+    }
+  }
+
+  .lane[data-drop-before]::before,
+  .lane[data-drop-after]::after {
+    left: 0;
+    right: 0;
+    width: auto;
+    height: 3px;
+  }
+
+  .lane[data-drop-before]::before {
+    top: -7px;
+    bottom: auto;
+  }
+
+  .lane[data-drop-after]::after {
+    top: auto;
+    bottom: -7px;
+  }
+}
+
+.addLane {
+  flex: 0 0 auto;
+}
+
+.card {
+  position: relative;
+  margin-bottom: 6px;
+  padding: 4px;
+  border: 1px solid var(--db-border);
+  border-radius: var(--mantine-radius-sm);
+  background: var(--mantine-color-body);
+  box-shadow: var(--mantine-shadow-xs);
+  cursor: pointer;
+  touch-action: none;
+
+  &:hover {
+    border-color: var(--mantine-color-blue-3);
+  }
+
+  &:hover .hoverAction {
+    opacity: 1;
+  }
+
+  &[data-dragging] {
+    opacity: 0.4;
+  }
+}
+
+.cardActions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  border-radius: var(--mantine-radius-sm);
+  background: var(--mantine-color-body);
+}
+
+/* Card body: column 1 holds each field's icon and name, column 2 its value. */
+.cardFields {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  padding-left: 4px;
+}
+
+/* The first field is the card's title: full width, kept clear of the card actions. */
+.cardHeading {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin-left: -4px;
+  padding-right: 48px;
+}
+
+/* A field row places its marker and value straight into the card grid. */
+.cardField {
+  display: contents;
+}
+
+.cardLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 88px;
+  font-size: var(--mantine-font-size-xs);
+  color: var(--mantine-color-dimmed);
+}
+
+.cardIcon {
+  flex: 0 0 auto;
+}
+
+.cardFieldValue {
+  min-width: 0;
+
+  .fieldDisplay {
+    min-height: 24px;
+    padding: 2px 4px;
+  }
+}
+
+.dropIndicator {
+  height: 3px;
+  margin: -2px 2px 3px;
+  border-radius: 2px;
+  background: var(--mantine-color-blue-5);
+  box-shadow: 0 0 4px var(--mantine-color-blue-4);
+}
+
+/* ---------------------------------------------------------------- calendar */
+
+.calendar {
+  min-width: 640px;
+  border: 1px solid var(--db-border);
+  border-radius: var(--mantine-radius-sm);
+  overflow: hidden;
+}
+
+.weekdays,
+.week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.weekdays {
+  border-bottom: 1px solid var(--db-border);
+}
+
+.weekday {
+  padding: 3px 6px;
+  font-size: var(--mantine-font-size-xs);
+  color: var(--mantine-color-dimmed);
+}
+
+.week {
+  position: relative;
+  overflow: hidden;
+
+  & + & {
+    border-top: 1px solid var(--db-border);
+  }
+}
+
+.day {
+  position: relative;
+  min-width: 0;
+  padding: 0 4px;
+
+  & + & {
+    border-left: 1px solid var(--db-border);
+  }
+
+  &[data-outside] {
+    background: light-dark(
+      var(--mantine-color-gray-0),
+      var(--mantine-color-dark-7)
+    );
+
+    .dayNumber {
+      opacity: 0.5;
+    }
+  }
+
+  &[data-today] {
+    background: light-dark(
+      var(--mantine-color-blue-0),
+      rgba(34, 139, 230, 0.08)
+    );
+
+    .dayNumber {
+      color: var(--mantine-color-blue-6);
+      font-weight: 700;
+    }
+  }
+
+  &[data-drop-target] {
+    background: light-dark(
+      var(--mantine-color-blue-1),
+      rgba(34, 139, 230, 0.18)
+    );
+  }
+
+  &:hover .dayAdd {
+    opacity: 1;
+  }
+}
+
+.dayNumber {
+  position: absolute;
+  top: 3px;
+  left: 6px;
+  font-size: var(--mantine-font-size-xs);
+  color: var(--mantine-color-dimmed);
+}
+
+.dayAdd {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  opacity: 0;
+}
+
+/* A calendar entry: no frame; a dot in the first select's color, then the title. */
+.calendarBar {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 4px;
+  border-radius: var(--mantine-radius-sm);
+  background: transparent;
+  font-size: var(--mantine-font-size-xs);
+  line-height: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  touch-action: none;
+  outline: none;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--db-hover);
+  }
+
+  /* Multi-day entries are a tinted band so their span reads at a glance. */
+  &[data-multi-day] {
+    background: var(--bar-tint);
+  }
+
+  &[data-continues-left] {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+  }
+
+  &[data-continues-right] {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  &[data-dragging] {
+    opacity: 0.4;
+  }
+}
+
+.calendarBarDot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--bar-color);
+}
+
+.calendarBarTitle {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--mantine-color-text);
+}
+
+.calendarBarExtra {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--mantine-color-dimmed);
+}
+
+.calendarBarPeople {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.resizeStart,
+.resizeEnd {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.resizeStart {
+  left: 0;
+}
+
+.resizeEnd {
+  right: 0;
+}

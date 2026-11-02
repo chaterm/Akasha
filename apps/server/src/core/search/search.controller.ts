@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { SearchService } from './search.service';
 import {
+  ResolvePagesDTO,
   SearchDTO,
   SearchShareDTO,
   SearchSuggestionDTO,
@@ -98,6 +99,16 @@ export class SearchController {
       userRole: user.role,
       workspaceId: workspace.id,
     });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('resolve-pages')
+  async resolvePages(
+    @Body() dto: ResolvePagesDTO,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    return this.searchService.resolvePages(dto.pageIds, user.id, workspace.id);
   }
 
   @HttpCode(HttpStatus.OK)

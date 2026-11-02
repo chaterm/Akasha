@@ -1,4 +1,8 @@
-import { IconList, IconLayoutGrid } from "@tabler/icons-react";
+import { IconDatabase, IconList, IconLayoutGrid } from "@tabler/icons-react";
+import { buildDefaultDatabaseJSON } from "@docmost/editor-ext";
+import { getDefaultStore } from "jotai";
+import i18n from "@/i18n.ts";
+import { userAtom } from "@/features/user/atoms/current-user-atom";
 import {
   CommandProps,
   SlashMenuItemType,
@@ -33,6 +37,49 @@ export const macroMenuItems: SlashMenuItemType[] = [
     icon: IconLayoutGrid,
     command: ({ editor, range }: CommandProps) => {
       editor.chain().focus().deleteRange(range).insertPanel().run();
+    },
+  },
+  {
+    title: "Database",
+    description:
+      "Insert a database with table, kanban, calendar and timeline views.",
+    searchTerms: [
+      "database",
+      "kanban",
+      "board",
+      "calendar",
+      "table view",
+    ],
+    icon: IconDatabase,
+    command: ({ editor, range }: CommandProps) => {
+      const t = i18n.t.bind(i18n);
+      const user = getDefaultStore().get(userAtom);
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .insertDatabase(
+          buildDefaultDatabaseJSON({
+            title: "",
+            task: t("Task"),
+            taskItem: (n) => t("Task {{n}}", { n }),
+            member: t("Member"),
+            me: user
+              ? { id: user.id, name: user.name, avatarUrl: user.avatarUrl }
+              : undefined,
+            status: t("Status"),
+            date: t("Date"),
+            todo: t("To do"),
+            doing: t("In progress"),
+            done: t("Done"),
+            table: t("Table"),
+            kanban: t("Kanban"),
+            calendar: t("Calendar"),
+            timeline: t("Timeline"),
+            mine: t("Mine"),
+          }),
+        )
+        .run();
     },
   },
 ];
