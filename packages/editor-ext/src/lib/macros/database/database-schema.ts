@@ -311,6 +311,11 @@ function uniqueStrings(value: unknown): string[] {
   ];
 }
 
+/** Saved row order; rows not listed here follow in document order. */
+export function normalizeDatabaseRowOrder(value: unknown): string[] {
+  return uniqueStrings(value);
+}
+
 export function isDatabaseDate(value: unknown): value is string {
   if (typeof value !== 'string' || !DATE_PATTERN.test(value)) return false;
   const [year, month, day] = value.split('-').map(Number);

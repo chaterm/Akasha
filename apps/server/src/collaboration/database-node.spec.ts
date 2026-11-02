@@ -7,6 +7,7 @@ import {
   buildDatabaseJSON,
   buildDefaultDatabaseJSON,
   changeDatabaseColumnType,
+  deleteDatabaseRow,
   deleteDatabaseColumn,
   duplicateDatabaseColumn,
   insertDatabaseRow,
@@ -136,6 +137,26 @@ describe('database node', () => {
     );
   });
 
+  it('preserves manual row order through JSON, HTML and text export', () => {
+    const tr = makeState().tr;
+    moveDatabaseRow(tr, 0, 'r3', 'r1');
+    const json = tr.doc.toJSON();
+    expect(
+      rowsOf({ doc: Node.fromJSON(tr.doc.type.schema, json) }).map(
+        (row) => row.id,
+      ),
+    ).toEqual(['r3', 'r1', 'r2']);
+    const html = jsonToHtml(json);
+    const parsed = Node.fromJSON(tr.doc.type.schema, htmlToJson(html));
+    expect(rowsOf({ doc: parsed }).map((row) => row.id)).toEqual([
+      'r3',
+      'r1',
+      'r2',
+    ]);
+    const text = jsonToText(json);
+    expect(text.indexOf('Review')).toBeLessThan(text.indexOf('Write spec'));
+  });
+
   it('migrates v1 views: hiddenColumnIds and single sort', () => {
     const [view] = normalizeDatabaseViews(
       [
@@ -229,6 +250,20 @@ describe('database row and column transforms', () => {
       'r2',
       'r3',
       'r0',
+    ]);
+  });
+
+  it('inserts and deletes relative to the saved order after moving rows', () => {
+    const tr = makeState().tr;
+    moveDatabaseRow(tr, 0, 'r3', 'r1');
+    insertDatabaseRow(tr, 0, { id: 'new', afterRowId: 'r3' });
+    deleteDatabaseRow(tr, 0, 'r1');
+    insertDatabaseRow(tr, 0, { id: 'last' });
+    expect(rowsOf(tr).map((row) => row.id)).toEqual([
+      'r3',
+      'new',
+      'r2',
+      'last',
     ]);
   });
 
@@ -389,6 +424,26 @@ describe('database view transforms', () => {
     expect(rowsOf(tr)[0].values.end).toBe('2026-11-30');
     resizeDatabaseRowRange(tr, 0, 'v3', 'r1', 'start', '2026-11-28');
     expect(rowsOf(tr)[0].values.due).toBe('2026-11-28');
+  });
+
+  it.each(['2026-11-01', '2026-11-10'])(
+    'moving a one-day range to %s moves both endpoints',
+    (date) => {
+      const tr = makeState().tr;
+      setDatabaseCellValue(tr, 0, 'r1', 'end', '2026-11-03');
+      moveDatabaseRowToDate(tr, 0, 'v3', 'r1', date);
+      expect(rowsOf(tr)[0].values).toMatchObject({ due: date, end: date });
+    },
+  );
+
+  it('moving a row with no end date leaves the end date empty', () => {
+    const tr = makeState().tr;
+    setDatabaseCellValue(tr, 0, 'r1', 'end', null);
+    moveDatabaseRowToDate(tr, 0, 'v3', 'r1', '2026-11-01');
+    expect(rowsOf(tr)[0].values).toMatchObject({
+      due: '2026-11-01',
+      end: null,
+    });
   });
 });
 
