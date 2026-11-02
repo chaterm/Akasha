@@ -149,12 +149,16 @@ export interface DatabaseRowData {
   values: Record<string, DatabaseCellValue>;
 }
 
-/** `mine` is a table of the rows that reference the viewer in a member column. */
+/**
+ * `mine` is a table of the rows that reference the viewer in a member column.
+ * `timeline` is a horizontal Gantt chart; `agenda` is a vertical list of dates.
+ */
 export type DatabaseViewType =
   | 'table'
   | 'kanban'
   | 'calendar'
   | 'timeline'
+  | 'agenda'
   | 'mine';
 
 export const DATABASE_VIEW_TYPES: readonly DatabaseViewType[] = [
@@ -162,7 +166,29 @@ export const DATABASE_VIEW_TYPES: readonly DatabaseViewType[] = [
   'kanban',
   'calendar',
   'timeline',
+  'agenda',
   'mine',
+];
+
+export type DatabaseRowHeight = 'compact' | 'default' | 'comfortable';
+export const DATABASE_ROW_HEIGHTS: readonly DatabaseRowHeight[] = [
+  'compact',
+  'default',
+  'comfortable',
+];
+
+export type DatabaseCardSize = 'small' | 'medium' | 'large';
+export const DATABASE_CARD_SIZES: readonly DatabaseCardSize[] = [
+  'small',
+  'medium',
+  'large',
+];
+
+export type DatabaseTimelineScale = 'day' | 'week' | 'month';
+export const DATABASE_TIMELINE_SCALES: readonly DatabaseTimelineScale[] = [
+  'day',
+  'week',
+  'month',
 ];
 
 export type DatabaseAlign = 'left' | 'center' | 'right';
@@ -186,6 +212,8 @@ export interface DatabaseViewColumn {
   /** null = the column type's default. */
   align: DatabaseAlign | null;
   hidden: boolean;
+  /** Table: show the full value on several lines instead of cutting it off. */
+  wrap: boolean;
 }
 
 export interface DatabaseSort {
@@ -244,6 +272,10 @@ export interface DatabaseView {
   orientation: 'vertical' | 'horizontal';
   /** Table: leading row-number column, counted in the view's row order. */
   showRowNumbers: boolean;
+  /** Table: height of single-line rows. */
+  rowHeight: DatabaseRowHeight;
+  /** Kanban: lane and card width. */
+  cardSize: DatabaseCardSize;
   columns: DatabaseViewColumn[];
   sorts: DatabaseSort[];
   filter: DatabaseFilterGroup;
@@ -252,13 +284,17 @@ export interface DatabaseView {
   /** Kanban: group keys in display order; groups not listed follow in natural order. */
   groupOrder: string[];
   hiddenGroups: string[];
+  /** Kanban: lanes folded into a narrow strip. */
+  collapsedGroups: string[];
   hideEmptyGroups: boolean;
   /** Kanban: manual card order per group key, used while the view has no sorts. */
   cardOrder: Record<string, string[]>;
   /** Calendar / timeline: start date column. */
   dateColumnId: string | null;
-  /** Calendar: optional end date column; rows with a later end render as multi-day bars. */
+  /** Calendar / timeline: optional end date column; rows with a later end render as multi-day bars. */
   endDateColumnId: string | null;
+  /** Timeline: zoom level of the time axis. */
+  timelineScale: DatabaseTimelineScale;
 }
 
 /** Group key for rows without a value (select / multiSelect / person / page). */
@@ -309,6 +345,11 @@ function uniqueStrings(value: unknown): string[] {
       ),
     ),
   ];
+}
+
+/** Saved row order; rows not listed here follow in document order. */
+export function normalizeDatabaseRowOrder(value: unknown): string[] {
+  return uniqueStrings(value);
 }
 
 export function isDatabaseDate(value: unknown): value is string {
@@ -393,7 +434,12 @@ function normalizeColumn(item: any, type: DatabaseColumnType): DatabaseColumn {
   return column;
 }
 
-/** Drops malformed columns; unknown types (including the old `title`) become text. Never empty. */
+/**
+ * Drops malformed columns; unknown types (including the old `title`) become text.
+ * The first column is always the title: the first text column moves to the
+ * front, and a database without one gets a text column with a fixed id, so
+ * every client derives the same schema.
+ */
 export function normalizeDatabaseColumns(value: unknown): DatabaseColumn[] {
   const raw = Array.isArray(value) ? value : [];
   const seen = new Set<string>();
@@ -409,7 +455,22 @@ export function normalizeDatabaseColumns(value: unknown): DatabaseColumn[] {
     columns.push(normalizeColumn(item, type));
   }
 
-  return columns.length ? columns : [{ id: 'text', name: 'Text', type: 'text' }];
+  if (!columns.length) return [{ id: 'text', name: 'Text', type: 'text' }];
+  const titleIndex = columns.findIndex((column) => column.type === 'text');
+  if (titleIndex > 0) columns.unshift(...columns.splice(titleIndex, 1));
+  if (titleIndex < 0) {
+    let id = 'title';
+    while (seen.has(id)) id = `${id}_`;
+    columns.unshift({ id, name: 'Title', type: 'text' });
+  }
+  return columns;
+}
+
+/** The title column: always the first, always text, never hidden or deleted. */
+export function getDatabaseTitleColumn(
+  columns: DatabaseColumn[],
+): DatabaseColumn {
+  return columns[0];
 }
 
 export function normalizeDatabaseCellValue(
@@ -627,6 +688,7 @@ function normalizeViewColumns(
             : null,
         align: normalizeDatabaseAlign(item?.align),
         hidden: item?.hidden === true,
+        wrap: item?.wrap === true,
       });
     }
   }
@@ -637,9 +699,17 @@ function normalizeViewColumns(
       width: null,
       align: null,
       hidden: legacyHidden.has(column.id),
+      wrap: false,
     });
   }
 
+  // The title column leads every view and cannot be hidden.
+  const titleId = columns[0]?.id;
+  const titleIndex = entries.findIndex((entry) => entry.id === titleId);
+  if (titleIndex >= 0) {
+    const [title] = entries.splice(titleIndex, 1);
+    entries.unshift({ ...title, hidden: false });
+  }
   return entries;
 }
 
@@ -702,7 +772,10 @@ export function normalizeDatabaseView(
   let dateColumnId = isOfTypes(item?.dateColumnId, ['date'])
     ? item.dateColumnId
     : null;
-  if (!dateColumnId && (type === 'calendar' || type === 'timeline')) {
+  if (
+    !dateColumnId &&
+    (type === 'calendar' || type === 'timeline' || type === 'agenda')
+  ) {
     dateColumnId = ofTypes(['date'])[0]?.id ?? null;
   }
   const endDateColumnId =
@@ -718,16 +791,26 @@ export function normalizeDatabaseView(
     align: normalizeDatabaseAlign(item?.align) ?? 'left',
     orientation: item?.orientation === 'horizontal' ? 'horizontal' : 'vertical',
     showRowNumbers: item?.showRowNumbers !== false,
+    rowHeight: DATABASE_ROW_HEIGHTS.includes(item?.rowHeight)
+      ? item.rowHeight
+      : 'default',
+    cardSize: DATABASE_CARD_SIZES.includes(item?.cardSize)
+      ? item.cardSize
+      : 'medium',
     columns: normalizeViewColumns(item, columns),
     sorts: normalizeSorts(item, columns),
     filter: normalizeDatabaseFilter(item?.filter, columns),
     groupBy,
     groupOrder: uniqueStrings(item?.groupOrder),
     hiddenGroups: uniqueStrings(item?.hiddenGroups),
+    collapsedGroups: uniqueStrings(item?.collapsedGroups),
     hideEmptyGroups: item?.hideEmptyGroups === true,
     cardOrder: normalizeCardOrder(item?.cardOrder),
     dateColumnId,
     endDateColumnId,
+    timelineScale: DATABASE_TIMELINE_SCALES.includes(item?.timelineScale)
+      ? item.timelineScale
+      : 'week',
   };
 }
 

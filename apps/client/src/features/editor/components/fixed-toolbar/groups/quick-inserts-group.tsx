@@ -5,12 +5,14 @@ import {
   IconAt,
   IconColumns2,
   IconColumns3,
+  IconDatabase,
   IconMoodSmile,
   IconTable,
 } from "@tabler/icons-react";
 import { IconColumns4 } from "@/components/icons/icon-columns-4";
 import { IconColumns5 } from "@/components/icons/icon-columns-5";
 import { useTranslation } from "react-i18next";
+import { insertDefaultDatabase } from "@/features/editor/macros/insert-database";
 
 interface Props {
   editor: Editor;
@@ -110,6 +112,17 @@ export const QuickInsertsGroup: FC<Props> = ({ editor }) => {
           }
         >
           <IconTable size={16} />
+        </ActionIcon>
+      </Tooltip>
+      <Tooltip label={t("Database")} withArrow>
+        <ActionIcon
+          variant="subtle"
+          color="dark"
+          size="md"
+          aria-label={t("Database")}
+          onClick={() => insertDefaultDatabase(editor)}
+        >
+          <IconDatabase size={16} />
         </ActionIcon>
       </Tooltip>
     </ActionIcon.Group>

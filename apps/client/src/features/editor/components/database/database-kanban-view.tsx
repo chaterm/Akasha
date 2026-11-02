@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { Button, Group, Popover, Stack, Text, TextInput } from "@mantine/core";
-import { IconEye, IconPlus } from "@tabler/icons-react";
+import {
+  Button,
+  Group,
+  Popover,
+  Stack,
+  Text,
+  TextInput,
+  UnstyledButton,
+} from "@mantine/core";
+import { IconChevronsRight, IconEye, IconPlus } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import {
   addDatabaseColumn,
@@ -24,7 +32,11 @@ import {
   type DatabaseContext,
 } from "./database-context";
 import { KanbanCard } from "./database-kanban-card";
-import { KanbanGroupHeader, groupLabel } from "./database-kanban-group";
+import {
+  GroupName,
+  KanbanGroupHeader,
+  groupLabel,
+} from "./database-kanban-group";
 import { MenuRow, OptionLabel } from "./database-ui";
 import { elementAt, hitTestList, usePointerDrag } from "./use-pointer-drag";
 import { focusWithoutScroll, moveItem } from "./database-utils";
@@ -64,6 +76,28 @@ export default function DatabaseKanbanView({ db }: { db: DatabaseContext }) {
       !(db.view.hideEmptyGroups && !group.rows.length),
   );
   const hiddenGroups = groups.filter((group) => hidden.has(group.key));
+  // Viewers may reveal cards without writing to the shared view configuration.
+  const [localExpanded, setLocalExpanded] = useState<Record<string, string[]>>(
+    {},
+  );
+  const expanded = new Set(localExpanded[db.view.id] ?? []);
+  const collapsedKeys = new Set(
+    db.view.collapsedGroups.filter((key) => db.editable || !expanded.has(key)),
+  );
+  const toggleCollapsed = (key: string) => {
+    if (!db.editable) {
+      setLocalExpanded((current) => ({
+        ...current,
+        [db.view.id]: [...(current[db.view.id] ?? []), key],
+      }));
+      return;
+    }
+    patchView(db, {
+      collapsedGroups: collapsedKeys.has(key)
+        ? db.view.collapsedGroups.filter((item) => item !== key)
+        : [...db.view.collapsedGroups, key],
+    });
+  };
   const [drop, setDrop] = useState<CardDrop | null>(null);
   const [groupDrop, setGroupDrop] = useState<number | null>(null);
   // Horizontal: each group is a row of cards; groups stack top to bottom.
@@ -218,10 +252,22 @@ export default function DatabaseKanbanView({ db }: { db: DatabaseContext }) {
         className={classes.kanban}
         data-align={horizontal ? undefined : db.view.align}
         data-orientation={db.view.orientation}
+        data-card-size={db.view.cardSize}
       >
         {shown.map((group, laneIndex) => {
           let index = 0;
           const isTarget = drop?.key === group.key;
+          const collapsed = collapsedKeys.has(group.key);
+          if (collapsed)
+            return (
+              <CollapsedLane
+                key={group.key}
+                column={column}
+                group={group}
+                dropTarget={isTarget}
+                onExpand={() => toggleCollapsed(group.key)}
+              />
+            );
           return (
             <div
               key={group.key}
@@ -241,6 +287,7 @@ export default function DatabaseKanbanView({ db }: { db: DatabaseContext }) {
                 column={column}
                 group={group}
                 onAddCard={() => insertCard(group, null, "top")}
+                onCollapse={() => toggleCollapsed(group.key)}
                 onPointerDown={
                   db.editable
                     ? (event) =>
@@ -344,6 +391,38 @@ function useSidewaysWheel(
     element.addEventListener("wheel", onWheel, { passive: false });
     return () => element.removeEventListener("wheel", onWheel);
   }, [board, enabled]);
+}
+
+/** A folded lane: a narrow strip with the group name and count; cards can still be dropped on it. */
+function CollapsedLane({
+  column,
+  group,
+  dropTarget,
+  onExpand,
+}: {
+  column: DatabaseColumn;
+  group: DatabaseGroup;
+  dropTarget: boolean;
+  onExpand: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <UnstyledButton
+      className={classes.laneCollapsed}
+      data-lane-key={group.key}
+      data-drop-target={dropTarget || undefined}
+      title={t("Expand group")}
+      onClick={onExpand}
+    >
+      <IconChevronsRight size={14} className={classes.menuIcon} />
+      <span className={classes.laneCollapsedLabel}>
+        <GroupName column={column} group={group} />
+      </span>
+      <Text size="xs" c="dimmed">
+        {group.rows.length}
+      </Text>
+    </UnstyledButton>
+  );
 }
 
 function HiddenGroups({

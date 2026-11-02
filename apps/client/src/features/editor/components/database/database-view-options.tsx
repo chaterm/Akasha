@@ -18,15 +18,19 @@ import {
   IconEye,
   IconEyeOff,
   IconListNumbers,
+  IconLock,
   IconTrash,
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import {
   deleteDatabaseView,
   DATABASE_GROUPABLE_TYPES,
+  type DatabaseCardSize,
+  type DatabaseRowHeight,
 } from "@docmost/editor-ext";
 import {
   columnAlign,
+  isDateView,
   isTableView,
   stopBubbling,
   patchView,
@@ -55,13 +59,16 @@ function PropertiesPage({
 }) {
   const { t } = useTranslation();
   const byId = new Map(db.columns.map((column) => [column.id, column]));
-  const entries = db.view.columns;
+  // The title leads every view and cannot be hidden or moved.
+  const [titleEntry, ...entries] = db.view.columns;
+  const title = byId.get(titleEntry.id)!;
+  const TitleIcon = COLUMN_TYPE_ICONS[title.type];
   const setHidden = (ids: Set<string>) =>
     patchView(db, {
-      columns: entries.map((entry) => ({
-        ...entry,
-        hidden: ids.has(entry.id),
-      })),
+      columns: [
+        titleEntry,
+        ...entries.map((entry) => ({ ...entry, hidden: ids.has(entry.id) })),
+      ],
     });
   const hidden = new Set(
     entries.filter((entry) => entry.hidden).map((entry) => entry.id),
@@ -116,11 +123,20 @@ function PropertiesPage({
           </ActionIcon>
         </Group>
       )}
+      <Group gap={8} px={8} py={4} wrap="nowrap" title={t("Title")}>
+        <TitleIcon size={15} className={classes.menuIcon} />
+        <Text size="sm" flex={1} truncate>
+          {title.name || t("Untitled")}
+        </Text>
+        <IconLock size={14} className={classes.menuIcon} />
+      </Group>
       <SortableList
         items={entries}
         getKey={(entry) => entry.id}
         onMove={(from, to) =>
-          patchView(db, { columns: moveItem(entries, from, to) })
+          patchView(db, {
+            columns: [titleEntry, ...moveItem(entries, from, to)],
+          })
         }
         renderItem={(entry) => {
           const column = byId.get(entry.id)!;
@@ -227,6 +243,44 @@ export function ViewOptions({ db }: { db: DatabaseContext }) {
           />
         </Group>
       )}
+      {isTableView(view) && (
+        <Group justify="space-between" wrap="nowrap">
+          <Text size="xs" fw={500}>
+            {t("Row height")}
+          </Text>
+          <SegmentedControl
+            size="xs"
+            value={view.rowHeight}
+            onChange={(rowHeight) =>
+              patchView(db, { rowHeight: rowHeight as DatabaseRowHeight })
+            }
+            data={[
+              { value: "compact", label: t("Compact") },
+              { value: "default", label: t("Default") },
+              { value: "comfortable", label: t("Comfortable") },
+            ]}
+          />
+        </Group>
+      )}
+      {view.type === "kanban" && (
+        <Group justify="space-between" wrap="nowrap">
+          <Text size="xs" fw={500}>
+            {t("Card size")}
+          </Text>
+          <SegmentedControl
+            size="xs"
+            value={view.cardSize}
+            onChange={(cardSize) =>
+              patchView(db, { cardSize: cardSize as DatabaseCardSize })
+            }
+            data={[
+              { value: "small", label: t("Small") },
+              { value: "medium", label: t("Medium") },
+              { value: "large", label: t("Large") },
+            ]}
+          />
+        </Group>
+      )}
       {(isTableView(view) ||
         (view.type === "kanban" && view.orientation === "vertical")) && (
         <Group justify="space-between" wrap="nowrap">
@@ -302,7 +356,7 @@ export function ViewOptions({ db }: { db: DatabaseContext }) {
           )}
         </>
       )}
-      {(view.type === "calendar" || view.type === "timeline") && (
+      {isDateView(view) && (
         <>
           <Select
             size="xs"

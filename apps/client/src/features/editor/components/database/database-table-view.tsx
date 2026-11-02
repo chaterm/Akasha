@@ -6,6 +6,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { UnstyledButton } from "@mantine/core";
+import type { CSSProperties } from "react";
 import { IconPlus } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import {
@@ -33,6 +34,9 @@ import {
 import { DatabaseTableRow } from "./database-table-row";
 import { DatabaseTableGroupRow } from "./database-table-group";
 import { elementAt, hitTestList, usePointerDrag } from "./use-pointer-drag";
+import { useStickyHeader } from "./use-sticky-header";
+import { pasteIntoTable, rangeToTSV } from "./database-clipboard";
+import { DatabaseBulkBar } from "./database-bulk-bar";
 import classes from "./database.module.css";
 
 export interface CellPosition {
@@ -40,7 +44,10 @@ export interface CellPosition {
   columnId: string;
 }
 
-const GUTTER_WIDTH = 52;
+/** Grip, row menu and checkbox, outside the table frame. */
+const GUTTER_WIDTH = 72;
+/** Rows shown at first and added by each "Load more". */
+const PAGE_SIZE = 50;
 /** `rowId` of a selection on the header row. */
 const HEADER_ROW = "__header";
 const ADD_COLUMN_WIDTH = 40;
@@ -82,6 +89,23 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
   // Visible column index the dragged column would be inserted before.
   const [columnDrop, setColumnDrop] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Far corner of a multi-cell range; `selection` is the other corner.
+  const [rangeEnd, setRangeEnd] = useState<CellPosition | null>(null);
+  /** Moves the selection to one cell (or none), dropping any range. */
+  const select = (position: CellPosition | null) => {
+    setSelection(position);
+    setRangeEnd(null);
+  };
+  // Rows checked for a bulk action; shift-click extends from the last one.
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const lastChecked = useRef<string | null>(null);
+  // Rows shown before "Load more", per group key ("" when not grouped).
+  const [limits, setLimits] = useState<Record<string, number>>({});
+  const limitOf = (key: string) => limits[key] ?? PAGE_SIZE;
+  const [scrolledX, setScrolledX] = useState(false);
+  // Focused for Mod-C / X / V so the browser's own clipboard events can be used.
+  const sinkRef = useRef<HTMLTextAreaElement>(null);
+  useStickyHeader(tableRef);
 
   const ordered = useMemo(() => {
     if (!frozen) return viewRows;
@@ -93,15 +117,27 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
     return [...kept, ...viewRows.filter((row) => !keptIds.has(row.id))];
   }, [frozen, viewRows, db.rows]);
   const grouping = useViewGroups(db, ordered);
-  // Rows in display order (expanded groups only); a multi-select row in several groups counts once.
+  // Rows on screen in display order: expanded groups only, up to each "Load
+  // more" limit; a multi-select row in several groups counts once.
   const rows = useMemo(() => {
-    if (!grouping) return ordered;
     const seen = new Set<string>();
-    return grouping.groups
-      .filter((group) => !collapsed.has(group.key))
-      .flatMap((group) => group.rows)
-      .filter((row) => !seen.has(row.id) && !!seen.add(row.id));
-  }, [grouping, ordered, collapsed]);
+    const shown = grouping
+      ? grouping.groups
+          .filter((group) => !collapsed.has(group.key))
+          .flatMap((group) => group.rows.slice(0, limitOf(group.key)))
+      : ordered.slice(0, limitOf(""));
+    return shown.filter((row) => !seen.has(row.id) && !!seen.add(row.id));
+  }, [grouping, ordered, collapsed, limits]);
+  // Pasting continues past the loaded rows (ungrouped) instead of creating new ones.
+  const pasteRows = grouping ? rows : ordered;
+
+  // Checked rows that left the view (filtered out or deleted) are unchecked.
+  useEffect(() => {
+    if (!checked.size) return;
+    const ids = new Set(viewRows.map((row) => row.id));
+    if ([...checked].some((id) => !ids.has(id)))
+      setChecked(new Set([...checked].filter((id) => ids.has(id))));
+  }, [viewRows, checked]);
 
   // Drop a selection whose row or column no longer exists (deleted, possibly remotely).
   useEffect(() => {
@@ -111,7 +147,7 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
         !rows.some((row) => row.id === selection.rowId)) ||
       !columns.some((c) => c.id === selection.columnId)
     ) {
-      setSelection(null);
+      select(null);
       setEditing(null);
     }
   }, [rows, columns, selection]);
@@ -143,7 +179,7 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
     const column = columns.find((item) => item.id === position.columnId);
     const row = rows.find((item) => item.id === position.rowId);
     if (!db.editable || !column || !row) return;
-    setSelection(position);
+    select(position);
     if (column.type === "checkbox") {
       toggleCheckbox(db, row, column);
       return;
@@ -156,7 +192,7 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
   const move = (rowDelta: number, columnDelta: number, wrap = false) => {
     if (!columns.length) return;
     if (!selection) {
-      setSelection({
+      select({
         rowId: rows[0]?.id ?? HEADER_ROW,
         columnId: columns[0].id,
       });
@@ -173,10 +209,102 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
     if (wrap && c < 0) [r, c] = [r - 1, columns.length - 1];
     r = Math.min(Math.max(r + rowDelta, -1), rows.length - 1);
     c = Math.min(Math.max(c, 0), columns.length - 1);
-    setSelection({
+    select({
       rowId: r < 0 ? HEADER_ROW : rows[r].id,
       columnId: columns[c].id,
     });
+  };
+
+  /** Index bounds of the selected range (a single cell without one), or null on the header row. */
+  const selectedRange = () => {
+    if (!selection || selection.rowId === HEADER_ROW) return null;
+    const end = rangeEnd ?? selection;
+    const index = (position: CellPosition) => ({
+      r: pasteRows.findIndex((row) => row.id === position.rowId),
+      c: columns.findIndex((column) => column.id === position.columnId),
+    });
+    const a = index(selection);
+    const b = index(end);
+    if (a.r < 0 || a.c < 0 || b.r < 0 || b.c < 0) return null;
+    return {
+      top: Math.min(a.r, b.r),
+      bottom: Math.max(a.r, b.r),
+      left: Math.min(a.c, b.c),
+      right: Math.max(a.c, b.c),
+    };
+  };
+  const range = selectedRange();
+  const rangeRows = range ? pasteRows.slice(range.top, range.bottom + 1) : [];
+  const rangeColumns = range ? columns.slice(range.left, range.right + 1) : [];
+  const multiCell = rangeRows.length * rangeColumns.length > 1;
+  const rangeRowIds = new Set(multiCell ? rangeRows.map((row) => row.id) : []);
+  const rangeColumnIds = new Set(rangeColumns.map((column) => column.id));
+
+  /** Shift + arrow / click: moves the range's far corner. */
+  const extend = (rowDelta: number, columnDelta: number) => {
+    if (!selection || selection.rowId === HEADER_ROW) return;
+    const end = rangeEnd ?? selection;
+    const r = Math.min(
+      Math.max(
+        pasteRows.findIndex((row) => row.id === end.rowId) + rowDelta,
+        0,
+      ),
+      pasteRows.length - 1,
+    );
+    const c = Math.min(
+      Math.max(
+        columns.findIndex((column) => column.id === end.columnId) + columnDelta,
+        0,
+      ),
+      columns.length - 1,
+    );
+    if (r < 0 || c < 0) return;
+    setRangeEnd({ rowId: pasteRows[r].id, columnId: columns[c].id });
+  };
+
+  const clearRange = () =>
+    db.apply((tr, pos) => {
+      for (const row of rangeRows)
+        for (const column of rangeColumns)
+          setDatabaseCellValue(tr, pos, row.id, column.id, null);
+    });
+
+  /** Lets the browser copy / paste through a focused hidden textarea, then returns focus. */
+  const clipboard = (kind: "copy" | "cut" | "paste") => {
+    const sink = sinkRef.current;
+    if (!sink || !range) return false;
+    sink.value =
+      kind === "paste" ? "" : rangeToTSV(db, rangeRows, rangeColumns);
+    sink.focus({ preventScroll: true });
+    sink.select();
+    setTimeout(() => {
+      if (kind === "cut") clearRange();
+      if (document.activeElement === sink) focusGrid();
+    }, 0);
+    return true;
+  };
+
+  const paste = (text: string) => {
+    if (!range || !db.editable) return;
+    const result = pasteIntoTable(db, text, pasteRows, columns, {
+      top: range.top,
+      left: range.left,
+      height: range.bottom - range.top + 1,
+      width: range.right - range.left + 1,
+    });
+    if (!result?.rowIds.length) return;
+    const shown = range.top + result.rowIds.length;
+    if (!grouping && shown > limitOf(""))
+      setLimits((current) => ({ ...current, "": shown }));
+    setSelection({ rowId: result.rowIds[0], columnId: result.columnIds[0] });
+    setRangeEnd(
+      result.rowIds.length * result.columnIds.length > 1
+        ? {
+            rowId: result.rowIds[result.rowIds.length - 1],
+            columnId: result.columnIds[result.columnIds.length - 1],
+          }
+        : null,
+    );
   };
 
   const finishEdit = (reason: EditDoneReason) => {
@@ -192,16 +320,22 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
   const addRow = (
     side: { afterRowId?: string; beforeRowId?: string } = {},
     values?: Record<string, DatabaseCellValue>,
+    /** Group the row lands in, so its "Load more" limit makes room for it. */
+    groupKey = "",
   ) => {
     const id = createRow(db, { ...side, values });
     if (!id) return;
+    setLimits((current) => ({
+      ...current,
+      [groupKey]: (current[groupKey] ?? PAGE_SIZE) + 1,
+    }));
     const afterId = side.beforeRowId
       ? (rows[rows.findIndex((row) => row.id === side.beforeRowId) - 1]?.id ??
         null)
       : side.afterRowId;
     freeze({ id, afterId });
     if (!columns.length) return;
-    setSelection({ rowId: id, columnId: columns[0].id });
+    select({ rowId: id, columnId: columns[0].id });
     setEditing({});
   };
 
@@ -217,27 +351,50 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
       event.preventDefault();
       event.stopPropagation();
     };
+    const arrows: Record<string, [number, number]> = {
+      ArrowUp: [-1, 0],
+      ArrowDown: [1, 0],
+      ArrowLeft: [0, -1],
+      ArrowRight: [0, 1],
+    };
+    if (arrows[event.key]) {
+      handled();
+      const [rowDelta, columnDelta] = arrows[event.key];
+      if (event.shiftKey && selection) return extend(rowDelta, columnDelta);
+      return move(rowDelta, columnDelta);
+    }
+    const key = event.key.toLowerCase();
+    if (mod && !event.altKey && ["c", "x", "v"].includes(key)) {
+      // Copy works read-only; the native event follows on the focused sink.
+      if (key !== "c" && !db.editable) return;
+      if (clipboard(key === "c" ? "copy" : key === "x" ? "cut" : "paste"))
+        event.stopPropagation();
+      return;
+    }
+    if (mod && key === "a" && pasteRows.length && columns.length) {
+      handled();
+      setSelection({ rowId: pasteRows[0].id, columnId: columns[0].id });
+      setRangeEnd({
+        rowId: pasteRows[pasteRows.length - 1].id,
+        columnId: columns[columns.length - 1].id,
+      });
+      return;
+    }
     switch (event.key) {
-      case "ArrowUp":
-        handled();
-        return move(-1, 0);
-      case "ArrowDown":
-        handled();
-        return move(1, 0);
-      case "ArrowLeft":
-        handled();
-        return move(0, -1);
-      case "ArrowRight":
-        handled();
-        return move(0, 1);
       case "Tab":
         if (!selection) return;
         handled();
         return move(0, event.shiftKey ? -1 : 1, true);
       case "Escape":
-        if (!selection) return;
-        handled();
-        return setSelection(null);
+        if (selection) {
+          handled();
+          return select(null);
+        }
+        if (checked.size) {
+          handled();
+          setChecked(new Set());
+        }
+        return;
     }
     if (!selection || !db.editable) return;
     if (selection.rowId === HEADER_ROW) {
@@ -253,15 +410,7 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
       else startEdit(selection);
     } else if (event.key === "Backspace" || event.key === "Delete") {
       handled();
-      db.apply((tr, pos) =>
-        setDatabaseCellValue(
-          tr,
-          pos,
-          selection.rowId,
-          selection.columnId,
-          null,
-        ),
-      );
+      clearRange();
     } else if (event.key.length === 1 && !mod && !event.altKey) {
       const column = columns.find((item) => item.id === selection.columnId);
       // Typing starts editing text-like cells with the typed character; progress takes digits.
@@ -299,8 +448,12 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
     cursor: "grabbing",
   });
 
+  // Nothing can be dropped before the title column.
   const columnDropIndex = (x: number, y: number) =>
-    hitTestList(containerRef.current, "th[data-column-id]", "x", x, y);
+    Math.max(
+      hitTestList(containerRef.current, "th[data-column-id]", "x", x, y),
+      1,
+    );
   const columnDrag = usePointerDrag<string>({
     onMove: (_, x, y) => setColumnDrop(columnDropIndex(x, y)),
     onDrop: (columnId, x, y) => {
@@ -369,6 +522,7 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
     number: number,
     key: string,
     index: number,
+    groupKey = "",
   ) => (
     <DatabaseTableRow
       key={key}
@@ -377,22 +531,34 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
       rowNumber={db.view.showRowNumbers ? number : null}
       columns={columns}
       selection={selection?.rowId === row.id ? selection.columnId : null}
+      rangeColumns={rangeRowIds.has(row.id) ? rangeColumnIds : null}
+      wrapColumns={wrapColumns}
+      checked={checked.has(row.id)}
+      checking={checked.size > 0}
+      onCheck={(shiftKey) => toggleCheck(row.id, shiftKey)}
       editing={selection?.rowId === row.id && editing ? editing : null}
       dragging={rowDrag.dragging === row.id}
       dropBefore={dropIndex === index}
       canDrag={db.editable}
       dragBlocked={dragBlocked}
-      onCellMouseDown={(columnId) => {
+      onCellMouseDown={(columnId, shiftKey) => {
         focusGrid();
-        setSelection({ rowId: row.id, columnId });
+        if (shiftKey && selection && selection.rowId !== HEADER_ROW) {
+          setRangeEnd({ rowId: row.id, columnId });
+          return;
+        }
+        select({ rowId: row.id, columnId });
         const column = columns.find((item) => item.id === columnId);
         if (column?.type === "checkbox") startEdit({ rowId: row.id, columnId });
+        else startRangeDrag({ rowId: row.id, columnId });
       }}
       onCellDoubleClick={(columnId) => startEdit({ rowId: row.id, columnId })}
       onEditDone={finishEdit}
       onInsert={(side) =>
         addRow(
           side === "above" ? { beforeRowId: row.id } : { afterRowId: row.id },
+          undefined,
+          groupKey,
         )
       }
       onGripPointerDown={(event) =>
@@ -400,6 +566,80 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
       }
     />
   );
+
+  /** Dragging from a cell selects the cells it passes over. */
+  const startRangeDrag = (anchor: CellPosition) => {
+    const onMove = (event: globalThis.MouseEvent) => {
+      const cell = elementAt(
+        event.clientX,
+        event.clientY,
+        "td[data-column-id]",
+      );
+      const rowId =
+        cell?.closest<HTMLElement>("tr[data-row-id]")?.dataset.rowId;
+      const columnId = cell?.dataset.columnId;
+      if (!rowId || !columnId || !containerRef.current?.contains(cell)) return;
+      setRangeEnd(
+        rowId === anchor.rowId && columnId === anchor.columnId
+          ? null
+          : { rowId, columnId },
+      );
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  /** Shift-click checks every row between the last checked one and this one. */
+  const toggleCheck = (rowId: string, shiftKey: boolean) => {
+    const next = new Set(checked);
+    const anchor = lastChecked.current;
+    const from = anchor ? rows.findIndex((row) => row.id === anchor) : -1;
+    const to = rows.findIndex((row) => row.id === rowId);
+    if (shiftKey && from >= 0 && to >= 0) {
+      const on = !checked.has(rowId);
+      for (const row of rows.slice(Math.min(from, to), Math.max(from, to) + 1))
+        if (on) next.add(row.id);
+        else next.delete(row.id);
+    } else if (next.has(rowId)) next.delete(rowId);
+    else next.add(rowId);
+    lastChecked.current = rowId;
+    setChecked(next);
+  };
+  const checkState: "none" | "some" | "all" = !checked.size
+    ? "none"
+    : viewRows.every((row) => checked.has(row.id))
+      ? "all"
+      : "some";
+  const checkedRows = viewRows.filter((row) => checked.has(row.id));
+
+  const wrapColumns = new Set(
+    db.view.columns.filter((entry) => entry.wrap).map((entry) => entry.id),
+  );
+
+  /** "Load more" under the rows of a group ("" when not grouped). */
+  const loadMore = (key: string, total: number) => {
+    const limit = limitOf(key);
+    if (total <= limit) return null;
+    return (
+      <tr key={`more:${key}`} className={classes.loadMoreRow}>
+        <td className={classes.gutterCell} />
+        <td colSpan={columns.length + (db.view.showRowNumbers ? 1 : 0)}>
+          <UnstyledButton
+            className={classes.loadMore}
+            onClick={() =>
+              setLimits((current) => ({ ...current, [key]: limit + PAGE_SIZE }))
+            }
+          >
+            {t("Load more ({{count}} remaining)", { count: total - limit })}
+          </UnstyledButton>
+        </td>
+      </tr>
+    );
+  };
 
   const addColumn = () => {
     let id = "";
@@ -409,128 +649,184 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
     if (id) setTimeout(() => setMenuColumnId(id), 0);
   };
 
+  const titleLeft =
+    GUTTER_WIDTH + (db.view.showRowNumbers ? ROW_NUMBER_WIDTH : 0);
+
   return (
-    <div
-      ref={containerRef}
-      className={classes.tableScroll}
-      tabIndex={0}
-      data-db-focus
-      onKeyDown={onKeyDown}
-      onBlur={(event) => {
-        if (
-          !editing &&
-          !event.currentTarget.contains(event.relatedTarget as Node)
-        )
-          setSelection(null);
-      }}
-    >
+    <div className={classes.tableView}>
+      {checkedRows.length > 0 && (
+        <DatabaseBulkBar
+          db={db}
+          rows={checkedRows}
+          onClear={() => setChecked(new Set())}
+        />
+      )}
       <div
-        className={classes.tableBlock}
-        data-align={db.view.align}
-        style={{ width: tableWidth + (db.editable ? ADD_COLUMN_WIDTH : 0) }}
+        ref={containerRef}
+        className={classes.tableScroll}
+        tabIndex={0}
+        data-db-focus
+        data-row-height={db.view.rowHeight}
+        data-scrolled-x={scrolledX || undefined}
+        style={
+          {
+            "--db-gutter": `${GUTTER_WIDTH}px`,
+            "--db-title-left": `${titleLeft}px`,
+          } as CSSProperties
+        }
+        onScroll={(event) => {
+          const next = event.currentTarget.scrollLeft > 0;
+          if (next !== scrolledX) setScrolledX(next);
+        }}
+        onKeyDown={onKeyDown}
+        onBlur={(event) => {
+          if (
+            !editing &&
+            !event.currentTarget.contains(event.relatedTarget as Node)
+          )
+            select(null);
+        }}
       >
-        <div className={classes.tableFrame}>
-          <table
-            ref={tableRef}
-            className={classes.table}
-            style={{ width: tableWidth }}
-          >
-            <DatabaseTableHeader
-              db={db}
-              columns={columns}
-              liveWidths={liveWidths}
-              setLiveWidths={setLiveWidths}
-              menuColumnId={menuColumnId}
-              setMenuColumnId={(id) => {
-                setMenuColumnId(id);
-                if (!id) focusGrid();
+        <textarea
+          ref={sinkRef}
+          className={classes.clipboardSink}
+          tabIndex={-1}
+          aria-hidden
+          readOnly={!db.editable}
+          onPaste={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            paste(event.clipboardData.getData("text/plain"));
+            focusGrid();
+          }}
+        />
+        <div
+          className={classes.tableBlock}
+          data-align={db.view.align}
+          style={{ width: tableWidth + (db.editable ? ADD_COLUMN_WIDTH : 0) }}
+        >
+          <div className={classes.tableFrame}>
+            <table
+              ref={tableRef}
+              className={classes.table}
+              style={{ width: tableWidth }}
+            >
+              <DatabaseTableHeader
+                db={db}
+                columns={columns}
+                liveWidths={liveWidths}
+                setLiveWidths={setLiveWidths}
+                menuColumnId={menuColumnId}
+                setMenuColumnId={(id) => {
+                  setMenuColumnId(id);
+                  if (!id) focusGrid();
+                }}
+                selectedColumnId={
+                  selection?.rowId === HEADER_ROW ? selection.columnId : null
+                }
+                draggingColumnId={columnDrag.dragging}
+                checkState={checkState}
+                onCheckAll={() =>
+                  setChecked(
+                    checkState === "all"
+                      ? new Set()
+                      : new Set(viewRows.map((row) => row.id)),
+                  )
+                }
+                onColumnPointerDown={(event, column) =>
+                  columnDrag.onPointerDown(
+                    event,
+                    column.id,
+                    event.currentTarget.closest("th"),
+                  )
+                }
+              />
+              <tbody>
+                {grouping
+                  ? (() => {
+                      let number = 0;
+                      return grouping.groups.flatMap((group) => {
+                        const open = !collapsed.has(group.key);
+                        return [
+                          <DatabaseTableGroupRow
+                            key={`group:${group.key}`}
+                            db={db}
+                            column={grouping.column}
+                            group={group}
+                            span={
+                              columns.length + (db.view.showRowNumbers ? 1 : 0)
+                            }
+                            collapsed={!open}
+                            onToggle={() => toggleGroup(group.key)}
+                            onAdd={() =>
+                              addRow(
+                                {},
+                                groupValues(grouping.column, group),
+                                group.key,
+                              )
+                            }
+                          />,
+                          ...(open
+                            ? group.rows
+                                .slice(0, limitOf(group.key))
+                                .map((row) =>
+                                  renderRow(
+                                    row,
+                                    ++number,
+                                    `${group.key}:${row.id}`,
+                                    -1,
+                                    group.key,
+                                  ),
+                                )
+                            : []),
+                          open && loadMore(group.key, group.rows.length),
+                        ];
+                      });
+                    })()
+                  : [
+                      ...rows.map((row, index) =>
+                        renderRow(row, index + 1, row.id, index),
+                      ),
+                      loadMore("", ordered.length),
+                    ]}
+              </tbody>
+            </table>
+            {db.editable && (
+              <UnstyledButton
+                className={classes.addColumnStrip}
+                style={{ width: ADD_COLUMN_WIDTH }}
+                aria-label={t("Add column")}
+                title={t("Add column")}
+                onClick={addColumn}
+              >
+                <IconPlus size={14} />
+              </UnstyledButton>
+            )}
+          </div>
+          {dropIndex !== null && dropIndex >= rows.length && (
+            <div className={classes.rowDropEnd} style={{ width: dataWidth }} />
+          )}
+          {columnDrop !== null && (
+            <div
+              className={classes.columnDrop}
+              style={{
+                left: columnDropLeft(columnDrop),
+                height: tableRef.current?.offsetHeight,
               }}
-              selectedColumnId={
-                selection?.rowId === HEADER_ROW ? selection.columnId : null
-              }
-              draggingColumnId={columnDrag.dragging}
-              onColumnPointerDown={(event, column) =>
-                columnDrag.onPointerDown(
-                  event,
-                  column.id,
-                  event.currentTarget.closest("th"),
-                )
-              }
             />
-            <tbody>
-              {grouping
-                ? (() => {
-                    let number = 0;
-                    return grouping.groups.flatMap((group) => {
-                      const open = !collapsed.has(group.key);
-                      return [
-                        <DatabaseTableGroupRow
-                          key={`group:${group.key}`}
-                          db={db}
-                          column={grouping.column}
-                          group={group}
-                          span={
-                            columns.length + (db.view.showRowNumbers ? 1 : 0)
-                          }
-                          collapsed={!open}
-                          onToggle={() => toggleGroup(group.key)}
-                          onAdd={() =>
-                            addRow({}, groupValues(grouping.column, group))
-                          }
-                        />,
-                        ...(open
-                          ? group.rows.map((row) =>
-                              renderRow(
-                                row,
-                                ++number,
-                                `${group.key}:${row.id}`,
-                                -1,
-                              ),
-                            )
-                          : []),
-                      ];
-                    });
-                  })()
-                : rows.map((row, index) =>
-                    renderRow(row, index + 1, row.id, index),
-                  )}
-            </tbody>
-          </table>
+          )}
           {db.editable && (
             <UnstyledButton
-              className={classes.addColumnStrip}
-              style={{ width: ADD_COLUMN_WIDTH }}
-              aria-label={t("Add column")}
-              title={t("Add column")}
-              onClick={addColumn}
+              className={classes.newRowStrip}
+              style={{ width: dataWidth }}
+              aria-label={t("New row")}
+              title={t("New row")}
+              onClick={() => addRow()}
             >
               <IconPlus size={14} />
             </UnstyledButton>
           )}
         </div>
-        {dropIndex !== null && dropIndex >= rows.length && (
-          <div className={classes.rowDropEnd} style={{ width: dataWidth }} />
-        )}
-        {columnDrop !== null && (
-          <div
-            className={classes.columnDrop}
-            style={{
-              left: columnDropLeft(columnDrop),
-              height: tableRef.current?.offsetHeight,
-            }}
-          />
-        )}
-        {db.editable && (
-          <UnstyledButton
-            className={classes.newRowStrip}
-            style={{ width: dataWidth }}
-            aria-label={t("New row")}
-            title={t("New row")}
-            onClick={() => addRow()}
-          >
-            <IconPlus size={14} />
-          </UnstyledButton>
-        )}
       </div>
     </div>
   );

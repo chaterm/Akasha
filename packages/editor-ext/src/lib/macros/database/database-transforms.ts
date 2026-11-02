@@ -12,6 +12,7 @@ import {
 } from './database-logic';
 import {
   hasDatabaseOptions,
+  isDatabaseDate,
   normalizeDatabaseCellValue,
   normalizeDatabaseColumns,
   normalizeDatabaseViews,
@@ -140,12 +141,17 @@ export function insertDatabaseRow(
     !before && options.afterRowId
       ? findRow(tr, dbPos, options.afterRowId)
       : null;
-  const pos = before
-    ? before.pos
-    : after
-      ? after.pos + after.node.nodeSize
-      : dbPos + db.nodeSize - 1;
-  tr.insert(pos, row);
+  // Keep existing Yjs row/cell identities stable, including when inserting
+  // above a row that another user is editing.
+  tr.insert(dbPos + db.nodeSize - 1, row);
+  if (before || after) {
+    const ids = readDatabaseRows(db).map((item) => item.id);
+    const index = before
+      ? ids.indexOf(before.node.attrs.id)
+      : ids.indexOf(after!.node.attrs.id) + 1;
+    ids.splice(index, 0, id);
+    tr.setNodeAttribute(dbPos, 'rowOrder', ids);
+  }
   return id;
 }
 
@@ -159,7 +165,7 @@ export function deleteDatabaseRow(
   return tr;
 }
 
-/** Moves a row before `beforeRowId`, or to the end when it is null. */
+/** Moves a row in the saved order, preserving its Yjs identity and concurrent cell edits. */
 export function moveDatabaseRow(
   tr: Transaction,
   dbPos: number,
@@ -167,13 +173,14 @@ export function moveDatabaseRow(
   beforeRowId: string | null,
 ): Transaction {
   if (rowId === beforeRowId) return tr;
-  const row = findRow(tr, dbPos, rowId);
-  if (!row) return tr;
-  tr.delete(row.pos, row.pos + row.node.nodeSize);
-  const before = beforeRowId ? findRow(tr, dbPos, beforeRowId) : null;
   const db = getDatabase(tr, dbPos);
-  tr.insert(before ? before.pos : dbPos + db.nodeSize - 1, row.node);
-  return tr;
+  const ids = readDatabaseRows(db).map((row) => row.id);
+  const from = ids.indexOf(rowId);
+  if (from < 0) return tr;
+  ids.splice(from, 1);
+  const before = beforeRowId ? ids.indexOf(beforeRowId) : -1;
+  ids.splice(before < 0 ? ids.length : before, 0, rowId);
+  return tr.setNodeAttribute(dbPos, 'rowOrder', ids);
 }
 
 export function setDatabaseCellValue(
@@ -241,6 +248,7 @@ function placeColumnInViews(
       width: null,
       align: null,
       hidden: false,
+      wrap: false,
     });
     return { ...view, columns: entries };
   });
@@ -298,7 +306,7 @@ export function duplicateDatabaseColumn(
   return id;
 }
 
-/** Changes the column type and converts every existing value (see convertDatabaseColumn). */
+/** Changes the column type and converts every existing value (see convertDatabaseColumn). The title stays text. */
 export function changeDatabaseColumnType(
   tr: Transaction,
   dbPos: number,
@@ -308,7 +316,8 @@ export function changeDatabaseColumnType(
   const db = getDatabase(tr, dbPos);
   const columns = getColumns(db);
   const column = columns.find((item) => item.id === columnId);
-  if (!column || column.type === type) return tr;
+  if (!column || column.type === type || column.id === columns[0].id)
+    return tr;
   const rows = readDatabaseRows(db);
   const { column: next, convert } = convertDatabaseColumn(
     column,
@@ -352,7 +361,7 @@ export function updateDatabaseColumn(
   return writeSchema(tr, dbPos, columns, getViews(db));
 }
 
-/** Removes the column, its cells in every row, and view references to it. The last column cannot be deleted. */
+/** Removes the column, its cells in every row, and view references to it. The title column cannot be deleted. */
 export function deleteDatabaseColumn(
   tr: Transaction,
   dbPos: number,
@@ -361,7 +370,7 @@ export function deleteDatabaseColumn(
   const db = getDatabase(tr, dbPos);
   const columns = getColumns(db);
   const target = columns.find((column) => column.id === columnId);
-  if (!target || columns.length <= 1) return tr;
+  if (!target || target.id === columns[0].id) return tr;
 
   const cellPositions: { from: number; to: number }[] = [];
   for (const row of findRows(tr, dbPos)) {
@@ -412,6 +421,7 @@ export function updateDatabaseView(
     if (patch.groupBy !== undefined && patch.groupBy !== view.groupBy) {
       next.groupOrder = [];
       next.hiddenGroups = [];
+      next.collapsedGroups = [];
       next.cardOrder = {};
     }
     return next;
@@ -528,7 +538,11 @@ export function moveDatabaseRowToDate(
   if (!view?.dateColumnId || !row) return tr;
   const range = getDatabaseDateRange(row, view);
   setDatabaseCellValue(tr, dbPos, rowId, view.dateColumnId, date);
-  if (range && view.endDateColumnId && range.end !== range.start) {
+  if (
+    range &&
+    view.endDateColumnId &&
+    isDatabaseDate(row.values[view.endDateColumnId])
+  ) {
     const days = diffDatabaseDays(range.start, range.end);
     setDatabaseCellValue(
       tr,

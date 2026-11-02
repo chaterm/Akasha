@@ -37,6 +37,7 @@ import DatabaseTableView from "./database-table-view";
 import DatabaseKanbanView from "./database-kanban-view";
 import DatabaseCalendarView from "./database-calendar-view";
 import DatabaseTimelineView from "./database-timeline-view";
+import DatabaseAgendaView from "./database-agenda-view";
 import { pageIdsOf, usePageInfo, withPageInfo } from "./use-page-info";
 import classes from "./database.module.css";
 
@@ -180,6 +181,7 @@ export default function DatabaseView(props: NodeViewProps) {
   return (
     <NodeViewWrapper
       className={classes.wrapper}
+      data-database-id={node.attrs.id || undefined}
       contentEditable={false}
       onMouseDown={(event: MouseEvent) => {
         // Keep focus out of the ProseMirror root: otherwise Backspace typed
@@ -243,6 +245,8 @@ export default function DatabaseView(props: NodeViewProps) {
         <DatabaseCalendarView db={db} />
       ) : view.type === "timeline" ? (
         <DatabaseTimelineView db={db} />
+      ) : view.type === "agenda" ? (
+        <DatabaseAgendaView db={db} />
       ) : view.type === "mine" && !mineColumn ? (
         <Text size="sm" c="dimmed" ta="center" p="lg">
           {t("Add a member property to see the rows assigned to you.")}
@@ -252,6 +256,7 @@ export default function DatabaseView(props: NodeViewProps) {
       )}
       <DatabaseRowDetail
         db={db}
+        databaseId={String(node.attrs.id || "")}
         rowId={openRowId}
         order={order}
         onNavigate={setOpenRowId}

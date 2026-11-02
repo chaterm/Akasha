@@ -180,6 +180,15 @@ export function groupValues(
   };
 }
 
+/** Views laid out by a start (and optional end) date column. */
+export function isDateView(view: Pick<DatabaseView, "type">) {
+  return (
+    view.type === "calendar" ||
+    view.type === "timeline" ||
+    view.type === "agenda"
+  );
+}
+
 /** "Mine" is a table over the viewer's rows, so it takes the table's settings. */
 export function isTableView(view: Pick<DatabaseView, "type">) {
   return view.type === "table" || view.type === "mine";

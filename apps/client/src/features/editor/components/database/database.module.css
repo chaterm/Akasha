@@ -519,13 +519,69 @@
   overflow-x: auto;
   outline: none;
   padding-bottom: 2px;
-  margin-left: -52px;
+  margin-left: calc(-1 * var(--db-gutter));
+
+  /* Cells are opaque so the sticky columns hide what scrolls under them. */
+  --db-cell-bg: var(--mantine-color-body);
+
+  &[data-row-height="compact"] {
+    --db-row-height: 28px;
+  }
+
+  &[data-row-height="comfortable"] {
+    --db-row-height: 44px;
+  }
 }
 
-/* Overrides the editor's `.ProseMirror table` styles. */
+/* Positions the bulk action bar over the view bar. */
+.tableView {
+  position: relative;
+}
+
+/* Hidden target the browser copies from and pastes into. */
+.clipboardSink {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  resize: none;
+  pointer-events: none;
+}
+
+.bulkBar {
+  position: absolute;
+  z-index: 6;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  min-height: 32px;
+  padding: 0 4px;
+  border-radius: var(--mantine-radius-sm);
+  background: light-dark(var(--mantine-color-blue-0), var(--mantine-color-dark-6));
+  box-shadow: 0 0 0 1px light-dark(var(--mantine-color-blue-2), var(--mantine-color-dark-4));
+}
+
+.bulkEditor {
+  display: inline-flex;
+  min-width: 160px;
+
+  .cellInput {
+    height: 26px;
+    border: 1px solid var(--db-selected);
+    border-radius: var(--mantine-radius-sm);
+  }
+}
+
+/* Overrides the editor's `.ProseMirror table` styles. Separate borders:
+   collapsed ones are painted by the table and would not follow sticky cells. */
 .wrapper table.table {
   table-layout: fixed;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   min-width: 0;
   margin: 0;
 
@@ -536,7 +592,7 @@
     border: 0;
     border-bottom: 1px solid var(--db-border);
     vertical-align: middle;
-    background: transparent;
+    background: var(--db-cell-bg);
     font-weight: normal;
   }
 
@@ -558,12 +614,78 @@
   thead th:not(.gutterCell) {
     border-top: 1px solid var(--db-border);
   }
+
+  /* Gutter, row number and title stay put while the table scrolls sideways. */
+  .gutterCell,
+  .rowNumberCell,
+  [data-title-cell] {
+    position: sticky;
+    z-index: 1;
+  }
+
+  .gutterCell {
+    left: 0;
+  }
+
+  .rowNumberCell {
+    left: var(--db-gutter);
+  }
+
+  [data-title-cell] {
+    left: var(--db-title-left);
+  }
+
+  /* The header row is moved down by useStickyHeader while the table scrolls with the page. */
+  thead tr {
+    position: relative;
+    z-index: 4;
+  }
+
+  thead tr[data-pinned] th:not(.gutterCell) {
+    box-shadow: 0 1px 0 var(--db-border), 0 4px 6px -4px rgba(0, 0, 0, 0.15);
+  }
+}
+
+/* The title column casts a shadow over the columns scrolled under it. */
+.tableScroll[data-scrolled-x] table.table [data-title-cell] {
+  box-shadow: 4px 0 6px -4px rgba(0, 0, 0, 0.18);
 }
 
 /* The gutter sits outside the table frame. */
 .gutterCell {
-  width: 52px;
+  width: var(--db-gutter);
   border-bottom-color: transparent !important;
+}
+
+/* Row checkbox: shown on hover, or on every row once one is checked. */
+.rowCheck {
+  opacity: 0;
+  transition: opacity 100ms;
+
+  &[data-visible] {
+    opacity: 1;
+  }
+}
+
+.row:hover .rowCheck,
+.wrapper table.table thead:hover .rowCheck {
+  opacity: 1;
+}
+
+.loadMoreRow > td:not(.gutterCell) {
+  height: 32px;
+}
+
+.loadMore {
+  position: sticky;
+  left: var(--db-title-left);
+  padding: 0 8px;
+  font-size: var(--mantine-font-size-xs);
+  color: var(--mantine-color-dimmed);
+
+  &:hover {
+    color: var(--mantine-color-text);
+  }
 }
 
 /* Beats the editor's `.ProseMirror table th { text-align: left }`. */
@@ -594,6 +716,13 @@
 /* Header row of a group in a grouped table. */
 .groupRow > td:not(.gutterCell) {
   background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-7));
+}
+
+/* The group name stays visible while the table scrolls sideways. */
+.groupRow .groupHeader {
+  position: sticky;
+  left: var(--db-gutter);
+  width: max-content;
 }
 
 .groupRow:hover .hoverAction {
@@ -660,7 +789,7 @@
 /* New-row strip: from the table's left edge to its right edge. */
 .newRowStrip {
   height: 30px;
-  margin-left: 52px;
+  margin-left: var(--db-gutter);
   padding-left: 8px;
   border-radius: 0 0 var(--mantine-radius-sm) var(--mantine-radius-sm);
 }
@@ -682,6 +811,10 @@
     background: var(--db-hover);
   }
 
+  &[data-checked] > td:not(.gutterCell) {
+    background: light-dark(var(--mantine-color-blue-0), var(--mantine-color-dark-6));
+  }
+
   &[data-dragging] {
     opacity: 0.4;
   }
@@ -698,7 +831,7 @@
 
 .rowDropEnd {
   height: 2px;
-  margin-left: 52px;
+  margin-left: var(--db-gutter);
   margin-top: -1px;
   background: var(--mantine-color-blue-5);
 }
@@ -832,6 +965,21 @@
   font-size: var(--mantine-font-size-sm);
 }
 
+/* Wrapped cells grow with their content; the row height becomes a minimum. */
+.cell[data-wrap] .cellContent {
+  height: auto;
+  min-height: var(--db-row-height);
+  /* One line is exactly the row height; more lines grow the row. */
+  padding-block: calc((var(--db-row-height) - 20px) / 2);
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cell[data-in-range] {
+  background: light-dark(var(--mantine-color-blue-0), var(--mantine-color-dark-5)) !important;
+}
+
 .cellInput {
   width: 100%;
   height: var(--db-row-height);
@@ -861,7 +1009,266 @@
   transform: translate(-50%, -50%);
 }
 
-/* ---------------------------------------------------------------- timeline */
+/* ---------------------------------------------------------------- gantt */
+
+.gantt {
+  position: relative;
+}
+
+/* Scrolls sideways; the label column and the scale stick. */
+.ganttScroll {
+  overflow-x: auto;
+  border: 1px solid var(--db-border);
+  border-radius: var(--mantine-radius-sm);
+  --gantt-bg: var(--mantine-color-body);
+}
+
+.ganttCanvas {
+  position: relative;
+}
+
+.ganttHeader {
+  display: flex;
+  height: 52px;
+  border-bottom: 1px solid var(--db-border);
+}
+
+.ganttCorner,
+.ganttLabel,
+.ganttNew {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  flex: 0 0 var(--gantt-label);
+  width: var(--gantt-label);
+  border-right: 1px solid var(--db-border);
+  background: var(--gantt-bg);
+}
+
+.ganttCorner {
+  display: flex;
+  align-items: flex-end;
+  padding: 0 10px 8px;
+  font-size: var(--mantine-font-size-xs);
+  font-weight: 500;
+  color: var(--mantine-color-dimmed);
+}
+
+.ganttScale {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.ganttScaleRow {
+  position: relative;
+  height: 26px;
+}
+
+.ganttMajor,
+.ganttMinor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--mantine-font-size-xs);
+}
+
+.ganttMajor {
+  padding-left: 6px;
+  border-left: 1px solid var(--db-border);
+  font-weight: 600;
+
+  /* The label follows the view while its span is partly scrolled away. */
+  > span {
+    position: sticky;
+    left: calc(var(--gantt-label) + 6px);
+  }
+}
+
+.ganttMinor {
+  justify-content: center;
+  border-left: 1px solid var(--db-border);
+  color: var(--mantine-color-dimmed);
+
+  &[data-today] {
+    color: var(--mantine-color-red-6);
+    font-weight: 600;
+  }
+}
+
+.ganttBody {
+  position: relative;
+}
+
+.ganttGrid {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+
+.ganttGridLine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6));
+
+  &[data-weekend] {
+    background: light-dark(var(--mantine-color-gray-0), rgba(255, 255, 255, 0.02));
+  }
+}
+
+.ganttToday {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--mantine-color-red-5);
+  opacity: 0.7;
+}
+
+.ganttRow {
+  position: relative;
+  display: flex;
+  height: var(--gantt-row);
+  border-bottom: 1px solid light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6));
+
+  &:hover {
+    --gantt-bg: var(--db-hover);
+  }
+
+  &:last-child {
+    border-bottom: 0;
+  }
+}
+
+.ganttLabel {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--mantine-font-size-sm);
+
+  &:hover {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+}
+
+.ganttNew {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: var(--mantine-font-size-sm);
+  color: var(--mantine-color-dimmed);
+
+  &:hover {
+    color: var(--mantine-color-text);
+  }
+}
+
+.ganttTrack {
+  position: relative;
+  flex: 0 0 auto;
+
+  &[data-schedulable] {
+    cursor: pointer;
+  }
+}
+
+.ganttGhost {
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  border: 1px dashed var(--mantine-color-blue-4);
+  border-radius: var(--mantine-radius-sm);
+  pointer-events: none;
+}
+
+.ganttBar {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  display: flex;
+  align-items: center;
+  min-width: 6px;
+  padding: 0 8px;
+  overflow: hidden;
+  border-left: 3px solid var(--bar-color);
+  border-radius: var(--mantine-radius-sm);
+  background: var(--bar-tint);
+  font-size: var(--mantine-font-size-xs);
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+
+  &[data-editable] {
+    cursor: grab;
+  }
+
+  &[data-dragging] {
+    cursor: grabbing;
+    box-shadow: var(--mantine-shadow-sm);
+    opacity: 0.85;
+  }
+
+  &:hover .ganttHandle {
+    opacity: 1;
+  }
+}
+
+.ganttBarTitle,
+.ganttOutsideTitle {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ganttOutsideTitle {
+  position: absolute;
+  top: 50%;
+  max-width: 240px;
+  transform: translateY(-50%);
+  font-size: var(--mantine-font-size-xs);
+  pointer-events: none;
+}
+
+.ganttHandle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+  opacity: 0;
+
+  &::after {
+    content: "";
+    position: absolute;
+    top: 25%;
+    bottom: 25%;
+    left: 3px;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--bar-color);
+  }
+
+  &[data-edge="start"] {
+    left: 0;
+  }
+
+  &[data-edge="end"] {
+    right: 0;
+  }
+}
+
+/* ---------------------------------------------------------------- agenda */
 
 /* A vertical axis: date label | node on the line | the entries of that date. */
 .timeline {
@@ -1086,6 +1493,27 @@
 
 /* ---------------------------------------------------------------- row detail */
 
+/* Side peek: full height, below the app's fixed bars. */
+.detailDrawer {
+  border-left: 1px solid var(--mantine-color-default-border);
+}
+
+.detailTitle {
+  display: block;
+  width: 100%;
+  padding: 0 6px;
+  border: 0;
+  outline: 0;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
 .detailRow {
   min-height: 32px;
 }
@@ -1131,9 +1559,69 @@
   }
 }
 
+.kanban {
+  --lane-width: 260px;
+
+  &[data-card-size="small"] {
+    --lane-width: 220px;
+  }
+
+  &[data-card-size="large"] {
+    --lane-width: 320px;
+  }
+}
+
+/* A folded lane: name and count read top to bottom. */
+.laneCollapsed {
+  display: flex;
+  flex: 0 0 40px;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-height: 160px;
+  padding: 8px 4px;
+  border-radius: var(--mantine-radius-md);
+  background: light-dark(
+    var(--mantine-color-gray-0),
+    var(--mantine-color-dark-7)
+  );
+
+  &[data-drop-target] {
+    box-shadow: 0 0 0 1px var(--mantine-color-blue-4);
+  }
+}
+
+.laneCollapsedLabel {
+  writing-mode: vertical-rl;
+  max-height: 200px;
+  overflow: hidden;
+
+  /* Badges are one line high with an ellipsis; let them run down the strip. */
+  :global(.mantine-Badge-root) {
+    height: auto;
+    max-width: none;
+    padding: 6px 2px;
+  }
+
+  :global(.mantine-Badge-label) {
+    overflow: visible;
+    text-overflow: clip;
+  }
+}
+
+.kanban[data-orientation="horizontal"] .laneCollapsed {
+  flex: 0 0 auto;
+  flex-direction: row;
+  min-height: 0;
+
+  .laneCollapsedLabel {
+    writing-mode: horizontal-tb;
+  }
+}
+
 .lane {
   position: relative;
-  flex: 0 0 260px;
+  flex: 0 0 var(--lane-width);
   padding: 4px;
   border-radius: var(--mantine-radius-md);
   background: light-dark(
@@ -1211,7 +1699,7 @@
 
     > * {
       position: relative;
-      flex: 0 0 240px;
+      flex: 0 0 calc(var(--lane-width) - 20px);
     }
 
     .card {

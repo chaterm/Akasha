@@ -20,13 +20,22 @@ interface TableRowProps {
   columns: DatabaseColumn[];
   /** Selected column id in this row. */
   selection: string | null;
+  /** Columns of a multi-cell range that covers this row. */
+  rangeColumns: Set<string> | null;
+  /** Columns that show their full value on several lines. */
+  wrapColumns: Set<string>;
+  /** Checked for a bulk action. */
+  checked: boolean;
+  /** Show the checkbox without hovering (some row is checked). */
+  checking: boolean;
+  onCheck: (shiftKey: boolean) => void;
   editing: { initialText?: string } | null;
   dragging: boolean;
   dropBefore: boolean;
   canDrag: boolean;
   /** Why rows cannot be dragged right now (sorted or grouped view); null = they can. */
   dragBlocked: string | null;
-  onCellMouseDown: (columnId: string) => void;
+  onCellMouseDown: (columnId: string, shiftKey: boolean) => void;
   onCellDoubleClick: (columnId: string) => void;
   onEditDone: (reason: EditDoneReason) => void;
   onInsert: (side: "above" | "below") => void;
@@ -39,6 +48,11 @@ export function DatabaseTableRow({
   rowNumber,
   columns,
   selection,
+  rangeColumns,
+  wrapColumns,
+  checked,
+  checking,
+  onCheck,
   editing,
   dragging,
   dropBefore,
@@ -51,11 +65,13 @@ export function DatabaseTableRow({
   onGripPointerDown,
 }: TableRowProps) {
   const { t } = useTranslation();
+  const titleId = db.columns[0]?.id;
 
   return (
     <tr
       data-row-id={row.id}
       className={classes.row}
+      data-checked={checked || undefined}
       data-dragging={dragging || undefined}
       data-drop-before={dropBefore || undefined}
     >
@@ -77,6 +93,18 @@ export function DatabaseTableRow({
             onInsert={onInsert}
             showExpand={rowNumber === null}
           />
+          {db.editable && (
+            <Checkbox
+              size="xs"
+              className={classes.rowCheck}
+              data-visible={checked || checking || undefined}
+              aria-label={t("Select row")}
+              checked={checked}
+              onChange={(event) =>
+                onCheck((event.nativeEvent as MouseEvent).shiftKey)
+              }
+            />
+          )}
         </div>
       </td>
       {rowNumber !== null && (
@@ -97,7 +125,8 @@ export function DatabaseTableRow({
       {columns.map((column) => {
         const selected = selection === column.id;
         const isEditing = selected && !!editing;
-        const display = CellDisplay({ db, column, row });
+        const wrap = wrapColumns.has(column.id);
+        const display = CellDisplay({ db, column, row, wrap });
         const content =
           column.type === "checkbox" ? (
             <Checkbox
@@ -113,6 +142,10 @@ export function DatabaseTableRow({
           <td
             key={column.id}
             className={classes.cell}
+            data-column-id={column.id}
+            data-title-cell={column.id === titleId || undefined}
+            data-wrap={wrap || undefined}
+            data-in-range={rangeColumns?.has(column.id) || undefined}
             data-selected={selected || undefined}
             data-editing={isEditing || undefined}
             data-type={column.type}
@@ -122,7 +155,7 @@ export function DatabaseTableRow({
                 return;
               if ((event.target as HTMLElement).closest("a,button")) return;
               event.preventDefault();
-              onCellMouseDown(column.id);
+              onCellMouseDown(column.id, event.shiftKey);
             }}
             onDoubleClick={(event) => {
               if (isEditing || column.type === "checkbox") return;

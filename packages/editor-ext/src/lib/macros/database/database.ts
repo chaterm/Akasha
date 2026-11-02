@@ -9,6 +9,7 @@ import {
   normalizeDatabaseCellValue,
   normalizeDatabaseColumns,
   normalizeDatabaseAlign,
+  normalizeDatabaseRowOrder,
   normalizeDatabaseViews,
   type DatabaseCellValue,
   type DatabaseColumn,
@@ -19,14 +20,14 @@ import {
 /**
  * Database block: one data source (columns + rows), many views.
  *
- *   database      attrs: id, title, columns, views
+ *   database      attrs: id, title, columns, views, rowOrder
  *     databaseRow   attrs: id
  *       databaseCell  attrs: columnId, value
  *
  * Every cell is its own node so y-prosemirror merges concurrent edits per
  * cell; a row-level JSON attr would let one user's edit overwrite another's
- * in a different column. `columns`/`views` are JSON attrs on the database
- * node and are last-writer-wins as a whole.
+ * in a different column. `columns`/`views`/`rowOrder` are JSON attrs on the
+ * database node and are last-writer-wins as a whole.
  *
  * Views only store configuration (see database-schema.ts). Moving a card in
  * a kanban or calendar view writes the cell value; sorting never reorders
@@ -46,7 +47,11 @@ function parseJSON(value: string | null): unknown {
   }
 }
 
-/** Reads rows in document order. If a column has duplicate cells (concurrent first writes), the first wins. */
+/**
+ * Reads rows in saved order, falling back to document order for unlisted rows
+ * and old documents. If a column has duplicate cells (concurrent first writes),
+ * the first wins. Deleted ids in the saved order are ignored.
+ */
 export function readDatabaseRows(node: PMNode): DatabaseRowData[] {
   const rows: DatabaseRowData[] = [];
   node.forEach((row) => {
@@ -60,7 +65,12 @@ export function readDatabaseRows(node: PMNode): DatabaseRowData[] {
     });
     rows.push({ id: String(row.attrs.id || ''), values });
   });
-  return rows;
+  const order = normalizeDatabaseRowOrder(node.attrs.rowOrder);
+  const rank = new Map(order.map((id, index) => [id, index]));
+  return rows.sort(
+    (a, b) =>
+      (rank.get(a.id) ?? order.length) - (rank.get(b.id) ?? order.length),
+  );
 }
 
 export function serializeDatabaseText(node: PMNode): string {
@@ -246,6 +256,9 @@ function renderDatabaseDOM(node: PMNode): any {
       'data-title-align': normalizeDatabaseAlign(node.attrs.titleAlign) ?? 'left',
       'data-columns': JSON.stringify(columns),
       'data-views': JSON.stringify(views),
+      'data-row-order': JSON.stringify(
+        normalizeDatabaseRowOrder(node.attrs.rowOrder),
+      ),
     },
     ...(title ? [['p', { 'data-database-title': '' }, title]] : []),
     ['table', {}, ['thead', {}, header], ['tbody', {}, ...body]],
@@ -333,6 +346,14 @@ export const Database = Node.create<DatabaseOptions>({
         parseHTML: (element) =>
           normalizeDatabaseAlign(element.getAttribute('data-title-align')) ??
           'left',
+        renderHTML: () => ({}),
+      },
+      rowOrder: {
+        default: [],
+        parseHTML: (element) =>
+          normalizeDatabaseRowOrder(
+            parseJSON(element.getAttribute('data-row-order')),
+          ),
         renderHTML: () => ({}),
       },
       columns: {

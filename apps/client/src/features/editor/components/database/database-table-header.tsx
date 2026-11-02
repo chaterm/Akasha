@@ -1,5 +1,5 @@
 import { useState, type PointerEvent } from "react";
-import { Text, UnstyledButton } from "@mantine/core";
+import { Checkbox, Text, UnstyledButton } from "@mantine/core";
 import { useTranslation } from "react-i18next";
 import {
   DATABASE_MIN_COLUMN_WIDTH,
@@ -54,6 +54,9 @@ interface HeaderProps {
   /** Header cell selected by keyboard navigation. */
   selectedColumnId: string | null;
   draggingColumnId: string | null;
+  /** Select-all state over the view's rows. */
+  checkState: "none" | "some" | "all";
+  onCheckAll: () => void;
   onColumnPointerDown: (
     event: PointerEvent<HTMLElement>,
     column: DatabaseColumn,
@@ -69,6 +72,8 @@ export function DatabaseTableHeader({
   setMenuColumnId,
   selectedColumnId,
   draggingColumnId,
+  checkState,
+  onCheckAll,
   onColumnPointerDown,
 }: HeaderProps) {
   const { t } = useTranslation();
@@ -114,7 +119,21 @@ export function DatabaseTableHeader({
   return (
     <thead>
       <tr>
-        <th className={classes.gutterCell} />
+        <th className={classes.gutterCell}>
+          <div className={classes.gutter}>
+            {db.editable && (
+              <Checkbox
+                size="xs"
+                className={classes.rowCheck}
+                data-visible={checkState !== "none" || undefined}
+                aria-label={t("Select all")}
+                checked={checkState === "all"}
+                indeterminate={checkState === "some"}
+                onChange={onCheckAll}
+              />
+            )}
+          </div>
+        </th>
         {db.view.showRowNumbers && (
           <th
             className={classes.rowNumberCell}
@@ -124,7 +143,9 @@ export function DatabaseTableHeader({
           </th>
         )}
         {columns.map((column) => {
-          const draggable = db.editable;
+          // The title column stays first.
+          const isTitle = column.id === db.columns[0]?.id;
+          const draggable = db.editable && !isTitle;
           const label = (
             <UnstyledButton
               className={classes.headerButton}
@@ -162,6 +183,7 @@ export function DatabaseTableHeader({
             <th
               key={column.id}
               data-column-id={column.id}
+              data-title-cell={isTitle || undefined}
               data-selected={selectedColumnId === column.id || undefined}
               data-dragging={draggingColumnId === column.id || undefined}
               style={{ width: columnWidth(db, column, liveWidths) }}

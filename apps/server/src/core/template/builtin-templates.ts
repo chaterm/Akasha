@@ -182,7 +182,8 @@ const database = (
   });
 
 /** 视图里隐藏这些列。 */
-const hide = (...ids: string[]) => ids.map((id) => ({ id, width: null, align: null, hidden: true }));
+const hide = (...ids: string[]) =>
+  ids.map((id) => ({ id, width: null, align: null, hidden: true, wrap: false }));
 
 const option = (id: string, name: string, color: DatabaseSelectOption['color']) => ({ id, name, color });
 
@@ -650,7 +651,7 @@ const taskBoard: BuiltinTemplate = {
     callout(
       'info',
       '💡',
-      p(b('怎么用：'), '拖动卡片改状态，双击卡片上的字段直接修改；点卡片打开详情，填负责人、截止日期和进度。'),
+      p(b('怎么用：'), '拖动卡片改状态，双击卡片上的字段直接修改；点卡片在右侧打开详情，填负责人、截止日期和进度。'),
       '切到"按负责人"看每个人手上的事，切到"我的任务"只看分给自己的。',
     ),
     database(
@@ -677,7 +678,13 @@ const taskBoard: BuiltinTemplate = {
       [
         { id: 'board', name: '看板', type: 'kanban', groupBy: 'status', columns: hide('status', 'note') },
         { id: 'by-owner', name: '按负责人', type: 'kanban', groupBy: 'owner', columns: hide('owner', 'note') },
-        { id: 'list', name: '列表', type: 'table', sorts: [{ columnId: 'due', direction: 'asc' }] },
+        {
+          id: 'list',
+          name: '列表',
+          type: 'table',
+          sorts: [{ columnId: 'due', direction: 'asc' }],
+          columns: [{ id: 'note', width: null, align: null, hidden: false, wrap: true }],
+        },
         { id: 'calendar', name: '日历', type: 'calendar', dateColumnId: 'due' },
         { id: 'mine', name: '我的任务', type: 'mine' },
       ],
@@ -702,7 +709,8 @@ const taskBoard: BuiltinTemplate = {
     bullets(
       '每天或每次例会花几分钟过一遍看板，先看"受阻"，再看快到期的任务。',
       '在"列表"里按截止日期排序，在"日历"里看本周和下周的安排。',
-      '已完成的卡片太多时，在看板列的菜单里隐藏"已完成"这一栏。',
+      '已完成的卡片太多时，在看板列的菜单里折叠或隐藏"已完成"这一栏。',
+      '在"列表"里勾选多行，可以一次改负责人、状态，或批量删除；也可以从 Excel、飞书表格复制多行直接粘贴进来。',
     ),
   ),
 };
@@ -814,14 +822,14 @@ const projectPlan: BuiltinTemplate = {
       [b('按状态：'), '看板，拖动卡片就会修改状态。'],
       [b('按优先级：'), '横向泳道，每个优先级一行。'],
       [b('日历：'), '按开始和结束日期画出跨天的任务条，拖动可以改日期。'],
-      [b('时间线：'), '按日期顺序列出任务，适合看近期安排。'],
+      [b('时间线：'), '甘特图，横向看每个任务从开始到结束的时间段；拖动任务条改日期，拖两端改起止，可切换日、周、月。'],
       [b('重点关注：'), '筛选出未完成、且是 P0 或有风险的任务。'],
       [b('我的任务：'), '只显示负责人包含自己的任务。'],
     ),
     h(2, '二、试一试'),
     tasks(
       '在"按状态"里把一张卡片拖到"已完成"',
-      '在"日历"里拖动任务条，改开始日期',
+      '在"时间线"里拖动"执行落地"的右端，把结束日期延后两天',
       '点开一行，拖动进度条或直接输入数字，再填上预算',
       '把"执行落地"的"有风险"取消勾选，看它从"重点关注"里消失',
       '新建一个看板视图，在视图设置里改成按"类型"分组',
@@ -832,10 +840,10 @@ const projectPlan: BuiltinTemplate = {
 export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
   weeklyReport,
   todoChecklist,
+  taskBoard,
   flowchart,
   operationManual,
   techDesign,
-  taskBoard,
   projectPlan,
 ];
 

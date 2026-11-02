@@ -19,7 +19,7 @@ import {
 import { jsonToNode } from '../../collaboration/collaboration.util';
 import { BUILTIN_TEMPLATES } from './builtin-templates';
 
-const [WEEKLY_ID, CHECKLIST_ID, FLOWCHART_ID, MANUAL_ID, DESIGN_ID, BOARD_ID, PLAN_ID] =
+const [WEEKLY_ID, CHECKLIST_ID, BOARD_ID, FLOWCHART_ID, MANUAL_ID, DESIGN_ID, PLAN_ID] =
   BUILTIN_TEMPLATES.map((t) => t.id);
 const BUILTIN_IDS = BUILTIN_TEMPLATES.map((t) => t.id);
 /** 每个内置模板必须保留下来的块（未知节点会被静默剥掉） */

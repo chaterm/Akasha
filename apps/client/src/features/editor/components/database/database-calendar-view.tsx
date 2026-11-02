@@ -353,7 +353,7 @@ function UndatedList({
   );
 }
 
-/** Shown by date-based views (calendar, timeline) until the view has a date column. */
+/** Shown by date-based views (calendar, timeline, agenda) until the view has a date column. */
 export function NoDateColumn({ db }: { db: DatabaseContext }) {
   const { t } = useTranslation();
   return (
@@ -361,7 +361,9 @@ export function NoDateColumn({ db }: { db: DatabaseContext }) {
       <Text size="sm" c="dimmed">
         {db.view.type === "timeline"
           ? t("Timeline needs a date field.")
-          : t("Calendar needs a date field.")}
+          : db.view.type === "agenda"
+            ? t("Agenda needs a date field.")
+            : t("Calendar needs a date field.")}
       </Text>
       {db.editable && (
         <Button

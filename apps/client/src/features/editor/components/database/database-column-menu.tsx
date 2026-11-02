@@ -1,5 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { ActionIcon, Group, Popover, Text, TextInput } from "@mantine/core";
+import {
+  ActionIcon,
+  Group,
+  Popover,
+  Switch,
+  Text,
+  TextInput,
+} from "@mantine/core";
 import {
   IconLayoutAlignLeft,
   IconArrowLeft,
@@ -12,7 +19,9 @@ import {
   IconMinus,
   IconPlus,
   IconSortAscending,
+  IconLock,
   IconSortDescending,
+  IconTextWrap,
   IconTrash,
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
@@ -26,6 +35,7 @@ import {
   updateDatabaseColumn,
   DATABASE_NUMBER_FORMATS,
   type DatabaseColumn,
+  type DatabaseColumnType,
   type DatabaseNumberFormat,
 } from "@docmost/editor-ext";
 import {
@@ -56,6 +66,14 @@ const NUMBER_FORMAT_LABELS: Record<DatabaseNumberFormat, string> = {
   GBP: "Pound",
   JPY: "Yen",
 };
+
+/** Types whose cells can show their full value on several lines. */
+const WRAPPABLE_TYPES: DatabaseColumnType[] = [
+  "text",
+  "multiSelect",
+  "person",
+  "page",
+];
 
 /** Moves a column one visible step left/right in the active view. */
 function moveColumnInView(
@@ -133,6 +151,8 @@ export function ColumnMenu({
     .filter((entry) => !entry.hidden)
     .map((entry) => entry.id);
   const visibleIndex = visible.indexOf(column.id);
+  // The title column is fixed: always first, always text, never hidden or deleted.
+  const isTitle = column.id === db.columns[0]?.id;
 
   const TypeIcon = COLUMN_TYPE_ICONS[column.type];
   const main = (
@@ -149,13 +169,45 @@ export function ColumnMenu({
           if (event.key === "Enter") run(() => {});
         }}
       />
-      <MenuRow
-        icon={TypeIcon}
-        label={t("Type")}
-        hint={t(COLUMN_TYPE_LABELS[column.type])}
-        submenu
-        onClick={() => setPage("type")}
-      />
+      {isTitle ? (
+        <Group gap={8} px={8} wrap="nowrap" className={classes.menuRow}>
+          <TypeIcon size={15} className={classes.menuIcon} />
+          <Text size="sm" flex={1}>
+            {t("Title")}
+          </Text>
+          <IconLock size={14} className={classes.menuIcon} />
+        </Group>
+      ) : (
+        <MenuRow
+          icon={TypeIcon}
+          label={t("Type")}
+          hint={t(COLUMN_TYPE_LABELS[column.type])}
+          submenu
+          onClick={() => setPage("type")}
+        />
+      )}
+      {alignable && WRAPPABLE_TYPES.includes(column.type) && (
+        <Group justify="space-between" px={8} py={2} wrap="nowrap">
+          <Group gap={8} wrap="nowrap">
+            <IconTextWrap size={15} className={classes.menuIcon} />
+            <Text size="sm">{t("Wrap text")}</Text>
+          </Group>
+          <Switch
+            size="xs"
+            checked={
+              !!db.view.columns.find((entry) => entry.id === column.id)?.wrap
+            }
+            onChange={(event) => {
+              const wrap = event.currentTarget.checked;
+              patchView(db, {
+                columns: db.view.columns.map((entry) =>
+                  entry.id === column.id ? { ...entry, wrap } : entry,
+                ),
+              });
+            }}
+          />
+        </Group>
+      )}
       {column.type === "number" && (
         <MenuRow
           label={t("Number format")}
@@ -209,38 +261,42 @@ export function ColumnMenu({
           />
         </>
       )}
-      <MenuRow
-        icon={IconEyeOff}
-        label={t("Hide in view")}
-        onClick={() =>
-          run(() =>
-            patchView(db, {
-              columns: db.view.columns.map((entry) =>
-                entry.id === column.id ? { ...entry, hidden: true } : entry,
-              ),
-            }),
-          )
-        }
-      />
+      {!isTitle && (
+        <MenuRow
+          icon={IconEyeOff}
+          label={t("Hide in view")}
+          onClick={() =>
+            run(() =>
+              patchView(db, {
+                columns: db.view.columns.map((entry) =>
+                  entry.id === column.id ? { ...entry, hidden: true } : entry,
+                ),
+              }),
+            )
+          }
+        />
+      )}
       <MenuDivider />
-      <MenuRow
-        icon={IconColumnInsertLeft}
-        label={t("Insert left")}
-        onClick={() => insert("left")}
-      />
+      {!isTitle && (
+        <MenuRow
+          icon={IconColumnInsertLeft}
+          label={t("Insert left")}
+          onClick={() => insert("left")}
+        />
+      )}
       <MenuRow
         icon={IconColumnInsertRight}
         label={t("Insert right")}
         onClick={() => insert("right")}
       />
-      {visibleIndex > 0 && (
+      {visibleIndex > 1 && (
         <MenuRow
           icon={IconArrowLeft}
           label={t("Move left")}
           onClick={() => run(() => moveColumnInView(db, column.id, -1))}
         />
       )}
-      {visibleIndex < visible.length - 1 && (
+      {!isTitle && visibleIndex < visible.length - 1 && (
         <MenuRow
           icon={IconArrowRight}
           label={t("Move right")}
@@ -263,7 +319,7 @@ export function ColumnMenu({
           )
         }
       />
-      {db.columns.length > 1 && (
+      {!isTitle && (
         <MenuRow
           icon={IconTrash}
           label={t("Delete column")}
