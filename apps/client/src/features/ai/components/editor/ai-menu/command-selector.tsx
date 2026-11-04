@@ -1,6 +1,7 @@
 import { Loader, Menu, ScrollArea } from "@mantine/core";
 import { IconChevronRight } from "@tabler/icons-react";
 import { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { CommandItem } from "./command-items.ts";
 import classes from "./ai-menu.module.css";
 
@@ -22,6 +23,7 @@ const CommandSelector = ({
   currentItems,
   handleCommand,
 }: CommandSelectorProps) => {
+  const { t } = useTranslation();
   return (
     <Menu
       opened={!isLoading && currentItems.length > 0}
@@ -59,7 +61,7 @@ const CommandSelector = ({
                 onClick={() => handleCommand(item)}
                 disabled={isLoading}
               >
-                {item.name}
+                {t(item.name)}
               </Menu.Item>
             );
           })}

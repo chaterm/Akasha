@@ -20,6 +20,7 @@ import {
 export const macroMenuItems: SlashMenuItemType[] = [
   {
     title: "Table of contents",
+    shortcut: "toc",
     description: "Insert an outline of this page's headings",
     searchTerms: ["toc", "table of contents", "outline", "contents", "index"],
     icon: IconList,
@@ -29,6 +30,7 @@ export const macroMenuItems: SlashMenuItemType[] = [
   },
   {
     title: "Panel",
+    shortcut: "panel",
     description: "Insert a neutral content panel.",
     searchTerms: ["panel", "container", "box", "section"],
     icon: IconLayoutGrid,
@@ -38,6 +40,7 @@ export const macroMenuItems: SlashMenuItemType[] = [
   },
   {
     title: "Database",
+    shortcut: "database",
     description:
       "Insert a database with table, kanban, calendar and timeline views.",
     searchTerms: [

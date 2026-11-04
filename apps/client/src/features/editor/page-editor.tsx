@@ -58,6 +58,7 @@ import ExcalidrawMenu from "./components/excalidraw/excalidraw-menu-lazy";
 import DrawioMenu from "./components/drawio/drawio-menu";
 import { useCollabToken } from "@/features/auth/queries/auth-query.tsx";
 import SearchAndReplaceDialog from "@/features/editor/components/search-and-replace/search-and-replace-dialog.tsx";
+import { EmptyPageHint } from "@/features/editor/components/empty-page-hint/empty-page-hint";
 import { useDebouncedCallback, useDocumentVisibility } from "@mantine/hooks";
 import { useIdle } from "@/hooks/use-idle.ts";
 import { queryClient } from "@/main.tsx";
@@ -332,6 +333,12 @@ export default function PageEditor({
       return ctx.editor?.isEditable ?? false;
     },
   });
+  const editorIsEmpty = useEditorState({
+    editor,
+    selector: (ctx) => ctx.editor?.isEmpty ?? false,
+  });
+  const showEmptyPageHint =
+    editable && pageEditMode === PageEditMode.Read && editorIsEmpty;
 
   const debouncedUpdateContent = useDebouncedCallback((newContent: any) => {
     const pageData = queryClient.getQueryData<IPage>(["pages", slugId]);
@@ -425,6 +432,7 @@ export default function PageEditor({
       ) : (
         <div className="editor-container" style={{ position: "relative" }}>
           <div ref={menuContainerRef}>
+            {showEmptyPageHint && <EmptyPageHint />}
             <EditorContent editor={editor} />
 
             {editor && (

@@ -19,6 +19,7 @@ export type SlashMenuItemType = {
   icon: any;
   separator?: true;
   searchTerms: string[];
+  shortcut: string;
   command: (props: CommandProps) => void;
   disable?: (editor: ReturnType<typeof useEditor>) => boolean;
 };

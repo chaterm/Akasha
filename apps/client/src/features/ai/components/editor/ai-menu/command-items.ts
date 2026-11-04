@@ -96,21 +96,21 @@ const toneItems: CommandItem[] = [
     name: "Professional",
     icon: IconMoodSmile,
     action: AiAction.CHANGE_TONE,
-    prompt: "Professional",
+    prompt: "专业",
   },
   {
     id: "tone-casual",
     name: "Casual",
     icon: IconMoodSmile,
     action: AiAction.CHANGE_TONE,
-    prompt: "Casual",
+    prompt: "轻松",
   },
   {
     id: "tone-friendly",
     name: "Friendly",
     icon: IconMoodSmile,
     action: AiAction.CHANGE_TONE,
-    prompt: "Friendly",
+    prompt: "友好",
   },
 ];
 const translateItems: CommandItem[] = [
@@ -124,77 +124,77 @@ const translateItems: CommandItem[] = [
     name: "English",
     icon: IconLanguage,
     action: AiAction.TRANSLATE,
-    prompt: "English",
+    prompt: "英语",
   },
   {
     id: "translate-spanish",
     name: "Spanish",
     icon: IconLanguage,
     action: AiAction.TRANSLATE,
-    prompt: "Spanish",
+    prompt: "西班牙语",
   },
   {
     id: "translate-german",
     name: "German",
     icon: IconLanguage,
     action: AiAction.TRANSLATE,
-    prompt: "German",
+    prompt: "德语",
   },
   {
     id: "translate-french",
     name: "French",
     icon: IconLanguage,
     action: AiAction.TRANSLATE,
-    prompt: "French",
+    prompt: "法语",
   },
   {
     id: "translate-dutch",
     name: "Dutch",
     icon: IconLanguage,
     action: AiAction.TRANSLATE,
-    prompt: "Dutch",
+    prompt: "荷兰语",
   },
   {
     id: "translate-portuguese",
     name: "Portuguese",
     icon: IconLanguage,
     action: AiAction.TRANSLATE,
-    prompt: "Portuguese",
+    prompt: "葡萄牙语",
   },
   {
     id: "translate-italian",
     name: "Italian",
     icon: IconLanguage,
     action: AiAction.TRANSLATE,
-    prompt: "Italian",
+    prompt: "意大利语",
   },
   {
     id: "translate-japanese",
     name: "Japanese",
     icon: IconLanguage,
     action: AiAction.TRANSLATE,
-    prompt: "Japanese",
+    prompt: "日语",
   },
   {
     id: "translate-korean",
     name: "Korean",
     icon: IconLanguage,
     action: AiAction.TRANSLATE,
-    prompt: "Korean",
+    prompt: "韩语",
   },
   {
     id: "translate-swedish",
     name: "Swedish",
     icon: IconLanguage,
     action: AiAction.TRANSLATE,
-    prompt: "Swedish",
+    prompt: "瑞典语",
   },
   {
     id: "translate-chinese",
     name: "Chinese (Simplified)",
     icon: IconLanguage,
     action: AiAction.TRANSLATE,
-    prompt: "Simplified Chinese",
+    prompt: "简体中文",
   },
 ];
 const resultItems: CommandItem[] = [
@@ -219,9 +219,13 @@ const getVisibleCommandItems = (
   commandSet: CommandSet,
   prompt: string,
   readOnly: boolean,
+  translate: (name: string) => string = (name) => name,
 ) => {
-  const items = commandItems[commandSet].filter((item) =>
-    item.name.toLowerCase().includes(prompt.toLowerCase()),
+  const query = prompt.toLowerCase();
+  const items = commandItems[commandSet].filter(
+    (item) =>
+      item.name.toLowerCase().includes(query) ||
+      translate(item.name).toLowerCase().includes(query),
   );
 
   if (!readOnly || commandSet !== "result") {
