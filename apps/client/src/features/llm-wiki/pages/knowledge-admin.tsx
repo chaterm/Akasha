@@ -395,7 +395,7 @@ export default function KnowledgeAdminPage() {
       notifications.show({
         message: result.deferred
           ? deferredCompileMessage(t, result.deferredUntil ?? null)
-          : t("Knowledge update queued"),
+          : t("Knowledge update queued", { count: 1 }),
       });
       refreshRunViews();
     },

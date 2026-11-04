@@ -477,7 +477,7 @@ function ImportFormatSelection({ spaceId, onClose }: ImportFormatSelection) {
       <Group justify="center" gap="xl" mih={150}>
         <div>
           <Text ta="center" size="lg" inline>
-            Import zip file
+            {t("Import zip file")}
           </Text>
           <Text ta="center" size="sm" c="dimmed" inline py="sm">
             {t(

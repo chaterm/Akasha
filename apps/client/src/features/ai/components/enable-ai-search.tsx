@@ -16,10 +16,10 @@ export default function EnableAiSearch() {
     <>
       <Group justify="space-between" wrap="nowrap" gap="xl">
         <div>
-          <Text size="md">{t("知识库")}</Text>
+          <Text size="md">{t("Knowledge base")}</Text>
           <Text size="sm" c="dimmed">
             {t(
-              "启用知识库编译、检索和基于权限的问答能力，支持用户查询工作空间内容。",
+              "Enable knowledge base compilation, retrieval, and permission-aware Q&A so users can query workspace content.",
             )}
           </Text>
         </div>

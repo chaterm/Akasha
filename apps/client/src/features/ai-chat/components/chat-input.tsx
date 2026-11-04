@@ -376,7 +376,7 @@ export default function ChatInput({
               type="button"
               className={classes.stopButton}
               onClick={onStop}
-              aria-label="Stop generation"
+              aria-label={t("Stop generation")}
             >
               <IconPlayerStopFilled size={14} />
             </button>
@@ -386,7 +386,7 @@ export default function ChatInput({
               className={classes.sendButton}
               onClick={handleSubmit}
               disabled={disabled || !hasContent}
-              aria-label="Send message"
+              aria-label={t("Send message")}
             >
               <IconArrowUp size={16} stroke={2.5} />
             </button>

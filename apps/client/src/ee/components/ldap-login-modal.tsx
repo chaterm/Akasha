@@ -99,7 +99,7 @@ export function LdapLoginModal({
             id="ldap-username"
             type="text"
             label={t("LDAP username")}
-            placeholder="Enter your LDAP username"
+            placeholder={t("Enter your LDAP username")}
             variant="filled"
             disabled={isLoading}
             data-autofocus

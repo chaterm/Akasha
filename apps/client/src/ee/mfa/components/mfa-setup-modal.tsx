@@ -171,7 +171,7 @@ export function MfaSetupModal({
                     <Paper p="md" withBorder>
                       <Image
                         src={setupData.qrCode}
-                        alt="MFA QR Code"
+                        alt={t("MFA QR Code")}
                         width={200}
                         height={200}
                       />
