@@ -46,6 +46,7 @@ import { treeDataAtom } from "@/features/page/tree/atoms/tree-data-atom";
 import { treeModel } from "@/features/page/tree/model/tree-model";
 import { SpaceTreeNode } from "@/features/page/tree/types";
 import { useQueryEmit } from "@/features/websocket/use-query-emit";
+import { notifyError } from "@/lib/errors";
 
 export function usePageQuery(
   pageInput: Partial<IPageInput>,
@@ -212,11 +213,7 @@ export function useDeletePageMutation() {
           ["trash-list"].includes(item.queryKey[0] as string),
       });
     },
-    onError: (error) => {
-      const message =
-        error["response"]?.data?.message || t("Failed to delete page");
-      notifications.show({ message, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to delete page"),
   });
 }
 

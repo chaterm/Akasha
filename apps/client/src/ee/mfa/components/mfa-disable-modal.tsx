@@ -16,6 +16,7 @@ import { useTranslation } from "react-i18next";
 import { z } from "zod/v4";
 import { disableMfa } from "@/ee/mfa";
 import useCurrentUser from "@/features/user/hooks/use-current-user";
+import { getErrorMessage } from "@/lib/errors";
 
 interface MfaDisableModalProps {
   opened: boolean;
@@ -55,7 +56,7 @@ export function MfaDisableModal({
     onError: (error: any) => {
       notifications.show({
         title: t("Error"),
-        message: error.response?.data?.message || t("Failed to disable MFA"),
+        message: getErrorMessage(error, "Failed to disable MFA"),
         color: "red",
       });
     },

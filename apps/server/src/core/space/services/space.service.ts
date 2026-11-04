@@ -34,6 +34,7 @@ import {
   AUDIT_SERVICE,
   IAuditService,
 } from '../../../integrations/audit/audit.service';
+import { ErrorCode, errorBody } from '../../../common/errors/error-codes';
 
 @Injectable()
 export class SpaceService {
@@ -110,7 +111,10 @@ export class SpaceService {
     );
     if (slugExists) {
       throw new BadRequestException(
-        'Space slug exists. Please use a unique space slug',
+        errorBody(
+          ErrorCode.SPACE_SLUG_TAKEN,
+          'Space slug exists. Please use a unique space slug',
+        ),
       );
     }
 
@@ -138,7 +142,10 @@ export class SpaceService {
 
       if (slugExists) {
         throw new BadRequestException(
-          'Space slug exists. Please use a unique space slug',
+          errorBody(
+            ErrorCode.SPACE_SLUG_TAKEN,
+            'Space slug exists. Please use a unique space slug',
+          ),
         );
       }
     }
@@ -159,7 +166,12 @@ export class SpaceService {
           workspace.plan,
         )
       ) {
-        throw new ForbiddenException('This feature requires a valid license');
+        throw new ForbiddenException(
+          errorBody(
+            ErrorCode.LICENSE_REQUIRED,
+            'This feature requires a valid license',
+          ),
+        );
       }
     }
 
@@ -296,7 +308,12 @@ export class SpaceService {
       throw new NotFoundException('Space not found');
     }
     if (space.personalOwnerId) {
-      throw new BadRequestException('Personal spaces cannot be deleted');
+      throw new BadRequestException(
+        errorBody(
+          ErrorCode.PERSONAL_SPACE_PROTECTED,
+          'Personal spaces cannot be deleted',
+        ),
+      );
     }
 
     await this.spaceRepo.deleteSpace(spaceId, workspaceId);

@@ -28,6 +28,7 @@ import {
   updateShare,
 } from "@/features/share/services/share-service.ts";
 import { IPagination, QueryParams } from "@/lib/types.ts";
+import { notifyError } from "@/lib/errors";
 
 export function useGetSharesQuery(
   params?: QueryParams,
@@ -89,12 +90,7 @@ export function useCreateShareMutation() {
           ["share-for-page", "share-list"].includes(item.queryKey[0] as string),
       });
     },
-    onError: (error) => {
-      notifications.show({
-        message: error?.["response"]?.data?.message || t("Failed to share page"),
-        color: "red",
-      });
-    },
+    onError: (error) => notifyError(error, "Failed to share page"),
   });
 }
 
@@ -124,10 +120,7 @@ export function useUpdateShareMutation() {
         return;
       }
 
-      notifications.show({
-        message: error?.["response"]?.data?.message || "Share not found",
-        color: "red",
-      });
+      notifyError(error, "Failed to update share");
     },
   });
 }
@@ -159,10 +152,7 @@ export function useDeleteShareMutation() {
         });
       }
 
-      notifications.show({
-        message: error?.["response"]?.data?.message || "Failed to delete share",
-        color: "red",
-      });
+      notifyError(error, "Failed to delete share");
     },
   });
 }

@@ -38,6 +38,7 @@ import {
   getProsemirrorContent,
 } from '../../common/helpers/prosemirror/utils';
 import { htmlToMarkdown } from '@docmost/editor-ext';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
 type AllowedAttachment = { id: string; fileName: string; filePath: string };
 
@@ -140,7 +141,9 @@ export class ExportService {
     }
 
     if (!pages || pages.length === 0) {
-      throw new BadRequestException('No pages to export');
+      throw new BadRequestException(
+        errorBody(ErrorCode.EXPORT_NO_PAGES, 'No pages to export'),
+      );
     }
 
     if (!ignorePermissions && userId) {
@@ -151,7 +154,9 @@ export class ExportService {
         pages[0].spaceId,
       );
       if (pages.length === 0) {
-        throw new BadRequestException('No accessible pages to export');
+        throw new BadRequestException(
+          errorBody(ErrorCode.EXPORT_NO_PAGES, 'No accessible pages to export'),
+        );
       }
     }
 
@@ -241,7 +246,9 @@ export class ExportService {
         spaceId,
       );
       if (pages.length === 0) {
-        throw new BadRequestException('No accessible pages to export');
+        throw new BadRequestException(
+          errorBody(ErrorCode.EXPORT_NO_PAGES, 'No accessible pages to export'),
+        );
       }
     }
 

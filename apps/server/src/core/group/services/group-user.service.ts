@@ -22,6 +22,7 @@ import {
 } from '../../../integrations/audit/audit.service';
 import { dbOrTx } from '@akasha/db/utils';
 import { UserType } from '../../../common/auth/user-type';
+import { ErrorCode, errorBody } from '../../../common/errors/error-codes';
 
 @Injectable()
 export class GroupUserService {
@@ -127,7 +128,10 @@ export class GroupUserService {
 
     if (group.isDefault) {
       throw new BadRequestException(
-        'You cannot remove users from a default group',
+        errorBody(
+          ErrorCode.GROUP_DEFAULT_PROTECTED,
+          'You cannot remove users from a default group',
+        ),
       );
     }
 

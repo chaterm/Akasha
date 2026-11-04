@@ -6,6 +6,7 @@ import { z } from "zod/v4";
 import { notifications } from "@mantine/notifications";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { getErrorMessage } from "@/lib/errors";
 import { IAuthProvider } from "@/ee/security/types/security.types";
 import APP_ROUTE, { getPostLoginRedirect } from "@/lib/app-route";
 import { ldapLogin } from "@/ee/security/services/ldap-auth-service";
@@ -69,8 +70,7 @@ export function LdapLoginModal({
       }
     } catch (err: any) {
       setIsLoading(false);
-      const errorMessage =
-        err.response?.data?.message || "Authentication failed";
+      const errorMessage = getErrorMessage(err, "Authentication failed");
       setError(errorMessage);
 
       notifications.show({

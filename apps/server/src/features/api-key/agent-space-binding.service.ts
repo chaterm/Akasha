@@ -16,6 +16,7 @@ import {
   AUDIT_SERVICE,
   IAuditService,
 } from '../../integrations/audit/audit.service';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
 @Injectable()
 export class AgentSpaceBindingService {
@@ -66,7 +67,10 @@ export class AgentSpaceBindingService {
     const manageableIds = new Set(manageableSpaces.map((space) => space.id));
     if (spaceIds.some((spaceId) => !manageableIds.has(spaceId))) {
       throw new ForbiddenException(
-        'The user must be an administrator of every selected space',
+        errorBody(
+          ErrorCode.AGENT_SPACE_ADMIN_REQUIRED,
+          'The user must be an administrator of every selected space',
+        ),
       );
     }
 

@@ -4,10 +4,10 @@ import { workspaceAtom } from "@/features/user/atoms/current-user-atom.ts";
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { updateWorkspace } from "@/features/workspace/services/workspace-service.ts";
-import { notifications } from "@mantine/notifications";
 import { useHasFeature } from "@/ee/hooks/use-feature";
 import { Feature } from "@/ee/features";
 import { useUpgradeLabel } from "@/ee/hooks/use-upgrade-label";
+import { notifyError } from "@/lib/errors";
 
 export default function EnableAiSearch() {
   const { t } = useTranslation();
@@ -48,10 +48,7 @@ export function AiSearchToggle({ size, label }: AiSearchToggleProps) {
       setChecked(value);
       setWorkspace(updatedWorkspace);
     } catch (err) {
-      notifications.show({
-        message: err?.response?.data?.message,
-        color: "red",
-      });
+      notifyError(err, "Failed to update data");
     }
   };
 

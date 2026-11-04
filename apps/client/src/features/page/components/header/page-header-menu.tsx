@@ -92,6 +92,7 @@ import {
   useUnwatchPageMutation,
 } from "@/features/page/queries/watcher-query";
 import type { KnowledgePageIndexModeChoice } from "@/features/page/services/page-service";
+import { notifyError } from "@/lib/errors";
 
 const PUBLISH_COOLDOWNS = [10 * 60_000, 30 * 60_000, 2 * 60 * 60_000];
 const publishCooldownKey = (pageId: string) =>
@@ -373,11 +374,7 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
           if (error?.response?.status === 429) {
             void refetchCooldown();
           }
-          notifications.show({
-            message:
-              error?.response?.data?.message || t("Failed to publish page"),
-            color: "red",
-          });
+          notifyError(error, "Failed to publish page");
         },
       },
     );
@@ -393,12 +390,7 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
       {
         onError: (error: any) => {
           setIndexMode(previous);
-          notifications.show({
-            message:
-              error?.response?.data?.message ||
-              t("Failed to save publish mode"),
-            color: "red",
-          });
+          notifyError(error, "Failed to save publish mode");
         },
       },
     );
@@ -441,9 +433,7 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
     return (
       <Tooltip
         label={
-          status === "failed"
-            ? compileStatus.errorMessage || t("Publish failed")
-            : config.label
+          status === "failed" ? t("Publish failed") : config.label
         }
         withArrow
       >

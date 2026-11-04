@@ -41,6 +41,7 @@ import {
 } from '../../../integrations/audit/audit.service';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import { SpaceService } from '../../space/services/space.service';
+import { ErrorCode, errorBody } from '../../../common/errors/error-codes';
 
 @Injectable()
 export class AuthService {
@@ -64,9 +65,12 @@ export class AuthService {
       includePassword: true,
     });
 
-    const errorMessage = 'Email or password does not match';
+    const invalidCredentials = errorBody(
+      ErrorCode.AUTH_INVALID_CREDENTIALS,
+      'Email or password does not match',
+    );
     if (!user || isUserDisabled(user)) {
-      throw new UnauthorizedException(errorMessage);
+      throw new UnauthorizedException(invalidCredentials);
     }
 
     const isPasswordMatch = await comparePasswordHash(
@@ -75,7 +79,7 @@ export class AuthService {
     );
 
     if (!isPasswordMatch) {
-      throw new UnauthorizedException(errorMessage);
+      throw new UnauthorizedException(invalidCredentials);
     }
 
     throwIfEmailNotVerified({
@@ -133,7 +137,12 @@ export class AuthService {
     );
 
     if (!comparePasswords) {
-      throw new BadRequestException('Current password is incorrect');
+      throw new BadRequestException(
+        errorBody(
+          ErrorCode.AUTH_CURRENT_PASSWORD_INCORRECT,
+          'Current password is incorrect',
+        ),
+      );
     }
 
     const newPasswordHash = await hashPassword(dto.newPassword);
@@ -232,7 +241,9 @@ export class AuthService {
       userToken.type !== UserTokenType.FORGOT_PASSWORD ||
       userToken.expiresAt < new Date()
     ) {
-      throw new BadRequestException('Invalid or expired token');
+      throw new BadRequestException(
+        errorBody(ErrorCode.AUTH_TOKEN_INVALID, 'Invalid or expired token'),
+      );
     }
 
     const user = await this.userRepo.findById(userToken.userId, workspace.id, {
@@ -314,7 +325,9 @@ export class AuthService {
       userToken.type !== userTokenDto.type ||
       userToken.expiresAt < new Date()
     ) {
-      throw new BadRequestException('Invalid or expired token');
+      throw new BadRequestException(
+        errorBody(ErrorCode.AUTH_TOKEN_INVALID, 'Invalid or expired token'),
+      );
     }
   }
 

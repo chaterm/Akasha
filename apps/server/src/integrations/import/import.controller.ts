@@ -30,6 +30,7 @@ import {
   AUDIT_SERVICE,
   IAuditService,
 } from '../../integrations/audit/audit.service';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
 @Controller()
 export class ImportController {
@@ -64,7 +65,11 @@ export class ImportController {
       this.logger.error(err.message);
       if (err?.statusCode === 413) {
         throw new BadRequestException(
-          `File too large. Exceeds the 10mb import limit`,
+          errorBody(
+            ErrorCode.FILE_TOO_LARGE,
+            `File too large. Exceeds the 10mb import limit`,
+            { limit: '10mb' },
+          ),
         );
       }
     }
@@ -76,7 +81,9 @@ export class ImportController {
     if (
       !validFileExtensions.includes(path.extname(file.filename).toLowerCase())
     ) {
-      throw new BadRequestException('Invalid import file type.');
+      throw new BadRequestException(
+        errorBody(ErrorCode.FILE_TYPE_INVALID, 'Invalid import file type.'),
+      );
     }
 
     const spaceId = file.fields?.spaceId?.value;
@@ -143,7 +150,11 @@ export class ImportController {
       this.logger.error(err.message);
       if (err?.statusCode === 413) {
         throw new BadRequestException(
-          `File too large. Exceeds the ${this.environmentService.getFileImportSizeLimit()} import limit`,
+          errorBody(
+            ErrorCode.FILE_TOO_LARGE,
+            `File too large. Exceeds the ${this.environmentService.getFileImportSizeLimit()} import limit`,
+            { limit: this.environmentService.getFileImportSizeLimit() },
+          ),
         );
       }
     }
@@ -155,7 +166,12 @@ export class ImportController {
     if (
       !validFileExtensions.includes(path.extname(file.filename).toLowerCase())
     ) {
-      throw new BadRequestException('Invalid import file extension.');
+      throw new BadRequestException(
+        errorBody(
+          ErrorCode.FILE_TYPE_INVALID,
+          'Invalid import file extension.',
+        ),
+      );
     }
 
     const spaceId = file.fields?.spaceId?.value;

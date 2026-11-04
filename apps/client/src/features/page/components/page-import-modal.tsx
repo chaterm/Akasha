@@ -38,6 +38,7 @@ import { getFileTaskById } from "@/features/file-task/services/file-task-service
 import { queryClient } from "@/main.tsx";
 import { useQueryEmit } from "@/features/websocket/use-query-emit.ts";
 import bytes from "bytes";
+import { getErrorMessage } from "@/lib/errors";
 
 interface PageImportModalProps {
   spaceId: string;
@@ -157,7 +158,7 @@ function ImportFormatSelection({ spaceId, onClose }: ImportFormatSelection) {
         id: "import",
         color: "red",
         title: t("Failed to upload import file"),
-        message: err?.response.data.message,
+        message: getErrorMessage(err, "Please try again later."),
         icon: <IconX size={18} />,
         loading: false,
         withCloseButton: true,
@@ -209,12 +210,7 @@ function ImportFormatSelection({ spaceId, onClose }: ImportFormatSelection) {
             id: "import",
             color: "red",
             title: t("Page import failed"),
-            message: t(
-              "Something went wrong while importing pages: {{reason}}.",
-              {
-                reason: fileTask.errorMessage,
-              },
-            ),
+            message: t("Please try again later."),
             icon: <IconX size={18} />,
             loading: false,
             withCloseButton: true,
@@ -229,12 +225,7 @@ function ImportFormatSelection({ spaceId, onClose }: ImportFormatSelection) {
           id: "import",
           color: "red",
           title: t("Import failed"),
-          message: t(
-            "Something went wrong while importing pages: {{reason}}.",
-            {
-              reason: err.response?.data.message,
-            },
-          ),
+          message: getErrorMessage(err, "Please try again later."),
           icon: <IconX size={18} />,
           loading: false,
           withCloseButton: true,

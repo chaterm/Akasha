@@ -23,6 +23,7 @@ import { useLocation } from "react-router-dom";
 import { isFocusWithinAiMenu } from "./ai-menu.utils";
 import { notifications } from "@mantine/notifications";
 import { useTranslation } from "react-i18next";
+import { notifyError } from "@/lib/errors";
 
 interface EditorAiMenuProps {
   editor: Editor | null;
@@ -155,7 +156,7 @@ const EditorAiMenu = ({
         onError: (error) => {
           streamAbortControllerRef.current = null;
           setIsLoading(false);
-          notifications.show({ message: error.error, color: "red" });
+          notifyError(error, "AI generation failed");
           resetMenu();
         },
       });

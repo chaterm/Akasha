@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { notifications } from "@mantine/notifications";
 import { useTranslation } from "react-i18next";
+import { notifyError } from "@/lib/errors";
 import {
   createTemplate,
   fetchTemplate,
@@ -26,10 +27,6 @@ export const templateKeys = {
     [...templateKeys.all, "list", params] as const,
   detail: (id: string) => [...templateKeys.all, "detail", id] as const,
 };
-
-function errorMessage(err: any, fallback: string) {
-  return err?.response?.data?.message ?? fallback;
-}
 
 export function useTemplateList(params: Omit<TemplateListParams, "cursor">) {
   return useInfiniteQuery({
@@ -55,35 +52,25 @@ export function useTemplate(templateId: string | null | undefined) {
 
 export function useCreateTemplate() {
   const qc = useQueryClient();
-  const { t } = useTranslation();
   return useMutation({
     mutationFn: createTemplate,
     onSuccess: (tpl) => {
       qc.setQueryData(templateKeys.detail(tpl.id), tpl);
       qc.invalidateQueries({ queryKey: [...templateKeys.all, "list"] });
     },
-    onError: (err) =>
-      notifications.show({
-        color: "red",
-        message: errorMessage(err, t("Failed to create template")),
-      }),
+    onError: (err) => notifyError(err, "Failed to create template"),
   });
 }
 
 export function useSaveTemplate(templateId: string) {
   const qc = useQueryClient();
-  const { t } = useTranslation();
   return useMutation({
     mutationFn: (draft: TemplateDraft) => saveTemplate(templateId, draft),
     onSuccess: (tpl) => {
       qc.setQueryData(templateKeys.detail(tpl.id), tpl);
       qc.invalidateQueries({ queryKey: [...templateKeys.all, "list"] });
     },
-    onError: (err) =>
-      notifications.show({
-        color: "red",
-        message: errorMessage(err, t("Failed to save template")),
-      }),
+    onError: (err) => notifyError(err, "Failed to save template"),
   });
 }
 
@@ -97,10 +84,6 @@ export function useRemoveTemplate() {
       qc.invalidateQueries({ queryKey: [...templateKeys.all, "list"] });
       notifications.show({ message: t("Template deleted") });
     },
-    onError: (err) =>
-      notifications.show({
-        color: "red",
-        message: errorMessage(err, t("Failed to delete template")),
-      }),
+    onError: (err) => notifyError(err, "Failed to delete template"),
   });
 }

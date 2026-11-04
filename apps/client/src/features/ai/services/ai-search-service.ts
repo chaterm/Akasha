@@ -1,5 +1,6 @@
 import api from "@/lib/api-client.ts";
 import { IPageSearchParams } from "@/features/search/types/search.types.ts";
+import { apiErrorFromResponse } from "@/lib/errors";
 
 export interface IAiSearchResponse {
   answer: string;
@@ -29,7 +30,7 @@ export async function aiAnswers(
   });
 
   if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+    throw await apiErrorFromResponse(response);
   }
 
   const reader = response.body?.getReader();

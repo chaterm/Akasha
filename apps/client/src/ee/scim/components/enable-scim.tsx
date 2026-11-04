@@ -4,10 +4,10 @@ import { workspaceAtom } from "@/features/user/atoms/current-user-atom.ts";
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { updateWorkspace } from "@/features/workspace/services/workspace-service.ts";
-import { notifications } from "@mantine/notifications";
 import { useHasFeature } from "@/ee/hooks/use-feature.ts";
 import { Feature } from "@/ee/features.ts";
 import { useUpgradeLabel } from "@/ee/hooks/use-upgrade-label.ts";
+import { notifyError } from "@/lib/errors";
 
 export default function EnableScim() {
   const { t } = useTranslation();
@@ -23,10 +23,7 @@ export default function EnableScim() {
       setChecked(value);
       setWorkspace(updatedWorkspace);
     } catch (err) {
-      notifications.show({
-        message: err?.response?.data?.message,
-        color: "red",
-      });
+      notifyError(err, "Failed to update data");
     }
   };
 

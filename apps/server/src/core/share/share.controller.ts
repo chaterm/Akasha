@@ -35,6 +35,7 @@ import {
   AUDIT_SERVICE,
   IAuditService,
 } from '../../integrations/audit/audit.service';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
 @UseGuards(JwtAuthGuard)
 @Controller('shares')
@@ -165,7 +166,12 @@ export class ShareController {
       page.id,
     );
     if (isRestricted) {
-      throw new BadRequestException('Cannot share a restricted page');
+      throw new BadRequestException(
+        errorBody(
+          ErrorCode.SHARE_RESTRICTED_PAGE,
+          'Cannot share a restricted page',
+        ),
+      );
     }
 
     const sharingAllowed = await this.shareService.isSharingAllowed(
@@ -173,7 +179,12 @@ export class ShareController {
       page.spaceId,
     );
     if (!sharingAllowed) {
-      throw new ForbiddenException('Public sharing is disabled');
+      throw new ForbiddenException(
+        errorBody(
+          ErrorCode.SHARE_PUBLIC_DISABLED,
+          'Public sharing is disabled',
+        ),
+      );
     }
 
     const share = await this.shareService.createShare({

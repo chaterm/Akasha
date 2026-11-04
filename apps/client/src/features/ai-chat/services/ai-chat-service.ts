@@ -6,6 +6,7 @@ import type {
   ChatAttachment,
 } from "../types/ai-chat.types";
 import { IPagination } from "@/lib/types.ts";
+import { apiErrorFromResponse } from "@/lib/errors";
 
 export async function createChat(): Promise<AiChat> {
   const req = await api.post<AiChat>("/ai/chats/create");
@@ -68,7 +69,7 @@ export function sendChatMessage(
     responseMode?: "knowledge" | "general";
   },
   onEvent: (event: AiChatStreamEvent) => void,
-  onError?: (error: string) => void,
+  onError?: (error: unknown) => void,
   onComplete?: () => void,
 ): AbortController {
   return streamChatRequest(
@@ -87,7 +88,7 @@ export function editChatMessage(
     content: string;
   },
   onEvent: (event: AiChatStreamEvent) => void,
-  onError?: (error: string) => void,
+  onError?: (error: unknown) => void,
   onComplete?: () => void,
 ): AbortController {
   return streamChatRequest(
@@ -103,7 +104,7 @@ function streamChatRequest(
   url: string,
   params: Record<string, unknown>,
   onEvent: (event: AiChatStreamEvent) => void,
-  onError?: (error: string) => void,
+  onError?: (error: unknown) => void,
   onComplete?: () => void,
 ): AbortController {
   const abortController = new AbortController();
@@ -119,15 +120,7 @@ function streamChatRequest(
       });
 
       if (!response.ok) {
-        const errorBody = await response.text();
-        let errorMessage = `HTTP error ${response.status}`;
-        try {
-          const parsed = JSON.parse(errorBody);
-          errorMessage = parsed.message || errorMessage;
-        } catch {
-          // use default
-        }
-        onError?.(errorMessage);
+        onError?.(await apiErrorFromResponse(response));
         return;
       }
 
@@ -135,7 +128,7 @@ function streamChatRequest(
       const decoder = new TextDecoder();
 
       if (!reader) {
-        onError?.("Response body is not readable");
+        onError?.(new Error("Response body is not readable"));
         return;
       }
 
@@ -172,7 +165,7 @@ function streamChatRequest(
       onComplete?.();
     } catch (error: any) {
       if (error.name !== "AbortError") {
-        onError?.(error.message);
+        onError?.(error);
       }
     }
   })();

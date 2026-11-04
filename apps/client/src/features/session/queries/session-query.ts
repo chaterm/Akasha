@@ -12,6 +12,7 @@ import {
 import { ISession } from "@/features/session/types/session.types";
 import { notifications } from "@mantine/notifications";
 import { useTranslation } from "react-i18next";
+import { notifyError } from "@/lib/errors";
 
 export function useGetSessionsQuery(): UseQueryResult<ISession[], Error> {
   return useQuery({
@@ -30,10 +31,7 @@ export function useRevokeSessionMutation() {
       notifications.show({ message: t("Session revoked") });
       queryClient.invalidateQueries({ queryKey: ["session-list"] });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to revoke session"),
   });
 }
 
@@ -47,9 +45,6 @@ export function useRevokeAllSessionsMutation() {
       notifications.show({ message: t("All other sessions revoked") });
       queryClient.invalidateQueries({ queryKey: ["session-list"] });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to revoke sessions"),
   });
 }

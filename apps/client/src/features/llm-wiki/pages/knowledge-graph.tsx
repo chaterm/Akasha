@@ -56,6 +56,7 @@ import type {
   KnowledgeGraphResult,
 } from "../types/knowledge.types";
 import classes from "../styles/knowledge-graph.module.css";
+import { getErrorMessage } from "@/lib/errors";
 
 const GRAPH_NODE_LIMIT = 10_000;
 const OVERVIEW_NODE_LIMIT = 10_000;
@@ -541,7 +542,7 @@ export default function KnowledgeGraphPage() {
 
           {graphQuery.isError && (
             <Alert color="red" icon={<IconAlertTriangle size={18} />}>
-              {graphQuery.error.message}
+              {getErrorMessage(graphQuery.error, "Failed to load data", { withDetail: true })}
             </Alert>
           )}
 

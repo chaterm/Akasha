@@ -37,6 +37,7 @@ import { AgentAccess } from '../../common/decorators/agent-access.decorator';
 import type { AgentAccessContext } from '../../common/auth/agent-access-context';
 import { buildKnowledgeQueryAuditMetadata } from './services/knowledge-query-audit-metadata';
 import { AgentAccessService } from '../../core/page/page-access/agent-access.service';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
 /** HTTP boundary for iself agents, with the same knowledge-chat behavior as the regular API. */
 @UseGuards(JwtAuthGuard)
@@ -71,7 +72,12 @@ export class IsElfLlmWikiController {
     );
 
     if (!this.chatService.isEnabledForWorkspace(workspace)) {
-      throw new ForbiddenException('AI knowledge chat is disabled');
+      throw new ForbiddenException(
+        errorBody(
+          ErrorCode.AI_KNOWLEDGE_DISABLED,
+          'AI knowledge chat is disabled',
+        ),
+      );
     }
 
     const allowedSpaceIds = new Set(

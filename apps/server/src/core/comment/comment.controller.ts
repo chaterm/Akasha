@@ -33,6 +33,7 @@ import {
   IAuditService,
 } from '../../integrations/audit/audit.service';
 import { WsService } from '../../ws/ws.service';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
 @UseGuards(JwtAuthGuard)
 @Controller('comments')
@@ -216,7 +217,10 @@ export class CommentController {
       // Space admin can delete any comment
       if (ability.cannot(SpaceCaslAction.Manage, SpaceCaslSubject.Settings)) {
         throw new ForbiddenException(
-          'You can only delete your own comments',
+          errorBody(
+            ErrorCode.COMMENT_NOT_AUTHOR,
+            'You can only delete your own comments',
+          ),
         );
       }
       await this.commentRepo.deleteComment(comment.id);

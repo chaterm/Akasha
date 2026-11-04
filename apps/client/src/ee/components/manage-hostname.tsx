@@ -5,7 +5,6 @@ import { useDisclosure } from "@mantine/hooks";
 import * as React from "react";
 import { useForm } from "@mantine/form";
 import { zod4Resolver } from "mantine-form-zod-resolver";
-import { notifications } from "@mantine/notifications";
 import { useTranslation } from "react-i18next";
 import { getSubdomainHost } from "@/lib/config.ts";
 import { IWorkspace } from "@/features/workspace/types/workspace.types.ts";
@@ -18,6 +17,7 @@ import {
 } from "@/features/user/atoms/current-user-atom.ts";
 import useUserRole from "@/hooks/use-user-role.tsx";
 import { RESET } from "jotai/utils";
+import { notifyError } from "@/lib/errors";
 
 export default function ManageHostname() {
   const { t } = useTranslation();
@@ -88,10 +88,7 @@ function ChangeHostnameForm({ onClose }: ChangeHostnameFormProps) {
       setCurrentUser(RESET);
       window.location.href = getHostnameUrl(data.hostname.toLowerCase());
     } catch (err) {
-      notifications.show({
-        message: err?.response?.data?.message,
-        color: "red",
-      });
+      notifyError(err, "Failed to change hostname");
     }
     setIsLoading(false);
   }

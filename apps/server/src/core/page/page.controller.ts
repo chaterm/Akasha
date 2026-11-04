@@ -76,6 +76,7 @@ import { AgentAccess } from '../../common/decorators/agent-access.decorator';
 import type { AgentAccessContext } from '../../common/auth/agent-access-context';
 import { AgentAccessService } from './page-access/agent-access.service';
 import { UserType } from '../../common/auth/user-type';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
 function pageSearchExcerpt(text: string | null, query: string): string {
   if (!text) return '';
@@ -835,7 +836,10 @@ export class PageController {
       // Permanent deletion requires space admin permissions
       if (ability.cannot(SpaceCaslAction.Manage, SpaceCaslSubject.Settings)) {
         throw new ForbiddenException(
-          'Only space admins can permanently delete pages',
+          errorBody(
+            ErrorCode.PAGE_DELETE_REQUIRES_SPACE_ADMIN,
+            'Only space admins can permanently delete pages',
+          ),
         );
       }
       await this.pageService.forceDelete(deletePageDto.pageId, workspace.id);
