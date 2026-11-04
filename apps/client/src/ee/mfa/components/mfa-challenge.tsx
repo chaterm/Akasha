@@ -15,7 +15,6 @@ import { useForm } from "@mantine/form";
 import { zod4Resolver } from "mantine-form-zod-resolver";
 import { IconDeviceMobile, IconLock } from "@tabler/icons-react";
 import { useNavigate } from "react-router-dom";
-import { notifications } from "@mantine/notifications";
 import classes from "./mfa-challenge.module.css";
 import { verifyMfa } from "@/ee/mfa";
 import APP_ROUTE, { getPostLoginRedirect } from "@/lib/app-route";
@@ -23,6 +22,7 @@ import { useTranslation } from "react-i18next";
 import { z } from "zod/v4";
 import { MfaBackupCodeInput } from "./mfa-backup-code-input";
 import { AuthLayout } from "@/features/auth/components/auth-layout.tsx";
+import { notifyError } from "@/lib/errors";
 
 const formSchema = z.object({
   code: z
@@ -57,11 +57,7 @@ export function MfaChallenge() {
       navigate(getPostLoginRedirect());
     } catch (error: any) {
       setIsLoading(false);
-      notifications.show({
-        message:
-          error.response?.data?.message || t("Invalid verification code"),
-        color: "red",
-      });
+      notifyError(error, "Invalid verification code");
       form.setFieldValue("code", "");
     }
   };

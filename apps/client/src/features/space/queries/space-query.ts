@@ -31,6 +31,7 @@ import { queryClient } from "@/main.tsx";
 import { getRecentChanges } from "@/features/page/services/page-service.ts";
 import { useEffect } from "react";
 import { validate as isValidUuid } from "uuid";
+import { notifyError } from "@/lib/errors";
 
 export function useGetSpacesQuery(
   params?: SpaceQueryParams,
@@ -90,10 +91,7 @@ export function useCreateSpaceMutation() {
       });
       notifications.show({ message: t("Space created successfully") });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to create space"),
   });
 }
 
@@ -131,10 +129,7 @@ export function useUpdateSpaceMutation() {
         queryKey: ["spaces"],
       });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to update space"),
   });
 }
 
@@ -185,10 +180,7 @@ export function useDeleteSpaceMutation() {
         predicate: (item) => ["spaces"].includes(item.queryKey[0] as string),
       });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to delete space"),
   });
 }
 
@@ -217,10 +209,7 @@ export function useAddSpaceMemberMutation() {
         queryKey: ["spaceMembers", variables.spaceId],
       });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to add members"),
   });
 }
 
@@ -236,10 +225,7 @@ export function useRemoveSpaceMemberMutation() {
         queryKey: ["spaceMembers", variables.spaceId],
       });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to remove member"),
   });
 }
 
@@ -256,9 +242,6 @@ export function useChangeSpaceMemberRoleMutation() {
         queryKey: ["spaceMembers", variables.spaceId],
       });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to update member role"),
   });
 }

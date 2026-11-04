@@ -1137,9 +1137,57 @@ describe('LlmWikiController', () => {
     const controller = createController({ cacheManager });
 
     await expect(
-      controller.getPagePublishCooldown('11111111-1111-4111-8111-111111111111'),
+      controller.getPagePublishCooldown(
+        '11111111-1111-4111-8111-111111111111',
+        user(),
+      ),
     ).resolves.toEqual({ expiresAt: null, step: 0 });
     expect(cacheManager.del).toHaveBeenCalled();
+  });
+
+  it('lets owners publish immediately without starting a cooldown', async () => {
+    const cacheManager = {
+      get: jest
+        .fn()
+        .mockResolvedValue({ step: 1, expiresAt: Date.now() + 60_000 }),
+      set: jest.fn(),
+      del: jest.fn(),
+    };
+    const requestImmediatePagePublish = jest.fn().mockResolvedValue({
+      disposition: 'created',
+      run: { id: 'run-1', spaceId: 'space-1', knowledgeGeneration: 7 },
+    });
+    const controller = createController({
+      cacheManager,
+      pageAccessService: { validateCanEdit: jest.fn() },
+      spaceCompilation: { requestImmediatePagePublish },
+      pageRepo: {
+        findById: jest.fn().mockResolvedValue({
+          id: '11111111-1111-4111-8111-111111111111',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          deletedAt: null,
+        }),
+      },
+    });
+    const owner = user({ role: UserRole.OWNER });
+
+    await expect(
+      controller.publishPageKnowledge(
+        '11111111-1111-4111-8111-111111111111',
+        owner,
+        workspace(),
+      ),
+    ).resolves.toEqual(expect.objectContaining({ runId: 'run-1' }));
+    await expect(
+      controller.getPagePublishCooldown(
+        '11111111-1111-4111-8111-111111111111',
+        owner,
+      ),
+    ).resolves.toEqual({ expiresAt: null, step: 0 });
+    expect(requestImmediatePagePublish).toHaveBeenCalled();
+    expect(cacheManager.get).not.toHaveBeenCalled();
+    expect(cacheManager.set).not.toHaveBeenCalled();
   });
 
   it('queues admin space actions with explicit operational job ids', async () => {
@@ -1337,8 +1385,6 @@ describe('LlmWikiController', () => {
       scheduleId: '11111111-1111-4111-8111-111111111111',
       sourcePageId: 'page-1',
       spaceId: 'space-1',
-      deferred: false,
-      deferredUntil: null,
     });
     expect(
       spaceCompilation.requestImmediateDelayedPageCompilation,
@@ -1864,7 +1910,7 @@ describe('LlmWikiController', () => {
       expect(spaceCompilation.deferSpaceRuns).not.toHaveBeenCalled();
     });
 
-    it('reports when an immediately-due delayed page will actually run', async () => {
+    it('compiles a delayed page immediately even outside the night window', async () => {
       const spaceCompilation = {
         getCompileWindowDecision: jest.fn().mockResolvedValue(closedWindow),
         requestImmediateDelayedPageCompilation: jest.fn().mockResolvedValue({
@@ -1883,13 +1929,13 @@ describe('LlmWikiController', () => {
           adminUser(),
           workspace(),
         ),
-      ).resolves.toEqual(
-        expect.objectContaining({
-          accepted: true,
-          deferred: true,
-          deferredUntil: '2026-10-28T15:00:00.000Z',
-        }),
-      );
+      ).resolves.toEqual({
+        accepted: true,
+        scheduleId: '11111111-1111-4111-8111-111111111111',
+        sourcePageId: 'page-1',
+        spaceId: 'space-1',
+      });
+      expect(spaceCompilation.getCompileWindowDecision).not.toHaveBeenCalled();
     });
   });
 

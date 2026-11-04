@@ -16,6 +16,7 @@ import {
   AUDIT_SERVICE,
   IAuditService,
 } from '../../integrations/audit/audit.service';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
 @Injectable()
 export class UserService {
@@ -106,7 +107,10 @@ export class UserService {
 
       if (!updateUserDto.confirmPassword) {
         throw new BadRequestException(
-          'You must provide a password to change your email',
+          errorBody(
+            ErrorCode.AUTH_PASSWORD_REQUIRED,
+            'You must provide a password to change your email',
+          ),
         );
       }
 
@@ -116,11 +120,21 @@ export class UserService {
       );
 
       if (!isPasswordMatch) {
-        throw new BadRequestException('You must provide the correct password to change your email');
+        throw new BadRequestException(
+          errorBody(
+            ErrorCode.AUTH_CURRENT_PASSWORD_INCORRECT,
+            'You must provide the correct password to change your email',
+          ),
+        );
       }
 
       if (await this.userRepo.findByEmail(updateUserDto.email, workspace.id)) {
-        throw new BadRequestException('A user with this email already exists');
+        throw new BadRequestException(
+          errorBody(
+            ErrorCode.AUTH_EMAIL_TAKEN,
+            'A user with this email already exists',
+          ),
+        );
       }
 
       user.email = updateUserDto.email;

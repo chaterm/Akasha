@@ -14,10 +14,10 @@ import { workspaceAtom } from "@/features/user/atoms/current-user-atom.ts";
 import React, { useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { updateWorkspace } from "@/features/workspace/services/workspace-service.ts";
-import { notifications } from "@mantine/notifications";
 import { getAppUrl } from "@/lib/config.ts";
 import { IconCheck, IconCopy } from "@tabler/icons-react";
 import { CopyButton } from "@/components/common/copy-button.tsx";
+import { notifyError } from "@/lib/errors";
 
 export default function McpSettings() {
   const { t } = useTranslation();
@@ -33,10 +33,7 @@ export default function McpSettings() {
       setChecked(value);
       setWorkspace(updatedWorkspace);
     } catch (err) {
-      notifications.show({
-        message: err?.response?.data?.message,
-        color: "red",
-      });
+      notifyError(err, "Failed to update data");
     }
   };
 

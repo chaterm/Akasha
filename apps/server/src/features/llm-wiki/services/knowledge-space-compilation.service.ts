@@ -50,6 +50,7 @@ import {
 import { KnowledgeSourceRetirementService } from './knowledge-source-retirement.service';
 import { KnowledgeImageUnderstandingProvider } from './knowledge-image-understanding-provider.service';
 import { KnowledgeIndexMode } from '../types/knowledge-index-mode.types';
+import { ErrorCode, errorBody } from '../../../common/errors/error-codes';
 
 @Injectable()
 export class KnowledgeSpaceCompilationService implements OnModuleInit {
@@ -112,7 +113,10 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       if (result.disposition !== 'rejected') continue;
       if (result.reason === 'space_name_mismatch') {
         throw new ConflictException(
-          'Space name confirmation no longer matches.',
+          errorBody(
+            ErrorCode.KNOWLEDGE_SPACE_NAME_MISMATCH,
+            'Space name confirmation no longer matches.',
+          ),
         );
       }
       throw new NotFoundException('Space not found.');
@@ -152,7 +156,10 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       if (result.disposition !== 'rejected') continue;
       if (result.reason === 'space_name_mismatch') {
         throw new ConflictException(
-          'Space name confirmation no longer matches.',
+          errorBody(
+            ErrorCode.KNOWLEDGE_SPACE_NAME_MISMATCH,
+            'Space name confirmation no longer matches.',
+          ),
         );
       }
       throw new NotFoundException('Space not found.');
@@ -404,7 +411,14 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     const result =
       await this.runRepo.markDelayedPageForImmediateCompilation(input);
     if (result) {
-      await this.dispatchPending();
+      await this.requestRuns([
+        {
+          workspaceId: input.workspaceId,
+          spaceId: result.spaceId,
+          trigger: 'manual_compile',
+          targetSourcePageIds: [result.sourcePageId],
+        },
+      ]);
     }
     return result;
   }

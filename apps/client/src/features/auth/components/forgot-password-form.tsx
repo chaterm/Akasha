@@ -48,7 +48,7 @@ export function ForgotPasswordForm() {
             <TextInput
               id="email"
               type="email"
-              label="Email"
+              label={t("Email")}
               placeholder="email@example.com"
               variant="filled"
               {...form.getInputProps("email")}

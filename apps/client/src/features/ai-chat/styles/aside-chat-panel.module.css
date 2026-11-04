@@ -73,39 +73,6 @@
   text-align: center;
 }
 
-.quickActions {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 100%;
-}
-
-.quickAction {
-  display: flex;
-  align-items: center;
-  gap: var(--mantine-spacing-sm);
-  padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
-  border: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
-  border-radius: var(--mantine-radius-md);
-  cursor: pointer;
-  background: transparent;
-  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1));
-  font-size: var(--mantine-font-size-sm);
-  text-align: left;
-  width: 100%;
-  transition: background-color 150ms, border-color 150ms;
-
-  @mixin hover {
-    background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
-    border-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
-  }
-}
-
-.quickActionIcon {
-  flex-shrink: 0;
-  color: light-dark(var(--mantine-color-gray-5), var(--mantine-color-dark-3));
-}
-
 .historyList {
   max-height: 300px;
   overflow-y: auto;

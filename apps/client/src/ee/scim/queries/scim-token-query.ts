@@ -20,6 +20,7 @@ import {
 } from "@/ee/scim/types/scim-token.types";
 import { notifications } from "@mantine/notifications";
 import { useTranslation } from "react-i18next";
+import { notifyError } from "@/lib/errors";
 
 export function useGetScimTokensQuery(
   params?: QueryParams,
@@ -48,10 +49,7 @@ export function useCreateScimTokenMutation() {
           ["scim-token-list"].includes(item.queryKey[0] as string),
       });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to create SCIM token"),
   });
 }
 
@@ -68,10 +66,7 @@ export function useUpdateScimTokenMutation() {
           ["scim-token-list"].includes(item.queryKey[0] as string),
       });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to update SCIM token"),
   });
 }
 
@@ -88,9 +83,6 @@ export function useRevokeScimTokenMutation() {
           ["scim-token-list"].includes(item.queryKey[0] as string),
       });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to revoke SCIM token"),
   });
 }

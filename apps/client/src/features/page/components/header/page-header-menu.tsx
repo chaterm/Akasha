@@ -75,6 +75,7 @@ import { formattedDate } from "@/lib/time.ts";
 import { PageEditModeControls } from "@/features/editor/components/page-edit-mode-toggle.tsx";
 import MovePageModal from "@/features/page/components/move-page-modal.tsx";
 import { useTimeAgo } from "@/hooks/use-time-ago.tsx";
+import useUserRole from "@/hooks/use-user-role.tsx";
 import { PageShareModal } from "@/ee/page-permission";
 import {
   PageVerificationMenuItem,
@@ -91,6 +92,7 @@ import {
   useUnwatchPageMutation,
 } from "@/features/page/queries/watcher-query";
 import type { KnowledgePageIndexModeChoice } from "@/features/page/services/page-service";
+import { notifyError } from "@/lib/errors";
 
 const PUBLISH_COOLDOWNS = [10 * 60_000, 30 * 60_000, 2 * 60 * 60_000];
 const publishCooldownKey = (pageId: string) =>
@@ -223,6 +225,7 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
   const { data: watchStatus } = useWatchStatusQuery(page?.id);
   const watchPage = useWatchPageMutation();
   const unwatchPage = useUnwatchPageMutation();
+  const { isOwner } = useUserRole();
   const publishPageKnowledge = usePublishPageKnowledgeMutation();
   const setPageIndexMode = useSetPageIndexModeMutation();
   const { data: serverCooldown, refetch: refetchCooldown } =
@@ -247,7 +250,7 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
       });
     }
   }, [serverCooldown]);
-  const publishCoolingDown = publishCooldownRemaining > 0;
+  const publishCoolingDown = !isOwner && publishCooldownRemaining > 0;
   const isPublishing = compileStatus?.status === "compiling";
 
   useEffect(() => {
@@ -351,15 +354,19 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
       { pageId: page.id, indexMode },
       {
         onSuccess: () => {
-          const step = (publishCooldown?.step ?? 0) + 1;
-          const expiresAt =
-            Date.now() +
-            PUBLISH_COOLDOWNS[Math.min(step - 1, PUBLISH_COOLDOWNS.length - 1)];
-          setPublishCooldown({ expiresAt, step });
-          localStorage.setItem(
-            publishCooldownKey(page.id),
-            JSON.stringify({ expiresAt, step }),
-          );
+          if (!isOwner) {
+            const step = (publishCooldown?.step ?? 0) + 1;
+            const expiresAt =
+              Date.now() +
+              PUBLISH_COOLDOWNS[
+                Math.min(step - 1, PUBLISH_COOLDOWNS.length - 1)
+              ];
+            setPublishCooldown({ expiresAt, step });
+            localStorage.setItem(
+              publishCooldownKey(page.id),
+              JSON.stringify({ expiresAt, step }),
+            );
+          }
           notifications.show({ message: t("Page publish started") });
           void refetchCompileStatus();
         },
@@ -367,11 +374,7 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
           if (error?.response?.status === 429) {
             void refetchCooldown();
           }
-          notifications.show({
-            message:
-              error?.response?.data?.message || t("Failed to publish page"),
-            color: "red",
-          });
+          notifyError(error, "Failed to publish page");
         },
       },
     );
@@ -387,12 +390,7 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
       {
         onError: (error: any) => {
           setIndexMode(previous);
-          notifications.show({
-            message:
-              error?.response?.data?.message ||
-              t("Failed to save publish mode"),
-            color: "red",
-          });
+          notifyError(error, "Failed to save publish mode");
         },
       },
     );
@@ -435,9 +433,7 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
     return (
       <Tooltip
         label={
-          status === "failed"
-            ? compileStatus.errorMessage || t("Publish failed")
-            : config.label
+          status === "failed" ? t("Publish failed") : config.label
         }
         withArrow
       >

@@ -9,6 +9,7 @@ import { notifications } from "@mantine/notifications";
 import { useTranslation } from "react-i18next";
 import { updateWorkspace } from "@/features/workspace/services/workspace-service.ts";
 import { IWorkspace } from "@/features/workspace/types/workspace.types.ts";
+import { notifyError } from "@/lib/errors";
 
 const formSchema = z.object({
   emailDomains: z.array(z.string()),
@@ -41,10 +42,7 @@ export default function AllowedDomains() {
       });
     } catch (err) {
       console.log(err);
-      notifications.show({
-        message: err.response.data.message,
-        color: "red",
-      });
+      notifyError(err, "Failed to update data");
     }
 
     form.resetDirty();

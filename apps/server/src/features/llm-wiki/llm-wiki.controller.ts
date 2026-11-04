@@ -108,6 +108,7 @@ import {
   isKnowledgeIndexMode,
   resolveEffectiveKnowledgeIndexMode,
 } from './types/knowledge-index-mode.types';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
 @UseGuards(JwtAuthGuard)
 @Controller('llm-wiki')
@@ -177,7 +178,12 @@ export class LlmWikiController {
     @Headers('x-akasha-public-key') publicApiKey?: string,
   ) {
     if (!this.chatService.isEnabledForWorkspace(workspace)) {
-      throw new ForbiddenException('AI knowledge chat is disabled');
+      throw new ForbiddenException(
+        errorBody(
+          ErrorCode.AI_KNOWLEDGE_DISABLED,
+          'AI knowledge chat is disabled',
+        ),
+      );
     }
 
     const queryType = dto.type ?? KnowledgeQueryType.USER;
@@ -442,7 +448,12 @@ export class LlmWikiController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     if (!this.chatService.isEnabledForWorkspace(workspace)) {
-      throw new ForbiddenException('AI knowledge chat is disabled');
+      throw new ForbiddenException(
+        errorBody(
+          ErrorCode.AI_KNOWLEDGE_DISABLED,
+          'AI knowledge chat is disabled',
+        ),
+      );
     }
 
     return this.graphService.getSpaceGraph({
@@ -455,7 +466,13 @@ export class LlmWikiController {
 
   @HttpCode(HttpStatus.OK)
   @Get('pages/:pageId/publish-cooldown')
-  async getPagePublishCooldown(@Param('pageId', ParseUUIDPipe) pageId: string) {
+  async getPagePublishCooldown(
+    @Param('pageId', ParseUUIDPipe) pageId: string,
+    @AuthUser() user: User,
+  ) {
+    if (user.role === UserRole.OWNER) {
+      return { expiresAt: null, step: 0 };
+    }
     const state = await this.cacheManager?.get<{
       step: number;
       expiresAt: number;
@@ -527,7 +544,12 @@ export class LlmWikiController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     if (!this.chatService.isEnabledForWorkspace(workspace)) {
-      throw new ForbiddenException('AI knowledge chat is disabled');
+      throw new ForbiddenException(
+        errorBody(
+          ErrorCode.AI_KNOWLEDGE_DISABLED,
+          'AI knowledge chat is disabled',
+        ),
+      );
     }
     if (!this.pageIndexSettingsRepo) {
       throw new NotFoundException('Page publish mode is unavailable');
@@ -543,7 +565,10 @@ export class LlmWikiController {
     const { spaceIndexMode } = await this.resolvePageIndexMode(page);
     if (isKnowledgeIndexMode(spaceIndexMode)) {
       throw new ForbiddenException(
-        'The space publish mode applies to every page in this space',
+        errorBody(
+          ErrorCode.KNOWLEDGE_INDEX_MODE_LOCKED,
+          'The space publish mode applies to every page in this space',
+        ),
       );
     }
 
@@ -565,7 +590,12 @@ export class LlmWikiController {
     @Body() dto: PagePublishDto = {},
   ) {
     if (!this.chatService.isEnabledForWorkspace(workspace)) {
-      throw new ForbiddenException('AI knowledge chat is disabled');
+      throw new ForbiddenException(
+        errorBody(
+          ErrorCode.AI_KNOWLEDGE_DISABLED,
+          'AI knowledge chat is disabled',
+        ),
+      );
     }
 
     const page = await this.pageRepo.findById(pageId);
@@ -590,15 +620,21 @@ export class LlmWikiController {
       spaceIndexMode: resolved.spaceIndexMode,
     });
 
+    const bypassCooldown = user.role === UserRole.OWNER;
     const cooldownKey = this.publishCooldownKey(page.id);
-    const cooldown = await this.cacheManager?.get<{
-      step: number;
-      expiresAt: number;
-    }>(cooldownKey);
+    const cooldown = bypassCooldown
+      ? undefined
+      : await this.cacheManager?.get<{
+          step: number;
+          expiresAt: number;
+        }>(cooldownKey);
     if (cooldown && cooldown.expiresAt > Date.now()) {
       throw new HttpException(
         {
-          message: 'Page publish is cooling down',
+          ...errorBody(
+            ErrorCode.KNOWLEDGE_PUBLISH_COOLDOWN,
+            'Page publish is cooling down',
+          ),
           expiresAt: cooldown.expiresAt,
         },
         HttpStatus.TOO_MANY_REQUESTS,
@@ -613,17 +649,19 @@ export class LlmWikiController {
       updatedBy: user.id,
     });
     const run = request.run!;
-    const step = Math.min(
-      (cooldown?.step ?? 0) + 1,
-      LlmWikiController.PUBLISH_COOLDOWN_MS.length,
-    );
-    const expiresAt =
-      Date.now() + LlmWikiController.PUBLISH_COOLDOWN_MS[step - 1];
-    await this.cacheManager?.set(
-      cooldownKey,
-      { step, expiresAt },
-      LlmWikiController.PUBLISH_COOLDOWN_TTL,
-    );
+    if (!bypassCooldown) {
+      const step = Math.min(
+        (cooldown?.step ?? 0) + 1,
+        LlmWikiController.PUBLISH_COOLDOWN_MS.length,
+      );
+      const expiresAt =
+        Date.now() + LlmWikiController.PUBLISH_COOLDOWN_MS[step - 1];
+      await this.cacheManager?.set(
+        cooldownKey,
+        { step, expiresAt },
+        LlmWikiController.PUBLISH_COOLDOWN_TTL,
+      );
+    }
     const result = {
       pageId: page.id,
       spaceId: page.spaceId,
@@ -737,7 +775,12 @@ export class LlmWikiController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     if (!this.chatService.isEnabledForWorkspace(workspace)) {
-      throw new ForbiddenException('AI knowledge chat is disabled');
+      throw new ForbiddenException(
+        errorBody(
+          ErrorCode.AI_KNOWLEDGE_DISABLED,
+          'AI knowledge chat is disabled',
+        ),
+      );
     }
 
     this.assertAdmin(user, 'AI knowledge compile is restricted to admins');
@@ -831,7 +874,12 @@ export class LlmWikiController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     if (!this.chatService.isEnabledForWorkspace(workspace)) {
-      throw new ForbiddenException('AI knowledge chat is disabled');
+      throw new ForbiddenException(
+        errorBody(
+          ErrorCode.AI_KNOWLEDGE_DISABLED,
+          'AI knowledge chat is disabled',
+        ),
+      );
     }
 
     this.assertAdmin(user, 'AI knowledge actions are restricted to admins');
@@ -944,7 +992,10 @@ export class LlmWikiController {
       });
     if (!result) {
       throw new BadRequestException(
-        'Delayed page is unavailable or page name confirmation does not match',
+        errorBody(
+          ErrorCode.KNOWLEDGE_DELAYED_PAGE_UNAVAILABLE,
+          'Delayed page is unavailable or page name confirmation does not match',
+        ),
       );
     }
 
@@ -960,18 +1011,11 @@ export class LlmWikiController {
         pageName: result.pageName,
       },
     });
-    // The schedule is now due; outside the night window the promotion gate
-    // still holds it, so report when it will actually run.
-    const window = await this.spaceCompilation.getCompileWindowDecision(
-      workspace.id,
-    );
     return {
       accepted: true,
       scheduleId: result.scheduleId,
       sourcePageId: result.sourcePageId,
       spaceId: result.spaceId,
-      deferred: window.deferred,
-      deferredUntil: window.deferredUntil?.toISOString() ?? null,
     };
   }
 
@@ -991,7 +1035,10 @@ export class LlmWikiController {
     });
     if (!result) {
       throw new BadRequestException(
-        'Delayed page is unavailable or page name confirmation does not match',
+        errorBody(
+          ErrorCode.KNOWLEDGE_DELAYED_PAGE_UNAVAILABLE,
+          'Delayed page is unavailable or page name confirmation does not match',
+        ),
       );
     }
 
@@ -1201,7 +1248,12 @@ export class LlmWikiController {
     @AuthWorkspace() workspace: Workspace,
   ): Promise<{ queuedPageCount: number; jobIds: string[] }> {
     if (!this.chatService.isEnabledForWorkspace(workspace)) {
-      throw new ForbiddenException('AI knowledge chat is disabled');
+      throw new ForbiddenException(
+        errorBody(
+          ErrorCode.AI_KNOWLEDGE_DISABLED,
+          'AI knowledge chat is disabled',
+        ),
+      );
     }
     this.assertAdmin(user, 'AI knowledge retry is restricted to admins');
 
@@ -1217,7 +1269,10 @@ export class LlmWikiController {
     );
     if (pageIds.some((pageId) => !pageById.has(pageId))) {
       throw new BadRequestException(
-        'One or more source pages are unavailable for retry',
+        errorBody(
+          ErrorCode.KNOWLEDGE_RETRY_PAGES_UNAVAILABLE,
+          'One or more source pages are unavailable for retry',
+        ),
       );
     }
 
@@ -1236,7 +1291,10 @@ export class LlmWikiController {
     );
     if (pageIds.some((pageId) => !compiledPageIds.has(pageId))) {
       throw new BadRequestException(
-        'Only pages that have already been compiled can be retried',
+        errorBody(
+          ErrorCode.KNOWLEDGE_RETRY_NOT_COMPILED,
+          'Only pages that have already been compiled can be retried',
+        ),
       );
     }
 
@@ -1251,7 +1309,10 @@ export class LlmWikiController {
       });
     if (spacesWithActiveRun.length > 0) {
       throw new ConflictException(
-        'A compilation run is still in progress for the selected pages. Wait for it to finish, then retry.',
+        errorBody(
+          ErrorCode.KNOWLEDGE_RUN_IN_PROGRESS,
+          'A compilation run is still in progress for the selected pages. Wait for it to finish, then retry.',
+        ),
       );
     }
 
@@ -1346,7 +1407,12 @@ export class LlmWikiController {
 
   private assertDiagnosticsEnabled(workspace: Workspace): void {
     if (!this.chatService.isEnabledForWorkspace(workspace)) {
-      throw new ForbiddenException('AI knowledge chat is disabled');
+      throw new ForbiddenException(
+        errorBody(
+          ErrorCode.AI_KNOWLEDGE_DISABLED,
+          'AI knowledge chat is disabled',
+        ),
+      );
     }
   }
 
@@ -1375,7 +1441,12 @@ export class LlmWikiController {
     workspace: Workspace,
   ): void {
     if (!this.chatService.isEnabledForWorkspace(workspace)) {
-      throw new ForbiddenException('AI knowledge chat is disabled');
+      throw new ForbiddenException(
+        errorBody(
+          ErrorCode.AI_KNOWLEDGE_DISABLED,
+          'AI knowledge chat is disabled',
+        ),
+      );
     }
     this.assertAdmin(user, 'AI knowledge compile is restricted to admins');
   }

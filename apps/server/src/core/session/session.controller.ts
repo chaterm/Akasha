@@ -15,6 +15,7 @@ import { AuthWorkspace } from '../../common/decorators/auth-workspace.decorator'
 import { User, Workspace } from '@akasha/db/types/entity.types';
 import { RevokeSessionDto } from './dto/revoke-session.dto';
 import { FastifyRequest } from 'fastify';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
 @UseGuards(JwtAuthGuard)
 @Controller('sessions')
@@ -48,7 +49,10 @@ export class SessionController {
     const currentSessionId = (req.raw as any).sessionId;
     if (dto.sessionId === currentSessionId) {
       throw new BadRequestException(
-        'Cannot revoke current session. Use logout instead.',
+        errorBody(
+          ErrorCode.SESSION_CANNOT_REVOKE_CURRENT,
+          'Cannot revoke current session. Use logout instead.',
+        ),
       );
     }
     await this.sessionService.revokeSession(

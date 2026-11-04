@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { Workspace } from '@akasha/db/types/entity.types';
 import { createHmac } from 'node:crypto';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
 export function computeEmailSignature(
   email: string,
@@ -35,7 +36,12 @@ export function throwIfEmailNotVerified(opts: {
 
 export function validateSsoEnforcement(workspace: Workspace) {
   if (workspace.enforceSso) {
-    throw new BadRequestException('This workspace has enforced SSO login.');
+    throw new BadRequestException(
+      errorBody(
+        ErrorCode.AUTH_SSO_ENFORCED,
+        'This workspace has enforced SSO login.',
+      ),
+    );
   }
 }
 
@@ -47,7 +53,11 @@ export function validateAllowedEmail(userEmail: string, workspace: Workspace) {
     !workspace.emailDomains.includes(emailDomain)
   ) {
     throw new BadRequestException(
-      `The email domain "${emailDomain}" is not approved for this workspace.`,
+      errorBody(
+        ErrorCode.AUTH_EMAIL_DOMAIN_NOT_ALLOWED,
+        `The email domain "${emailDomain}" is not approved for this workspace.`,
+        { domain: emailDomain },
+      ),
     );
   }
 }

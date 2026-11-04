@@ -22,6 +22,8 @@ import { copyToClipboard, htmlToMarkdown } from "@docmost/editor-ext";
 import { useLocation } from "react-router-dom";
 import { isFocusWithinAiMenu } from "./ai-menu.utils";
 import { notifications } from "@mantine/notifications";
+import { useTranslation } from "react-i18next";
+import { notifyError } from "@/lib/errors";
 
 interface EditorAiMenuProps {
   editor: Editor | null;
@@ -32,6 +34,7 @@ const EditorAiMenu = ({
   editor,
   readOnly = false,
 }: EditorAiMenuProps): JSX.Element | null => {
+  const { t } = useTranslation();
   const aiGenerateStreamMutation = useAiGenerateStreamMutation();
   const location = useLocation();
   const isSmBreakpoint = useMediaQuery("(max-width: 48em)");
@@ -153,7 +156,7 @@ const EditorAiMenu = ({
         onError: (error) => {
           streamAbortControllerRef.current = null;
           setIsLoading(false);
-          notifications.show({ message: error.error, color: "red" });
+          notifyError(error, "AI generation failed");
           resetMenu();
         },
       });
@@ -357,7 +360,7 @@ const EditorAiMenu = ({
           <TextInput
             ref={inputRef}
             className={classes.aiInput}
-            placeholder="Ask AI..."
+            placeholder={t("Ask AI...")}
             data-autofocus
             value={prompt}
             disabled={isLoading}

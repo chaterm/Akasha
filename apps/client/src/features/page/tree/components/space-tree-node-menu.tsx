@@ -34,6 +34,7 @@ import { treeDataAtom } from "@/features/page/tree/atoms/tree-data-atom.ts";
 import { treeModel } from "@/features/page/tree/model/tree-model";
 import { useTreeMutation } from "@/features/page/tree/hooks/use-tree-mutation.ts";
 import type { SpaceTreeNode } from "@/features/page/tree/types.ts";
+import { notifyError } from "@/lib/errors";
 
 export interface NodeMenuProps {
   node: SpaceTreeNode;
@@ -111,10 +112,7 @@ export function NodeMenu({ node, canEdit }: NodeMenuProps) {
 
       notifications.show({ message: t("Page duplicated successfully") });
     } catch (err: any) {
-      notifications.show({
-        message: err?.response?.data?.message || "An error occurred",
-        color: "red",
-      });
+      notifyError(err, "Failed to duplicate page");
     }
   };
 

@@ -26,6 +26,7 @@ import {
   IAuditService,
 } from '../../../integrations/audit/audit.service';
 import { UserType } from '../../../common/auth/user-type';
+import { ErrorCode, errorBody } from '../../../common/errors/error-codes';
 
 @Injectable()
 export class SpaceMemberService {
@@ -238,7 +239,10 @@ export class SpaceMemberService {
     }
     if (dto.userId && space.personalOwnerId === dto.userId) {
       throw new BadRequestException(
-        'The personal space owner cannot be removed',
+        errorBody(
+          ErrorCode.PERSONAL_SPACE_PROTECTED,
+          'The personal space owner cannot be removed',
+        ),
       );
     }
     if (dto.userId) {
@@ -336,7 +340,10 @@ export class SpaceMemberService {
       dto.role !== SpaceRole.ADMIN
     ) {
       throw new BadRequestException(
-        'The personal space owner must remain an admin',
+        errorBody(
+          ErrorCode.PERSONAL_SPACE_PROTECTED,
+          'The personal space owner must remain an admin',
+        ),
       );
     }
     if (dto.userId) {
@@ -409,7 +416,10 @@ export class SpaceMemberService {
     );
     if (spaceOwnerCount === 1) {
       throw new BadRequestException(
-        'There must be at least one space admin with full access',
+        errorBody(
+          ErrorCode.SPACE_LAST_ADMIN,
+          'There must be at least one space admin with full access',
+        ),
       );
     }
   }

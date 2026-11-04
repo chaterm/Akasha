@@ -10,6 +10,7 @@ import {
   getSkillSettings,
   updateSkillSettings,
 } from "@/features/workspace/services/workspace-service.ts";
+import { notifyError } from "@/lib/errors";
 
 const formSchema = z.object({
   latestVersion: z.string().regex(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/),
@@ -62,10 +63,7 @@ export default function SkillSettings() {
       queryClient.setQueryData(["skill-settings"], updatedSettings);
       notifications.show({ message: t("Updated successfully") });
     } catch (error: any) {
-      notifications.show({
-        message: error?.response?.data?.message ?? t("Failed to update data"),
-        color: "red",
-      });
+      notifyError(error, "Failed to update data");
     } finally {
       setIsSaving(false);
     }

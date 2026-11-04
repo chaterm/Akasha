@@ -23,6 +23,7 @@ import type {
   AiModelProvider,
   UpdateAiModelConfigInput,
 } from "@/features/ai/types/ai-model-config.types.ts";
+import { notifyError } from "@/lib/errors";
 
 const PROVIDER_OPTIONS: { value: AiModelProvider; label: string }[] = [
   { value: "openai-compatible", label: "Qwen / OpenAI 兼容" },
@@ -132,10 +133,7 @@ export default function AiModelFeatureForm({
         });
       }
     } catch (error: any) {
-      notifications.show({
-        message: error?.response?.data?.message ?? t("Connection failed"),
-        color: "red",
-      });
+      notifyError(error, "Connection failed");
     } finally {
       setIsTesting(false);
     }
@@ -157,10 +155,7 @@ export default function AiModelFeatureForm({
       form.resetDirty();
       notifications.show({ message: t("Updated successfully") });
     } catch (error: any) {
-      notifications.show({
-        message: error?.response?.data?.message ?? t("Failed to update data"),
-        color: "red",
-      });
+      notifyError(error, "Failed to update data");
     } finally {
       setIsSaving(false);
     }

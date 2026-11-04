@@ -81,7 +81,7 @@ export function SsoHOIDCForm({ provider, onClose }: SsoFormProps) {
             {...form.getInputProps("name")}
           />
           <TextInput
-            label="Callback URL"
+            label={t("Callback URL")}
             variant="filled"
             value={callbackUrl}
             pointer
@@ -95,7 +95,7 @@ export function SsoHOIDCForm({ provider, onClose }: SsoFormProps) {
             {...form.getInputProps("oidcIssuer")}
           />
           <TextInput
-            label="Platform ID"
+            label={t("Platform ID")}
             description="SSO 平台 ID"
             placeholder="your-platform-id"
             {...form.getInputProps("oidcClientId")}

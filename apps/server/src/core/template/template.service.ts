@@ -47,6 +47,7 @@ import {
   findBuiltinTemplate,
   instantiateBuiltinContent,
 } from './builtin-templates';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
 const EMPTY_DOC = { type: 'doc', content: [{ type: 'paragraph' }] };
 
@@ -190,10 +191,12 @@ export class TemplateService {
       { includeContent: true },
     );
     if (!template.allSpaces && !template.spaceIds.includes(spaceId)) {
-      throw new BadRequestException({
-        code: 'TEMPLATE_NOT_APPLICABLE',
-        message: 'Template is not available in this space',
-      });
+      throw new BadRequestException(
+        errorBody(
+          ErrorCode.TEMPLATE_NOT_APPLICABLE,
+          'Template is not available in this space',
+        ),
+      );
     }
     // Normalize a copy: parsing legacy template JSON may mutate its input.
     const node = jsonToNode(

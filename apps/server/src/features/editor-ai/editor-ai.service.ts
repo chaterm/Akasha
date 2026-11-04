@@ -13,6 +13,7 @@ import {
   EDITOR_PROVIDER_NAME,
   editorCallOptions,
 } from '../llm-wiki/services/knowledge-answer-provider.service';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
 const SYSTEM_PROMPT = [
   'You are an inline writing assistant inside a document editor.',
@@ -91,7 +92,11 @@ export class EditorAiService {
     const maxInputChars = this.environmentService.getAiChatMaxInputChars();
     if (inputLength > maxInputChars) {
       throw new BadRequestException(
-        `AI input exceeds the ${maxInputChars} character limit.`,
+        errorBody(
+          ErrorCode.AI_INPUT_TOO_LONG,
+          `AI input exceeds the ${maxInputChars} character limit.`,
+          { max: maxInputChars },
+        ),
       );
     }
   }
@@ -105,7 +110,10 @@ export class EditorAiService {
 
     if (!model) {
       throw new ServiceUnavailableException(
-        'The answer model is not configured.',
+        errorBody(
+          ErrorCode.AI_MODEL_NOT_CONFIGURED,
+          'The answer model is not configured.',
+        ),
       );
     }
 

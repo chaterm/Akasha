@@ -13,6 +13,7 @@ import { ExportFormat } from "@/features/page/types/page.types.ts";
 import { notifications } from "@mantine/notifications";
 import { exportSpace } from "@/features/space/services/space-service";
 import { useTranslation } from "react-i18next";
+import { notifyError } from "@/lib/errors";
 
 interface ExportModalProps {
   id: string;
@@ -52,11 +53,7 @@ export default function ExportModal({
       });
       onClose();
     } catch (err) {
-      notifications.show({
-        message: "Export failed:" + err.response?.data.message,
-        color: "red",
-      });
-      console.error("export error", err);
+      notifyError(err, "Export failed");
     } finally {
       setIsExporting(false);
     }

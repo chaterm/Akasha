@@ -20,6 +20,7 @@ import {
   SendAiChatMessageDto,
   UpdateAiChatTitleDto,
 } from './dto/ai-chat.dto';
+import { readErrorCode } from '../../common/errors/error-codes';
 
 @UseGuards(JwtAuthGuard)
 @Controller('ai/chats')
@@ -163,6 +164,7 @@ export class AiChatController {
           error instanceof Error
             ? error.message
             : 'Failed to send chat message',
+        code: readErrorCode(error),
         retryable: false,
       });
     } finally {
@@ -226,6 +228,7 @@ export class AiChatController {
           error instanceof Error
             ? error.message
             : 'Failed to edit chat message',
+        code: readErrorCode(error),
         retryable: false,
       });
     } finally {

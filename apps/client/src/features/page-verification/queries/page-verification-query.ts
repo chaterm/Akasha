@@ -26,6 +26,7 @@ import {
 import { notifications } from "@mantine/notifications";
 import { useTranslation } from "react-i18next";
 import { IPagination } from "@/lib/types";
+import { notifyError } from "@/lib/errors";
 
 export function usePageVerificationInfoQuery(
   pageId: string | undefined,
@@ -49,13 +50,7 @@ export function useSetupVerificationMutation() {
       });
       notifications.show({ message: t("Verification enabled") });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({
-        message: errorMessage || t("Failed to enable verification"),
-        color: "red",
-      });
-    },
+    onError: (error) => notifyError(error, "Failed to enable verification"),
   });
 }
 
@@ -71,13 +66,7 @@ export function useUpdateVerificationMutation() {
       });
       notifications.show({ message: t("Verification updated") });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({
-        message: errorMessage || t("Failed to update verification"),
-        color: "red",
-      });
-    },
+    onError: (error) => notifyError(error, "Failed to update verification"),
   });
 }
 
@@ -93,13 +82,7 @@ export function useRemoveVerificationMutation() {
       });
       notifications.show({ message: t("Verification removed") });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({
-        message: errorMessage || t("Failed to remove verification"),
-        color: "red",
-      });
-    },
+    onError: (error) => notifyError(error, "Failed to remove verification"),
   });
 }
 
@@ -115,13 +98,7 @@ export function useVerifyPageMutation() {
       });
       notifications.show({ message: t("Page verified") });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({
-        message: errorMessage || t("Failed to verify page"),
-        color: "red",
-      });
-    },
+    onError: (error) => notifyError(error, "Failed to verify page"),
   });
 }
 
@@ -137,13 +114,7 @@ export function useSubmitForApprovalMutation() {
       });
       notifications.show({ message: t("Submitted for approval") });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({
-        message: errorMessage || t("Failed to submit for approval"),
-        color: "red",
-      });
-    },
+    onError: (error) => notifyError(error, "Failed to submit for approval"),
   });
 }
 
@@ -159,13 +130,7 @@ export function useRejectApprovalMutation() {
       });
       notifications.show({ message: t("Approval rejected") });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({
-        message: errorMessage || t("Failed to reject approval"),
-        color: "red",
-      });
-    },
+    onError: (error) => notifyError(error, "Failed to reject approval"),
   });
 }
 
@@ -181,13 +146,7 @@ export function useMarkObsoleteMutation() {
       });
       notifications.show({ message: t("Page marked as obsolete") });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({
-        message: errorMessage || t("Failed to mark as obsolete"),
-        color: "red",
-      });
-    },
+    onError: (error) => notifyError(error, "Failed to mark as obsolete"),
   });
 }
 

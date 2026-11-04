@@ -285,7 +285,7 @@ describe("useChatStream message editing", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.error).toBe("Message not found");
+      expect(result.current.error).toBe("Failed to send message");
       expect(invalidateQueries).toHaveBeenCalledWith({
         queryKey: ["ai-chat", "chat-1"],
       });

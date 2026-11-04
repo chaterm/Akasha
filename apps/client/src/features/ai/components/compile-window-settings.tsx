@@ -11,6 +11,7 @@ import {
   getCompileWindowSettings,
   updateCompileWindowSettings,
 } from "@/features/workspace/services/workspace-service.ts";
+import { notifyError } from "@/lib/errors";
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const QUERY_KEY = ["compile-window-settings"];
@@ -66,10 +67,7 @@ export default function CompileWindowSettings() {
       queryClient.setQueryData(QUERY_KEY, updated);
       notifications.show({ message: t("Updated successfully") });
     } catch (error: any) {
-      notifications.show({
-        message: error?.response?.data?.message ?? t("Failed to update data"),
-        color: "red",
-      });
+      notifyError(error, "Failed to update data");
     } finally {
       setIsSaving(false);
     }

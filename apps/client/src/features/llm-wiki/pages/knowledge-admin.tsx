@@ -77,6 +77,7 @@ import type {
   KnowledgeRunPhase,
   KnowledgeRunStatus,
 } from "../types/knowledge.types";
+import { getErrorMessage, notifyError } from "@/lib/errors";
 
 const PAGE_SIZE = 50;
 const ALL_SPACES_VALUE = "__all_spaces__";
@@ -395,11 +396,14 @@ export default function KnowledgeAdminPage() {
       notifications.show({
         message: result.deferred
           ? deferredCompileMessage(t, result.deferredUntil ?? null)
-          : t("Knowledge update queued"),
+          : t("Knowledge update queued", { count: 1 }),
       });
       refreshRunViews();
     },
-    onError: (error) => setConfirmationError(error.message),
+    onError: (error) =>
+      setConfirmationError(
+        getErrorMessage(error, "Failed to queue knowledge update", { withDetail: true }),
+      ),
   });
   const immediateDelayedPageMutation = useMutation({
     mutationFn: immediatelyCompileDelayedPage,
@@ -408,14 +412,13 @@ export default function KnowledgeAdminPage() {
       setConfirmedDelayedPage(null);
       setDelayedPageConfirmationName("");
       setDelayedPageConfirmationError(null);
-      notifications.show({
-        message: result.deferred
-          ? deferredCompileMessage(t, result.deferredUntil ?? null)
-          : t("Page compilation queued"),
-      });
+      notifications.show({ message: t("Page compilation queued") });
       refreshRunViews();
     },
-    onError: (error) => setDelayedPageConfirmationError(error.message),
+    onError: (error) =>
+      setDelayedPageConfirmationError(
+        getErrorMessage(error, "Failed to compile page", { withDetail: true }),
+      ),
   });
   const removeDelayedPageMutation = useMutation({
     mutationFn: removeDelayedPageFromQueue,
@@ -425,7 +428,7 @@ export default function KnowledgeAdminPage() {
       refreshRunViews();
     },
     onError: (error) =>
-      notifications.show({ color: "red", message: error.message }),
+      notifyError(error, "Failed to remove page from queue", { withDetail: true }),
   });
   const actionMutation = useMutation({
     mutationFn: runKnowledgeAdminAction,
@@ -439,7 +442,7 @@ export default function KnowledgeAdminPage() {
       refreshRunViews();
     },
     onError: (error) =>
-      notifications.show({ color: "red", message: error.message }),
+      notifyError(error, "Failed to queue knowledge action", { withDetail: true }),
   });
   const retryPagesMutation = useMutation({
     mutationFn: retryKnowledgePages,
@@ -453,7 +456,7 @@ export default function KnowledgeAdminPage() {
       refreshRunViews();
     },
     onError: (error) =>
-      notifications.show({ color: "red", message: error.message }),
+      notifyError(error, "Failed to queue page retries", { withDetail: true }),
   });
   const logRetryMutation = useMutation({
     mutationFn: retryKnowledgePages,
@@ -466,7 +469,7 @@ export default function KnowledgeAdminPage() {
       void pageLogQuery.refetch();
     },
     onError: (error) =>
-      notifications.show({ color: "red", message: error.message }),
+      notifyError(error, "Failed to queue page retries", { withDetail: true }),
   });
   const cancelRunMutation = useMutation({
     mutationFn: cancelKnowledgeCompilationRun,
@@ -484,7 +487,7 @@ export default function KnowledgeAdminPage() {
       refreshRunViews();
     },
     onError: (error) =>
-      notifications.show({ color: "red", message: error.message }),
+      notifyError(error, "Failed to cancel compilation run", { withDetail: true }),
   });
 
   const runSummary = runSummaryQuery.data;
@@ -799,7 +802,13 @@ export default function KnowledgeAdminPage() {
             size="xl"
           >
             {runPageDetailQuery.isError && (
-              <Alert color="red">{runPageDetailQuery.error.message}</Alert>
+              <Alert color="red">
+                {getErrorMessage(
+                  runPageDetailQuery.error,
+                  "Failed to load data",
+                  { withDetail: true },
+                )}
+              </Alert>
             )}
             {runPageDetailQuery.isLoading ? (
               <Loader size="sm" />
@@ -932,7 +941,11 @@ export default function KnowledgeAdminPage() {
 
           {(runSummaryQuery.isError || runListQuery.isError) && (
             <Alert color="red" icon={<IconAlertTriangle size={18} />}>
-              {runSummaryQuery.error?.message ?? runListQuery.error?.message}
+              {getErrorMessage(
+                runSummaryQuery.error ?? runListQuery.error,
+                "Failed to load data",
+                { withDetail: true },
+              )}
             </Alert>
           )}
 
@@ -1464,7 +1477,7 @@ function DelayedCompilationQueue({
 
       {query.isError && (
         <Alert color="red" icon={<IconAlertTriangle size={18} />}>
-          {query.error.message}
+          {getErrorMessage(query.error, "Failed to load data", { withDetail: true })}
         </Alert>
       )}
       {query.isLoading ? (
@@ -1703,7 +1716,7 @@ function PageCompilationLog({
       </Group>
       {query.isError && (
         <Alert color="red" icon={<IconAlertTriangle size={18} />}>
-          {query.error.message}
+          {getErrorMessage(query.error, "Failed to load data", { withDetail: true })}
         </Alert>
       )}
       {query.isLoading ? (
@@ -1878,7 +1891,7 @@ function HealthDiagnostics({
     <Stack gap="lg">
       {error && (
         <Alert color="red" icon={<IconAlertTriangle size={18} />}>
-          {error.message}
+          {getErrorMessage(error, "Failed to load data", { withDetail: true })}
         </Alert>
       )}
       <section className={classes.panel}>

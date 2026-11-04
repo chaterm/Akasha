@@ -30,6 +30,7 @@ import { useGetSpacesQuery } from "@/features/space/queries/space-query";
 import { queryKnowledge } from "../services/knowledge-service";
 import type { KnowledgeQueryResult } from "../types/knowledge.types";
 import classes from "../styles/knowledge-query.module.css";
+import { getErrorMessage } from "@/lib/errors";
 
 export default function KnowledgeQueryPage() {
   const { t } = useTranslation();
@@ -140,7 +141,7 @@ export default function KnowledgeQueryPage() {
 
           {mutation.isError && (
             <Alert color="red" icon={<IconAlertTriangle size={18} />}>
-              {mutation.error.message}
+              {getErrorMessage(mutation.error, "Failed to query knowledge", { withDetail: true })}
             </Alert>
           )}
 

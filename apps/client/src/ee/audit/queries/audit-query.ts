@@ -14,6 +14,7 @@ import { IAuditLog, IAuditLogParams } from "@/ee/audit/types/audit.types";
 import { IPagination } from "@/lib/types";
 import { notifications } from "@mantine/notifications";
 import { useTranslation } from "react-i18next";
+import { notifyError } from "@/lib/errors";
 
 export function useAuditLogsQuery(
   params?: IAuditLogParams,
@@ -43,9 +44,6 @@ export function useUpdateAuditRetentionMutation() {
       notifications.show({ message: t("Audit retention updated") });
       queryClient.invalidateQueries({ queryKey: ["audit-retention"] });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to update audit retention"),
   });
 }

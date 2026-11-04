@@ -22,8 +22,7 @@ import {
   updatePagePermissionRole,
 } from "@/ee/page-permission/services/page-permission-service";
 import { IPage } from "@/features/page/types/page.types";
-import { notifications } from "@mantine/notifications";
-import { useTranslation } from "react-i18next";
+import { notifyError } from "@/lib/errors";
 
 export function usePageRestrictionInfoQuery(
   pageId: string | undefined,
@@ -75,45 +74,30 @@ function updatePageRestrictionCache(
 
 export function useRestrictPageMutation() {
   const queryClient = useQueryClient();
-  const { t } = useTranslation();
 
   return useMutation<void, Error, string>({
     mutationFn: (pageId) => restrictPage(pageId),
     onSuccess: (_, pageId) => {
       updatePageRestrictionCache(queryClient, pageId, true);
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({
-        message: errorMessage || t("Failed to restrict page"),
-        color: "red",
-      });
-    },
+    onError: (error) => notifyError(error, "Failed to restrict page"),
   });
 }
 
 export function useUnrestrictPageMutation() {
   const queryClient = useQueryClient();
-  const { t } = useTranslation();
 
   return useMutation<void, Error, string>({
     mutationFn: (pageId) => unrestrictPage(pageId),
     onSuccess: (_, pageId) => {
       updatePageRestrictionCache(queryClient, pageId, false);
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({
-        message: errorMessage || t("Failed to remove page restriction"),
-        color: "red",
-      });
-    },
+    onError: (error) => notifyError(error, "Failed to remove page restriction"),
   });
 }
 
 export function useAddPagePermissionMutation() {
   const queryClient = useQueryClient();
-  const { t } = useTranslation();
 
   return useMutation<void, Error, IAddPagePermission>({
     mutationFn: (data) => addPagePermission(data),
@@ -122,19 +106,12 @@ export function useAddPagePermissionMutation() {
         queryKey: ["page-permissions", variables.pageId],
       });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({
-        message: errorMessage || t("Failed to add permission"),
-        color: "red",
-      });
-    },
+    onError: (error) => notifyError(error, "Failed to add permission"),
   });
 }
 
 export function useRemovePagePermissionMutation() {
   const queryClient = useQueryClient();
-  const { t } = useTranslation();
 
   return useMutation<void, Error, IRemovePagePermission>({
     mutationFn: (data) => removePagePermission(data),
@@ -143,19 +120,12 @@ export function useRemovePagePermissionMutation() {
         queryKey: ["page-permissions", variables.pageId],
       });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({
-        message: errorMessage || t("Failed to remove permission"),
-        color: "red",
-      });
-    },
+    onError: (error) => notifyError(error, "Failed to remove permission"),
   });
 }
 
 export function useUpdatePagePermissionRoleMutation() {
   const queryClient = useQueryClient();
-  const { t } = useTranslation();
 
   return useMutation<void, Error, IUpdatePagePermissionRole>({
     mutationFn: (data) => updatePagePermissionRole(data),
@@ -164,12 +134,6 @@ export function useUpdatePagePermissionRoleMutation() {
         queryKey: ["page-permissions", variables.pageId],
       });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({
-        message: errorMessage || t("Failed to update permission"),
-        color: "red",
-      });
-    },
+    onError: (error) => notifyError(error, "Failed to update permission"),
   });
 }

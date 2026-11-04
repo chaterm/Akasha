@@ -22,6 +22,7 @@ import { getSpaceUrl } from "@/lib/config.ts";
 import { useQueryEmit } from "@/features/websocket/use-query-emit.ts";
 import { createPageFromTemplate } from "@/features/template/api/template-api";
 import { OPEN_IN_EDIT_MODE_STATE } from "@/features/editor/use-open-in-edit-mode";
+import { notifyError } from "@/lib/errors";
 
 export type UseTreeMutation = {
   handleMove: (sourceId: string, op: DropOp) => Promise<void>;
@@ -148,12 +149,7 @@ export function useTreeMutation(spaceId: string): UseTreeMutation {
           : await createPageMutation.mutateAsync(payload);
       } catch (err: any) {
         if (opts?.templateId) {
-          notifications.show({
-            color: "red",
-            message:
-              err?.response?.data?.message ??
-              t("Failed to create page from template"),
-          });
+          notifyError(err, "Failed to create page from template");
         }
         throw new Error("Failed to create page");
       }

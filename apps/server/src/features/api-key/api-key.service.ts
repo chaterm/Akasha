@@ -32,6 +32,7 @@ import {
   AUDIT_SERVICE,
   IAuditService,
 } from '../../integrations/audit/audit.service';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
 @Injectable()
 export class ApiKeyService {
@@ -71,12 +72,22 @@ export class ApiKeyService {
       user.role !== UserRole.OWNER &&
       user.role !== UserRole.ADMIN
     ) {
-      throw new ForbiddenException('API key creation is restricted to admins');
+      throw new ForbiddenException(
+        errorBody(
+          ErrorCode.API_KEY_CREATION_RESTRICTED,
+          'API key creation is restricted to admins',
+        ),
+      );
     }
 
     const expiresDate = expiresAt ? new Date(expiresAt) : null;
     if (expiresDate && expiresDate <= new Date()) {
-      throw new BadRequestException('Expiration date must be in the future');
+      throw new BadRequestException(
+        errorBody(
+          ErrorCode.API_KEY_EXPIRATION_IN_PAST,
+          'Expiration date must be in the future',
+        ),
+      );
     }
 
     const apiKey = await this.apiKeyRepo.create({
@@ -181,7 +192,12 @@ export class ApiKeyService {
     try {
       const result = await this.apiKeyRepo.transaction(async (trx) => {
         if (await this.apiKeyRepo.findActiveAgentByName(workspaceId, name, trx)) {
-          throw new ConflictException('Agent API key name already exists');
+          throw new ConflictException(
+            errorBody(
+              ErrorCode.AGENT_NAME_TAKEN,
+              'Agent API key name already exists',
+            ),
+          );
         }
 
         const agentUser = await this.agentUserService.create(
@@ -223,7 +239,10 @@ export class ApiKeyService {
     } catch (error) {
       if (isUniqueViolation(error)) {
         throw new ConflictException(
-          'Agent API key name or agent_id already exists',
+          errorBody(
+            ErrorCode.AGENT_NAME_TAKEN,
+            'Agent API key name or agent_id already exists',
+          ),
         );
       }
       throw error;
@@ -306,7 +325,12 @@ export class ApiKeyService {
           trx,
         );
         if (duplicate && duplicate.id !== key.id) {
-          throw new ConflictException('Agent API key name already exists');
+          throw new ConflictException(
+            errorBody(
+              ErrorCode.AGENT_NAME_TAKEN,
+              'Agent API key name already exists',
+            ),
+          );
         }
 
         await this.agentUserService.rename(
@@ -326,7 +350,12 @@ export class ApiKeyService {
       return result;
     } catch (error) {
       if (isUniqueViolation(error)) {
-        throw new ConflictException('Agent API key name already exists');
+        throw new ConflictException(
+          errorBody(
+            ErrorCode.AGENT_NAME_TAKEN,
+            'Agent API key name already exists',
+          ),
+        );
       }
       throw error;
     }
