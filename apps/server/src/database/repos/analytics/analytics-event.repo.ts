@@ -92,7 +92,10 @@ export class AnalyticsEventRepo {
     agentUserId: string;
     op: string;
     channel: 'api' | 'mcp';
-    apiKeyId: string;
+    /** Null for SSO-token MCP calls. */
+    apiKeyId: string | null;
+    /** Credential behind the call; absent on rows written before it existed. */
+    keyType?: 'agent' | 'personal' | 'sso';
     delegatedUserId?: string | null;
     outcome: 'ok' | 'error' | 'called';
   }): Promise<void> {
@@ -106,6 +109,7 @@ export class AnalyticsEventRepo {
         metadata: {
           channel: input.channel,
           apiKeyId: input.apiKeyId,
+          keyType: input.keyType ?? 'agent',
           delegatedUserId: input.delegatedUserId ?? null,
           outcome: input.outcome,
         },
@@ -469,9 +473,12 @@ export class AnalyticsEventRepo {
           WHERE workspace_id = ${workspaceId} AND user_type = 'agent'
             AND deleted_at IS NULL
             AND created_at >= ${from} AND created_at < ${to}) AS new_agents,
-        (SELECT count(DISTINCT user_id) FROM analytics_events
-          WHERE workspace_id = ${workspaceId} AND event = 'agent_op'
-            AND created_at >= ${from} AND created_at < ${to}) AS active_agents,
+        -- MCP calls made with personal keys are recorded under the human user,
+        -- so only agent accounts count as active agents.
+        (SELECT count(DISTINCT e.user_id) FROM analytics_events e
+          JOIN users u ON u.id = e.user_id AND u.user_type = 'agent'
+          WHERE e.workspace_id = ${workspaceId} AND e.event = 'agent_op'
+            AND e.created_at >= ${from} AND e.created_at < ${to}) AS active_agents,
         (SELECT count(*) FROM analytics_events
           WHERE workspace_id = ${workspaceId} AND event = 'agent_op'
             AND created_at >= ${from} AND created_at < ${to}) AS ops,

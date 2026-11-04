@@ -66,6 +66,46 @@ export function groupAgentOpsByCategory(
   }));
 }
 
+export type AgentOpKeyType = 'agent' | 'personal' | 'sso';
+
+/** Minimal shape of an authenticated MCP request (see McpAuthContext). */
+type McpCaller = {
+  user: { id: string };
+  workspace: { id: string };
+  agentAccess?: {
+    apiKeyId: string;
+    agentUser: { id: string };
+    delegatedUser?: { id: string };
+  };
+};
+
+/**
+ * One agent_op row per `tools/call`, whatever the credential: agent keys,
+ * personal keys and SSO tokens all count as the MCP channel.
+ */
+export function buildMcpAgentOps(
+  caller: McpCaller,
+  body: unknown,
+  apiKeyId: string | null,
+) {
+  const { agentAccess } = caller;
+  const keyType: AgentOpKeyType = agentAccess
+    ? 'agent'
+    : apiKeyId
+      ? 'personal'
+      : 'sso';
+  return extractMcpToolCalls(body).map((tool) => ({
+    workspaceId: caller.workspace.id,
+    agentUserId: agentAccess?.agentUser.id ?? caller.user.id,
+    op: `mcp:${tool}`,
+    channel: 'mcp' as const,
+    apiKeyId: agentAccess?.apiKeyId ?? apiKeyId,
+    keyType,
+    delegatedUserId: agentAccess?.delegatedUser?.id ?? null,
+    outcome: 'called' as const,
+  }));
+}
+
 /** Tool names from `tools/call` messages in a single or batched JSON-RPC body. */
 export function extractMcpToolCalls(body: unknown): string[] {
   const messages = Array.isArray(body) ? body : [body];
