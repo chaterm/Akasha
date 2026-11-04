@@ -12,7 +12,9 @@ import StarterKit from "@tiptap/starter-kit";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
   buildDatabaseJSON,
+  changeDatabaseColumnType,
   Database,
+  deleteDatabaseColumn,
   insertDatabaseRow,
   DatabaseCell,
   DatabaseRow,
@@ -885,6 +887,50 @@ describe("DatabaseView", () => {
     expect(views[views.length - 1].filter.conditions[0].value).toEqual([]);
     expect(view("t").filter.conditions[0].value).toEqual(["done"]);
   });
+
+  it.each(["deleted", "changed to a number"] as const)(
+    "keeps valid draft filters when a referenced column is %s",
+    async (change) => {
+      renderEditor();
+      await screen.findByText("Write spec");
+      fireEvent.click(screen.getByText("Filter"));
+      const menu = (await screen.findByText("Filter by")).parentElement!;
+      fireEvent.click(within(menu).getByText("Status"));
+      fireEvent.click(await screen.findByText("Options"));
+      fireEvent.click(
+        await screen.findByRole("option", { name: "Done", hidden: true }),
+      );
+      fireEvent.click(screen.getByLabelText("Collapse"));
+      fireEvent.click(screen.getByText("Add filter"));
+      const value = screen.getByPlaceholderText("Value");
+      fireEvent.change(value, { target: { value: "Ship" } });
+      fireEvent.blur(value);
+      expect(document.querySelectorAll("tr[data-row-id]")).toHaveLength(1);
+
+      // Schema transactions can originate from this editor or a collaborator.
+      act(() => {
+        const tr = editor!.state.tr;
+        editor!.view.dispatch(
+          change === "deleted"
+            ? deleteDatabaseColumn(tr, 0, "status")
+            : changeDatabaseColumnType(tr, 0, "status", "number"),
+        );
+      });
+
+      expect(screen.getByDisplayValue("Ship")).toBeTruthy();
+      expect(screen.getByDisplayValue("Name")).toBeTruthy();
+      expect(screen.queryByDisplayValue("Status")).toBeNull();
+      expect(document.querySelectorAll("tr[data-row-id]")).toHaveLength(1);
+      expect(screen.getByText("Ship it")).toBeTruthy();
+      fireEvent.click(screen.getByText("Save"));
+      expect(
+        editor!.state.doc.child(0).attrs.views.find((view: any) => view.id === "t")
+          .filter.conditions,
+      ).toEqual([
+        { type: "condition", columnId: "name", op: "contains", value: "Ship" },
+      ]);
+    },
+  );
 
   it("clears every filter condition from the panel and saves the empty filter", async () => {
     renderEditor();
