@@ -404,7 +404,14 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     const result =
       await this.runRepo.markDelayedPageForImmediateCompilation(input);
     if (result) {
-      await this.dispatchPending();
+      await this.requestRuns([
+        {
+          workspaceId: input.workspaceId,
+          spaceId: result.spaceId,
+          trigger: 'manual_compile',
+          targetSourcePageIds: [result.sourcePageId],
+        },
+      ]);
     }
     return result;
   }

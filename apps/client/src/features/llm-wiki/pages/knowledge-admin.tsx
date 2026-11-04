@@ -408,11 +408,7 @@ export default function KnowledgeAdminPage() {
       setConfirmedDelayedPage(null);
       setDelayedPageConfirmationName("");
       setDelayedPageConfirmationError(null);
-      notifications.show({
-        message: result.deferred
-          ? deferredCompileMessage(t, result.deferredUntil ?? null)
-          : t("Page compilation queued"),
-      });
+      notifications.show({ message: t("Page compilation queued") });
       refreshRunViews();
     },
     onError: (error) => setDelayedPageConfirmationError(error.message),

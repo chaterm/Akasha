@@ -455,7 +455,13 @@ export class LlmWikiController {
 
   @HttpCode(HttpStatus.OK)
   @Get('pages/:pageId/publish-cooldown')
-  async getPagePublishCooldown(@Param('pageId', ParseUUIDPipe) pageId: string) {
+  async getPagePublishCooldown(
+    @Param('pageId', ParseUUIDPipe) pageId: string,
+    @AuthUser() user: User,
+  ) {
+    if (user.role === UserRole.OWNER) {
+      return { expiresAt: null, step: 0 };
+    }
     const state = await this.cacheManager?.get<{
       step: number;
       expiresAt: number;
@@ -590,11 +596,14 @@ export class LlmWikiController {
       spaceIndexMode: resolved.spaceIndexMode,
     });
 
+    const bypassCooldown = user.role === UserRole.OWNER;
     const cooldownKey = this.publishCooldownKey(page.id);
-    const cooldown = await this.cacheManager?.get<{
-      step: number;
-      expiresAt: number;
-    }>(cooldownKey);
+    const cooldown = bypassCooldown
+      ? undefined
+      : await this.cacheManager?.get<{
+          step: number;
+          expiresAt: number;
+        }>(cooldownKey);
     if (cooldown && cooldown.expiresAt > Date.now()) {
       throw new HttpException(
         {
@@ -613,17 +622,19 @@ export class LlmWikiController {
       updatedBy: user.id,
     });
     const run = request.run!;
-    const step = Math.min(
-      (cooldown?.step ?? 0) + 1,
-      LlmWikiController.PUBLISH_COOLDOWN_MS.length,
-    );
-    const expiresAt =
-      Date.now() + LlmWikiController.PUBLISH_COOLDOWN_MS[step - 1];
-    await this.cacheManager?.set(
-      cooldownKey,
-      { step, expiresAt },
-      LlmWikiController.PUBLISH_COOLDOWN_TTL,
-    );
+    if (!bypassCooldown) {
+      const step = Math.min(
+        (cooldown?.step ?? 0) + 1,
+        LlmWikiController.PUBLISH_COOLDOWN_MS.length,
+      );
+      const expiresAt =
+        Date.now() + LlmWikiController.PUBLISH_COOLDOWN_MS[step - 1];
+      await this.cacheManager?.set(
+        cooldownKey,
+        { step, expiresAt },
+        LlmWikiController.PUBLISH_COOLDOWN_TTL,
+      );
+    }
     const result = {
       pageId: page.id,
       spaceId: page.spaceId,
@@ -960,18 +971,11 @@ export class LlmWikiController {
         pageName: result.pageName,
       },
     });
-    // The schedule is now due; outside the night window the promotion gate
-    // still holds it, so report when it will actually run.
-    const window = await this.spaceCompilation.getCompileWindowDecision(
-      workspace.id,
-    );
     return {
       accepted: true,
       scheduleId: result.scheduleId,
       sourcePageId: result.sourcePageId,
       spaceId: result.spaceId,
-      deferred: window.deferred,
-      deferredUntil: window.deferredUntil?.toISOString() ?? null,
     };
   }
 
