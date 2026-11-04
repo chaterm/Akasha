@@ -6,7 +6,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import { NodeViewProps, NodeViewWrapper, useEditorState } from "@tiptap/react";
+import { NodeViewProps, NodeViewWrapper } from "@tiptap/react";
 import type { Transaction } from "@tiptap/pm/state";
 import { Group, Text } from "@mantine/core";
 import { useAtomValue } from "jotai";
@@ -20,7 +20,10 @@ import {
   updateDatabaseColumn,
   setDatabaseTitle,
   setDatabaseTitleAlign,
+  addDatabaseView,
+  updateDatabaseView,
   type DatabaseAlign,
+  type DatabaseFilterGroup,
 } from "@docmost/editor-ext";
 import {
   isTextTarget,
@@ -28,6 +31,7 @@ import {
   rowsOf,
   useViewRows,
   type DatabaseContext,
+  type DatabaseFilterDraft,
 } from "./database-context";
 import { DatabaseViewTabs } from "./database-view-tabs";
 import { DatabaseToolbar } from "./database-toolbar";
@@ -100,12 +104,25 @@ function TitleInput({
   );
 }
 
+function useEditorEditable(editor: NodeViewProps["editor"]) {
+  const [editable, setEditable] = useState(editor.isEditable);
+  useEffect(() => {
+    const sync = () => setEditable(editor.isEditable);
+    sync();
+    editor.on("update", sync);
+    editor.on("transaction", sync);
+    return () => {
+      editor.off("update", sync);
+      editor.off("transaction", sync);
+    };
+  }, [editor]);
+  return editable;
+}
+
 export default function DatabaseView(props: NodeViewProps) {
   const { node, editor, getPos } = props;
   const { t, i18n } = useTranslation();
-  const editable =
-    useEditorState({ editor, selector: (ctx) => ctx.editor.isEditable }) ??
-    editor.isEditable;
+  const editable = useEditorEditable(editor);
   const stored = useMemo(
     () => normalizeDatabaseColumns(node.attrs.columns),
     [node.attrs.columns],
@@ -138,11 +155,43 @@ export default function DatabaseView(props: NodeViewProps) {
     [editor, getPos],
   );
 
+  const [draft, setDraft] = useState<{
+    viewId: string;
+    filter: DatabaseFilterGroup;
+  } | null>(null);
+  const draftFilter = draft?.viewId === view.id ? draft.filter : null;
+  const filterDraft: DatabaseFilterDraft = {
+    dirty: !!draftFilter,
+    change: (filter) => setDraft({ viewId: view.id, filter }),
+    reset: () => setDraft(null),
+    save: () => {
+      if (!draftFilter) return;
+      apply((tr, pos) =>
+        updateDatabaseView(tr, pos, view.id, { filter: draftFilter }),
+      );
+      setDraft(null);
+    },
+    saveAsView: () => {
+      let id = "";
+      apply((tr, pos) => {
+        const { id: _id, ...settings } = view;
+        id = addDatabaseView(tr, pos, {
+          ...settings,
+          name: t("{{name}} (filtered)", { name: view.name }),
+          filter: draftFilter ?? view.filter,
+        });
+      });
+      setDraft(null);
+      if (id) setActiveViewId(id);
+    },
+  };
+
   const base: DatabaseContext = {
     columns,
     rows,
     views,
-    view,
+    view: draftFilter ? { ...view, filter: draftFilter } : view,
+    filterDraft,
     editable,
     locale: i18n.language,
     search: searches[view.id] ?? "",

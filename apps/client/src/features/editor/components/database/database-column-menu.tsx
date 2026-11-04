@@ -42,6 +42,7 @@ import {
   columnAlign,
   stopBubbling,
   patchView,
+  setColumnSort,
   type DatabaseContext,
 } from "./database-context";
 import {
@@ -240,24 +241,12 @@ export function ColumnMenu({
           <MenuRow
             icon={IconSortAscending}
             label={t("Sort ascending")}
-            onClick={() =>
-              run(() =>
-                patchView(db, {
-                  sorts: [{ columnId: column.id, direction: "asc" }],
-                }),
-              )
-            }
+            onClick={() => run(() => setColumnSort(db, column.id, "asc"))}
           />
           <MenuRow
             icon={IconSortDescending}
             label={t("Sort descending")}
-            onClick={() =>
-              run(() =>
-                patchView(db, {
-                  sorts: [{ columnId: column.id, direction: "desc" }],
-                }),
-              )
-            }
+            onClick={() => run(() => setColumnSort(db, column.id, "desc"))}
           />
         </>
       )}

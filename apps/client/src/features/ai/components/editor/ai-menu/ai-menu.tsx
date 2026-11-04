@@ -58,8 +58,8 @@ const EditorAiMenu = ({
     width: 0,
   });
   const currentItems = useMemo(
-    () => getVisibleCommandItems(activeCommandSet, prompt, readOnly),
-    [prompt, activeCommandSet, readOnly],
+    () => getVisibleCommandItems(activeCommandSet, prompt, readOnly, t),
+    [prompt, activeCommandSet, readOnly, t],
   );
   const updateMenuPlacement = useCallback(() => {
     if (!editor || !showAiMenu) return;

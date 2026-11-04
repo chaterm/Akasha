@@ -16,9 +16,18 @@ import {
   type DatabaseColumn,
   type DatabaseGroup,
   type DatabaseRowData,
+  type DatabaseFilterGroup,
   type DatabaseView,
   type DatabaseViewPatch,
 } from "@docmost/editor-ext";
+
+export interface DatabaseFilterDraft {
+  dirty: boolean;
+  change: (filter: DatabaseFilterGroup) => void;
+  reset: () => void;
+  save: () => void;
+  saveAsView: () => void;
+}
 
 /** Everything a view needs: the shared data, the active view, and a way to write. */
 export interface DatabaseContext {
@@ -26,6 +35,7 @@ export interface DatabaseContext {
   rows: DatabaseRowData[];
   views: DatabaseView[];
   view: DatabaseView;
+  filterDraft?: DatabaseFilterDraft;
   editable: boolean;
   locale: string;
   /** Local search text of the active view (not stored in the document). */
@@ -44,6 +54,20 @@ export interface DatabaseContext {
 
 export function patchView(db: DatabaseContext, patch: DatabaseViewPatch) {
   db.apply((tr, pos) => updateDatabaseView(tr, pos, db.view.id, patch));
+}
+
+export function setColumnSort(
+  db: DatabaseContext,
+  columnId: string,
+  direction: "asc" | "desc",
+) {
+  const sorts = db.view.sorts;
+  const next = sorts.some((sort) => sort.columnId === columnId)
+    ? sorts.map((sort) =>
+        sort.columnId === columnId ? { ...sort, direction } : sort,
+      )
+    : [...sorts, { columnId, direction }];
+  patchView(db, { sorts: next });
 }
 
 /** Inserts a row pre-filled so it stays visible under the view's filter; returns its id. */

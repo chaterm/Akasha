@@ -492,13 +492,23 @@ describe("DatabaseView", () => {
     expect(screen.getByText("Unassigned (2)")).toBeTruthy();
   });
 
-  it("drops Expand from the row menu while the row number shows its own", async () => {
+  it("has no row menu; Expand moves to the gutter when row numbers are off", async () => {
     renderEditor();
     await screen.findByText("Write spec");
-    fireEvent.click(screen.getAllByLabelText("More")[0]);
-    const insert = await screen.findByText("Insert above");
-    const menu = insert.closest(".mantine-Popover-dropdown") as HTMLElement;
-    expect(within(menu).queryByText("Expand")).toBeNull();
+    const table = document.querySelector("table")!;
+    expect(within(table).queryAllByLabelText("More")).toHaveLength(0);
+    const expandIn = (cell: number) =>
+      [...document.querySelectorAll("tr[data-row-id]")].filter((row) =>
+        row.children[cell]?.querySelector('[aria-label="Expand"]'),
+      );
+    expect(expandIn(0)).toHaveLength(0);
+    expect(expandIn(1)).toHaveLength(3);
+    act(() => {
+      editor!.view.dispatch(
+        updateDatabaseView(editor!.state.tr, 0, "t", { showRowNumbers: false }),
+      );
+    });
+    expect(expandIn(0)).toHaveLength(3);
   });
 
   it("labels every card field with its icon and name", async () => {
@@ -570,6 +580,7 @@ describe("DatabaseView", () => {
       editor!.state.doc
         .child(0)
         .attrs.views.find((view: any) => view.id === "t").filter;
+    fireEvent.click(screen.getByText("Save"));
     expect(filterOf().conditions.map((c: any) => c.type)).toEqual([
       "condition",
       "group",
@@ -578,6 +589,7 @@ describe("DatabaseView", () => {
     // The last Delete is the group's only condition.
     const deletes = screen.getAllByLabelText("Delete");
     fireEvent.click(deletes[deletes.length - 1]);
+    fireEvent.click(screen.getByText("Save"));
     expect(filterOf().conditions.map((c: any) => c.type)).toEqual([
       "condition",
     ]);
@@ -604,6 +616,136 @@ describe("DatabaseView", () => {
     expect(sortsOf()).toEqual([{ columnId: "due", direction: "asc" }]);
     fireEvent.click(await screen.findByText("Descending"));
     expect(sortsOf()).toEqual([{ columnId: "due", direction: "desc" }]);
+  });
+
+  it("keeps row checkboxes shown once a row is checked", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    const roots = () =>
+      screen
+        .getAllByLabelText("Select row")
+        .map((input) => input.closest("[data-visible]"));
+    expect(roots().every((root) => root === null)).toBe(true);
+    fireEvent.click(screen.getAllByLabelText("Select row")[1]);
+    expect(roots().every((root) => root !== null)).toBe(true);
+  });
+
+  it("adds a column-menu sort to the sort list and flips it from the header arrow", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    const sortsOf = () =>
+      editor!.state.doc
+        .child(0)
+        .attrs.views.find((view: any) => view.id === "t").sorts;
+    act(() => {
+      editor!.view.dispatch(
+        updateDatabaseView(editor!.state.tr, 0, "t", {
+          sorts: [{ columnId: "due", direction: "asc" }],
+        }),
+      );
+    });
+    const header = document.querySelector('th[data-column-id="status"]')!;
+    fireEvent.contextMenu(header.querySelector("button")!);
+    fireEvent.click(await screen.findByText("Sort descending"));
+    expect(sortsOf()).toEqual([
+      { columnId: "due", direction: "asc" },
+      { columnId: "status", direction: "desc" },
+    ]);
+    const toggle = within(
+      document.querySelector('th[data-column-id="status"]') as HTMLElement,
+    ).getByLabelText("Toggle sort direction");
+    fireEvent.click(toggle);
+    expect(sortsOf()[1]).toEqual({ columnId: "status", direction: "asc" });
+    expect(
+      document.querySelector('th[data-column-id="name"] [aria-label="Toggle sort direction"]'),
+    ).toBeNull();
+  });
+
+  it("picks filter options from a checkbox list and clears them with one button", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    fireEvent.click(screen.getByText("Filter"));
+    const menu = (await screen.findByText("Filter by")).parentElement!;
+    fireEvent.click(within(menu).getByText("Status"));
+    const filterOf = () =>
+      editor!.state.doc
+        .child(0)
+        .attrs.views.find((view: any) => view.id === "t").filter;
+    fireEvent.click(await screen.findByText("Options"));
+    fireEvent.click(await screen.findByRole("option", { name: "To do", hidden: true }));
+    fireEvent.click(screen.getByRole("option", { name: "Done", hidden: true }));
+    expect(screen.getByTitle("To do, Done")).toBeTruthy();
+    expect(screen.getAllByLabelText("Clear")).toHaveLength(1);
+    const arrow = screen.getByLabelText("Collapse");
+    expect(arrow.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(arrow);
+    expect(arrow.getAttribute("aria-expanded")).toBe("false");
+    expect(arrow.getAttribute("aria-label")).toBe("Expand");
+    fireEvent.click(screen.getByText("Save"));
+    expect(filterOf().conditions[0].value).toEqual(["todo", "done"]);
+    fireEvent.click(screen.getByLabelText("Clear"));
+    fireEvent.click(screen.getByText("Save"));
+    expect(filterOf().conditions[0].value).toEqual([]);
+  });
+
+  it("lays every view setting out as one label-and-control row", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    const labels = () =>
+      [...document.querySelectorAll('[class*="optionRow"]')]
+        .map(
+          (element) =>
+            element.querySelector('[class*="optionLabel"]')?.textContent,
+        )
+        .filter(Boolean);
+    fireEvent.click(screen.getByLabelText("View settings"));
+    await screen.findByText("Row height");
+    expect(labels()).toEqual(
+      expect.arrayContaining([
+        "Properties",
+        "Row height",
+        "View alignment",
+        "Cell alignment",
+        "Delete view",
+      ]),
+    );
+    expect(labels()).not.toContain("Group by");
+    expect(labels()).not.toContain("Hide empty groups");
+    act(() => {
+      editor!.view.dispatch(
+        updateDatabaseView(editor!.state.tr, 0, "t", { groupBy: "status" }),
+      );
+    });
+    fireEvent.click(await screen.findByLabelText("Hide empty groups"));
+    expect(
+      editor!.state.doc.child(0).attrs.views.find((v: any) => v.id === "t")
+        .hideEmptyGroups,
+    ).toBe(true);
+  });
+
+  it("groups from the toolbar button next to Sort", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    const groupByOf = () =>
+      editor!.state.doc.child(0).attrs.views.find((v: any) => v.id === "t")
+        .groupBy;
+    const toolbarButtons = [
+      ...document.querySelectorAll<HTMLElement>('[class*="toolbar"] button'),
+    ].map((button) => button.textContent);
+    const sortAt = toolbarButtons.indexOf("Sort");
+    expect(toolbarButtons[sortAt + 1]).toBe("Grouping");
+    fireEvent.click(screen.getByText("Grouping"));
+    const menu = (await screen.findByText("Group by")).parentElement!;
+    expect(within(menu).getByText("None")).toBeTruthy();
+    fireEvent.click(within(menu).getByText("Status"));
+    expect(groupByOf()).toBe("status");
+    fireEvent.click(screen.getByText("Group: Status"));
+    fireEvent.click(
+      within((await screen.findByText("Group by")).parentElement!).getByText(
+        "None",
+      ),
+    );
+    expect(groupByOf()).toBe(null);
   });
 
   it("filters rows with the search box", async () => {
@@ -645,9 +787,167 @@ describe("DatabaseView", () => {
     fireEvent.click(boxes[0]);
     fireEvent.click(boxes[2], { shiftKey: true });
     expect(screen.getByText("3 selected")).toBeTruthy();
-    fireEvent.click(screen.getByText("Delete"));
+    expect(screen.queryByText("Edit property")).toBeNull();
+    fireEvent.click(screen.getByText("Delete rows"));
     expect(rows()).toHaveLength(0);
     expect(screen.queryByText("3 selected")).toBeNull();
+  });
+
+  it("moves checked rows up and down one step and clears their values", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    const names = () => rows().map((row) => row.values.name);
+    fireEvent.click(screen.getAllByLabelText("Select row")[1]);
+    fireEvent.click(screen.getByText("Move up"));
+    expect(names()).toEqual(["Ship it", "Write spec", "Not mine"]);
+    expect(screen.getByText("Move up").closest("button")!.disabled).toBe(true);
+    fireEvent.click(screen.getByText("Move down"));
+    fireEvent.click(screen.getByText("Move down"));
+    expect(names()).toEqual(["Write spec", "Not mine", "Ship it"]);
+    expect(screen.getByText("Move down").closest("button")!.disabled).toBe(true);
+    fireEvent.click(screen.getByText("Clear values"));
+    expect(rows()[2].values).toMatchObject({ name: "", status: null });
+    fireEvent.click(screen.getByLabelText("Clear selection"));
+    expect(screen.queryByText("1 selected")).toBeNull();
+  });
+
+  it("inserts a row above the first and below the last checked row", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    const ids = () => rows().map((row) => row.id);
+    const original = ids();
+    const boxes = screen.getAllByLabelText("Select row");
+    fireEvent.click(boxes[1]);
+    fireEvent.click(boxes[2]);
+    fireEvent.click(screen.getByText("Insert above"));
+    expect(ids()).toHaveLength(4);
+    expect(ids()[0]).toBe(original[0]);
+    expect(ids()[2]).toBe(original[1]);
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    fireEvent.click(screen.getByText("Insert below"));
+    expect(ids()).toHaveLength(5);
+    expect(ids()[3]).toBe(original[2]);
+  });
+
+  it("blocks moving checked rows while the view is sorted", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    act(() => {
+      editor!.view.dispatch(
+        updateDatabaseView(editor!.state.tr, 0, "t", {
+          sorts: [{ columnId: "name", direction: "asc" }],
+        }),
+      );
+    });
+    fireEvent.click(screen.getAllByLabelText("Select row")[0]);
+    expect(screen.getByText("Move up").closest("button")!.disabled).toBe(true);
+    expect(screen.getByText("Move down").closest("button")!.disabled).toBe(true);
+  });
+
+  it("previews a filter draft and saves it, or adds it as a new view", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    const view = (id: string) =>
+      editor!.state.doc
+        .child(0)
+        .attrs.views.find((item: any) => item.id === id);
+    fireEvent.click(screen.getByText("Filter"));
+    const menu = (await screen.findByText("Filter by")).parentElement!;
+    fireEvent.click(within(menu).getByText("Status"));
+    fireEvent.click(await screen.findByText("Options"));
+    fireEvent.click(await screen.findByRole("option", { name: "Done", hidden: true }));
+    expect(document.querySelectorAll("tr[data-row-id]")).toHaveLength(1);
+    expect(view("t").filter.conditions).toEqual([]);
+    const actionRow = screen.getByText("Add filter").closest(
+      '[class*="filterActions"]',
+    ) as HTMLElement;
+    for (const label of [
+      "Add filter group",
+      "Clear filters",
+      "Add as new view",
+      "Save",
+    ])
+      expect(within(actionRow).getByText(label)).toBeTruthy();
+    fireEvent.click(screen.getByText("Save"));
+    expect(view("t").filter.conditions[0].value).toEqual(["done"]);
+    expect(screen.getByText("Save").closest("button")!.disabled).toBe(true);
+
+    fireEvent.click(screen.getByLabelText("Clear"));
+    expect(document.querySelectorAll("tr[data-row-id]")).toHaveLength(3);
+    const before = editor!.state.doc.child(0).attrs.views.length;
+    fireEvent.click(screen.getByText("Add as new view"));
+    const views = editor!.state.doc.child(0).attrs.views;
+    expect(views).toHaveLength(before + 1);
+    expect(views[views.length - 1]).toMatchObject({
+      name: "Grid (filtered)",
+      type: "table",
+    });
+    expect(views[views.length - 1].filter.conditions[0].value).toEqual([]);
+    expect(view("t").filter.conditions[0].value).toEqual(["done"]);
+  });
+
+  it("clears every filter condition from the panel and saves the empty filter", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    act(() => {
+      editor!.view.dispatch(
+        updateDatabaseView(editor!.state.tr, 0, "t", {
+          filter: {
+            type: "group",
+            mode: "and",
+            conditions: [
+              { type: "condition", columnId: "status", op: "isAnyOf", value: ["done"] },
+            ],
+          },
+        }),
+      );
+    });
+    expect(document.querySelectorAll("tr[data-row-id]")).toHaveLength(1);
+    fireEvent.click(screen.getByText("1 filters"));
+    fireEvent.click(await screen.findByText("Clear filters"));
+    expect(document.querySelectorAll("tr[data-row-id]")).toHaveLength(3);
+    expect(await screen.findByText("Filter by")).toBeTruthy();
+    expect(screen.getByText("Clear filters").closest("button")!.disabled).toBe(
+      true,
+    );
+    fireEvent.click(screen.getByText("Save"));
+    expect(
+      editor!.state.doc.child(0).attrs.views.find((v: any) => v.id === "t")
+        .filter.conditions,
+    ).toEqual([]);
+  });
+
+  it("clears or cancels a selected range of cells from its bar", async () => {
+    renderEditor();
+    const first = (await screen.findByText("Write spec")).closest("td")!;
+    const last = screen.getByText("Not mine").closest("td")!;
+    fireEvent.mouseDown(first, { button: 0 });
+    fireEvent.mouseUp(window);
+    fireEvent.mouseDown(last, { button: 0, shiftKey: true });
+    expect(screen.getByText("3 cells selected")).toBeTruthy();
+    fireEvent.click(screen.getByText("Cancel"));
+    expect(screen.queryByText("3 cells selected")).toBeNull();
+    expect(document.querySelector("[data-in-range]")).toBeNull();
+
+    fireEvent.mouseDown(first, { button: 0 });
+    fireEvent.mouseUp(window);
+    fireEvent.mouseDown(last, { button: 0, shiftKey: true });
+    fireEvent.click(screen.getByText("Clear values"));
+    expect(rows().map((row) => row.values.name)).toEqual(["", "", ""]);
+    expect(rows()[0].values.status).toBe("todo");
+  });
+
+  it("offers no row menu while reading, only Expand", async () => {
+    renderEditor();
+    await screen.findByText("Write spec");
+    act(() => {
+      editor!.setEditable(false);
+    });
+    await waitFor(() =>
+      expect(screen.queryAllByLabelText("More")).toHaveLength(0),
+    );
+    expect(screen.queryAllByLabelText("Select row")).toHaveLength(0);
+    expect(screen.getAllByLabelText("Expand").length).toBeGreaterThan(0);
   });
 
   it("shows 50 rows at first and the rest on Load more", async () => {

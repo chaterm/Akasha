@@ -217,7 +217,7 @@ export function DatabaseRowDetail({
         <div ref={contentRef} {...stopBubbling} onKeyDown={onKeyDown}>
           <Stack gap="sm">
             {title && <TitleField db={db} row={row} column={title} />}
-            <Stack gap={2}>
+            <Stack gap={4}>
               {properties.map((column) => {
                 const TypeIcon = COLUMN_TYPE_ICONS[column.type];
                 const label = (
@@ -266,7 +266,7 @@ export function DatabaseRowDetail({
               })}
             </Stack>
             {db.editable && (
-              <Group justify="space-between">
+              <Group justify="space-between" className={classes.detailFooter}>
                 <Menu shadow="md" position="bottom-start" withinPortal>
                   <Menu.Target>
                     <Button

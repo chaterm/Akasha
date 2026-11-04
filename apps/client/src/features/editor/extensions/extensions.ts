@@ -15,6 +15,7 @@ import SlashCommand, {
 } from "@/features/editor/extensions/slash-command";
 import renderItems from "@/features/editor/components/slash-menu/render-items";
 import getSuggestionItems from "@/features/editor/components/slash-menu/menu-items";
+import { isGenerativeAiEnabled } from "@/features/editor/utils/is-generative-ai-enabled";
 import { Collaboration, isChangeOrigin } from "@tiptap/extension-collaboration";
 import { CollaborationCaret } from "@tiptap/extension-collaboration-caret";
 import { HocuspocusProvider } from "@hocuspocus/provider";
@@ -127,6 +128,41 @@ lowlight.register("fortran", fortran);
 lowlight.register("haskell", haskell);
 lowlight.register("scala", scala);
 
+const buildPlaceholder = ({ askAi }: { askAi: boolean }) =>
+  Placeholder.configure({
+    placeholder: ({ editor, node, pos }) => {
+      if (node.type.name === "heading") {
+        return i18n.t("Heading {{level}}", { level: node.attrs.level });
+      }
+      if (node.type.name === "detailsSummary") {
+        return i18n.t("Toggle title");
+      }
+      if (node.type.name === "paragraph") {
+        const $pos = editor.state.doc.resolve(pos);
+        const parentName = $pos.parent.type.name;
+        if (
+          parentName === "column" ||
+          parentName === "tableCell" ||
+          parentName === "tableHeader" ||
+          parentName === "callout" ||
+          parentName === "blockquote"
+        ) {
+          return i18n.t("Write...");
+        }
+        if (askAi && isGenerativeAiEnabled()) {
+          return i18n.t(
+            'Write anything. Enter "/" for commands, "/ai" to ask AI',
+          );
+        }
+        return i18n.t('Write anything. Enter "/" for commands');
+      }
+    },
+    includeChildren: true,
+    showOnlyWhenEditable: true,
+  });
+
+const MainPlaceholder = buildPlaceholder({ askAi: true });
+
 // @ts-ignore
 export const mainExtensions = [
   StarterKit.configure({
@@ -184,32 +220,7 @@ export const mainExtensions = [
     types: ["heading", "paragraph", "transclusionSource"],
     filterTransaction: (transaction) => !isChangeOrigin(transaction),
   }),
-  Placeholder.configure({
-    placeholder: ({ editor, node, pos }) => {
-      if (node.type.name === "heading") {
-        return i18n.t("Heading {{level}}", { level: node.attrs.level });
-      }
-      if (node.type.name === "detailsSummary") {
-        return i18n.t("Toggle title");
-      }
-      if (node.type.name === "paragraph") {
-        const $pos = editor.state.doc.resolve(pos);
-        const parentName = $pos.parent.type.name;
-        if (
-          parentName === "column" ||
-          parentName === "tableCell" ||
-          parentName === "tableHeader" ||
-          parentName === "callout" ||
-          parentName === "blockquote"
-        ) {
-          return i18n.t("Write...");
-        }
-        return i18n.t('Write anything. Enter "/" for commands');
-      }
-    },
-    includeChildren: true,
-    showOnlyWhenEditable: true,
-  }),
+  MainPlaceholder,
   TextAlign.configure({ types: ["heading", "paragraph"] }),
   Indent,
   TaskList,
@@ -424,14 +435,16 @@ const TEMPLATE_EXCLUDED_SLASH_ITEMS = new Set([
   "Draw.io (diagrams.net)",
   "Excalidraw (Whiteboard)",
   "Audio",
-  "Synced block"
+  "Synced block",
+  "Ask AI",
 ]);
 
 const TemplateSlashCommand = Command.configure({
   suggestion: {
-    items: ({ query }: { query: string }) =>
+    items: ({ query, editor }: { query: string; editor: any }) =>
       getSuggestionItems({
         query,
+        editor,
         excludeItems: TEMPLATE_EXCLUDED_SLASH_ITEMS,
       }),
     render: renderItems,
@@ -439,8 +452,11 @@ const TemplateSlashCommand = Command.configure({
 });
 
 export const templateExtensions = [
-  ...mainExtensions.filter((ext: any) => ext !== SlashCommand),
+  ...mainExtensions.filter(
+    (ext: any) => ext !== SlashCommand && ext !== MainPlaceholder,
+  ),
   TemplateSlashCommand,
+  buildPlaceholder({ askAi: false }),
   UndoRedo,
 ] as any;
 

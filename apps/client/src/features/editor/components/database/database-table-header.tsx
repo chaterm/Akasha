@@ -1,5 +1,6 @@
 import { useState, type PointerEvent } from "react";
-import { Checkbox, Text, UnstyledButton } from "@mantine/core";
+import { ActionIcon, Checkbox, Text, UnstyledButton } from "@mantine/core";
+import { IconSortAscending, IconSortDescending } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import {
   DATABASE_MIN_COLUMN_WIDTH,
@@ -9,6 +10,7 @@ import {
 import {
   columnAlign,
   patchView,
+  setColumnSort,
   type DatabaseContext,
 } from "./database-context";
 import { ColumnMenu } from "./database-column-menu";
@@ -125,7 +127,9 @@ export function DatabaseTableHeader({
               <Checkbox
                 size="xs"
                 className={classes.rowCheck}
-                data-visible={checkState !== "none" || undefined}
+                wrapperProps={{
+                  "data-visible": checkState !== "none" || undefined,
+                }}
                 aria-label={t("Select all")}
                 checked={checkState === "all"}
                 indeterminate={checkState === "some"}
@@ -179,6 +183,9 @@ export function DatabaseTableHeader({
               </Text>
             </UnstyledButton>
           );
+          const sort = db.view.sorts.find((item) => item.columnId === column.id);
+          const SortIcon =
+            sort?.direction === "desc" ? IconSortDescending : IconSortAscending;
           return (
             <th
               key={column.id}
@@ -186,6 +193,7 @@ export function DatabaseTableHeader({
               data-title-cell={isTitle || undefined}
               data-selected={selectedColumnId === column.id || undefined}
               data-dragging={draggingColumnId === column.id || undefined}
+              data-sorted={sort ? true : undefined}
               style={{ width: columnWidth(db, column, liveWidths) }}
             >
               {db.editable ? (
@@ -201,6 +209,31 @@ export function DatabaseTableHeader({
                 </ColumnMenu>
               ) : (
                 label
+              )}
+              {sort && (
+                <ActionIcon
+                  size="xs"
+                  variant="subtle"
+                  color="blue"
+                  className={classes.sortToggle}
+                  disabled={!db.editable}
+                  aria-label={t("Toggle sort direction")}
+                  title={
+                    sort.direction === "asc"
+                      ? t("Sort ascending")
+                      : t("Sort descending")
+                  }
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={() =>
+                    setColumnSort(
+                      db,
+                      column.id,
+                      sort.direction === "asc" ? "desc" : "asc",
+                    )
+                  }
+                >
+                  <SortIcon size={14} />
+                </ActionIcon>
               )}
               {db.editable && (
                 <div

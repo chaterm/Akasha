@@ -1,133 +1,123 @@
-import { useState } from "react";
-import { Button, CloseButton, Group, Menu, Text } from "@mantine/core";
-import { IconPencil, IconTrash } from "@tabler/icons-react";
+import { Button, CloseButton, Group, Text, Tooltip } from "@mantine/core";
+import {
+  IconArrowDown,
+  IconArrowUp,
+  IconEraser,
+  IconRowInsertBottom,
+  IconRowInsertTop,
+  IconTrash,
+} from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import {
   deleteDatabaseRow,
-  normalizeDatabaseCellValue,
-  readDatabaseRows,
   setDatabaseCellValue,
-  type DatabaseCellValue,
-  type DatabaseColumn,
   type DatabaseRowData,
 } from "@docmost/editor-ext";
-import { stopBubbling, type DatabaseContext } from "./database-context";
-import { CellEditor } from "./database-cells";
-import { COLUMN_TYPE_ICONS, COLUMN_TYPE_LABELS } from "./database-ui";
+import type { DatabaseContext } from "./database-context";
 import classes from "./database.module.css";
 
-const same = (a: DatabaseCellValue, b: DatabaseCellValue) =>
-  JSON.stringify(a) === JSON.stringify(b);
-
-/** The value every row shares in `column`, or empty when they differ. */
-function sharedValue(
-  column: DatabaseColumn,
-  rows: DatabaseRowData[],
-): DatabaseCellValue {
-  const values = rows.map((row) =>
-    normalizeDatabaseCellValue(column.type, row.values[column.id] ?? null),
+export function DatabaseRangeBar({
+  count,
+  onClearValues,
+  onCancel,
+}: {
+  count: number;
+  onClearValues: () => void;
+  onCancel: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Group
+      gap={4}
+      wrap="nowrap"
+      className={classes.bulkBar}
+      onMouseDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+    >
+      <Text size="sm" fw={500} px={6}>
+        {t("{{count}} cells selected", { count })}
+      </Text>
+      <Button
+        size="compact-xs"
+        variant="subtle"
+        color="gray"
+        leftSection={<IconEraser size={14} />}
+        onClick={onClearValues}
+      >
+        {t("Clear values")}
+      </Button>
+      <Button
+        size="compact-xs"
+        variant="subtle"
+        color="gray"
+        onClick={onCancel}
+      >
+        {t("Cancel")}
+      </Button>
+    </Group>
   );
-  return values.every((value) => same(value, values[0])) ? values[0] : null;
 }
 
-/**
- * A context whose edits to the lead row's `column` are copied to every row.
- * The regular cell editors run against a virtual row holding the shared
- * value; after their transaction, a changed lead value is written to all rows
- * and an unchanged one restored, so option-only edits leave the rows alone.
- */
-function batchContext(
-  db: DatabaseContext,
-  column: DatabaseColumn,
-  rows: DatabaseRowData[],
-): { context: DatabaseContext; row: DatabaseRowData } {
-  const lead = rows[0];
-  const shared = sharedValue(column, rows);
-  const original = normalizeDatabaseCellValue(
-    column.type,
-    lead.values[column.id] ?? null,
+function MoveButton({
+  icon: Icon,
+  label,
+  blocked,
+  disabled,
+  onClick,
+}: {
+  icon: typeof IconArrowUp;
+  label: string;
+  blocked: string | null;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Tooltip label={blocked} disabled={!blocked} withinPortal>
+      <span className={classes.bulkBarSlot}>
+        <Button
+          size="compact-xs"
+          variant="subtle"
+          color="gray"
+          leftSection={<Icon size={14} />}
+          disabled={disabled || !!blocked}
+          onClick={onClick}
+        >
+          {label}
+        </Button>
+      </span>
+    </Tooltip>
   );
-  const context: DatabaseContext = {
-    ...db,
-    apply: (build) =>
-      db.apply((tr, pos) => {
-        if (!same(original, shared))
-          setDatabaseCellValue(tr, pos, lead.id, column.id, shared);
-        build(tr, pos);
-        const node = tr.doc.nodeAt(pos);
-        const after = node
-          ? normalizeDatabaseCellValue(
-              column.type,
-              readDatabaseRows(node).find((row) => row.id === lead.id)?.values[
-                column.id
-              ] ?? null,
-            )
-          : shared;
-        if (same(after, shared)) {
-          if (!same(original, shared))
-            setDatabaseCellValue(tr, pos, lead.id, column.id, original);
-          return;
-        }
-        for (const row of rows.slice(1))
-          setDatabaseCellValue(tr, pos, row.id, column.id, after);
-      }),
-  };
-  return {
-    context,
-    row: { id: lead.id, values: { ...lead.values, [column.id]: shared } },
-  };
 }
 
-/** Replaces the view bar while rows are checked: count, edit a property for all, delete. */
 export function DatabaseBulkBar({
   db,
   rows,
   onClear,
+  moveBlocked,
+  canMoveUp,
+  canMoveDown,
+  onMove,
+  onInsert,
 }: {
   db: DatabaseContext;
-  /** Checked rows, in view order. */
   rows: DatabaseRowData[];
   onClear: () => void;
+  moveBlocked: string | null;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onMove: (direction: "up" | "down") => void;
+  onInsert: (side: "above" | "below") => void;
 }) {
   const { t } = useTranslation();
-  const [editing, setEditing] = useState<DatabaseColumn | null>(null);
-  // The title is unique per row, so it is not offered.
-  const editable = db.columns.slice(1);
 
-  const edit = (column: DatabaseColumn) => {
-    if (column.type !== "checkbox") return setEditing(column);
-    const value = !rows.every((row) => row.values[column.id] === true);
+  const clearValues = () =>
     db.apply((tr, pos) => {
       for (const row of rows)
-        setDatabaseCellValue(tr, pos, row.id, column.id, value);
+        for (const column of db.columns)
+          setDatabaseCellValue(tr, pos, row.id, column.id, null);
     });
-  };
-
-  const trigger = (
-    <Button
-      size="compact-xs"
-      variant="subtle"
-      color="gray"
-      leftSection={<IconPencil size={14} />}
-    >
-      {t("Edit property")}
-    </Button>
-  );
-  let editor = null;
-  if (editing) {
-    const { context, row } = batchContext(db, editing, rows);
-    editor = (
-      <div className={classes.bulkEditor} {...stopBubbling}>
-        <CellEditor
-          db={context}
-          row={row}
-          column={editing}
-          anchor={trigger}
-          onDone={() => setEditing(null)}
-        />
-      </div>
-    );
-  }
 
   return (
     <Group
@@ -141,25 +131,47 @@ export function DatabaseBulkBar({
       </Text>
       {db.editable && (
         <>
-          {editor ?? (
-            <Menu shadow="md" position="bottom-start" withinPortal>
-              <Menu.Target>{trigger}</Menu.Target>
-              <Menu.Dropdown {...stopBubbling}>
-                {editable.map((column) => {
-                  const TypeIcon = COLUMN_TYPE_ICONS[column.type];
-                  return (
-                    <Menu.Item
-                      key={column.id}
-                      leftSection={<TypeIcon size={14} />}
-                      onClick={() => edit(column)}
-                    >
-                      {column.name || t(COLUMN_TYPE_LABELS[column.type])}
-                    </Menu.Item>
-                  );
-                })}
-              </Menu.Dropdown>
-            </Menu>
-          )}
+          <Button
+            size="compact-xs"
+            variant="subtle"
+            color="gray"
+            leftSection={<IconRowInsertTop size={14} />}
+            onClick={() => onInsert("above")}
+          >
+            {t("Insert above")}
+          </Button>
+          <Button
+            size="compact-xs"
+            variant="subtle"
+            color="gray"
+            leftSection={<IconRowInsertBottom size={14} />}
+            onClick={() => onInsert("below")}
+          >
+            {t("Insert below")}
+          </Button>
+          <MoveButton
+            icon={IconArrowUp}
+            label={t("Move up")}
+            blocked={moveBlocked}
+            disabled={!canMoveUp}
+            onClick={() => onMove("up")}
+          />
+          <MoveButton
+            icon={IconArrowDown}
+            label={t("Move down")}
+            blocked={moveBlocked}
+            disabled={!canMoveDown}
+            onClick={() => onMove("down")}
+          />
+          <Button
+            size="compact-xs"
+            variant="subtle"
+            color="gray"
+            leftSection={<IconEraser size={14} />}
+            onClick={clearValues}
+          >
+            {t("Clear values")}
+          </Button>
           <Button
             size="compact-xs"
             variant="subtle"
@@ -172,11 +184,10 @@ export function DatabaseBulkBar({
               onClear();
             }}
           >
-            {t("Delete")}
+            {t("Delete rows")}
           </Button>
         </>
       )}
-      <span className={classes.flexSpacer} />
       <CloseButton
         size="sm"
         aria-label={t("Clear selection")}

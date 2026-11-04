@@ -344,13 +344,45 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  min-height: 24px;
+  gap: 12px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 4px;
+  border-radius: var(--mantine-radius-sm);
+}
+
+.optionLabel {
+  flex-shrink: 0;
+  font-size: var(--mantine-font-size-xs);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.optionRow > .optionLabel {
+  min-width: 76px;
+}
+
+.optionControl {
+  flex: 1;
+  min-width: 0;
+}
+
+.propertyRow {
+  flex: 1;
+  min-height: 32px;
+}
+
+.optionLink,
+.optionDanger {
   cursor: pointer;
 
   &:hover {
-    color: var(--mantine-color-blue-6);
+    background: var(--db-hover, light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6)));
   }
+}
+
+.optionDanger {
+  color: var(--mantine-color-red-6);
 }
 
 .menuIcon {
@@ -565,15 +597,13 @@
   box-shadow: 0 0 0 1px light-dark(var(--mantine-color-blue-2), var(--mantine-color-dark-4));
 }
 
-.bulkEditor {
-  display: inline-flex;
-  min-width: 160px;
+.wrapper .bulkBar p {
+  margin: 0;
+}
 
-  .cellInput {
-    height: 26px;
-    border: 1px solid var(--db-selected);
-    border-radius: var(--mantine-radius-sm);
-  }
+.bulkBarSlot {
+  display: inline-flex;
+  align-items: center;
 }
 
 /* Overrides the editor's `.ProseMirror table` styles. Separate borders:
@@ -884,6 +914,24 @@
 
 .wrapper table.table th[data-dragging] {
   opacity: 0.4;
+}
+
+.wrapper table.table th[data-sorted] .headerButton {
+  padding-right: 28px;
+}
+
+.sortToggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  z-index: 1;
+  transform: translateY(-50%);
+
+  &:disabled {
+    background: transparent;
+    color: var(--mantine-color-blue-6);
+    opacity: 1;
+  }
 }
 
 .resizeHandle {
@@ -1468,6 +1516,28 @@
 /* ---------------------------------------------------------------- filter */
 
 /* Fixed width so the field selects line up. */
+.unsavedDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mantine-color-orange-6);
+}
+
+.checkSelectChevron {
+  transition: transform 150ms;
+
+  &[data-open] {
+    transform: rotate(180deg);
+  }
+}
+
+.checkSelectValue {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .filterPrefix {
   display: flex;
   flex: 0 0 64px;
@@ -1478,7 +1548,6 @@
 .filterActions {
   margin-top: 2px;
   padding-top: 6px;
-  border-top: 1px solid var(--mantine-color-default-border);
 }
 
 .filterGroup {
@@ -1495,6 +1564,8 @@
 
 /* Side peek: full height, below the app's fixed bars. */
 .detailDrawer {
+  --detail-row-height: 32px;
+  --detail-inset: 6px;
   border-left: 1px solid var(--mantine-color-default-border);
 }
 
@@ -1515,7 +1586,7 @@
 }
 
 .detailRow {
-  min-height: 32px;
+  min-height: var(--detail-row-height);
 }
 
 .detailLabel {
@@ -1524,9 +1595,11 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  height: 32px;
-  padding: 0 6px;
+  height: var(--detail-row-height);
+  padding: 0 var(--detail-inset);
   border-radius: var(--mantine-radius-sm);
+  font-size: var(--mantine-font-size-sm);
+  line-height: 1.4;
 
   &:not(:disabled):hover {
     background: var(--db-hover);
@@ -1536,7 +1609,34 @@
 .detailValue {
   flex: 1;
   min-width: 0;
-  padding-top: 2px;
+  font-size: var(--mantine-font-size-sm);
+  line-height: 1.4;
+
+  .fieldDisplay {
+    min-height: var(--detail-row-height);
+    padding: 4px var(--detail-inset);
+  }
+
+  .fieldEditing .cellInput {
+    height: var(--detail-row-height);
+    padding: 0 var(--detail-inset);
+  }
+
+  .personChip,
+  .progressNumber,
+  :global(.mantine-Badge-label) {
+    font-size: var(--mantine-font-size-sm);
+  }
+
+  :global(.mantine-Badge-root) {
+    height: 22px;
+  }
+}
+
+.detailFooter :global(.mantine-Button-root) {
+  height: var(--detail-row-height);
+  padding: 0 var(--detail-inset);
+  font-size: var(--mantine-font-size-sm);
 }
 
 /* ---------------------------------------------------------------- kanban */
