@@ -60,6 +60,7 @@ import {
   AUDIT_SERVICE,
   IAuditService,
 } from '../../integrations/audit/audit.service';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
 @Controller()
 export class AttachmentController {
@@ -99,7 +100,11 @@ export class AttachmentController {
       this.logger.error(err.message);
       if (err?.statusCode === 413) {
         throw new BadRequestException(
-          `File too large. Exceeds the ${this.environmentService.getFileUploadSizeLimit()} limit`,
+          errorBody(
+            ErrorCode.FILE_TOO_LARGE,
+            `File too large. Exceeds the ${this.environmentService.getFileUploadSizeLimit()} limit`,
+            { limit: this.environmentService.getFileUploadSizeLimit() },
+          ),
         );
       }
     }
@@ -156,7 +161,11 @@ export class AttachmentController {
       if (err?.statusCode === 413) {
         const errMessage = `File too large. Exceeds the ${this.environmentService.getFileUploadSizeLimit()} limit`;
         this.logger.error(errMessage);
-        throw new BadRequestException(errMessage);
+        throw new BadRequestException(
+          errorBody(ErrorCode.FILE_TOO_LARGE, errMessage, {
+            limit: this.environmentService.getFileUploadSizeLimit(),
+          }),
+        );
       }
       this.logger.error(err);
       throw new BadRequestException('Error processing file upload.');
@@ -278,7 +287,11 @@ export class AttachmentController {
     } catch (err: any) {
       if (err?.statusCode === 413) {
         throw new BadRequestException(
-          `File too large. Exceeds the ${MAX_AVATAR_SIZE} limit`,
+          errorBody(
+            ErrorCode.FILE_TOO_LARGE,
+            `File too large. Exceeds the ${MAX_AVATAR_SIZE} limit`,
+            { limit: MAX_AVATAR_SIZE },
+          ),
         );
       }
     }
@@ -298,7 +311,9 @@ export class AttachmentController {
       !validAttachmentTypes.includes(attachmentType) ||
       attachmentType === AttachmentType.File
     ) {
-      throw new BadRequestException('Invalid image attachment type');
+      throw new BadRequestException(
+        errorBody(ErrorCode.FILE_TYPE_INVALID, 'Invalid image attachment type'),
+      );
     }
 
     if (attachmentType === AttachmentType.WorkspaceIcon) {
@@ -353,7 +368,9 @@ export class AttachmentController {
       !validAttachmentTypes.includes(attachmentType) ||
       attachmentType === AttachmentType.File
     ) {
-      throw new BadRequestException('Invalid image attachment type');
+      throw new BadRequestException(
+        errorBody(ErrorCode.FILE_TYPE_INVALID, 'Invalid image attachment type'),
+      );
     }
 
     if (!fileName) {

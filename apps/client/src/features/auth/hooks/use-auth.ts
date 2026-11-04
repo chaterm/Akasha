@@ -28,6 +28,7 @@ import { RESET } from "jotai/utils";
 import { useTranslation } from "react-i18next";
 import { isCloud } from "@/lib/config.ts";
 import { exchangeTokenRedirectUrl, getHostnameUrl } from "@/ee/utils.ts";
+import { notifyError } from "@/lib/errors";
 
 export default function useAuth() {
   const { t } = useTranslation();
@@ -62,10 +63,7 @@ export default function useAuth() {
         return;
       }
 
-      notifications.show({
-        message,
-        color: "red",
-      });
+      notifyError(err, "Failed to sign in");
     }
   };
 
@@ -88,10 +86,7 @@ export default function useAuth() {
       }
     } catch (err) {
       setIsLoading(false);
-      notifications.show({
-        message: err.response?.data.message,
-        color: "red",
-      });
+      notifyError(err, "Failed to create account");
     }
   };
 
@@ -127,10 +122,7 @@ export default function useAuth() {
       }
     } catch (err) {
       setIsLoading(false);
-      notifications.show({
-        message: err.response?.data.message,
-        color: "red",
-      });
+      notifyError(err, "Failed to set up workspace");
     }
   };
 
@@ -156,10 +148,7 @@ export default function useAuth() {
       }
     } catch (err) {
       setIsLoading(false);
-      notifications.show({
-        message: err.response?.data.message,
-        color: "red",
-      });
+      notifyError(err, "Failed to reset password");
     }
   };
 
@@ -180,10 +169,7 @@ export default function useAuth() {
     } catch (err) {
       console.log(err);
       setIsLoading(false);
-      notifications.show({
-        message: err.response?.data.message,
-        color: "red",
-      });
+      notifyError(err, "Failed to send password reset email");
 
       return false;
     }
@@ -198,10 +184,7 @@ export default function useAuth() {
     } catch (err) {
       console.log(err);
       setIsLoading(false);
-      notifications.show({
-        message: err.response?.data.message,
-        color: "red",
-      });
+      notifyError(err, "This link is invalid or has expired");
     }
   };
 

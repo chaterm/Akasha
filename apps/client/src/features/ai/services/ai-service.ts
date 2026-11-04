@@ -3,8 +3,8 @@ import {
   AiGenerateDto,
   AiContentResponse,
   AiStreamChunk,
-  AiStreamError,
 } from "@/features/ai/types/ai.types.ts";
+import { ApiError, apiErrorFromResponse } from "@/lib/errors";
 
 export async function generateAiContent(
   data: AiGenerateDto,
@@ -16,7 +16,7 @@ export async function generateAiContent(
 export async function generateAiContentStream(
   data: AiGenerateDto,
   onChunk: (chunk: AiStreamChunk) => void,
-  onError?: (error: AiStreamError) => void,
+  onError?: (error: unknown) => void,
   onComplete?: () => void,
   onController?: (controller: AbortController) => void,
 ): Promise<AbortController> {
@@ -34,7 +34,7 @@ export async function generateAiContentStream(
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      throw await apiErrorFromResponse(response);
     }
 
     const reader = response.body?.getReader();
@@ -70,7 +70,9 @@ export async function generateAiContentStream(
                 const parsed = JSON.parse(data);
                 if (parsed.error) {
                   failed = true;
-                  onError?.(parsed);
+                  onError?.(
+                    new ApiError({ code: parsed.code, message: parsed.error }),
+                  );
                   return;
                 } else {
                   onChunk(parsed);
@@ -83,11 +85,11 @@ export async function generateAiContentStream(
         }
 
         if (!completed && !failed && !abortController.signal.aborted) {
-          onError?.({ error: "AI stream ended unexpectedly." });
+          onError?.(new Error("AI stream ended unexpectedly."));
         }
       } catch (error) {
         if (error.name !== "AbortError") {
-          onError?.({ error: error.message });
+          onError?.(error);
         }
       } finally {
         reader.releaseLock();
@@ -96,7 +98,7 @@ export async function generateAiContentStream(
 
     processStream();
   } catch (error) {
-    onError?.({ error: error.message });
+    onError?.(error);
   }
 
   return abortController;

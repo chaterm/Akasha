@@ -12,6 +12,7 @@ import { PaginationOptions } from '../../pagination/pagination-options';
 import { executeWithCursorPagination } from '@akasha/db/pagination/cursor-pagination';
 import { GroupRepo } from '@akasha/db/repos/group/group.repo';
 import { UserRepo } from '@akasha/db/repos/user/user.repo';
+import { ErrorCode, errorBody } from '../../../common/errors/error-codes';
 
 @Injectable()
 export class GroupUserRepo {
@@ -114,7 +115,10 @@ export class GroupUserRepo {
 
         if (groupUserExists) {
           throw new BadRequestException(
-            'User is already a member of this group',
+            errorBody(
+              ErrorCode.GROUP_MEMBER_EXISTS,
+              'User is already a member of this group',
+            ),
           );
         }
 

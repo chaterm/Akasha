@@ -13,7 +13,6 @@ import {
   AiContentResponse,
   AiGenerateDto,
   AiStreamChunk,
-  AiStreamError,
 } from "@/features/ai/types/ai.types.ts";
 
 export function useAiGenerateMutation(): UseMutationResult<
@@ -29,7 +28,7 @@ export function useAiGenerateMutation(): UseMutationResult<
 interface StreamCallbacks {
   onController?: (controller: AbortController) => void;
   onChunk: (chunk: AiStreamChunk) => void;
-  onError?: (error: AiStreamError) => void;
+  onError?: (error: unknown) => void;
   onComplete?: () => void;
 }
 

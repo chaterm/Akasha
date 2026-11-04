@@ -100,8 +100,8 @@ export function CloudLoginForm() {
             <TextInput
               type="text"
               placeholder="my-team"
-              description="Enter your workspace hostname"
-              label="Workspace hostname"
+              description={t("Enter your workspace hostname")}
+              label={t("Workspace hostname")}
               rightSection={<Text fw={500}>.{getSubdomainHost()}</Text>}
               rightSectionWidth={150}
               withErrorStyles={false}

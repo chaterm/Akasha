@@ -6,6 +6,7 @@ import { IconCheck } from "@tabler/icons-react";
 import clsx from "clsx";
 import classes from "./status.module.css";
 import type { StatusColor } from "@docmost/editor-ext";
+import { useTranslation } from "react-i18next";
 
 const STATUS_COLORS: { name: StatusColor; bg: string }[] = [
   { name: "gray", bg: "var(--mantine-color-gray-4)" },
@@ -26,6 +27,7 @@ const colorClassMap: Record<StatusColor, string> = {
 };
 
 export default function StatusView(props: NodeViewProps) {
+  const { t } = useTranslation();
   const { node, updateAttributes, deleteNode, editor, getPos } = props;
   const { text, color } = node.attrs as {
     text: string;
@@ -121,7 +123,7 @@ export default function StatusView(props: NodeViewProps) {
                 editor.commands.focus(getPos() + node.nodeSize);
               }
             }}
-            placeholder="Status text"
+            placeholder={t("Status text")}
             size="sm"
             mb="xs"
           />

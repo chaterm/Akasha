@@ -33,6 +33,7 @@ import {
 } from './knowledge-retrieval.service';
 import { KnowledgeAuthorizationCache } from './knowledge-source-authorization.cache';
 import { KnowledgeSourceAuthorizationService } from './knowledge-source-authorization.service';
+import { ErrorCode, errorBody } from '../../../common/errors/error-codes';
 
 export { KnowledgeAnswerProvider, KnowledgeAnswerProviderInput };
 
@@ -250,7 +251,12 @@ export class AiKnowledgeChatService {
     workspace?: Workspace;
   }): Promise<AiKnowledgeRetrievalResult> {
     if (input.workspace && !this.isEnabledForWorkspace(input.workspace)) {
-      throw new ForbiddenException('AI knowledge chat is disabled');
+      throw new ForbiddenException(
+        errorBody(
+          ErrorCode.AI_KNOWLEDGE_DISABLED,
+          'AI knowledge chat is disabled',
+        ),
+      );
     }
 
     const authCache = new KnowledgeAuthorizationCache({
@@ -332,7 +338,12 @@ export class AiKnowledgeChatService {
 
   async chat(input: AiKnowledgeChatInput): Promise<AiKnowledgeChatResult> {
     if (input.workspace && !this.isEnabledForWorkspace(input.workspace)) {
-      throw new ForbiddenException('AI knowledge chat is disabled');
+      throw new ForbiddenException(
+        errorBody(
+          ErrorCode.AI_KNOWLEDGE_DISABLED,
+          'AI knowledge chat is disabled',
+        ),
+      );
     }
 
     const timings = new AiKnowledgeChatTimingCollector();

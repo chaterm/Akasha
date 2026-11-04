@@ -290,9 +290,6 @@ export interface KnowledgeImmediateDelayedPageCompileResult {
   scheduleId: string;
   sourcePageId: string;
   spaceId: string;
-  /** True outside the night compile window: runs at deferredUntil. */
-  deferred?: boolean;
-  deferredUntil?: string | null;
 }
 
 export interface KnowledgeRemoveDelayedPageResult {

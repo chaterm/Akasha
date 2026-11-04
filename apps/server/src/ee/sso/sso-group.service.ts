@@ -30,6 +30,7 @@ import {
   AUDIT_SERVICE,
   IAuditService,
 } from '../../integrations/audit/audit.service';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
 @Injectable()
 export class SsoGroupService {
@@ -149,7 +150,9 @@ export class SsoGroupService {
         { trx },
       );
       if (existing && existing.id !== group.id) {
-        throw new ConflictException('Group name already exists');
+        throw new ConflictException(
+          errorBody(ErrorCode.GROUP_NAME_TAKEN, 'Group name already exists'),
+        );
       }
       await this.groupRepo.update(
         { name: dto.newGroupName },

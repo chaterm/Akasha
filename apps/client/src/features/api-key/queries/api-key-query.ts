@@ -25,6 +25,7 @@ import {
 } from "@/features/api-key";
 import { notifications } from "@mantine/notifications";
 import { useTranslation } from "react-i18next";
+import { notifyError } from "@/lib/errors";
 
 export function useGetApiKeysQuery(
   params?: QueryParams,
@@ -73,10 +74,7 @@ export function useRevokeApiKeyMutation() {
           ["api-key-list"].includes(item.queryKey[0] as string),
       });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to revoke API key"),
   });
 }
 
@@ -97,10 +95,7 @@ export function useCreateApiKeyMutation() {
           ["api-key-list"].includes(item.queryKey[0] as string),
       });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to create API key"),
   });
 }
 
@@ -118,12 +113,7 @@ export function useCreatePublicApiKeyMutation() {
       });
       queryClient.invalidateQueries({ queryKey: ["api-key-list"] });
     },
-    onError: (error) => {
-      notifications.show({
-        message: error["response"]?.data?.message,
-        color: "red",
-      });
-    },
+    onError: (error) => notifyError(error, "Failed to create API key"),
   });
 }
 
@@ -140,10 +130,7 @@ export function useUpdateApiKeyMutation() {
           ["api-key-list"].includes(item.queryKey[0] as string),
       });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to update API key"),
   });
 }
 
@@ -157,10 +144,7 @@ export function useUpdatePublicApiKeyMutation() {
       notifications.show({ message: t("Updated successfully") });
       queryClient.invalidateQueries({ queryKey: ["api-key-list"] });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to update API key"),
   });
 }
 
@@ -173,7 +157,7 @@ export function useDeleteAgentApiKeyMutation() {
       notifications.show({ message: t("Deleted successfully") });
       queryClient.invalidateQueries({ queryKey: ["api-key-list"] });
     },
-    onError: (error) => notifications.show({ message: error["response"]?.data?.message, color: "red" }),
+    onError: (error) => notifyError(error, "Failed to delete agent"),
   });
 }
 
@@ -190,7 +174,7 @@ export function useUpdateAgentSpacesMutation() {
       notifications.show({ message: t("Spaces updated successfully") });
       queryClient.invalidateQueries({ queryKey: ["api-key-list", "public"] });
     },
-    onError: (error: any) => notifications.show({ message: error?.response?.data?.message, color: "red" }),
+    onError: (error: any) => notifyError(error, "Failed to update spaces"),
   });
 }
 
@@ -203,6 +187,6 @@ export function useRotateAgentApiKeyMutation() {
       notifications.show({ message: t("Agent key rotated successfully") });
       queryClient.invalidateQueries({ queryKey: ["api-key-list", "public"] });
     },
-    onError: (error: any) => notifications.show({ message: error?.response?.data?.message, color: "red" }),
+    onError: (error: any) => notifyError(error, "Failed to rotate agent key"),
   });
 }

@@ -15,6 +15,11 @@ import { AuthWorkspace } from '../../common/decorators/auth-workspace.decorator'
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { EditorAiGenerateDto } from './dto/editor-ai.dto';
 import { EditorAiService } from './editor-ai.service';
+import {
+  ErrorCode,
+  errorBody,
+  readErrorCode,
+} from '../../common/errors/error-codes';
 
 @UseGuards(JwtAuthGuard)
 @Controller('ai')
@@ -65,6 +70,7 @@ export class EditorAiController {
             error instanceof HttpException
               ? error.message
               : 'AI generation failed.',
+          code: readErrorCode(error),
         });
       }
     } finally {
@@ -94,7 +100,9 @@ export function isGenerativeAiEnabledForWorkspace(
 
 function assertGenerativeAiEnabled(workspace: Workspace): void {
   if (!isGenerativeAiEnabledForWorkspace(workspace)) {
-    throw new ForbiddenException('Generative AI is disabled.');
+    throw new ForbiddenException(
+      errorBody(ErrorCode.AI_GENERATIVE_DISABLED, 'Generative AI is disabled.'),
+    );
   }
 }
 

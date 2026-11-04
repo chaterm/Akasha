@@ -26,6 +26,7 @@ import { useForm } from "@mantine/form";
 import { zod4Resolver } from "mantine-form-zod-resolver";
 import { z } from "zod/v4";
 import useCurrentUser from "@/features/user/hooks/use-current-user";
+import { getErrorMessage } from "@/lib/errors";
 
 interface MfaBackupCodesModalProps {
   opened: boolean;
@@ -73,8 +74,7 @@ export function MfaBackupCodesModal({
       notifications.show({
         title: t("Error"),
         message:
-          error.response?.data?.message ||
-          t("Failed to regenerate backup codes"),
+          getErrorMessage(error, "Failed to regenerate backup codes"),
         color: "red",
       });
     },

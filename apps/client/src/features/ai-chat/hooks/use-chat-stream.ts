@@ -15,6 +15,7 @@ import type {
   ChatAttachment,
   PageMention,
 } from "../types/ai-chat.types";
+import { ApiError, getErrorMessage } from "@/lib/errors";
 
 type ChatStreamOptions = {
   onChatCreated?: (chatId: string) => void;
@@ -261,7 +262,10 @@ export function useChatStream(
           void reconcileFromServer(event.chatId);
           break;
         case "error":
-          session.error = event.message;
+          session.error = getErrorMessage(
+            new ApiError({ code: event.code, message: event.message }),
+            "Failed to send message",
+          );
           session.errorCode = event.code || null;
           session.isRetryable = event.retryable || false;
           session.isStreaming = false;
@@ -344,8 +348,8 @@ export function useChatStream(
           ...(responseMode && { responseMode }),
         },
         (event) => handleStreamEvent(event, session),
-        (errorMsg) => {
-          session.error = errorMsg;
+        (error) => {
+          session.error = getErrorMessage(error, "Failed to send message");
           session.isStreaming = false;
           session.progressStage = null;
           session.thinkingSteps = [];
@@ -410,8 +414,8 @@ export function useChatStream(
           handleStreamEvent(event, session);
           if (event.type === "error") reconcile();
         },
-        (errorMessage) => {
-          session.error = errorMessage;
+        (error) => {
+          session.error = getErrorMessage(error, "Failed to send message");
           session.isStreaming = false;
           session.progressStage = null;
           session.thinkingSteps = [];

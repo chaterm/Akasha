@@ -19,6 +19,7 @@ import { QueueJob, QueueName } from '../../integrations/queue/constants';
 import { extractUserMentionIdsFromJson } from '../../common/helpers/prosemirror/utils';
 import { ICommentNotificationJob } from '../../integrations/queue/constants/queue.interface';
 import { WsService } from '../../ws/ws.service';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
 @Injectable()
 export class CommentService {
@@ -166,7 +167,12 @@ export class CommentService {
     const commentContent = JSON.parse(updateCommentDto.content);
 
     if (comment.creatorId !== authUser.id) {
-      throw new ForbiddenException('You can only edit your own comments');
+      throw new ForbiddenException(
+        errorBody(
+          ErrorCode.COMMENT_NOT_AUTHOR,
+          'You can only edit your own comments',
+        ),
+      );
     }
 
     const oldMentionIds = extractUserMentionIdsFromJson(comment.content);

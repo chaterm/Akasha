@@ -16,6 +16,7 @@ import {
   DEFAULT_KNOWLEDGE_PROMPT_VERSION,
 } from '../llm-wiki.constants';
 import { KnowledgeSpaceCompilationService } from './knowledge-space-compilation.service';
+import { ErrorCode, errorBody } from '../../../common/errors/error-codes';
 
 @Injectable()
 export class KnowledgeSpaceResetService {
@@ -48,7 +49,10 @@ export class KnowledgeSpaceResetService {
     if (!result.reset) {
       if (result.reason === 'space_name_mismatch') {
         throw new ConflictException(
-          'Space name confirmation no longer matches.',
+          errorBody(
+            ErrorCode.KNOWLEDGE_SPACE_NAME_MISMATCH,
+            'Space name confirmation no longer matches.',
+          ),
         );
       }
       throw new NotFoundException('Space not found.');

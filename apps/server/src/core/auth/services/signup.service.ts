@@ -16,6 +16,7 @@ import {
   IAuditService,
 } from '../../../integrations/audit/audit.service';
 import { SpaceService } from '../../space/services/space.service';
+import { ErrorCode, errorBody } from '../../../common/errors/error-codes';
 
 @Injectable()
 export class SignupService {
@@ -40,7 +41,10 @@ export class SignupService {
 
     if (userCheck) {
       throw new BadRequestException(
-        'An account with this email already exists in this workspace',
+        errorBody(
+          ErrorCode.AUTH_EMAIL_TAKEN,
+          'An account with this email already exists in this workspace',
+        ),
       );
     }
 

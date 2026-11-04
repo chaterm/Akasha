@@ -43,6 +43,7 @@ import {
 } from '../../../integrations/audit/audit.service';
 import { isAdminActingOnOwner } from '../workspace.util';
 import { SpaceService } from '../../space/services/space.service';
+import { ErrorCode, errorBody } from '../../../common/errors/error-codes';
 
 @Injectable()
 export class WorkspaceInvitationService {
@@ -238,7 +239,9 @@ export class WorkspaceInvitationService {
     }
 
     if (dto.token !== invitation.token) {
-      throw new BadRequestException('Invalid invitation token');
+      throw new BadRequestException(
+        errorBody(ErrorCode.INVITATION_INVALID, 'Invalid invitation token'),
+      );
     }
 
     validateSsoEnforcement(workspace);
@@ -302,7 +305,12 @@ export class WorkspaceInvitationService {
     } catch (err: any) {
       this.logger.error(`acceptInvitation - ${err}`);
       if (err.message.includes('unique constraint')) {
-        throw new BadRequestException('Invitation already accepted');
+        throw new BadRequestException(
+          errorBody(
+            ErrorCode.INVITATION_ALREADY_ACCEPTED,
+            'Invitation already accepted',
+          ),
+        );
       }
       throw new BadRequestException(
         'Failed to accept invitation. An error occurred.',

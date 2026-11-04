@@ -34,6 +34,7 @@ import type {
   KnowledgeSourceWindow,
   KnowledgeWorkerDiagnostics,
 } from "../types/knowledge.types";
+import { apiErrorFromResponse } from "@/lib/errors";
 
 export async function queryKnowledge(params: {
   query: string;
@@ -48,8 +49,7 @@ export async function queryKnowledge(params: {
   });
 
   if (!response.ok) {
-    const message = await readErrorMessage(response);
-    throw new Error(message);
+    throw await apiErrorFromResponse(response);
   }
 
   return normalizeKnowledgeQueryResult(unwrapApiData(await response.json()));
@@ -66,8 +66,7 @@ export async function compileKnowledgeSpaces(params: {
   });
 
   if (!response.ok) {
-    const message = await readErrorMessage(response);
-    throw new Error(message);
+    throw await apiErrorFromResponse(response);
   }
 
   const body = unwrapApiData(await response.json());
@@ -105,8 +104,7 @@ async function requestConfirmedSpaceCompilation(
   );
 
   if (!response.ok) {
-    const message = await readErrorMessage(response);
-    throw new Error(message);
+    throw await apiErrorFromResponse(response);
   }
 
   return normalizeSpaceOperationResult(unwrapApiData(await response.json()));
@@ -201,8 +199,7 @@ export async function runKnowledgeAdminAction(params: {
   });
 
   if (!response.ok) {
-    const message = await readErrorMessage(response);
-    throw new Error(message);
+    throw await apiErrorFromResponse(response);
   }
 
   const body = unwrapApiData(await response.json());
@@ -286,7 +283,7 @@ export async function immediatelyCompileDelayedPage(params: {
       }),
     },
   );
-  if (!response.ok) throw new Error(await readErrorMessage(response));
+  if (!response.ok) throw await apiErrorFromResponse(response);
   return unwrapApiData(
     await response.json(),
   ) as KnowledgeImmediateDelayedPageCompileResult;
@@ -307,7 +304,7 @@ export async function removeDelayedPageFromQueue(params: {
       }),
     },
   );
-  if (!response.ok) throw new Error(await readErrorMessage(response));
+  if (!response.ok) throw await apiErrorFromResponse(response);
   return unwrapApiData(
     await response.json(),
   ) as KnowledgeRemoveDelayedPageResult;
@@ -326,7 +323,7 @@ export async function getKnowledgeRunPageDiagnostics(params: {
     `/api/llm-wiki/admin/diagnostics/runs/${encodeURIComponent(params.runId)}/pages?${query}`,
     { credentials: "include" },
   );
-  if (!response.ok) throw new Error(await readErrorMessage(response));
+  if (!response.ok) throw await apiErrorFromResponse(response);
   return normalizeRunPageDiagnosticsPage(unwrapApiData(await response.json()));
 }
 
@@ -351,7 +348,7 @@ export async function getKnowledgeWorkerDiagnostics(): Promise<KnowledgeWorkerDi
   const response = await fetch("/api/llm-wiki/admin/diagnostics/workers", {
     credentials: "include",
   });
-  if (!response.ok) throw new Error(await readErrorMessage(response));
+  if (!response.ok) throw await apiErrorFromResponse(response);
   return normalizeWorkerDiagnostics(unwrapApiData(await response.json()));
 }
 
@@ -383,7 +380,7 @@ export async function getKnowledgeRetrievalDiagnostics(): Promise<KnowledgeRetri
   const response = await fetch("/api/llm-wiki/admin/diagnostics/retrieval", {
     credentials: "include",
   });
-  if (!response.ok) throw new Error(await readErrorMessage(response));
+  if (!response.ok) throw await apiErrorFromResponse(response);
   return normalizeRetrievalDiagnostics(unwrapApiData(await response.json()));
 }
 
@@ -397,7 +394,7 @@ async function postKnowledgeDiagnostics(
     credentials: "include",
     body: JSON.stringify(params),
   });
-  if (!response.ok) throw new Error(await readErrorMessage(response));
+  if (!response.ok) throw await apiErrorFromResponse(response);
   return unwrapApiData(await response.json());
 }
 
@@ -412,8 +409,7 @@ export async function retryKnowledgePages(params: {
   });
 
   if (!response.ok) {
-    const message = await readErrorMessage(response);
-    throw new Error(message);
+    throw await apiErrorFromResponse(response);
   }
 
   const body = unwrapApiData(await response.json());
@@ -443,7 +439,7 @@ export async function cancelKnowledgeCompilationRun(params: {
       }),
     },
   );
-  if (!response.ok) throw new Error(await readErrorMessage(response));
+  if (!response.ok) throw await apiErrorFromResponse(response);
   const value = unwrapApiData(await response.json());
   const record = isRecord(value) ? value : {};
   return {
@@ -485,8 +481,7 @@ export async function getKnowledgeGraph(params: {
   );
 
   if (!response.ok) {
-    const message = await readErrorMessage(response);
-    throw new Error(message);
+    throw await apiErrorFromResponse(response);
   }
 
   return normalizeKnowledgeGraph(unwrapApiData(await response.json()));
@@ -1207,21 +1202,4 @@ function readNumber(value: unknown): number {
 
 function readOptionalNumber(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
-}
-
-async function readErrorMessage(response: Response): Promise<string> {
-  const fallback = `HTTP error ${response.status}`;
-
-  try {
-    const body = await response.json();
-    if (body?.message) {
-      return Array.isArray(body.message)
-        ? body.message.join(", ")
-        : body.message;
-    }
-  } catch {
-    return fallback;
-  }
-
-  return fallback;
 }

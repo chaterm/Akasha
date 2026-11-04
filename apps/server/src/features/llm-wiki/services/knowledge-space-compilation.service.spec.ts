@@ -212,8 +212,8 @@ describe('KnowledgeSpaceCompilationService', () => {
     );
   });
 
-  it('makes a confirmed delayed page due and immediately runs the dispatcher', async () => {
-    const fixture = createService();
+  it('requests a page-scoped Run for a confirmed delayed page even outside the night window', async () => {
+    const fixture = createService({ gatedWorkspaceIds: ['workspace-1'] });
     fixture.repo.markDelayedPageForImmediateCompilation.mockResolvedValue({
       scheduleId: 'schedule-1',
       sourcePageId: 'page-1',
@@ -236,7 +236,18 @@ describe('KnowledgeSpaceCompilationService', () => {
       scheduleId: 'schedule-1',
       confirmationPageName: 'Page 1',
     });
-    expect(fixture.repo.promoteDuePageCompileSchedules).toHaveBeenCalled();
+    expect(fixture.repo.requestRuns).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requests: [
+          {
+            workspaceId: 'workspace-1',
+            spaceId: 'space-1',
+            trigger: 'manual_compile',
+            targetSourcePageIds: ['page-1'],
+          },
+        ],
+      }),
+    );
   });
 
   it('does not dispatch when delayed-page confirmation fails', async () => {
@@ -249,6 +260,7 @@ describe('KnowledgeSpaceCompilationService', () => {
       confirmationPageName: 'wrong',
     });
 
+    expect(fixture.repo.requestRuns).not.toHaveBeenCalled();
     expect(fixture.repo.promoteDuePageCompileSchedules).not.toHaveBeenCalled();
   });
 

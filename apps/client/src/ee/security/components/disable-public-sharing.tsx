@@ -5,10 +5,10 @@ import { workspaceAtom } from "@/features/user/atoms/current-user-atom.ts";
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { updateWorkspace } from "@/features/workspace/services/workspace-service.ts";
-import { notifications } from "@mantine/notifications";
 import { useHasFeature } from "@/ee/hooks/use-feature";
 import { Feature } from "@/ee/features";
 import { useUpgradeLabel } from "@/ee/hooks/use-upgrade-label.ts";
+import { notifyError } from "@/lib/errors";
 
 export default function DisablePublicSharing() {
   const { t } = useTranslation();
@@ -44,10 +44,7 @@ function DisablePublicSharingToggle() {
       setChecked(value);
       setWorkspace(updatedWorkspace);
     } catch (err) {
-      notifications.show({
-        message: err?.response?.data?.message,
-        color: "red",
-      });
+      notifyError(err, "Failed to update data");
     }
   };
 

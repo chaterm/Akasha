@@ -6,9 +6,6 @@ import {
   IconArrowsDiagonal,
   IconX,
   IconSparkles,
-  IconFileText,
-  IconLanguage,
-  IconSearch,
 } from "@tabler/icons-react";
 import { useAtom } from "jotai";
 import { useNavigate, useParams } from "react-router-dom";
@@ -25,12 +22,6 @@ import type { ChatAttachment, PageMention } from "../types/ai-chat.types";
 import classes from "../styles/aside-chat-panel.module.css";
 import KnowledgeScopeBar from "./knowledge-scope-bar";
 import { useKnowledgeScope } from "../hooks/use-knowledge-scope";
-
-type QuickAction = {
-  icon: React.ReactNode;
-  label: string;
-  prompt: string;
-};
 
 export default function AsideChatPanel() {
   const { t } = useTranslation();
@@ -155,34 +146,7 @@ export default function AsideChatPanel() {
     [sendMessage, contextPages, knowledgeScope.spaceIds],
   );
 
-  const handleQuickAction = useCallback(
-    (prompt: string) => {
-      handleSend(prompt, [], []);
-    },
-    [handleSend],
-  );
-
   const hasMessages = messages.length > 0 || isStreaming;
-
-  // The prompt is the literal question sent to the model, so it follows the UI
-  // language too: an English prompt pins the answer to English.
-  const quickActions: QuickAction[] = [
-    {
-      icon: <IconFileText size={16} />,
-      label: t("Summarize this page"),
-      prompt: t("Summarize this page"),
-    },
-    {
-      icon: <IconLanguage size={16} />,
-      label: t("Translate this page"),
-      prompt: t("Translate this page"),
-    },
-    {
-      icon: <IconSearch size={16} />,
-      label: t("Analyze for insights"),
-      prompt: t("Analyze for insights"),
-    },
-  ];
 
   return (
     <div className={classes.panel}>
@@ -299,19 +263,6 @@ export default function AsideChatPanel() {
             {contextPages.length > 0
               ? t("Ask about this page")
               : t("Ask your workspace knowledge base")}
-          </div>
-          <div className={classes.quickActions}>
-            {quickActions.map((action) => (
-              <button
-                key={action.label}
-                type="button"
-                className={classes.quickAction}
-                onClick={() => handleQuickAction(action.prompt)}
-              >
-                <span className={classes.quickActionIcon}>{action.icon}</span>
-                {action.label}
-              </button>
-            ))}
           </div>
         </div>
       )}

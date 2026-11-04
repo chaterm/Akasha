@@ -32,6 +32,7 @@ import { ModuleRef } from '@nestjs/core';
 import { load } from 'cheerio';
 import { normalizeImportHtml } from '../utils/import-formatter';
 import { Json } from '@akasha/db/types/db';
+import { ErrorCode, errorBody } from '../../../common/errors/error-codes';
 
 @Injectable()
 export class ImportService {
@@ -174,7 +175,10 @@ export class ImportService {
         'DOCX import requested but EE module not bundled in this build',
       );
       throw new BadRequestException(
-        'This feature requires a valid enterprise license.',
+        errorBody(
+          ErrorCode.LICENSE_REQUIRED,
+          'This feature requires a valid enterprise license.',
+        ),
       );
     }
 
@@ -210,7 +214,10 @@ export class ImportService {
         'PDF import requested but EE module not bundled in this build',
       );
       throw new BadRequestException(
-        'This feature requires a valid enterprise license.',
+        errorBody(
+          ErrorCode.LICENSE_REQUIRED,
+          'This feature requires a valid enterprise license.',
+        ),
       );
     }
 

@@ -36,6 +36,3 @@ export interface AiStreamChunk {
   content: string;
 }
 
-export interface AiStreamError {
-  error: string;
-}

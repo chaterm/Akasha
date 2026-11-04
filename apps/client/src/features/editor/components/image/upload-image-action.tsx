@@ -4,16 +4,14 @@ import { notifications } from "@mantine/notifications";
 import { getFileUploadSizeLimit } from "@/lib/config.ts";
 import { formatBytes } from "@/lib";
 import i18n from "@/i18n.ts";
+import { notifyError } from "@/lib/errors";
 
 export const uploadImageAction = handleImageUpload({
   onUpload: async (file: File, pageId: string): Promise<any> => {
     try {
       return await uploadFile(file, pageId);
     } catch (err) {
-      notifications.show({
-        color: "red",
-        message: err?.response.data.message,
-      });
+      notifyError(err, "Failed to upload image");
       throw err;
     }
   },
