@@ -38,6 +38,26 @@ export function RowMenu({
   const [opened, setOpened] = useState(false);
   const close = () => setOpened(false);
 
+  if (!db.editable) {
+    if (!showExpand) return null;
+    return (
+      <ActionIcon
+        size="sm"
+        variant="subtle"
+        color="gray"
+        className={classes.hoverAction}
+        aria-label={t("Expand")}
+        title={t("Expand")}
+        onClick={(event) => {
+          event.stopPropagation();
+          db.openRow(rowId);
+        }}
+      >
+        <IconArrowsDiagonal size={14} />
+      </ActionIcon>
+    );
+  }
+
   return (
     <Popover
       opened={opened}
@@ -74,37 +94,34 @@ export function RowMenu({
             }}
           />
         )}
-        {db.editable && (
-          <>
-            {extra?.(close)}
-            <MenuRow
-              icon={IconRowInsertTop}
-              label={insertLabels?.above ?? t("Insert above")}
-              onClick={() => {
-                close();
-                onInsert("above");
-              }}
-            />
-            <MenuRow
-              icon={IconRowInsertBottom}
-              label={insertLabels?.below ?? t("Insert below")}
-              onClick={() => {
-                close();
-                onInsert("below");
-              }}
-            />
-            <MenuDivider />
-            <MenuRow
-              icon={IconTrash}
-              label={t("Delete")}
-              danger
-              onClick={() => {
-                close();
-                db.apply((tr, pos) => deleteDatabaseRow(tr, pos, rowId));
-              }}
-            />
-          </>
-        )}
+        {extra?.(close)}
+        <MenuRow
+          icon={IconRowInsertTop}
+          label={insertLabels?.above ?? t("Insert above")}
+          onClick={() => {
+            close();
+            onInsert("above");
+          }}
+        />
+        <MenuRow
+          icon={IconRowInsertBottom}
+          label={insertLabels?.below ?? t("Insert below")}
+          onClick={() => {
+            close();
+            onInsert("below");
+          }}
+        />
+        <MenuDivider />
+        <MenuRow
+          icon={IconTrash}
+          label={t("Delete")}
+          danger
+          onClick={() => {
+            close();
+            db.apply((tr, pos) => deleteDatabaseRow(tr, pos, rowId));
+          }}
+        />
+
       </Popover.Dropdown>
     </Popover>
   );

@@ -4,6 +4,7 @@ import {
   getWeekStart,
   layoutCalendarWeek,
   moveItem,
+  planRowMoves,
 } from "./database-utils";
 
 describe("buildMonthWeeks", () => {
@@ -66,5 +67,40 @@ describe("getWeekStart", () => {
     expect(getWeekStart("en-US")).toBe(0);
     expect(getWeekStart("zh-CN")).toBe(1);
     expect(getWeekStart("de-DE")).toBe(1);
+  });
+});
+
+describe("planRowMoves", () => {
+  const apply = (all: string[], moves: { rowId: string; beforeRowId: string | null }[]) => {
+    const ids = [...all];
+    for (const move of moves) {
+      ids.splice(ids.indexOf(move.rowId), 1);
+      const at = move.beforeRowId === null ? ids.length : ids.indexOf(move.beforeRowId);
+      ids.splice(at, 0, move.rowId);
+    }
+    return ids;
+  };
+
+  it("moves a block of selected rows up and down by one visible row", () => {
+    const all = ["a", "b", "c", "d", "e"];
+    const picked = new Set(["c", "d"]);
+    expect(apply(all, planRowMoves(all, all, picked, "up"))).toEqual(["a", "c", "d", "b", "e"]);
+    expect(apply(all, planRowMoves(all, all, picked, "down"))).toEqual(["a", "b", "e", "c", "d"]);
+  });
+
+  it("keeps rows already at the edge in place", () => {
+    const all = ["a", "b", "c"];
+    expect(planRowMoves(all, all, new Set(["a"]), "up")).toEqual([]);
+    expect(planRowMoves(all, all, new Set(["c"]), "down")).toEqual([]);
+    expect(apply(all, planRowMoves(all, all, new Set(["a", "c"]), "down"))).toEqual(["b", "a", "c"]);
+  });
+
+  it("steps over rows hidden by the filter", () => {
+    const all = ["a", "x", "b", "y", "c"];
+    const visible = ["a", "b", "c"];
+    const up = apply(all, planRowMoves(all, visible, new Set(["b"]), "up"));
+    expect(up.filter((id) => visible.includes(id))).toEqual(["b", "a", "c"]);
+    const down = apply(all, planRowMoves(all, visible, new Set(["b"]), "down"));
+    expect(down.filter((id) => visible.includes(id))).toEqual(["a", "c", "b"]);
   });
 });

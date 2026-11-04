@@ -1,17 +1,32 @@
-import { useEffect, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import {
   ActionIcon,
   Button,
+  Checkbox,
+  CloseButton,
+  Combobox,
   Group,
-  MultiSelect,
+  Input,
+  InputBase,
   NumberInput,
   Select,
   Stack,
   Text,
   TextInput,
+  useCombobox,
 } from "@mantine/core";
 import { DateInput, DatesProvider } from "@mantine/dates";
-import { IconFolderPlus, IconPlus, IconTrash } from "@tabler/icons-react";
+import {
+  IconChevronDown,
+  IconFolderPlus,
+  IconPlus,
+  IconTrash,
+} from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import {
   databaseFilterNeedsValue,
@@ -22,6 +37,7 @@ import {
   type DatabaseFilterCondition,
   type DatabaseFilterGroup,
   type DatabaseFilterOperator,
+  type DatabaseSelectOption,
 } from "@docmost/editor-ext";
 import { getDayjsLocale } from "@/lib/dayjs-locale.ts";
 import type { DatabaseContext } from "./database-context";
@@ -118,6 +134,137 @@ function BufferedInput({
   );
 }
 
+function OptionCheckSelect({
+  options,
+  value,
+  onChange,
+  placeholder,
+}: {
+  options: DatabaseSelectOption[];
+  value: string[];
+  onChange: (value: string[]) => void;
+  placeholder: string;
+}) {
+  const { t } = useTranslation();
+  const [search, setSearch] = useState("");
+  const combobox = useCombobox({
+    onDropdownClose: () => {
+      combobox.resetSelectedOption();
+      setSearch("");
+    },
+    onDropdownOpen: () => combobox.focusSearchInput(),
+  });
+  const selected = new Set(value);
+  const names = options
+    .filter((option) => selected.has(option.id))
+    .map((option) => option.name || t("Untitled"));
+  const query = search.trim().toLowerCase();
+  const shown = options.filter((option) =>
+    (option.name || "").toLowerCase().includes(query),
+  );
+  const toggle = (id: string) =>
+    onChange(
+      selected.has(id) ? value.filter((item) => item !== id) : [...value, id],
+    );
+
+  return (
+    <Combobox
+      store={combobox}
+      withinPortal={false}
+      onOptionSubmit={toggle}
+    >
+      <Combobox.Target>
+        <InputBase
+          component="button"
+          type="button"
+          size="xs"
+          flex={1}
+          miw={0}
+          pointer
+          rightSection={
+            <Group gap={2} wrap="nowrap">
+              {value.length > 0 && (
+                <CloseButton
+                  size="xs"
+                  aria-label={t("Clear")}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onChange([]);
+                  }}
+                />
+              )}
+              <ActionIcon
+                size="xs"
+                variant="transparent"
+                color="gray"
+                aria-label={t(combobox.dropdownOpened ? "Collapse" : "Expand")}
+                aria-expanded={combobox.dropdownOpened}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  combobox.toggleDropdown();
+                }}
+              >
+                <IconChevronDown
+                  size={14}
+                  className={classes.checkSelectChevron}
+                  data-open={combobox.dropdownOpened || undefined}
+                />
+              </ActionIcon>
+            </Group>
+          }
+          rightSectionWidth={value.length ? 48 : 28}
+          rightSectionPointerEvents="all"
+          onClick={() => combobox.toggleDropdown()}
+        >
+          {names.length ? (
+            <span className={classes.checkSelectValue} title={names.join(", ")}>
+              {names.join(", ")}
+            </span>
+          ) : (
+            <Input.Placeholder>{placeholder}</Input.Placeholder>
+          )}
+        </InputBase>
+      </Combobox.Target>
+      <Combobox.Dropdown>
+        <Combobox.Search
+          value={search}
+          onChange={(event) => setSearch(event.currentTarget.value)}
+          placeholder={t("Search")}
+        />
+        <Combobox.Options mah={240} style={{ overflowY: "auto" }}>
+          {shown.length ? (
+            shown.map((option) => (
+              <Combobox.Option
+                key={option.id}
+                value={option.id}
+                active={selected.has(option.id)}
+              >
+                <Group gap={8} wrap="nowrap">
+                  <Checkbox
+                    size="xs"
+                    checked={selected.has(option.id)}
+                    readOnly
+                    tabIndex={-1}
+                    aria-hidden
+                    style={{ pointerEvents: "none" }}
+                  />
+                  <span className={classes.ellipsis}>
+                    {option.name || t("Untitled")}
+                  </span>
+                </Group>
+              </Combobox.Option>
+            ))
+          ) : (
+            <Combobox.Empty>{t("No results")}</Combobox.Empty>
+          )}
+        </Combobox.Options>
+      </Combobox.Dropdown>
+    </Combobox>
+  );
+}
+
 function ValueInput({
   db,
   column,
@@ -151,10 +298,10 @@ function ValueInput({
   }
   if (hasDatabaseOptions(column.type)) {
     return (
-      <MultiSelect
-        size="xs"
-        flex={1}
-        miw={0}
+      <OptionCheckSelect
+        options={column.options ?? []}
+        value={(condition.value as string[]) ?? []}
+        onChange={onChange}
         placeholder={
           column.type === "person"
             ? t("Members")
@@ -162,13 +309,6 @@ function ValueInput({
               ? t("Pages")
               : t("Options")
         }
-        data={(column.options ?? []).map((option) => ({
-          value: option.id,
-          label: option.name || " ",
-        }))}
-        value={(condition.value as string[]) ?? []}
-        onChange={onChange}
-        comboboxProps={NO_PORTAL}
       />
     );
   }
@@ -187,6 +327,7 @@ interface GroupEditorProps {
   onChange: (group: DatabaseFilterGroup) => void;
   onRemove?: () => void;
   depth?: number;
+  actions?: ReactNode;
 }
 
 /** Condition tree editor: and/or per group, nested groups one level deep in the UI. */
@@ -196,6 +337,7 @@ export function FilterGroupEditor({
   onChange,
   onRemove,
   depth = 1,
+  actions,
 }: GroupEditorProps) {
   const { t } = useTranslation();
   const byId = new Map(db.columns.map((column) => [column.id, column]));
@@ -368,6 +510,11 @@ export function FilterGroupEditor({
           >
             {t("Add filter group")}
           </Button>
+        )}
+        {actions && (
+          <Group gap={6} wrap="nowrap" ml="auto">
+            {actions}
+          </Group>
         )}
       </Group>
     </Stack>

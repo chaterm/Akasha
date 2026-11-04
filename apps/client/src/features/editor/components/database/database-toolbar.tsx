@@ -14,6 +14,7 @@ import {
 import {
   IconArrowsSort,
   IconFilter,
+  IconLayoutRows,
   IconPlus,
   IconSearch,
   IconTrash,
@@ -21,10 +22,13 @@ import {
 import { useTranslation } from "react-i18next";
 import {
   countDatabaseFilterConditions,
+  DATABASE_GROUPABLE_TYPES,
   isDatabaseSortable,
+  type DatabaseFilterGroup,
   type DatabaseSort,
 } from "@docmost/editor-ext";
 import {
+  isTableView,
   stopBubbling,
   patchView,
   type DatabaseContext,
@@ -92,6 +96,30 @@ function SearchBox({
 function FilterButton({ db }: { db: DatabaseContext }) {
   const { t } = useTranslation();
   const count = countDatabaseFilterConditions(db.view.filter);
+  const draft = db.filterDraft;
+  const change = (filter: DatabaseFilterGroup) =>
+    draft ? draft.change(filter) : patchView(db, { filter });
+  const empty = count === 0 && !db.view.filter.conditions.length;
+  const actions = draft && (
+    <>
+      <Button
+        size="compact-xs"
+        variant="subtle"
+        color="gray"
+        disabled={!db.view.filter.conditions.length}
+        onClick={() => change({ ...db.view.filter, conditions: [] })}
+      >
+        {t("Clear filters")}
+      </Button>
+      <Button size="compact-xs" variant="default" onClick={draft.saveAsView}>
+        {t("Add as new view")}
+      </Button>
+      <Button size="compact-xs" disabled={!draft.dirty} onClick={draft.save}>
+        {t("Save")}
+      </Button>
+    </>
+  );
+  const showEmptyActions = empty && !!draft?.dirty;
   return (
     <Popover position="bottom-end" width={600} shadow="md" withinPortal>
       <Popover.Target>
@@ -100,12 +128,20 @@ function FilterButton({ db }: { db: DatabaseContext }) {
           variant={count ? "light" : "subtle"}
           color={count ? "blue" : "gray"}
           leftSection={<IconFilter size={14} />}
+          rightSection={
+            draft?.dirty ? (
+              <span
+                className={classes.unsavedDot}
+                title={t("Unsaved changes")}
+              />
+            ) : undefined
+          }
         >
           {count ? t("{{count}} filters", { count }) : t("Filter")}
         </Button>
       </Popover.Target>
       <Popover.Dropdown {...stopBubbling} p="xs">
-        {count === 0 && !db.view.filter.conditions.length ? (
+        {empty ? (
           <Stack gap={0} className={classes.menu}>
             <Text size="xs" c="dimmed" px={8} pb={4}>
               {t("Filter by")}
@@ -116,11 +152,9 @@ function FilterButton({ db }: { db: DatabaseContext }) {
                 icon={COLUMN_TYPE_ICONS[column.type]}
                 label={column.name || t("Untitled")}
                 onClick={() =>
-                  patchView(db, {
-                    filter: {
-                      ...db.view.filter,
-                      conditions: [newCondition(column)],
-                    },
+                  change({
+                    ...db.view.filter,
+                    conditions: [newCondition(column)],
                   })
                 }
               />
@@ -130,9 +164,83 @@ function FilterButton({ db }: { db: DatabaseContext }) {
           <FilterGroupEditor
             db={db}
             group={db.view.filter}
-            onChange={(filter) => patchView(db, { filter })}
+            onChange={change}
+            actions={actions}
           />
         )}
+        {showEmptyActions && (
+          <Group gap={6} wrap="nowrap" justify="flex-end" mt={6}>
+            {actions}
+          </Group>
+        )}
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
+function GroupButton({ db }: { db: DatabaseContext }) {
+  const { t } = useTranslation();
+  const [opened, setOpened] = useState(false);
+  const { view } = db;
+  const groupable = db.columns.filter((column) =>
+    DATABASE_GROUPABLE_TYPES.includes(column.type),
+  );
+  const current = db.columns.find((column) => column.id === view.groupBy);
+  const pick = (groupBy: string | null) => {
+    setOpened(false);
+    if (groupBy === view.groupBy) return;
+    patchView(db, { groupBy });
+  };
+
+  return (
+    <Popover
+      opened={opened}
+      onChange={setOpened}
+      position="bottom-end"
+      width={240}
+      shadow="md"
+      withinPortal
+    >
+      <Popover.Target>
+        <Button
+          size="compact-xs"
+          variant={current ? "light" : "subtle"}
+          color={current ? "blue" : "gray"}
+          leftSection={<IconLayoutRows size={14} />}
+          onClick={() => setOpened((value) => !value)}
+        >
+          {current
+            ? t("Group: {{name}}", { name: current.name || t("Untitled") })
+            : t("Grouping")}
+        </Button>
+      </Popover.Target>
+      <Popover.Dropdown {...stopBubbling} p={4}>
+        <Stack gap={0} className={classes.menu}>
+          <Text size="xs" c="dimmed" px={8} py={4}>
+            {t("Group by")}
+          </Text>
+          {view.type !== "kanban" && (
+            <MenuRow
+              label={t("None")}
+              active={!current}
+              onClick={() => pick(null)}
+            />
+          )}
+          {groupable.map((column) => (
+            <MenuRow
+              key={column.id}
+              icon={COLUMN_TYPE_ICONS[column.type]}
+              label={column.name || t("Untitled")}
+              active={column.id === view.groupBy}
+              onClick={() => pick(column.id)}
+            />
+          ))}
+          {groupable.length === 0 && (
+            <Text size="xs" c="dimmed" px={8} py={4}>
+              {t("Add a select or member property to group by it.")}
+            </Text>
+          )}
+        </Stack>
       </Popover.Dropdown>
     </Popover>
   );
@@ -142,7 +250,9 @@ function SortButton({ db }: { db: DatabaseContext }) {
   const { t } = useTranslation();
   const { sorts } = db.view;
   const used = new Set(sorts.map((sort) => sort.columnId));
-  const sortable = db.columns.filter((column) => isDatabaseSortable(column.type));
+  const sortable = db.columns.filter((column) =>
+    isDatabaseSortable(column.type),
+  );
   const available = sortable.filter((column) => !used.has(column.id));
   const columnData = sortable.map((column) => ({
     value: column.id,
@@ -271,6 +381,9 @@ export function DatabaseToolbar({
         <>
           <FilterButton db={db} />
           <SortButton db={db} />
+          {(isTableView(db.view) || db.view.type === "kanban") && (
+            <GroupButton db={db} />
+          )}
           <ViewOptions db={db} />
         </>
       )}

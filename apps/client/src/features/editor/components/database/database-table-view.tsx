@@ -35,8 +35,9 @@ import { DatabaseTableRow } from "./database-table-row";
 import { DatabaseTableGroupRow } from "./database-table-group";
 import { elementAt, hitTestList, usePointerDrag } from "./use-pointer-drag";
 import { useStickyHeader } from "./use-sticky-header";
+import { planRowMoves } from "./database-utils";
 import { pasteIntoTable, rangeToTSV } from "./database-clipboard";
-import { DatabaseBulkBar } from "./database-bulk-bar";
+import { DatabaseBulkBar, DatabaseRangeBar } from "./database-bulk-bar";
 import classes from "./database.module.css";
 
 export interface CellPosition {
@@ -522,7 +523,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
     number: number,
     key: string,
     index: number,
-    groupKey = "",
   ) => (
     <DatabaseTableRow
       key={key}
@@ -554,13 +554,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
       }}
       onCellDoubleClick={(columnId) => startEdit({ rowId: row.id, columnId })}
       onEditDone={finishEdit}
-      onInsert={(side) =>
-        addRow(
-          side === "above" ? { beforeRowId: row.id } : { afterRowId: row.id },
-          undefined,
-          groupKey,
-        )
-      }
       onGripPointerDown={(event) =>
         rowDrag.onPointerDown(event, row.id, event.currentTarget.closest("tr"))
       }
@@ -615,6 +608,13 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
       ? "all"
       : "some";
   const checkedRows = viewRows.filter((row) => checked.has(row.id));
+  const planMoves = (direction: "up" | "down") =>
+    planRowMoves(
+      db.rows.map((row) => row.id),
+      viewRows.map((row) => row.id),
+      checked,
+      direction,
+    );
 
   const wrapColumns = new Set(
     db.view.columns.filter((entry) => entry.wrap).map((entry) => entry.id),
@@ -654,12 +654,45 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
 
   return (
     <div className={classes.tableView}>
-      {checkedRows.length > 0 && (
+      {checkedRows.length > 0 ? (
         <DatabaseBulkBar
           db={db}
           rows={checkedRows}
           onClear={() => setChecked(new Set())}
+          moveBlocked={dragBlocked}
+          canMoveUp={planMoves("up").length > 0}
+          canMoveDown={planMoves("down").length > 0}
+          onMove={(direction) => {
+            const moves = planMoves(direction);
+            db.apply((tr, pos) => {
+              for (const move of moves)
+                moveDatabaseRow(tr, pos, move.rowId, move.beforeRowId);
+            });
+          }}
+          onInsert={(side) =>
+            addRow(
+              side === "above"
+                ? { beforeRowId: checkedRows[0].id }
+                : { afterRowId: checkedRows[checkedRows.length - 1].id },
+            )
+          }
         />
+      ) : (
+        multiCell &&
+        db.editable &&
+        !editing && (
+          <DatabaseRangeBar
+            count={rangeRows.length * rangeColumns.length}
+            onClearValues={() => {
+              clearRange();
+              focusGrid();
+            }}
+            onCancel={() => {
+              select(null);
+              focusGrid();
+            }}
+          />
+        )
       )}
       <div
         ref={containerRef}
@@ -775,7 +808,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
                                     ++number,
                                     `${group.key}:${row.id}`,
                                     -1,
-                                    group.key,
                                   ),
                                 )
                             : []),

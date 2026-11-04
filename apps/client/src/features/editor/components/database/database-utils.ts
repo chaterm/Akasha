@@ -281,3 +281,45 @@ export function splitTimeline(
   }
   return spans;
 }
+
+export interface RowMove {
+  rowId: string;
+  beforeRowId: string | null;
+}
+
+export function planRowMoves(
+  allIds: string[],
+  visibleIds: string[],
+  selected: Set<string>,
+  direction: "up" | "down",
+): RowMove[] {
+  const all = [...allIds];
+  const visible = [...visibleIds];
+  const moves: RowMove[] = [];
+  const place = (rowId: string, beforeRowId: string | null) => {
+    all.splice(all.indexOf(rowId), 1);
+    const at = beforeRowId === null ? all.length : all.indexOf(beforeRowId);
+    all.splice(at, 0, rowId);
+    moves.push({ rowId, beforeRowId });
+  };
+  if (direction === "up") {
+    for (let i = 1; i < visible.length; i++) {
+      const id = visible[i];
+      const neighbour = visible[i - 1];
+      if (!selected.has(id) || selected.has(neighbour)) continue;
+      visible[i - 1] = id;
+      visible[i] = neighbour;
+      place(id, neighbour);
+    }
+  } else {
+    for (let i = visible.length - 2; i >= 0; i--) {
+      const id = visible[i];
+      const neighbour = visible[i + 1];
+      if (!selected.has(id) || selected.has(neighbour)) continue;
+      visible[i + 1] = id;
+      visible[i] = neighbour;
+      place(id, all[all.indexOf(neighbour) + 1] ?? null);
+    }
+  }
+  return moves;
+}

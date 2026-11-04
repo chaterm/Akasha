@@ -9,7 +9,6 @@ import {
   type DatabaseContext,
 } from "./database-context";
 import { CellDisplay, CellEditor, type EditDoneReason } from "./database-cells";
-import { RowMenu } from "./database-row-menu";
 import classes from "./database.module.css";
 
 interface TableRowProps {
@@ -38,7 +37,6 @@ interface TableRowProps {
   onCellMouseDown: (columnId: string, shiftKey: boolean) => void;
   onCellDoubleClick: (columnId: string) => void;
   onEditDone: (reason: EditDoneReason) => void;
-  onInsert: (side: "above" | "below") => void;
   onGripPointerDown: (event: PointerEvent<HTMLElement>) => void;
 }
 
@@ -61,7 +59,6 @@ export function DatabaseTableRow({
   onCellMouseDown,
   onCellDoubleClick,
   onEditDone,
-  onInsert,
   onGripPointerDown,
 }: TableRowProps) {
   const { t } = useTranslation();
@@ -87,17 +84,26 @@ export function DatabaseTableRow({
               <IconGripVertical size={14} />
             </span>
           )}
-          <RowMenu
-            db={db}
-            rowId={row.id}
-            onInsert={onInsert}
-            showExpand={rowNumber === null}
-          />
+          {rowNumber === null && (
+            <ActionIcon
+              size="sm"
+              variant="subtle"
+              color="gray"
+              className={classes.hoverAction}
+              aria-label={t("Expand")}
+              title={t("Expand")}
+              onClick={() => db.openRow(row.id)}
+            >
+              <IconArrowsDiagonal size={14} />
+            </ActionIcon>
+          )}
           {db.editable && (
             <Checkbox
               size="xs"
               className={classes.rowCheck}
-              data-visible={checked || checking || undefined}
+              wrapperProps={{
+                "data-visible": checked || checking || undefined,
+              }}
               aria-label={t("Select row")}
               checked={checked}
               onChange={(event) =>

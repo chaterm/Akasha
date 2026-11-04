@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   ActionIcon,
   Button,
@@ -13,7 +13,6 @@ import {
 } from "@mantine/core";
 import {
   IconAdjustmentsHorizontal,
-  IconCheck,
   IconChevronRight,
   IconEye,
   IconEyeOff,
@@ -24,7 +23,6 @@ import {
 import { useTranslation } from "react-i18next";
 import {
   deleteDatabaseView,
-  DATABASE_GROUPABLE_TYPES,
   type DatabaseCardSize,
   type DatabaseRowHeight,
 } from "@docmost/editor-ext";
@@ -42,13 +40,34 @@ import {
   COLUMN_TYPE_ICONS,
   MenuBack,
   MenuDivider,
-  MenuRow,
 } from "./database-ui";
 import { SortableList } from "./sortable-list";
 import { moveItem } from "./database-utils";
 import classes from "./database.module.css";
 
 const NO_PORTAL = { withinPortal: false };
+
+function OptionRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={classes.optionRow}>
+      <Text className={classes.optionLabel}>{label}</Text>
+      <Group
+        gap={8}
+        wrap="nowrap"
+        justify="flex-end"
+        className={classes.optionControl}
+      >
+        {children}
+      </Group>
+    </div>
+  );
+}
 
 function PropertiesPage({
   db,
@@ -96,10 +115,10 @@ function PropertiesPage({
         </Button>
       </Group>
       {isTableView(db.view) && (
-        <Group gap={8} px={8} py={4} wrap="nowrap">
+        <Group gap={8} px={8} wrap="nowrap" className={classes.propertyRow}>
           <IconListNumbers size={15} className={classes.menuIcon} />
           <Text
-            size="sm"
+            size="xs"
             flex={1}
             truncate
             c={db.view.showRowNumbers ? undefined : "dimmed"}
@@ -123,9 +142,15 @@ function PropertiesPage({
           </ActionIcon>
         </Group>
       )}
-      <Group gap={8} px={8} py={4} wrap="nowrap" title={t("Title")}>
+      <Group
+        gap={8}
+        px={8}
+        wrap="nowrap"
+        className={classes.propertyRow}
+        title={t("Title")}
+      >
         <TitleIcon size={15} className={classes.menuIcon} />
-        <Text size="sm" flex={1} truncate>
+        <Text size="xs" flex={1} truncate>
           {title.name || t("Untitled")}
         </Text>
         <IconLock size={14} className={classes.menuIcon} />
@@ -142,10 +167,10 @@ function PropertiesPage({
           const column = byId.get(entry.id)!;
           const TypeIcon = COLUMN_TYPE_ICONS[column.type];
           return (
-            <Group gap={8} wrap="nowrap" pr={4}>
+            <Group gap={8} wrap="nowrap" pr={4} className={classes.propertyRow}>
               <TypeIcon size={15} className={classes.menuIcon} />
               <Text
-                size="sm"
+                size="xs"
                 flex={1}
                 truncate
                 c={entry.hidden ? "dimmed" : undefined}
@@ -200,22 +225,14 @@ export function ViewOptions({ db }: { db: DatabaseContext }) {
     visibleColumns(db).map((column) => columnAlign(db, column)),
   );
   const sharedAlign = aligns.size === 1 ? [...aligns][0] : null;
-  const groupable = ofTypes(DATABASE_GROUPABLE_TYPES);
-  const iconOf = (id: string | null) => {
-    const column = columns.find((item) => item.id === id);
-    return column ? COLUMN_TYPE_ICONS[column.type] : null;
-  };
-  const GroupByIcon = iconOf(view.groupBy);
 
   const main = (
-    <Stack gap={8}>
+    <Stack gap={4}>
       <UnstyledButton
-        className={classes.optionRow}
+        className={`${classes.optionRow} ${classes.optionLink}`}
         onClick={() => setPage("properties")}
       >
-        <Text size="xs" fw={500}>
-          {t("Properties")}
-        </Text>
+        <Text className={classes.optionLabel}>{t("Properties")}</Text>
         <Group gap={4} wrap="nowrap">
           <Text size="xs" c="dimmed">
             {t("{{count}} shown", { count: shownCount })}
@@ -224,10 +241,7 @@ export function ViewOptions({ db }: { db: DatabaseContext }) {
         </Group>
       </UnstyledButton>
       {view.type === "kanban" && (
-        <Group justify="space-between" wrap="nowrap">
-          <Text size="xs" fw={500}>
-            {t("Direction")}
-          </Text>
+        <OptionRow label={t("Direction")}>
           <SegmentedControl
             size="xs"
             value={view.orientation}
@@ -241,13 +255,10 @@ export function ViewOptions({ db }: { db: DatabaseContext }) {
               { value: "horizontal", label: t("Horizontal") },
             ]}
           />
-        </Group>
+        </OptionRow>
       )}
       {isTableView(view) && (
-        <Group justify="space-between" wrap="nowrap">
-          <Text size="xs" fw={500}>
-            {t("Row height")}
-          </Text>
+        <OptionRow label={t("Row height")}>
           <SegmentedControl
             size="xs"
             value={view.rowHeight}
@@ -260,13 +271,10 @@ export function ViewOptions({ db }: { db: DatabaseContext }) {
               { value: "comfortable", label: t("Comfortable") },
             ]}
           />
-        </Group>
+        </OptionRow>
       )}
       {view.type === "kanban" && (
-        <Group justify="space-between" wrap="nowrap">
-          <Text size="xs" fw={500}>
-            {t("Card size")}
-          </Text>
+        <OptionRow label={t("Card size")}>
           <SegmentedControl
             size="xs"
             value={view.cardSize}
@@ -279,25 +287,19 @@ export function ViewOptions({ db }: { db: DatabaseContext }) {
               { value: "large", label: t("Large") },
             ]}
           />
-        </Group>
+        </OptionRow>
       )}
       {(isTableView(view) ||
         (view.type === "kanban" && view.orientation === "vertical")) && (
-        <Group justify="space-between" wrap="nowrap">
-          <Text size="xs" fw={500}>
-            {t("View alignment")}
-          </Text>
+        <OptionRow label={t("View alignment")}>
           <AlignPicker
             value={view.align}
             onChange={(align) => patchView(db, { align })}
           />
-        </Group>
+        </OptionRow>
       )}
       {isTableView(view) && (
-        <Group justify="space-between" wrap="nowrap">
-          <Text size="xs" fw={500}>
-            {t("Cell alignment")}
-          </Text>
+        <OptionRow label={t("Cell alignment")}>
           <AlignPicker
             value={sharedAlign}
             onChange={(align) =>
@@ -306,97 +308,70 @@ export function ViewOptions({ db }: { db: DatabaseContext }) {
               })
             }
           />
-        </Group>
+        </OptionRow>
       )}
-      {(isTableView(view) || view.type === "kanban") && (
-        <>
-          {/* A board always needs a group column; a table can be ungrouped. */}
-          <Select
+      {(isTableView(view) || view.type === "kanban") && view.groupBy && (
+        <OptionRow label={t("Hide empty groups")}>
+          <Switch
             size="xs"
-            label={t("Group by")}
-            description={
-              groupable.length
-                ? undefined
-                : t("Add a select or member property to group by it.")
+            aria-label={t("Hide empty groups")}
+            checked={view.hideEmptyGroups}
+            onChange={(event) =>
+              patchView(db, { hideEmptyGroups: event.currentTarget.checked })
             }
-            allowDeselect={false}
-            clearable={view.type !== "kanban"}
-            placeholder={t("None")}
-            data={groupable}
-            leftSection={GroupByIcon && <GroupByIcon size={14} />}
-            renderOption={({ option, checked }) => {
-              const OptionIcon = iconOf(option.value);
-              return (
-                <Group gap={8} wrap="nowrap" flex={1}>
-                  {OptionIcon && (
-                    <OptionIcon size={14} className={classes.menuIcon} />
-                  )}
-                  <Text size="xs" flex={1} truncate>
-                    {option.label}
-                  </Text>
-                  {checked && <IconCheck size={12} />}
-                </Group>
-              );
-            }}
-            value={view.groupBy}
-            onChange={(groupBy) =>
-              (groupBy || view.type !== "kanban") && patchView(db, { groupBy })
-            }
-            comboboxProps={NO_PORTAL}
           />
-          {view.groupBy && (
-            <Switch
-              size="xs"
-              label={t("Hide empty groups")}
-              checked={view.hideEmptyGroups}
-              onChange={(event) =>
-                patchView(db, { hideEmptyGroups: event.currentTarget.checked })
-              }
-            />
-          )}
-        </>
+        </OptionRow>
       )}
       {isDateView(view) && (
         <>
-          <Select
-            size="xs"
-            label={t("Start date")}
-            allowDeselect={false}
-            data={ofTypes(["date"])}
-            value={view.dateColumnId}
-            onChange={(dateColumnId) =>
-              dateColumnId && patchView(db, { dateColumnId })
-            }
-            comboboxProps={NO_PORTAL}
-          />
-          <Select
-            size="xs"
-            label={t("End date")}
-            clearable
-            placeholder={t("None")}
-            data={ofTypes(["date"]).filter(
-              (item) => item.value !== view.dateColumnId,
-            )}
-            value={view.endDateColumnId}
-            onChange={(endDateColumnId) => patchView(db, { endDateColumnId })}
-            comboboxProps={NO_PORTAL}
-          />
+          <OptionRow label={t("Start date")}>
+            <Select
+              size="xs"
+              flex={1}
+              miw={0}
+              aria-label={t("Start date")}
+              allowDeselect={false}
+              data={ofTypes(["date"])}
+              value={view.dateColumnId}
+              onChange={(dateColumnId) =>
+                dateColumnId && patchView(db, { dateColumnId })
+              }
+              comboboxProps={NO_PORTAL}
+            />
+          </OptionRow>
+          <OptionRow label={t("End date")}>
+            <Select
+              size="xs"
+              flex={1}
+              miw={0}
+              aria-label={t("End date")}
+              clearable
+              placeholder={t("None")}
+              data={ofTypes(["date"]).filter(
+                (item) => item.value !== view.dateColumnId,
+              )}
+              value={view.endDateColumnId}
+              onChange={(endDateColumnId) => patchView(db, { endDateColumnId })}
+              comboboxProps={NO_PORTAL}
+            />
+          </OptionRow>
         </>
       )}
       {db.views.length > 1 && (
         <>
           <MenuDivider />
-          <div className={classes.menu}>
-            <MenuRow
-              icon={IconTrash}
-              label={t("Delete view")}
-              danger
-              onClick={() => {
-                setOpened(false);
-                db.apply((tr, pos) => deleteDatabaseView(tr, pos, view.id));
-              }}
-            />
-          </div>
+          <UnstyledButton
+            className={`${classes.optionRow} ${classes.optionDanger}`}
+            onClick={() => {
+              setOpened(false);
+              db.apply((tr, pos) => deleteDatabaseView(tr, pos, view.id));
+            }}
+          >
+            <Group gap={6} wrap="nowrap">
+              <IconTrash size={14} />
+              <Text className={classes.optionLabel}>{t("Delete view")}</Text>
+            </Group>
+          </UnstyledButton>
         </>
       )}
     </Stack>

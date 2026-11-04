@@ -684,7 +684,6 @@ const taskBoard: BuiltinTemplate = {
           id: 'list',
           name: '列表',
           type: 'table',
-          sorts: [{ columnId: 'due', direction: 'asc' }],
           columns: [{ id: 'note', width: null, align: null, hidden: false, wrap: true }],
         },
         { id: 'calendar', name: '日历', type: 'calendar', dateColumnId: 'due' },
@@ -766,7 +765,7 @@ const projectPlan: BuiltinTemplate = {
         { id: 'link', name: '相关链接', type: 'url' },
       ],
       [
-        { id: 'all', name: '全部任务', type: 'table', sorts: [{ columnId: 'start', direction: 'asc' }] },
+        { id: 'all', name: '全部任务', type: 'table' },
         {
           id: 'by-status',
           name: '按状态',
@@ -820,7 +819,7 @@ const projectPlan: BuiltinTemplate = {
     ),
     h(2, '一、视图说明'),
     bullets(
-      [b('全部任务：'), '表格，按开始日期排序；点列名可以排序、改列类型或隐藏列，筛选在视图上方的工具栏里。'],
+      [b('全部任务：'), '表格，拖动行左侧的把手调整顺序；点列名可以排序、改列类型或隐藏列，筛选在视图上方的工具栏里。'],
       [b('按状态：'), '看板，拖动卡片就会修改状态。'],
       [b('按优先级：'), '横向泳道，每个优先级一行。'],
       [b('日历：'), '按开始和结束日期画出跨天的任务条，拖动可以改日期。'],
