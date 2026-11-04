@@ -14,7 +14,8 @@ import { McpAuthService } from './mcp-auth.service';
 import { McpService } from './mcp.service';
 import { McpDisabledException } from './mcp.errors';
 import { AnalyticsEventRepo } from '@akasha/db/repos/analytics/analytics-event.repo';
-import { extractMcpToolCalls } from '../analytics/agent-op-category';
+import { buildMcpAgentOps } from '../analytics/agent-op-category';
+import { getApiKeyAccess } from '../../common/auth/api-key-access';
 import { readWeeklyReportDefaults } from '../weekly-report/weekly-report-defaults';
 
 @Controller('mcp')
@@ -73,26 +74,18 @@ export class McpController {
     await this.mcpService.handleRequest(ctx, req.raw, reply.raw, body);
   }
 
-  // Outcome is 'called': the response is streamed by the MCP transport and
-  // tool errors live inside the JSON-RPC result.
+  // Every MCP tool call is recorded, whether it came from an agent key, a
+  // personal key or an SSO token. Outcome is 'called': the response is
+  // streamed by the MCP transport and tool errors live inside the JSON-RPC
+  // result.
   private recordAgentToolCalls(
     ctx: Awaited<ReturnType<McpAuthService['authenticate']>>,
     body: unknown,
   ): void {
-    const agentAccess = ctx.agentAccess;
-    if (!agentAccess) return;
-
-    for (const tool of extractMcpToolCalls(body)) {
+    const apiKeyId = getApiKeyAccess(ctx.user)?.apiKeyId ?? null;
+    for (const op of buildMcpAgentOps(ctx, body, apiKeyId)) {
       this.analyticsEventRepo
-        .insertAgentOp({
-          workspaceId: agentAccess.workspace.id,
-          agentUserId: agentAccess.agentUser.id,
-          op: `mcp:${tool}`,
-          channel: 'mcp',
-          apiKeyId: agentAccess.apiKeyId,
-          delegatedUserId: agentAccess.delegatedUser?.id,
-          outcome: 'called',
-        })
+        .insertAgentOp(op)
         .catch((error) =>
           this.logger.warn(`Failed to record agent_op event: ${error}`),
         );

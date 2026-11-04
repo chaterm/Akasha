@@ -1,6 +1,7 @@
 import { lastValueFrom, of, throwError } from 'rxjs';
 import { AgentOpInterceptor } from './agent-op.interceptor';
 import {
+  buildMcpAgentOps,
   categorizeAgentOp,
   extractMcpToolCalls,
   groupAgentOpsByCategory,
@@ -17,7 +18,9 @@ describe('AgentOpInterceptor', () => {
 
   function setup(request: any, capability?: string) {
     const repo = { insertAgentOp: jest.fn().mockResolvedValue(undefined) };
-    const reflector = { getAllAndOverride: jest.fn().mockReturnValue(capability) };
+    const reflector = {
+      getAllAndOverride: jest.fn().mockReturnValue(capability),
+    };
     const interceptor = new AgentOpInterceptor(reflector as any, repo as any);
     const context = {
       getType: () => 'http',
@@ -31,7 +34,9 @@ describe('AgentOpInterceptor', () => {
   it('records a successful agent call with its capability', async () => {
     const { interceptor, repo, context } = setup({ agentAccess }, 'page.read');
 
-    await lastValueFrom(interceptor.intercept(context, { handle: () => of(1) }));
+    await lastValueFrom(
+      interceptor.intercept(context, { handle: () => of(1) }),
+    );
 
     expect(repo.insertAgentOp).toHaveBeenCalledWith({
       workspaceId: 'ws-1',
@@ -45,7 +50,10 @@ describe('AgentOpInterceptor', () => {
   });
 
   it('records failures without swallowing the error', async () => {
-    const { interceptor, repo, context } = setup({ agentAccess }, 'page.create');
+    const { interceptor, repo, context } = setup(
+      { agentAccess },
+      'page.create',
+    );
     const failing = { handle: () => throwError(() => new Error('boom')) };
 
     await expect(
@@ -59,7 +67,9 @@ describe('AgentOpInterceptor', () => {
   it('ignores requests without an agent API key', async () => {
     const { interceptor, repo, context } = setup({}, 'page.read');
 
-    await lastValueFrom(interceptor.intercept(context, { handle: () => of(1) }));
+    await lastValueFrom(
+      interceptor.intercept(context, { handle: () => of(1) }),
+    );
 
     expect(repo.insertAgentOp).not.toHaveBeenCalled();
   });
@@ -82,6 +92,59 @@ describe('extractMcpToolCalls', () => {
       ]),
     ).toEqual(['search_pages']);
     expect(extractMcpToolCalls(undefined)).toEqual([]);
+  });
+});
+
+describe('buildMcpAgentOps', () => {
+  const call = { method: 'tools/call', params: { name: 'update_page' } };
+  const human = { user: { id: 'human-1' }, workspace: { id: 'ws-1' } };
+
+  it('records personal-key calls under the human user', () => {
+    expect(buildMcpAgentOps(human, call, 'key-p')).toEqual([
+      {
+        workspaceId: 'ws-1',
+        agentUserId: 'human-1',
+        op: 'mcp:update_page',
+        channel: 'mcp',
+        apiKeyId: 'key-p',
+        keyType: 'personal',
+        delegatedUserId: null,
+        outcome: 'called',
+      },
+    ]);
+  });
+
+  it('records agent-key calls under the agent account', () => {
+    const agent = {
+      user: { id: 'agent-1' },
+      workspace: { id: 'ws-1' },
+      agentAccess: {
+        apiKeyId: 'key-a',
+        agentUser: { id: 'agent-1' },
+        delegatedUser: { id: 'human-1' },
+      },
+    };
+    expect(buildMcpAgentOps(agent, [call, call], null)).toEqual([
+      expect.objectContaining({
+        agentUserId: 'agent-1',
+        apiKeyId: 'key-a',
+        keyType: 'agent',
+        delegatedUserId: 'human-1',
+      }),
+      expect.objectContaining({ keyType: 'agent' }),
+    ]);
+  });
+
+  it('records SSO-token calls without a key', () => {
+    expect(buildMcpAgentOps(human, call, null)).toEqual([
+      expect.objectContaining({ apiKeyId: null, keyType: 'sso' }),
+    ]);
+  });
+
+  it('records nothing for non tool calls', () => {
+    expect(buildMcpAgentOps(human, { method: 'tools/list' }, 'key-p')).toEqual(
+      [],
+    );
   });
 });
 

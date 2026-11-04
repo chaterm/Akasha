@@ -3,6 +3,12 @@ jest.mock('../../collaboration/collaboration.gateway', () => ({
 }));
 
 import { McpController } from './mcp.controller';
+import { withApiKeyAccess } from '../../common/auth/api-key-access';
+import { ApiKeyType } from '../../common/auth/api-key-type';
+
+function analyticsRepo() {
+  return { insertAgentOp: jest.fn().mockResolvedValue(undefined) };
+}
 
 describe('MCP connection preference forwarding', () => {
   it('attaches preference headers after authentication without treating them as identity', async () => {
@@ -18,7 +24,7 @@ describe('MCP connection preference forwarding', () => {
     const controller = new McpController(
       auth as any,
       service as any,
-      {} as any,
+      analyticsRepo() as any,
     );
     const request = {
       method: 'POST',
@@ -65,7 +71,7 @@ describe('MCP connection preference forwarding', () => {
     const controller = new McpController(
       auth as any,
       service as any,
-      {} as any,
+      analyticsRepo() as any,
     );
     await controller.handle(
       {
@@ -76,6 +82,101 @@ describe('MCP connection preference forwarding', () => {
       { hijack: jest.fn(), raw: {} } as any,
       { method: 'tools/list' },
     );
+    expect(service.handleRequest).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('MCP agent_op recording', () => {
+  const body = {
+    jsonrpc: '2.0',
+    method: 'tools/call',
+    params: { name: 'update_page', arguments: {} },
+    id: 1,
+  };
+  const request = { method: 'POST', raw: {}, headers: {} };
+
+  function setup(authenticated: unknown, repo = analyticsRepo()) {
+    const auth = { authenticate: jest.fn().mockResolvedValue(authenticated) };
+    const service = {
+      assertEnabled: jest.fn(),
+      handleRequest: jest.fn().mockResolvedValue(undefined),
+    };
+    const controller = new McpController(
+      auth as any,
+      service as any,
+      repo as any,
+    );
+    return { controller, service, repo };
+  }
+
+  it('records personal-key tool calls under the key owner and still forwards', async () => {
+    const user = withApiKeyAccess({ id: 'human-1' } as any, {
+      apiKeyId: 'key-p',
+      personalSpaceId: null,
+      keyType: ApiKeyType.PERSONAL,
+    });
+    const { controller, service, repo } = setup({
+      user,
+      workspace: { id: 'ws-1' },
+    });
+
+    await controller.handle(
+      request as any,
+      { hijack: jest.fn(), raw: {} } as any,
+      body,
+    );
+
+    expect(repo.insertAgentOp).toHaveBeenCalledTimes(1);
+    expect(repo.insertAgentOp).toHaveBeenCalledWith({
+      workspaceId: 'ws-1',
+      agentUserId: 'human-1',
+      op: 'mcp:update_page',
+      channel: 'mcp',
+      apiKeyId: 'key-p',
+      keyType: 'personal',
+      delegatedUserId: null,
+      outcome: 'called',
+    });
+    expect(service.handleRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('records SSO tool calls without a key', async () => {
+    const { controller, repo } = setup({
+      user: { id: 'human-1' },
+      workspace: { id: 'ws-1' },
+    });
+
+    await controller.handle(
+      request as any,
+      { hijack: jest.fn(), raw: {} } as any,
+      body,
+    );
+
+    expect(repo.insertAgentOp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentUserId: 'human-1',
+        apiKeyId: null,
+        keyType: 'sso',
+      }),
+    );
+  });
+
+  it('does not block the request when recording fails', async () => {
+    const repo = {
+      insertAgentOp: jest.fn().mockRejectedValue(new Error('db down')),
+    };
+    const { controller, service } = setup(
+      { user: { id: 'human-1' }, workspace: { id: 'ws-1' } },
+      repo,
+    );
+
+    await controller.handle(
+      request as any,
+      { hijack: jest.fn(), raw: {} } as any,
+      body,
+    );
+
+    expect(repo.insertAgentOp).toHaveBeenCalledTimes(1);
     expect(service.handleRequest).toHaveBeenCalledTimes(1);
   });
 });
