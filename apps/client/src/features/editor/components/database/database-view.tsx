@@ -14,6 +14,7 @@ import { userAtom } from "@/features/user/atoms/current-user-atom";
 import { useTranslation } from "react-i18next";
 import {
   normalizeDatabaseColumns,
+  normalizeDatabaseFilter,
   normalizeDatabaseViews,
   normalizeDatabaseAlign,
   readDatabaseRows,
@@ -159,7 +160,14 @@ export default function DatabaseView(props: NodeViewProps) {
     viewId: string;
     filter: DatabaseFilterGroup;
   } | null>(null);
-  const draftFilter = draft?.viewId === view.id ? draft.filter : null;
+  // Local drafts must follow schema changes just like the stored view filters.
+  const draftFilter = useMemo(
+    () =>
+      draft?.viewId === view.id
+        ? normalizeDatabaseFilter(draft.filter, columns)
+        : null,
+    [draft, view.id, columns],
+  );
   const filterDraft: DatabaseFilterDraft = {
     dirty: !!draftFilter,
     change: (filter) => setDraft({ viewId: view.id, filter }),
