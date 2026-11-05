@@ -11,7 +11,10 @@ import {
   KNOWLEDGE_WORKER_SETTINGS,
 } from '../services/knowledge-worker-settings';
 import { recordKnowledgeWorkerEvent } from '../services/knowledge-worker-observability';
-import { isRetryableLlmUpstreamError } from '../services/knowledge-job-retry-policy';
+import {
+  isDeterministicJobFailure,
+  toUnrecoverableJobError,
+} from '../services/knowledge-job-retry-policy';
 
 @Processor(QueueName.KNOWLEDGE_SPACE_QUEUE, KNOWLEDGE_SPACE_WORKER_OPTIONS)
 export class KnowledgeSpaceProcessor
@@ -57,13 +60,12 @@ export class KnowledgeSpaceProcessor
         { workerId: this.workerId },
       );
     } catch (error) {
-      // Only LLM upstream failures are transient; everything else (schema
-      // violations, lease conflicts, programming errors) is deterministic and
-      // must fail on the first attempt instead of burning the retry budget.
-      if (isRetryableLlmUpstreamError(error)) throw error;
-      throw new UnrecoverableError(
-        error instanceof Error ? error.message : String(error),
-      );
+      // Deterministic failures (constraint violations, programming errors,
+      // explicitly non-retryable errors) fail on the first attempt; anything
+      // else may be a transient DB/Redis fault and keeps the retry budget.
+      if (isDeterministicJobFailure(error))
+        throw toUnrecoverableJobError(error);
+      throw error;
     }
   }
 

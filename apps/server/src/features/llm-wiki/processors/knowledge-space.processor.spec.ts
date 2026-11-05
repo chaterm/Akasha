@@ -111,8 +111,11 @@ describe('KnowledgeSpaceProcessor', () => {
   });
 
   it('does not spend the retry budget on deterministic failures', async () => {
-    const error = new Error(
-      'new row for relation "knowledge_space_compile_run_images" violates check constraint "chk_knowledge_space_compile_run_images_ordinal"',
+    const error = Object.assign(
+      new Error(
+        'new row for relation "knowledge_space_compile_run_images" violates check constraint "chk_knowledge_space_compile_run_images_ordinal"',
+      ),
+      { code: '23514' },
     );
     const runner = { runTextLease: jest.fn().mockRejectedValue(error) };
     const processor = new KnowledgeSpaceProcessor(
@@ -120,9 +123,46 @@ describe('KnowledgeSpaceProcessor', () => {
       createExecutionRepo() as never,
     );
 
-    await expect(processor.process(textJob())).rejects.toBeInstanceOf(
-      UnrecoverableError,
-    );
+    const thrown = await processor.process(textJob()).catch((e) => e);
+    expect(thrown).toBeInstanceOf(UnrecoverableError);
+    expect(thrown.message).toBe(error.message);
+    expect(thrown.stack).toBe(error.stack);
+    expect(thrown.cause).toBe(error);
+  });
+
+  it('fails programming errors and non-retryable errors on the first attempt', async () => {
+    for (const error of [
+      new TypeError("Cannot read properties of undefined (reading 'id')"),
+      new KnowledgeCompilerLlmError(
+        'input_too_large',
+        'Compiler input is too large.',
+        false,
+      ),
+    ]) {
+      const processor = new KnowledgeSpaceProcessor(
+        { runTextLease: jest.fn().mockRejectedValue(error) } as never,
+        createExecutionRepo() as never,
+      );
+
+      await expect(processor.process(textJob())).rejects.toBeInstanceOf(
+        UnrecoverableError,
+      );
+    }
+  });
+
+  it('keeps the retry budget for transient infrastructure failures', async () => {
+    for (const error of [
+      Object.assign(new Error('deadlock detected'), { code: '40P01' }),
+      Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }),
+      new Error('Connection is closed.'),
+    ]) {
+      const processor = new KnowledgeSpaceProcessor(
+        { runTextLease: jest.fn().mockRejectedValue(error) } as never,
+        createExecutionRepo() as never,
+      );
+
+      await expect(processor.process(textJob())).rejects.toBe(error);
+    }
   });
 
   it('retries LLM upstream failures', async () => {
