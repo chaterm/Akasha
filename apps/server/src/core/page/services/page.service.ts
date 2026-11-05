@@ -59,6 +59,10 @@ import { WatcherService } from '../../watcher/watcher.service';
 import { sql } from 'kysely';
 import { TransclusionService } from '../transclusion/transclusion.service';
 import { ErrorCode, errorBody } from '../../../common/errors/error-codes';
+import {
+  PageAttachmentRehomeService,
+  remapAttachmentsInJson,
+} from '../../attachment/services/page-attachment-rehome.service';
 
 @Injectable()
 export class PageService {
@@ -76,6 +80,7 @@ export class PageService {
     private collaborationGateway: CollaborationGateway,
     private readonly watcherService: WatcherService,
     private readonly transclusionService: TransclusionService,
+    private readonly attachmentRehome: PageAttachmentRehomeService,
   ) {}
 
   async findById(
@@ -117,15 +122,27 @@ export class PageService {
       parentPageId = parentPage.id;
     }
 
+    const pageId = uuid7();
     let content = undefined;
     let textContent = undefined;
     let ydoc = undefined;
 
     if (createPageDto?.content && createPageDto?.format) {
-      const prosemirrorJson = await this.parseProsemirrorContent(
+      let prosemirrorJson = await this.parseProsemirrorContent(
         createPageDto.content,
         createPageDto.format,
       );
+
+      const attachmentIds = getAttachmentIds(prosemirrorJson);
+      if (attachmentIds.length > 0) {
+        const remap = await this.attachmentRehome.copyForeignAttachments(
+          attachmentIds,
+          { pageId, spaceId: createPageDto.spaceId, workspaceId },
+          userId,
+          options?.trx,
+        );
+        prosemirrorJson = remapAttachmentsInJson(prosemirrorJson, remap);
+      }
 
       content = prosemirrorJson;
       textContent = jsonToText(prosemirrorJson);
@@ -134,6 +151,7 @@ export class PageService {
 
     const page = await this.pageRepo.insertPage(
       {
+        id: pageId,
         slugId: generateSlugId(),
         title: createPageDto.title,
         position: await this.nextPagePosition(

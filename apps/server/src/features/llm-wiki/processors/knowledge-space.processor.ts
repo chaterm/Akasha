@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Logger, OnModuleDestroy } from '@nestjs/common';
 import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
+import { Job, UnrecoverableError } from 'bullmq';
 import { KnowledgeSpaceExecutionRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-execution.repo';
 import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import { IKnowledgeSpaceJob } from '../../../integrations/queue/constants/queue.interface';
@@ -11,6 +11,7 @@ import {
   KNOWLEDGE_WORKER_SETTINGS,
 } from '../services/knowledge-worker-settings';
 import { recordKnowledgeWorkerEvent } from '../services/knowledge-worker-observability';
+import { isRetryableLlmUpstreamError } from '../services/knowledge-job-retry-policy';
 
 @Processor(QueueName.KNOWLEDGE_SPACE_QUEUE, KNOWLEDGE_SPACE_WORKER_OPTIONS)
 export class KnowledgeSpaceProcessor
@@ -34,22 +35,36 @@ export class KnowledgeSpaceProcessor
         QueueJob.KNOWLEDGE_FINALIZE_SPACE,
       ].includes(job.name as QueueJob)
     ) {
-      throw new Error(`Unsupported Knowledge Space job ${job.name}.`);
+      throw new UnrecoverableError(
+        `Unsupported Knowledge Space job ${job.name}.`,
+      );
     }
     const data = job.data as IKnowledgeSpaceJob;
     const finalize = job.name === QueueJob.KNOWLEDGE_FINALIZE_SPACE;
     if (data.phase !== (finalize ? 'finalize' : 'text'))
-      throw new Error('Knowledge Space job phase does not match its name.');
+      throw new UnrecoverableError(
+        'Knowledge Space job phase does not match its name.',
+      );
     const run = finalize
       ? this.runner.runFinalizeLease.bind(this.runner)
       : this.runner.runTextLease.bind(this.runner);
-    return run(
-      {
-        ...data,
-        spaceJobId: String(job.id),
-      },
-      { workerId: this.workerId },
-    );
+    try {
+      return await run(
+        {
+          ...data,
+          spaceJobId: String(job.id),
+        },
+        { workerId: this.workerId },
+      );
+    } catch (error) {
+      // Only LLM upstream failures are transient; everything else (schema
+      // violations, lease conflicts, programming errors) is deterministic and
+      // must fail on the first attempt instead of burning the retry budget.
+      if (isRetryableLlmUpstreamError(error)) throw error;
+      throw new UnrecoverableError(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   }
 
   @OnWorkerEvent('active')
@@ -87,14 +102,15 @@ export class KnowledgeSpaceProcessor
   @OnWorkerEvent('failed')
   async onFailed(job: Job | undefined): Promise<void> {
     if (!job) return;
+    const finalAttempt = await isTerminalFailure(job);
     this.logger.error({
       event: 'knowledge_space_job_failed',
       ...jobIdentity(job),
       workerId: this.workerId,
       failedReason: job.failedReason,
-      finalAttempt: isFinalAttempt(job),
+      finalAttempt,
     });
-    if (!isFinalAttempt(job)) return;
+    if (!finalAttempt) return;
     const data = job.data as IKnowledgeSpaceJob;
     const recoveryLease = await this.executionRepo.claimRecoveryLease({
       runId: data.spaceRunId,
@@ -135,9 +151,12 @@ export class KnowledgeSpaceProcessor
   }
 }
 
-function isFinalAttempt(job: Job): boolean {
+async function isTerminalFailure(job: Job): Promise<boolean> {
   const attempts = Math.max(Number(job.opts?.attempts ?? 1), 1);
-  return Number(job.attemptsMade ?? 0) >= attempts;
+  if (Number(job.attemptsMade ?? 0) >= attempts) return true;
+  // UnrecoverableError skips the remaining attempts budget, so the queue state
+  // is the only authoritative signal that no retry was scheduled.
+  return job.isFailed();
 }
 
 function jobIdentity(job: Job) {

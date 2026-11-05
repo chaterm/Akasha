@@ -14,6 +14,7 @@ import {
   DEFAULT_KNOWLEDGE_COMPILER_VERSION,
   DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
   DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+  MAX_KNOWLEDGE_IMAGES_PER_PAGE,
 } from '../llm-wiki.constants';
 import { buildEffectiveKnowledgeHash } from './knowledge-effective-hash';
 import { KnowledgeSourceExporterService } from './knowledge-source-exporter.service';
@@ -479,12 +480,17 @@ describe('KnowledgeSpaceCompilationService', () => {
     },
   );
 
-  it('binds only the first 50 images and records overflow as partial quality', async () => {
-    const source = sourceSnapshotWithImages(60);
+  it('binds images up to the safety limit and records overflow as partial quality', async () => {
+    const overflow = 10;
+    const source = sourceSnapshotWithImages(
+      MAX_KNOWLEDGE_IMAGES_PER_PAGE + overflow,
+    );
     const fixture = createService({
       exportedSources: [source],
       reuseCandidates: [reuseCandidate(source)],
-      readyExtractions: source.images.slice(0, 50).map(readyExtraction),
+      readyExtractions: source.images
+        .slice(0, MAX_KNOWLEDGE_IMAGES_PER_PAGE)
+        .map(readyExtraction),
     });
 
     await fixture.service.bindLeasedRunPage(lease(), {
@@ -494,17 +500,20 @@ describe('KnowledgeSpaceCompilationService', () => {
     const plan = fixture.executionRepo.bindTextPage.mock.calls[0][1];
     expect(plan).toEqual(
       expect.objectContaining({
-        expectedImageCount: 60,
-        succeededImageCount: 50,
-        skippedImageCount: 10,
+        expectedImageCount: MAX_KNOWLEDGE_IMAGES_PER_PAGE + overflow,
+        succeededImageCount: MAX_KNOWLEDGE_IMAGES_PER_PAGE,
+        skippedImageCount: overflow,
         imageStatus: 'partial',
         mergeStatus: 'pending',
         qualityStatus: 'partial_image',
       }),
     );
-    expect(plan.images).toHaveLength(50);
+    expect(plan.images).toHaveLength(MAX_KNOWLEDGE_IMAGES_PER_PAGE);
     expect(plan.images.map((image) => image.imageOrdinal)).toEqual(
-      Array.from({ length: 50 }, (_, index) => index),
+      Array.from(
+        { length: MAX_KNOWLEDGE_IMAGES_PER_PAGE },
+        (_, index) => index,
+      ),
     );
   });
 

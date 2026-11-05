@@ -54,7 +54,7 @@ export class ImportController {
   ) {
     const validFileExtensions = ['.md', '.html', '.docx', '.pdf'];
 
-    const maxFileSize = bytes('30mb');
+    const maxFileSize = bytes('100mb');
 
     let file = null;
     try {
@@ -67,8 +67,8 @@ export class ImportController {
         throw new BadRequestException(
           errorBody(
             ErrorCode.FILE_TOO_LARGE,
-            `File too large. Exceeds the 10mb import limit`,
-            { limit: '10mb' },
+            `File too large. Exceeds the 100mb import limit`,
+            { limit: '100mb' },
           ),
         );
       }

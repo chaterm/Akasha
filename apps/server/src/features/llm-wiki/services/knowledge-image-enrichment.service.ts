@@ -16,6 +16,7 @@ import {
 import {
   DEFAULT_KNOWLEDGE_IMAGE_PROMPT_VERSION,
   KNOWLEDGE_IMAGE_UNDERSTANDING_PROVIDER,
+  MAX_KNOWLEDGE_IMAGES_PER_PAGE,
 } from '../llm-wiki.constants';
 import {
   KnowledgeImageUnderstandingError,
@@ -23,7 +24,7 @@ import {
 } from './knowledge-image-understanding-provider.service';
 import { ReadyKnowledgeImage } from './knowledge-effective-hash';
 
-const MAX_IMAGES_PER_PAGE = 50;
+const MAX_IMAGES_PER_PAGE = MAX_KNOWLEDGE_IMAGES_PER_PAGE;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_NORMALIZED_IMAGE_BYTES = 12 * 1024 * 1024;
 const MAX_IMAGE_PIXELS = 40_000_000;

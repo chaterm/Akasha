@@ -10,6 +10,7 @@ import {
   KnowledgeImageUnderstandingError,
   KnowledgeImageUnderstandingProvider,
 } from './knowledge-image-understanding-provider.service';
+import { MAX_KNOWLEDGE_IMAGES_PER_PAGE } from '../llm-wiki.constants';
 import { KnowledgeImageEnrichmentService } from './knowledge-image-enrichment.service';
 
 const pngBytes = Buffer.from(
@@ -331,12 +332,15 @@ describe('KnowledgeImageEnrichmentService', () => {
   it('marks images beyond the safety limit terminal skipped without retrying', async () => {
     const fixture = createFixture();
     const many = source('正文');
-    many.images = Array.from({ length: 51 }, (_, index) => ({
-      ...many.images![0],
-      attachmentId: `image-${index + 1}`,
-    }));
+    many.images = Array.from(
+      { length: MAX_KNOWLEDGE_IMAGES_PER_PAGE + 1 },
+      (_, index) => ({
+        ...many.images![0],
+        attachmentId: `image-${index + 1}`,
+      }),
+    );
     fixture.attachmentRepo.findByIds.mockResolvedValue(
-      many.images.slice(0, 50).map((image) =>
+      many.images.slice(0, MAX_KNOWLEDGE_IMAGES_PER_PAGE).map((image) =>
         attachment({
           id: image.attachmentId,
           filePath: `workspace-1/${image.attachmentId}/dashboard.png`,
@@ -356,26 +360,31 @@ describe('KnowledgeImageEnrichmentService', () => {
 
     expect(result).toEqual(
       expect.objectContaining({
-        expected: 51,
-        succeeded: 50,
+        expected: MAX_KNOWLEDGE_IMAGES_PER_PAGE + 1,
+        succeeded: MAX_KNOWLEDGE_IMAGES_PER_PAGE,
         failed: 0,
         skipped: 1,
         retryableFailureCount: 0,
       }),
     );
-    expect(fixture.extractionRepo.claim).toHaveBeenCalledTimes(50);
+    expect(fixture.extractionRepo.claim).toHaveBeenCalledTimes(
+      MAX_KNOWLEDGE_IMAGES_PER_PAGE,
+    );
     expect(result.warnings).toContainEqual(
       expect.objectContaining({ code: 'skipped_limit' }),
     );
   });
 
-  it('treats exactly 50 ready images as complete rather than incomplete', async () => {
+  it('treats images at the safety limit as complete rather than incomplete', async () => {
     const fixture = createFixture();
     const fifty = source('正文');
-    fifty.images = Array.from({ length: 50 }, (_, index) => ({
-      ...fifty.images![0],
-      attachmentId: `image-${index + 1}`,
-    }));
+    fifty.images = Array.from(
+      { length: MAX_KNOWLEDGE_IMAGES_PER_PAGE },
+      (_, index) => ({
+        ...fifty.images![0],
+        attachmentId: `image-${index + 1}`,
+      }),
+    );
     fixture.attachmentRepo.findByIds.mockResolvedValue(
       fifty.images.map((image) =>
         attachment({
@@ -397,8 +406,8 @@ describe('KnowledgeImageEnrichmentService', () => {
 
     expect(result).toEqual(
       expect.objectContaining({
-        expected: 50,
-        succeeded: 50,
+        expected: MAX_KNOWLEDGE_IMAGES_PER_PAGE,
+        succeeded: MAX_KNOWLEDGE_IMAGES_PER_PAGE,
         failed: 0,
         skipped: 0,
         retryableFailureCount: 0,
