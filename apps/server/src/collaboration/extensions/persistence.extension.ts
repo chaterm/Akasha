@@ -19,6 +19,7 @@ import { Queue } from 'bullmq';
 import {
   extractMentions,
   extractUserMentions,
+  getAttachmentIds,
 } from '../../common/helpers/prosemirror/utils';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -33,6 +34,10 @@ import {
   HISTORY_INTERVAL,
 } from '../constants';
 import { TransclusionService } from '../../core/page/transclusion/transclusion.service';
+import {
+  PageAttachmentRehomeService,
+  remapAttachmentsInYdoc,
+} from '../../core/attachment/services/page-attachment-rehome.service';
 
 @Injectable()
 export class PersistenceExtension implements Extension {
@@ -48,6 +53,7 @@ export class PersistenceExtension implements Extension {
     @InjectQueue(QueueName.NOTIFICATION_QUEUE) private notificationQueue: Queue,
     private readonly collabHistory: CollabHistoryService,
     private readonly transclusionService: TransclusionService,
+    private readonly attachmentRehome: PageAttachmentRehomeService,
   ) {}
 
   async onLoadDocument(data: onLoadDocumentPayload) {
@@ -101,7 +107,17 @@ export class PersistenceExtension implements Extension {
 
     const pageId = getPageId(documentName);
 
-    const tiptapJson = TiptapTransformer.fromYdoc(document, 'default');
+    let tiptapJson = TiptapTransformer.fromYdoc(document, 'default');
+    if (
+      await this.rehomeForeignAttachments(
+        pageId,
+        document,
+        tiptapJson,
+        context?.user?.id,
+      )
+    ) {
+      tiptapJson = TiptapTransformer.fromYdoc(document, 'default');
+    }
     const ydocState = Buffer.from(Y.encodeStateAsUpdate(document));
 
     let textContent = null;
@@ -238,6 +254,35 @@ export class PersistenceExtension implements Extension {
   async afterUnloadDocument(data: afterUnloadDocumentPayload) {
     const documentName = data.documentName;
     this.contributors.delete(documentName);
+  }
+
+  private async rehomeForeignAttachments(
+    pageId: string,
+    document: Y.Doc,
+    tiptapJson: unknown,
+    userId: string | undefined,
+  ): Promise<boolean> {
+    if (!userId) return false;
+    try {
+      const attachmentIds = getAttachmentIds(tiptapJson);
+      if (attachmentIds.length === 0) return false;
+
+      const page = await this.pageRepo.findById(pageId);
+      if (!page) return false;
+
+      const remap = await this.attachmentRehome.copyForeignAttachments(
+        attachmentIds,
+        { pageId, spaceId: page.spaceId, workspaceId: page.workspaceId },
+        userId,
+      );
+      return remapAttachmentsInYdoc(document, remap) > 0;
+    } catch (err) {
+      this.logger.error(
+        { err, pageId },
+        'Failed to rehome foreign attachments for page',
+      );
+      return false;
+    }
   }
 
   private consumeContributors(documentName: string): string[] {

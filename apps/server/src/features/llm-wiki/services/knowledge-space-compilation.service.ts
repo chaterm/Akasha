@@ -36,6 +36,7 @@ import {
   KNOWLEDGE_IMAGE_UNDERSTANDING_PROVIDER,
   KNOWLEDGE_PAGE_COMPILE_QUIET_PERIOD_MS,
   DEFAULT_KNOWLEDGE_PROMPT_VERSION,
+  MAX_KNOWLEDGE_IMAGES_PER_PAGE,
 } from '../llm-wiki.constants';
 import { KnowledgeSourceSnapshot } from '../types/source-snapshot.types';
 import { KnowledgeSourceExporterService } from './knowledge-source-exporter.service';
@@ -539,7 +540,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     }
 
     const expectedImages = source.images ?? [];
-    const sourceImages = expectedImages.slice(0, 50);
+    const sourceImages = expectedImages.slice(0, MAX_KNOWLEDGE_IMAGES_PER_PAGE);
     const overflowImageCount = Math.max(
       0,
       expectedImages.length - sourceImages.length,

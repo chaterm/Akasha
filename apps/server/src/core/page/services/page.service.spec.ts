@@ -46,6 +46,7 @@ describe('PageService', () => {
       gateway as any,
       {} as any,
       {} as any,
+      {} as any,
     );
     const dto = {
       pageId: pending.id,
@@ -102,6 +103,9 @@ describe('PageService', () => {
       findById: jest.fn(),
     };
     const generalQueue = { add: jest.fn().mockResolvedValue(undefined) };
+    const attachmentRehome = {
+      copyForeignAttachments: jest.fn().mockResolvedValue(new Map()),
+    };
     const service = new PageService(
       pageRepo as any,
       {} as any,
@@ -114,10 +118,75 @@ describe('PageService', () => {
       {} as any,
       {} as any,
       {} as any,
+      attachmentRehome as any,
     );
     jest.spyOn(service, 'nextPagePosition').mockResolvedValue('a0');
-    return { service, pageRepo, generalQueue };
+    return { service, pageRepo, generalQueue, attachmentRehome };
   }
+
+  it('创建页面时把引用其他页面的图片复制到新页面名下', async () => {
+    const { service, pageRepo, attachmentRehome } = createSubject();
+    const oldId = '01900000-0000-7000-8000-000000000001';
+    const newId = '01900000-0000-7000-8000-0000000000aa';
+    attachmentRehome.copyForeignAttachments.mockResolvedValue(
+      new Map([[oldId, newId]]),
+    );
+    const trx = {} as any;
+
+    await service.create(
+      'user-1',
+      'workspace-1',
+      {
+        spaceId: 'space-1',
+        content: {
+          type: 'doc',
+          content: [
+            {
+              type: 'image',
+              attrs: {
+                attachmentId: oldId,
+                src: `/api/files/${oldId}/chart.png`,
+              },
+            },
+          ],
+        },
+        format: 'json',
+      },
+      { trx, deferCreatedEffects: true },
+    );
+
+    const saved = pageRepo.insertPage.mock.calls[0][0] as any;
+    expect(attachmentRehome.copyForeignAttachments).toHaveBeenCalledWith(
+      [oldId],
+      { pageId: saved.id, spaceId: 'space-1', workspaceId: 'workspace-1' },
+      'user-1',
+      trx,
+    );
+    expect(saved.content.content[0].attrs).toMatchObject({
+      attachmentId: newId,
+      src: `/api/files/${newId}/chart.png`,
+    });
+    const ydoc = new Y.Doc();
+    try {
+      Y.applyUpdate(ydoc, saved.ydoc);
+      expect(
+        (TiptapTransformer.fromYdoc(ydoc, 'default') as any).content[0].attrs
+          .attachmentId,
+      ).toBe(newId);
+    } finally {
+      ydoc.destroy();
+    }
+  });
+
+  it('内容没有附件时不调用附件复制', async () => {
+    const { service, attachmentRehome } = createSubject();
+    await service.create('user-1', 'workspace-1', {
+      spaceId: 'space-1',
+      content: { type: 'doc', content: [{ type: 'paragraph' }] },
+      format: 'json',
+    });
+    expect(attachmentRehome.copyForeignAttachments).not.toHaveBeenCalled();
+  });
 
   it('creation stores one normalized source for JSON, text and Y.Doc without mutating input', async () => {
     const { service, pageRepo } = createSubject();
@@ -191,6 +260,7 @@ describe('PageService', () => {
       {} as any,
       {} as any,
       generalQueue as any,
+      {} as any,
       {} as any,
       {} as any,
       {} as any,

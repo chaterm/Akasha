@@ -2,7 +2,8 @@ import {
   PROCESSOR_METADATA,
   WORKER_METADATA,
 } from '@nestjs/bullmq/dist/bull.constants';
-import { Job } from 'bullmq';
+import { Job, UnrecoverableError } from 'bullmq';
+import { KnowledgeCompilerLlmError } from '../compiler/knowledge-compiler-llm.provider';
 import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import { KNOWLEDGE_SPACE_WORKER_OPTIONS } from '../services/knowledge-worker-settings';
 import { KnowledgeSpaceProcessor } from './knowledge-space.processor';
@@ -102,6 +103,63 @@ describe('KnowledgeSpaceProcessor', () => {
         recoveryKind: 'final_failed',
       }),
     );
+    expect(executionRepo.finishRun).toHaveBeenCalledWith(
+      recoveryLease,
+      'failed',
+      expect.objectContaining({ errorCode: 'space_job_failed' }),
+    );
+  });
+
+  it('does not spend the retry budget on deterministic failures', async () => {
+    const error = new Error(
+      'new row for relation "knowledge_space_compile_run_images" violates check constraint "chk_knowledge_space_compile_run_images_ordinal"',
+    );
+    const runner = { runTextLease: jest.fn().mockRejectedValue(error) };
+    const processor = new KnowledgeSpaceProcessor(
+      runner as never,
+      createExecutionRepo() as never,
+    );
+
+    await expect(processor.process(textJob())).rejects.toBeInstanceOf(
+      UnrecoverableError,
+    );
+  });
+
+  it('retries LLM upstream failures', async () => {
+    const error = new KnowledgeCompilerLlmError(
+      'rate_limited',
+      'Compiler upstream is rate limited.',
+      true,
+    );
+    const runner = { runTextLease: jest.fn().mockRejectedValue(error) };
+    const processor = new KnowledgeSpaceProcessor(
+      runner as never,
+      createExecutionRepo() as never,
+    );
+
+    await expect(processor.process(textJob())).rejects.toBe(error);
+  });
+
+  it('treats a skipped retry budget as terminal', async () => {
+    const recoveryLease = {
+      runId: 'run-1',
+      knowledgeGeneration: 3,
+      jobPhase: 'text',
+      spaceJobSequence: 2,
+      spaceJobId: 'space-job-2',
+      executionToken: 'recovery-token',
+    };
+    const executionRepo = createExecutionRepo();
+    executionRepo.claimRecoveryLease.mockResolvedValue(recoveryLease);
+    const processor = new KnowledgeSpaceProcessor(
+      { runTextLease: jest.fn() } as never,
+      executionRepo as never,
+    );
+    const job = textJob({ attemptsMade: 1, opts: { attempts: 3 } });
+    Object.assign(job, { isFailed: jest.fn().mockResolvedValue(true) });
+
+    await processor.onFailed(job);
+
     expect(executionRepo.finishRun).toHaveBeenCalledWith(
       recoveryLease,
       'failed',

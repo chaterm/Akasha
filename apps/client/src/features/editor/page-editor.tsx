@@ -69,6 +69,7 @@ import { FIVE_MINUTES } from "@/lib/constants.ts";
 import { jwtDecode } from "jwt-decode";
 import { searchSpotlight } from "@/features/search/constants.ts";
 import { useEditorScroll } from "./hooks/use-editor-scroll";
+import { useSelectionAutoScroll } from "./hooks/use-selection-auto-scroll";
 import { EditorAiMenu } from "@/features/ai/components/editor/ai-menu/ai-menu";
 import { EditorLinkMenu } from "@/features/editor/components/link/link-menu";
 import ColumnsMenu from "@/features/editor/components/columns/columns-menu.tsx";
@@ -326,6 +327,8 @@ export default function PageEditor({
     },
     [pageId, editable, extensions],
   );
+
+  useSelectionAutoScroll(editor);
 
   const editorIsEditable = useEditorState({
     editor,

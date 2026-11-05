@@ -19,6 +19,7 @@ import { TransclusionService } from '../core/page/transclusion/transclusion.serv
 import { TransclusionModule } from '../core/page/transclusion/transclusion.module';
 import { StorageModule } from '../integrations/storage/storage.module';
 import { EnvironmentModule } from '../integrations/environment/environment.module';
+import { PageAttachmentRehomeService } from '../core/attachment/services/page-attachment-rehome.service';
 
 @Module({
   providers: [
@@ -31,6 +32,7 @@ import { EnvironmentModule } from '../integrations/environment/environment.modul
     CollabHistoryService,
     CollaborationHandler,
     TransclusionService,
+    PageAttachmentRehomeService,
   ],
   exports: [CollaborationGateway],
   imports: [

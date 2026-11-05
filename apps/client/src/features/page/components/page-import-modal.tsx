@@ -238,7 +238,7 @@ function ImportFormatSelection({ spaceId, onClose }: ImportFormatSelection) {
     }, 3000);
   }, [fileTaskId]);
 
-  const maxSingleFileSize = bytes("30mb");
+  const maxSingleFileSize = bytes("100mb");
 
   const handleFileUpload = async (selectedFiles: File[]) => {
     if (!selectedFiles) {
