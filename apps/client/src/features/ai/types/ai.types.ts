@@ -10,12 +10,15 @@ export enum AiAction {
   CONTINUE_WRITING = "continue_writing",
   TRANSLATE = "translate",
   CUSTOM = "custom",
+  GENERATE = "generate",
 }
 
 export interface AiGenerateDto {
   action?: AiAction;
   content: string;
   prompt?: string;
+  messages?: { role: "user" | "assistant"; content: string }[];
+  pageContent?: string;
 }
 
 export interface AiContentResponse {

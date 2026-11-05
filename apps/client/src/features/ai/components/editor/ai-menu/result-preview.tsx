@@ -1,32 +1,57 @@
 import { Loader, Paper, ScrollArea } from "@mantine/core";
 import DOMPurify from "dompurify";
-import { marked } from "marked";
-import { memo } from "react";
+import { markdownToHtml } from "@docmost/editor-ext";
+import { memo, useEffect, useRef } from "react";
+import type { AiTurn } from "./ai-menu.utils";
 import classes from "./ai-menu.module.css";
 
 interface ResultPreviewProps {
-  output: string;
+  turns: AiTurn[];
   isLoading: boolean;
+  showPrompts: boolean;
 }
-const ResultPreview = memo(({ output, isLoading }: ResultPreviewProps) => {
-  if (!output && !isLoading) return;
 
-  const parsedOutput = `${marked.parse(output)}`;
+const ResultPreview = memo(
+  ({ turns, isLoading, showPrompts }: ResultPreviewProps) => {
+    const viewportRef = useRef<HTMLDivElement>(null);
+    const lastOutput = turns.at(-1)?.output;
 
-  return (
-    <Paper mb={4} shadow="lg" radius="md" className={classes.resultPreview}>
-      <ScrollArea.Autosize mah={300} type="scroll" scrollbarSize={5}>
-        <div className={classes.resultPreviewWrapper}>
-          {parsedOutput && (
-            <div
-              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(parsedOutput) }}
-            />
-          )}
-          {isLoading && <Loader size={12} ml="xs" display="inline-block" />}
-        </div>
-      </ScrollArea.Autosize>
-    </Paper>
-  );
-});
+    useEffect(() => {
+      const viewport = viewportRef.current;
+      if (viewport) viewport.scrollTop = viewport.scrollHeight;
+    }, [turns.length, lastOutput]);
+
+    if (turns.length === 0) return null;
+
+    return (
+      <Paper mb={4} shadow="lg" radius="md" className={classes.resultPreview}>
+        <ScrollArea.Autosize
+          mah={360}
+          type="scroll"
+          scrollbarSize={5}
+          viewportRef={viewportRef}
+        >
+          <div className={classes.resultPreviewWrapper}>
+            {turns.map((turn, index) => (
+              <div key={index} className={classes.turn}>
+                {showPrompts && <div className={classes.turnPrompt}>{turn.prompt}</div>}
+                {turn.output && (
+                  <div
+                    dangerouslySetInnerHTML={{
+                      __html: DOMPurify.sanitize(
+                        markdownToHtml(turn.output) as string,
+                      ),
+                    }}
+                  />
+                )}
+              </div>
+            ))}
+            {isLoading && <Loader size={12} ml="xs" display="inline-block" />}
+          </div>
+        </ScrollArea.Autosize>
+      </Paper>
+    );
+  },
+);
 
 export { ResultPreview };

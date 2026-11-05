@@ -1,9 +1,13 @@
+import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsIn,
   IsOptional,
   IsString,
   MaxLength,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 
 export const EDITOR_AI_ACTIONS = [
@@ -18,9 +22,19 @@ export const EDITOR_AI_ACTIONS = [
   'continue_writing',
   'translate',
   'custom',
+  'generate',
 ] as const;
 
 export type EditorAiAction = (typeof EDITOR_AI_ACTIONS)[number];
+
+export class EditorAiMessageDto {
+  @IsIn(['user', 'assistant'])
+  role: 'user' | 'assistant';
+
+  @IsString()
+  @MaxLength(20_000)
+  content: string;
+}
 
 export class EditorAiGenerateDto {
   @IsOptional()
@@ -36,4 +50,16 @@ export class EditorAiGenerateDto {
   @MinLength(1)
   @MaxLength(4_000)
   prompt?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => EditorAiMessageDto)
+  messages?: EditorAiMessageDto[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(700_000)
+  pageContent?: string;
 }

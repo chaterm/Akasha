@@ -68,12 +68,12 @@ const CommandGroups: SlashMenuGroupedItemsType = {
     {
       title: "Ask AI",
       shortcut: "ai",
-      description: "Write, rewrite, or summarize with AI.",
-      searchTerms: ["ai", "assistant", "generate", "write"],
+      description: "Write at the cursor or ask AI a question.",
+      searchTerms: ["ai", "assistant", "generate", "write", "ask"],
       icon: IconSparkles,
       disable: () => !isGenerativeAiEnabled(),
       command: ({ editor, range }: CommandProps) => {
-        editor.chain().focus().deleteRange(range).run();
+        editor.chain().deleteRange(range).run();
         getDefaultStore().set(showAiMenuAtom, true);
       },
     },

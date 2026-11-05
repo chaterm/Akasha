@@ -4,6 +4,7 @@ import { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { CommandItem } from "./command-items.ts";
 import classes from "./ai-menu.module.css";
+import { AI_MENU_DROPDOWN_ATTR } from "./ai-menu.utils";
 
 interface CommandSelectorProps {
   selectedIndex: number;
@@ -35,7 +36,7 @@ const CommandSelector = ({
       shadow="lg"
     >
       <Menu.Target>{children}</Menu.Target>
-      <Menu.Dropdown>
+      <Menu.Dropdown {...{ [AI_MENU_DROPDOWN_ATTR]: true }}>
         <ScrollArea.Autosize type="scroll" scrollbarSize={5} mah={300}>
           {currentItems.map((item, index) => {
             const isSelected = selectedIndex === index;
