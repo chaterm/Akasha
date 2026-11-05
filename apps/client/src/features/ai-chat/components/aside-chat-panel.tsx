@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { ActionIcon, Popover, Tooltip, UnstyledButton } from "@mantine/core";
 import {
   IconPlus,
@@ -7,7 +7,7 @@ import {
   IconX,
   IconSparkles,
 } from "@tabler/icons-react";
-import { useAtom } from "jotai";
+import { getDefaultStore, useAtom } from "jotai";
 import { useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { asideStateAtom } from "@/components/layouts/global/hooks/atoms/sidebar-atom";
@@ -16,12 +16,32 @@ import { extractPageSlugId } from "@/lib";
 import { useChatStream } from "../hooks/use-chat-stream";
 import { useChatInfoQuery } from "../queries/ai-chat-query";
 import ChatMessageList from "./chat-message-list";
+import type { OpenCitationHandler } from "./chat-message";
+import type { Editor } from "@tiptap/core";
+import { pageEditorAtom } from "@/features/editor/atoms/editor-atoms";
+import {
+  findCitationRange,
+  pickDocCitationQuote,
+  scrollToCitation,
+} from "@/features/editor/utils/citation-locate";
 import ChatInput from "./chat-input";
 import AsideChatHistory from "./aside-chat-history";
 import type { ChatAttachment, PageMention } from "../types/ai-chat.types";
 import classes from "../styles/aside-chat-panel.module.css";
 import KnowledgeScopeBar from "./knowledge-scope-bar";
 import { useKnowledgeScope } from "../hooks/use-knowledge-scope";
+
+const CITATION_RETRY_LIMIT = 10;
+const CITATION_RETRY_MS = 300;
+
+function mountedView(editor: Editor | null) {
+  if (!editor || editor.isDestroyed) return null;
+  try {
+    return editor.view.dom.isConnected ? editor.view : null;
+  } catch {
+    return null;
+  }
+}
 
 export default function AsideChatPanel() {
   const { t } = useTranslation();
@@ -34,6 +54,45 @@ export default function AsideChatPanel() {
   const { pageSlug } = useParams();
   const slugId = extractPageSlugId(pageSlug);
   const { data: page } = usePageQuery({ pageId: slugId });
+  const stopCitationScrollRef = useRef<() => void>(() => {});
+
+  useEffect(() => () => stopCitationScrollRef.current(), []);
+
+  const handleOpenCitation = useCallback<OpenCitationHandler>(
+    (sourcePageId, quote, { answer, question }) => {
+      if (!page || page.id !== sourcePageId) return false;
+
+      stopCitationScrollRef.current();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let stopFollowing = () => {};
+      let attempts = 0;
+      stopCitationScrollRef.current = () => {
+        clearTimeout(timer);
+        stopFollowing();
+      };
+
+      const tryScroll = () => {
+        const view = mountedView(getDefaultStore().get(pageEditorAtom));
+        if (!view) {
+          if (attempts++ < CITATION_RETRY_LIMIT) {
+            timer = setTimeout(tryScroll, CITATION_RETRY_MS);
+          }
+          return;
+        }
+        const { doc } = view.state;
+        const target = quote ?? pickDocCitationQuote(doc, answer, question);
+        const range = target ? findCitationRange(doc, target) : null;
+        if (range) {
+          stopFollowing = scrollToCitation(view, range);
+        } else {
+          view.dom.scrollIntoView({ block: "start" });
+        }
+      };
+      timer = setTimeout(tryScroll, 0);
+      return true;
+    },
+    [page],
+  );
 
   const chatInfoQuery = useChatInfoQuery(chatId);
   const {
@@ -249,6 +308,7 @@ export default function AsideChatPanel() {
               thinkingSteps={thinkingSteps}
               onEditMessage={editMessage}
               onEditingStateChange={setIsEditingHistory}
+              onOpenCitation={handleOpenCitation}
             />
           </div>
         </>

@@ -98,7 +98,9 @@ export async function generateAiContentStream(
 
     processStream();
   } catch (error) {
-    onError?.(error);
+    if (error?.name !== "AbortError") {
+      onError?.(error);
+    }
   }
 
   return abortController;

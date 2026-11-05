@@ -214,7 +214,9 @@ describe("ChatMessage knowledge evidence", () => {
 
     expect(answerSourcesDetails?.open).toBe(true);
     const sourceLink = screen.getByRole("link", { name: "Used page" });
-    expect(sourceLink.getAttribute("href")).toBe("/p/used");
+    expect(sourceLink.getAttribute("href")).toBe(
+      "/p/used?cite=Thisexcerptdirectlysupportstheanswer",
+    );
     expect(sourceLink.getAttribute("target")).toBe("_blank");
     expect(sourceLink.getAttribute("rel")).toBe("noopener noreferrer");
     expect(
@@ -517,5 +519,68 @@ describe("ChatMessage knowledge evidence", () => {
     expect(
       screen.getByText("No verifiable citation was generated"),
     ).toBeTruthy();
+  });
+
+  it("lets the host navigate to a cited source in place", () => {
+    const onOpenCitation = vi
+      .fn()
+      .mockReturnValueOnce(true)
+      .mockReturnValue(false);
+    render(
+      <MantineProvider>
+        <MemoryRouter>
+          <ChatMessage
+            message={{
+              id: "message-in-page",
+              chatId: "chat-1",
+              role: "assistant",
+              content: "Answer",
+              toolCalls: null,
+              metadata: {
+                answerMode: "knowledge",
+                citations: [
+                  {
+                    sourcePageId: "page-1",
+                    title: "Current page",
+                    url: "/p/current",
+                  },
+                ],
+                citationEvidence: [
+                  {
+                    sourcePageId: "page-1",
+                    title: "Current page",
+                    url: "/p/current",
+                    excerpts: [
+                      {
+                        text: "Cited paragraph.",
+                        sourceRange: { startOffset: 0, endOffset: 16 },
+                        quoteHash: "sha256:cited",
+                      },
+                    ],
+                  },
+                ],
+              },
+              createdAt: "2026-07-24T00:00:00.000Z",
+            }}
+            onOpenCitation={onOpenCitation}
+          />
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+    fireEvent.click(screen.getByText("Answer sources").closest("summary")!);
+    const link = screen.getByRole("link", { name: "Current page" });
+
+    expect(fireEvent.click(link)).toBe(false);
+    expect(onOpenCitation).toHaveBeenLastCalledWith(
+      "page-1",
+      { start: "Citedparagraph" },
+      { answer: "Answer", question: "" },
+    );
+
+    expect(fireEvent.click(link)).toBe(true);
+
+    onOpenCitation.mockClear();
+    expect(fireEvent.click(link, { ctrlKey: true })).toBe(true);
+    expect(onOpenCitation).not.toHaveBeenCalled();
   });
 });

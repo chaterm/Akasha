@@ -25,6 +25,12 @@ import ChatToolGroup from "./chat-tool-group";
 import ThinkingProcess from "./thinking-process";
 import classes from "../styles/chat-message.module.css";
 import CopyTextButton from "@/components/common/copy.tsx";
+import {
+  buildCitationHref,
+  pickCitationQuote,
+  toCitationQuote,
+  type CitationQuote,
+} from "@/features/editor/utils/citation-link";
 
 const DIRECT_PAGE_HREF_RE =
   /^\/(?:s\/[^/?#\s]+\/p\/[^/?#\s]+|p\/[^/?#\s]+)(?:[?#][^\s]*)?$/;
@@ -75,6 +81,7 @@ const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif"];
 
 type Props = {
   message: AiChatMessage;
+  question?: string;
   isStreaming?: boolean;
   streamingContent?: string;
   streamingToolCalls?: AiChatToolCall[];
@@ -83,10 +90,18 @@ type Props = {
   onEdit?: (messageId: string, content: string) => void;
   editDisabled?: boolean;
   onEditingChange?: (editing: boolean) => void;
+  onOpenCitation?: OpenCitationHandler;
 };
+
+export type OpenCitationHandler = (
+  sourcePageId: string,
+  quote: CitationQuote | null,
+  context: { answer: string; question: string },
+) => boolean;
 
 export default function ChatMessage({
   message,
+  question = "",
   isStreaming,
   streamingContent,
   streamingToolCalls,
@@ -95,6 +110,7 @@ export default function ChatMessage({
   onEdit,
   editDisabled = false,
   onEditingChange,
+  onOpenCitation,
 }: Props) {
   const navigate = useNavigate();
   const { t } = useTranslation();
@@ -150,10 +166,7 @@ export default function ChatMessage({
     : readThinkingTrace(message.metadata?.thinkingTrace);
 
   if (isUser) {
-    const displayContent = (content || "").replace(
-      /\n\n<referenced_pages>[\s\S]*<\/referenced_pages>$/,
-      "",
-    );
+    const displayContent = stripReferencedPages(content || "");
     const attachments =
       (message.metadata?.attachments as {
         id: string;
@@ -306,11 +319,16 @@ export default function ChatMessage({
           qaMetadata.answerMode !== "general" &&
           qaMetadata.answerMode !== "no_match" && (
             <KnowledgeEvidence
+              answer={content || ""}
+              question={
+                qaMetadata.retrievalQuery ?? stripReferencedPages(question)
+              }
               citations={qaMetadata.citations}
               citationEvidence={qaMetadata.citationEvidence}
               diagnostics={qaMetadata.diagnostics}
               answerMode={qaMetadata.answerMode}
               retrievalQuery={qaMetadata.retrievalQuery}
+              onOpenCitation={onOpenCitation}
             />
           )}
       </div>
@@ -319,17 +337,23 @@ export default function ChatMessage({
 }
 
 function KnowledgeEvidence({
+  answer,
+  question,
   citations,
   citationEvidence,
   diagnostics,
   answerMode,
   retrievalQuery,
+  onOpenCitation,
 }: {
+  answer: string;
+  question: string;
   citations: AiQaCitation[];
   citationEvidence: AiQaCitationEvidence[];
   diagnostics?: AiQaRetrievalDiagnostics;
   answerMode?: "knowledge" | "no_match" | "general";
   retrievalQuery?: string;
+  onOpenCitation?: OpenCitationHandler;
 }) {
   const { t } = useTranslation();
   const evidenceBySourceId = new Map(
@@ -373,16 +397,41 @@ function KnowledgeEvidence({
           <div className={classes.citationSources}>
             {citations.map((source) => {
               const evidence = evidenceBySourceId.get(source.sourcePageId);
+              const quote = pickCitationQuote(
+                evidence?.excerpts.map((excerpt) => excerpt.text) ?? [],
+                answer,
+                question,
+              );
               return (
                 <div
                   key={source.sourcePageId}
                   className={classes.citationSource}
                 >
                   <a
-                    href={source.url}
+                    href={
+                      quote ? buildCitationHref(source.url, quote) : source.url
+                    }
                     target="_blank"
                     rel="noopener noreferrer"
                     className={classes.citationSourceLink}
+                    onClick={(event) => {
+                      if (
+                        !onOpenCitation ||
+                        event.button !== 0 ||
+                        event.ctrlKey ||
+                        event.metaKey ||
+                        event.shiftKey ||
+                        event.altKey
+                      ) {
+                        return;
+                      }
+                      const handled = onOpenCitation(
+                        source.sourcePageId,
+                        quote ? toCitationQuote(quote) : null,
+                        { answer, question },
+                      );
+                      if (handled) event.preventDefault();
+                    }}
                   >
                     <span>{source.title}</span>
                     <IconExternalLink size={13} />
@@ -537,6 +586,13 @@ function readCitations(value: unknown): AiQaCitation[] {
         ]
       : [];
   });
+}
+
+function stripReferencedPages(content: string): string {
+  return content.replace(
+    /\n\n<referenced_pages>[\s\S]*<\/referenced_pages>$/,
+    "",
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

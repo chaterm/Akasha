@@ -9,7 +9,7 @@ import type {
   AiChatToolCall,
   AiQaProgressStage,
 } from "../types/ai-chat.types";
-import ChatMessage from "./chat-message";
+import ChatMessage, { type OpenCitationHandler } from "./chat-message";
 import classes from "../styles/ai-chat.module.css";
 
 function ChatMessageErrorFallback() {
@@ -31,7 +31,15 @@ type Props = {
   thinkingSteps?: AiChatThinkingItem[];
   onEditMessage?: (messageId: string, content: string) => void;
   onEditingStateChange?: (editing: boolean) => void;
+  onOpenCitation?: OpenCitationHandler;
 };
+
+function precedingQuestion(messages: AiChatMessage[], index: number) {
+  for (let i = index - 1; i >= 0; i -= 1) {
+    if (messages[i].role === "user") return messages[i].content ?? "";
+  }
+  return "";
+}
 
 const BOTTOM_THRESHOLD_PX = 32;
 const SCROLL_UP_THRESHOLD_PX = 5;
@@ -46,6 +54,7 @@ export default function ChatMessageList({
   thinkingSteps = [],
   onEditMessage,
   onEditingStateChange,
+  onOpenCitation,
 }: Props) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -202,10 +211,15 @@ export default function ChatMessageList({
         className={classes.messageList}
         aria-label={t("Chat transcript")}
       >
-        {messages.map((msg) => (
+        {messages.map((msg, index) => (
           <ErrorBoundary key={msg.id} fallback={<ChatMessageErrorFallback />}>
             <ChatMessage
               message={msg}
+              question={
+                msg.role === "assistant"
+                  ? precedingQuestion(messages, index)
+                  : undefined
+              }
               onEdit={
                 onEditMessage &&
                 msg.role === "user" &&
@@ -220,6 +234,7 @@ export default function ChatMessageList({
               onEditingChange={(editing) =>
                 handleEditingChange(msg.id, editing)
               }
+              onOpenCitation={onOpenCitation}
             />
           </ErrorBoundary>
         ))}

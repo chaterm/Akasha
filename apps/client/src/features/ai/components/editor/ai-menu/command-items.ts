@@ -1,10 +1,9 @@
 import { AiAction } from "@/features/ai/types/ai.types.ts";
+import type { SlashMenuItemType } from "@/features/editor/components/slash-menu/types";
 import {
   IconSparkles,
   IconArrowsMaximize,
   IconArrowsMinimize,
-  IconWriting,
-  IconHelp,
   IconList,
   IconMoodSmile,
   IconLanguage,
@@ -25,11 +24,14 @@ interface CommandItem {
   action?: AiAction;
   prompt?: string;
   subCommandSet?: CommandSet;
+  slashItem?: SlashMenuItemType;
 }
+
+type AiMenuMode = "transform" | "generate";
 
 type CommandSet = "main" | "tone" | "translate" | "result";
 
-const mainItems: CommandItem[] = [
+const transformItems: CommandItem[] = [
   {
     id: "improve-writing",
     name: "Improve writing",
@@ -55,18 +57,6 @@ const mainItems: CommandItem[] = [
     action: AiAction.MAKE_SHORTER,
   },
   {
-    id: "continue-writing",
-    name: "Continue writing",
-    icon: IconWriting,
-    action: AiAction.CONTINUE_WRITING,
-  },
-  {
-    id: "explain",
-    name: "Explain",
-    icon: IconHelp,
-    action: AiAction.EXPLAIN,
-  },
-  {
     id: "summarize",
     name: "Summarize",
     icon: IconList,
@@ -85,6 +75,7 @@ const mainItems: CommandItem[] = [
     subCommandSet: "translate",
   },
 ];
+const generateItems: CommandItem[] = [];
 const toneItems: CommandItem[] = [
   {
     id: "back",
@@ -197,9 +188,7 @@ const translateItems: CommandItem[] = [
     prompt: "简体中文",
   },
 ];
-const resultItems: CommandItem[] = [
-  { id: "result-replace", name: "Replace", icon: IconCheck },
-  { id: "result-insert-below", name: "Insert below", icon: IconArrowDownLeft },
+const resultTailItems: CommandItem[] = [
   { id: "result-copy", name: "Copy", icon: IconCopy },
   { id: "result-discard", name: "Discard", icon: IconTrash },
   {
@@ -208,21 +197,41 @@ const resultItems: CommandItem[] = [
     icon: IconRefresh,
   },
 ];
-const commandItems: Record<CommandSet, CommandItem[]> = {
-  main: mainItems,
-  tone: toneItems,
-  translate: translateItems,
-  result: resultItems,
+const commandItems: Record<AiMenuMode, Record<CommandSet, CommandItem[]>> = {
+  transform: {
+    main: transformItems,
+    tone: toneItems,
+    translate: translateItems,
+    result: [
+      { id: "result-replace", name: "Replace", icon: IconCheck },
+      ...resultTailItems,
+    ],
+  },
+  generate: {
+    main: generateItems,
+    tone: [],
+    translate: [],
+    result: [
+      {
+        id: "result-insert",
+        name: "Insert at cursor",
+        icon: IconArrowDownLeft,
+      },
+      ...resultTailItems,
+    ],
+  },
 };
+const WRITE_RESULT_IDS = new Set(["result-replace", "result-insert"]);
 
 const getVisibleCommandItems = (
+  mode: AiMenuMode,
   commandSet: CommandSet,
   prompt: string,
   readOnly: boolean,
   translate: (name: string) => string = (name) => name,
 ) => {
   const query = prompt.toLowerCase();
-  const items = commandItems[commandSet].filter(
+  const items = commandItems[mode][commandSet].filter(
     (item) =>
       item.name.toLowerCase().includes(query) ||
       translate(item.name).toLowerCase().includes(query),
@@ -232,10 +241,8 @@ const getVisibleCommandItems = (
     return items;
   }
 
-  return items.filter(
-    (item) => item.id !== "result-replace" && item.id !== "result-insert-below",
-  );
+  return items.filter((item) => !WRITE_RESULT_IDS.has(item.id));
 };
 
-export type { CommandItem, CommandSet };
+export type { AiMenuMode, CommandItem, CommandSet };
 export { commandItems, getVisibleCommandItems };

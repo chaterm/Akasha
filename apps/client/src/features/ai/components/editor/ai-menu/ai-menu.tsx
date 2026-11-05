@@ -4,11 +4,12 @@ import { useDebouncedCallback, useMediaQuery } from "@mantine/hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAtom } from "jotai";
-import { IconArrowUp } from "@tabler/icons-react";
+import { IconArrowUp, IconPlayerStopFilled } from "@tabler/icons-react";
 import { showAiMenuAtom } from "@/features/editor/atoms/editor-atoms.ts";
 import { useAiGenerateStreamMutation } from "@/features/ai/queries/ai-query.ts";
 import { AiAction } from "@/features/ai/types/ai.types.ts";
 import {
+  AiMenuMode,
   CommandItem,
   CommandSet,
   getVisibleCommandItems,
@@ -16,14 +17,29 @@ import {
 import { CommandSelector } from "./command-selector.tsx";
 import { ResultPreview } from "./result-preview.tsx";
 import classes from "./ai-menu.module.css";
-import { marked } from "marked";
 import { DOMSerializer } from "@tiptap/pm/model";
-import { copyToClipboard, htmlToMarkdown } from "@docmost/editor-ext";
+import {
+  copyToClipboard,
+  htmlToMarkdown,
+  markdownToHtml,
+} from "@docmost/editor-ext";
 import { useLocation } from "react-router-dom";
-import { isFocusWithinAiMenu } from "./ai-menu.utils";
-import { notifications } from "@mantine/notifications";
+import {
+  AiTurn,
+  buildHistoryMessages,
+  buildPageContext,
+  isFocusWithinAiMenu,
+  isOutsideAiMenu,
+} from "./ai-menu.utils";
+import { getSlashCommandItems } from "./slash-items";
 import { useTranslation } from "react-i18next";
 import { notifyError } from "@/lib/errors";
+
+const GENERATE_SUGGESTIONS = [
+  "Compare the key points in a table",
+  "Turn this page into an FAQ with toggles",
+  "Draw a flowchart of the steps",
+];
 
 interface EditorAiMenuProps {
   editor: Editor | null;
@@ -43,7 +59,8 @@ const EditorAiMenu = ({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const streamAbortControllerRef = useRef<AbortController | null>(null);
   const [prompt, setPrompt] = useState("");
-  const [output, setOutput] = useState("");
+  const [turns, setTurns] = useState<AiTurn[]>([]);
+  const output = turns.at(-1)?.output ?? "";
   const [isLoading, setIsLoading] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [activeCommandSet, setActiveCommandSet] = useState<CommandSet>("main");
@@ -57,10 +74,22 @@ const EditorAiMenu = ({
     left: 0,
     width: 0,
   });
-  const currentItems = useMemo(
-    () => getVisibleCommandItems(activeCommandSet, prompt, readOnly, t),
-    [prompt, activeCommandSet, readOnly, t],
-  );
+  const [mode, setMode] = useState<AiMenuMode>("transform");
+  const [wasOpen, setWasOpen] = useState(showAiMenu);
+  if (showAiMenu !== wasOpen) {
+    setWasOpen(showAiMenu);
+    if (showAiMenu) {
+      setMode(editor?.state.selection.empty ? "generate" : "transform");
+    }
+  }
+  const currentItems = useMemo(() => {
+    if (mode === "generate" && !readOnly) {
+      const slashItems = getSlashCommandItems(prompt, editor);
+      if (slashItems) return slashItems;
+      if (prompt.trim()) return [];
+    }
+    return getVisibleCommandItems(mode, activeCommandSet, prompt, readOnly, t);
+  }, [mode, prompt, activeCommandSet, readOnly, t, editor]);
   const updateMenuPlacement = useCallback(() => {
     if (!editor || !showAiMenu) return;
 
@@ -99,7 +128,7 @@ const EditorAiMenu = ({
     streamAbortControllerRef.current?.abort();
     streamAbortControllerRef.current = null;
     setPrompt("");
-    setOutput("");
+    setTurns([]);
     setIsLoading(false);
     setSelectedIndex(-1);
     setActiveCommandSet("main");
@@ -111,41 +140,59 @@ const EditorAiMenu = ({
     60,
   );
   const handleGenerate = useCallback(
-    (item?: CommandItem) => {
+    (item?: CommandItem, { retry = false } = {}) => {
       if (!editor || isLoading) return;
 
       let command: CommandItem | null = item || null;
 
       if (!command) {
-        if (!prompt) return;
+        if (!prompt.trim()) return;
 
         command = {
           id: "custom",
           name: "Custom",
-          action: AiAction.CUSTOM,
-          prompt,
+          action: mode === "transform" ? AiAction.CUSTOM : AiAction.GENERATE,
+          prompt: prompt.trim(),
         };
       }
 
-      const { from, to } = editor.state.selection;
-      const slice = editor.state.doc.slice(from, to);
-      const serializer = DOMSerializer.fromSchema(editor.schema);
-      const fragment = serializer.serializeFragment(slice.content);
-      const wrapper = document.createElement("div");
-      wrapper.appendChild(fragment);
-      const content = htmlToMarkdown(wrapper.innerHTML);
+      const history =
+        mode === "generate" ? (retry ? turns.slice(0, -1) : turns) : [];
+      const turnPrompt = command.prompt ?? command.name;
+      setTurns([...history, { prompt: turnPrompt, output: "" }]);
 
-      setOutput("");
+      let content = "";
+      if (mode === "transform") {
+        const { from, to } = editor.state.selection;
+        const slice = editor.state.doc.slice(from, to);
+        const serializer = DOMSerializer.fromSchema(editor.schema);
+        const fragment = serializer.serializeFragment(slice.content);
+        const wrapper = document.createElement("div");
+        wrapper.appendChild(fragment);
+        content = htmlToMarkdown(wrapper.innerHTML);
+      }
+
       setIsLoading(true);
       aiGenerateStreamMutation.mutate({
         action: command.action,
         prompt: command.prompt,
         content,
+        ...(mode === "generate" && {
+          messages: buildHistoryMessages(history),
+          pageContent: buildPageContext(editor),
+        }),
         onController: (controller) => {
           streamAbortControllerRef.current = controller;
         },
         onChunk: (chunk) => {
-          setOutput((output) => output + chunk.content);
+          setTurns((turns) => {
+            const last = turns.at(-1);
+            if (!last) return turns;
+            return [
+              ...turns.slice(0, -1),
+              { ...last, output: last.output + chunk.content },
+            ];
+          });
         },
         onComplete: () => {
           streamAbortControllerRef.current = null;
@@ -157,6 +204,11 @@ const EditorAiMenu = ({
           streamAbortControllerRef.current = null;
           setIsLoading(false);
           notifyError(error, "AI generation failed");
+          if (mode === "generate" && history.length > 0) {
+            setTurns(history);
+            setPrompt(turnPrompt);
+            return;
+          }
           resetMenu();
         },
       });
@@ -164,12 +216,32 @@ const EditorAiMenu = ({
     },
     [
       editor,
+      mode,
       prompt,
+      turns,
       isLoading,
-      aiGenerateStreamMutation.mutateAsync,
+      aiGenerateStreamMutation.mutate,
       resetMenu,
     ],
   );
+  const handleStop = useCallback(() => {
+    if (!isLoading) return;
+    streamAbortControllerRef.current?.abort();
+    streamAbortControllerRef.current = null;
+    setIsLoading(false);
+
+    const last = turns.at(-1);
+    if (last?.output) {
+      setActiveCommandSet("result");
+    } else {
+      setTurns(turns.slice(0, -1));
+      if (mode === "generate" && last) setPrompt(last.prompt);
+      setActiveCommandSet(turns.length > 1 ? "result" : "main");
+    }
+    requestAnimationFrame(() =>
+      inputRef.current?.focus({ preventScroll: true }),
+    );
+  }, [isLoading, turns, mode]);
   const handleCommand = useCallback(
     (item?: CommandItem) => {
       setPrompt("");
@@ -180,14 +252,13 @@ const EditorAiMenu = ({
       if (item.id === "back") {
         return setActiveCommandSet("main");
       }
-      if (item.id === "result-replace") {
-        const chain = editor.chain().focus();
-
-        if (lastAction.action === AiAction.CONTINUE_WRITING) {
-          chain.setTextSelection(editor.state.selection.to);
-        }
-
-        const html = (marked.parse(output) as string).trim();
+      if (item.slashItem) {
+        const { from } = editor.state.selection;
+        item.slashItem.command({ editor, range: { from, to: from } });
+        return setShowAiMenu(false);
+      }
+      if (item.id === "result-replace" || item.id === "result-insert") {
+        const html = (markdownToHtml(output) as string).trim();
         const isSingleParagraph =
           html.startsWith("<p>") &&
           html.endsWith("</p>") &&
@@ -201,17 +272,7 @@ const EditorAiMenu = ({
               .innerHTML
           : html;
 
-        chain.insertContent(content).run();
-
-        return setShowAiMenu(false);
-      }
-      if (item.id === "result-insert-below") {
-        editor
-          .chain()
-          .focus()
-          .setTextSelection(editor.state.selection.to)
-          .insertContent(marked.parse(output))
-          .run();
+        editor.chain().focus().insertContent(content).run();
 
         return setShowAiMenu(false);
       }
@@ -221,12 +282,10 @@ const EditorAiMenu = ({
         return setShowAiMenu(false);
       }
       if (item.id === "result-discard") {
-        setOutput("");
-
         return resetMenu();
       }
       if (item.id === "result-try-again" && lastAction) {
-        return handleGenerate(lastAction);
+        return handleGenerate(lastAction, { retry: true });
       }
       if (item.subCommandSet) {
         return setActiveCommandSet(item.subCommandSet);
@@ -234,7 +293,7 @@ const EditorAiMenu = ({
 
       return handleGenerate(item);
     },
-    [editor, output, lastAction, handleGenerate, resetMenu],
+    [editor, output, lastAction, handleGenerate, resetMenu, setShowAiMenu],
   );
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -265,7 +324,7 @@ const EditorAiMenu = ({
         return handleCommand(currentItems[selectedIndex]);
       }
     },
-    [currentItems, selectedIndex],
+    [currentItems, selectedIndex, handleCommand],
   );
 
   useEffect(() => {
@@ -302,6 +361,18 @@ const EditorAiMenu = ({
       observer.disconnect();
     };
   }, [editor, updateMenuPlacement, debouncedUpdateMenuPlacement]);
+
+  useEffect(() => {
+    if (!showAiMenu) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (isOutsideAiMenu(event.target, containerRef.current)) {
+        setShowAiMenu(false);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () =>
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [showAiMenu, setShowAiMenu]);
 
   useEffect(() => {
     setShowAiMenu(false);
@@ -349,7 +420,29 @@ const EditorAiMenu = ({
         tabIndex={0}
         ref={containerRef}
       >
-        <ResultPreview output={output} isLoading={isLoading} />
+        <ResultPreview
+          turns={turns}
+          isLoading={isLoading}
+          showPrompts={mode === "generate"}
+        />
+        {mode === "generate" && turns.length === 0 && !prompt && (
+          <div className={classes.suggestions}>
+            {GENERATE_SUGGESTIONS.map((suggestion) => (
+              <button
+                key={suggestion}
+                type="button"
+                className={classes.suggestion}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setPrompt(t(suggestion));
+                  inputRef.current?.focus({ preventScroll: true });
+                }}
+              >
+                {t(suggestion)}
+              </button>
+            ))}
+          </div>
+        )}
         <CommandSelector
           selectedIndex={selectedIndex}
           isLoading={isLoading}
@@ -360,22 +453,44 @@ const EditorAiMenu = ({
           <TextInput
             ref={inputRef}
             className={classes.aiInput}
-            placeholder={t("Ask AI...")}
+            placeholder={
+              mode === "transform"
+                ? t("Tell AI how to edit the selection...")
+                : turns.length > 0
+                  ? t("Ask a follow-up...")
+                  : t("Ask AI about this page, or type / to insert a block...")
+            }
             data-autofocus
             value={prompt}
             disabled={isLoading}
             onChange={(e) => setPrompt(e.currentTarget.value)}
+            rightSectionPointerEvents="all"
             rightSection={
-              <ActionIcon
-                disabled={!prompt || isLoading}
-                variant="filled"
-                color="blue"
-                radius="xl"
-                size="sm"
-                onClick={() => handleGenerate()}
-              >
-                <IconArrowUp size={14} stroke={2.5} />
-              </ActionIcon>
+              isLoading ? (
+                <ActionIcon
+                  variant="filled"
+                  color="dark"
+                  radius="xl"
+                  size="sm"
+                  aria-label={t("Stop generation")}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={handleStop}
+                >
+                  <IconPlayerStopFilled size={12} />
+                </ActionIcon>
+              ) : (
+                <ActionIcon
+                  disabled={!prompt.trim()}
+                  variant="filled"
+                  color="blue"
+                  radius="xl"
+                  size="sm"
+                  aria-label={t("Send message")}
+                  onClick={() => handleGenerate()}
+                >
+                  <IconArrowUp size={14} stroke={2.5} />
+                </ActionIcon>
+              )
             }
             onKeyDown={handleKeyDown}
           />
