@@ -63,13 +63,21 @@ import { useDebouncedCallback, useDocumentVisibility } from "@mantine/hooks";
 import { useIdle } from "@/hooks/use-idle.ts";
 import { queryClient } from "@/main.tsx";
 import { IPage } from "@/features/page/types/page.types.ts";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { extractPageSlugId, platformModifierKey } from "@/lib";
 import { FIVE_MINUTES } from "@/lib/constants.ts";
 import { jwtDecode } from "jwt-decode";
 import { searchSpotlight } from "@/features/search/constants.ts";
 import { useEditorScroll } from "./hooks/use-editor-scroll";
 import { useSelectionAutoScroll } from "./hooks/use-selection-auto-scroll";
+import {
+  CITATION_PARAM,
+  readCitationQuote,
+} from "@/features/editor/utils/citation-link";
+import {
+  findCitationRange,
+  scrollToCitation,
+} from "@/features/editor/utils/citation-locate";
 import { EditorAiMenu } from "@/features/ai/components/editor/ai-menu/ai-menu";
 import { EditorLinkMenu } from "@/features/editor/components/link/link-menu";
 import ColumnsMenu from "@/features/editor/components/columns/columns-menu.tsx";
@@ -121,6 +129,8 @@ export default function PageEditor({
   const { isIdle, resetIdle } = useIdle(FIVE_MINUTES, { initialState: false });
   const documentState = useDocumentVisibility();
   const { pageSlug } = useParams();
+  const [searchParams] = useSearchParams();
+  const [citationParam] = useState(() => searchParams.get(CITATION_PARAM));
   const slugId = extractPageSlugId(pageSlug);
   const canScroll = useCallback(
     () => Boolean(isComponentMounted.current && editorRef.current),
@@ -417,6 +427,28 @@ export default function PageEditor({
       setShowStatic(false);
     }
   }, [yjsConnectionStatus, isSynced]);
+
+  useEffect(() => {
+    const quote = readCitationQuote(citationParam);
+    if (!editor || showStatic || !quote) return;
+    let attempts = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    let stopFollowing = () => {};
+    const tryScroll = () => {
+      if (editor.isDestroyed) return;
+      const range = findCitationRange(editor.state.doc, quote);
+      if (range) {
+        stopFollowing = scrollToCitation(editor.view, range);
+      } else if (attempts++ < 10) {
+        timer = setTimeout(tryScroll, 300);
+      }
+    };
+    tryScroll();
+    return () => {
+      clearTimeout(timer);
+      stopFollowing();
+    };
+  }, [editor, showStatic, citationParam]);
 
   return (
     <TransclusionLookupProvider>
