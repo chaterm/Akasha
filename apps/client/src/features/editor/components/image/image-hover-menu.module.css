@@ -1,0 +1,21 @@
+.toolbar {
+  position: fixed;
+  z-index: 200;
+  transform: translate(-50%, calc(-100% - 6px));
+  animation: fadeIn 120ms ease-out;
+  user-select: none;
+}
+
+.below {
+  transform: translate(-50%, 6px);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+

@@ -46,6 +46,7 @@ import { ReadonlyBubbleMenu } from "@/features/editor/components/bubble-menu/rea
 import TableMenu from "@/features/editor/components/table/table-menu.tsx";
 import { TableHandlesLayer } from "@/features/editor/components/table/handle/table-handles-layer";
 import ImageMenu from "@/features/editor/components/image/image-menu.tsx";
+import { ImageHoverMenu } from "@/features/editor/components/image/image-hover-menu.tsx";
 import CalloutMenu from "@/features/editor/components/callout/callout-menu.tsx";
 import VideoMenu from "@/features/editor/components/video/video-menu.tsx";
 import PdfMenu from "@/features/editor/components/pdf/pdf-menu.tsx";
@@ -485,6 +486,7 @@ export default function PageEditor({
                 <TableMenu editor={editor} />
                 <TableHandlesLayer editor={editor} />
                 <ImageMenu editor={editor} />
+                <ImageHoverMenu editor={editor} />
                 <VideoMenu editor={editor} />
                 <PdfMenu editor={editor} />
                 <CalloutMenu editor={editor} />
