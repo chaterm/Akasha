@@ -1,0 +1,36 @@
+.unitRow {
+  border-radius: var(--mantine-radius-sm);
+  padding-inline: 4px;
+}
+
+/* 悬停或键盘聚焦时显示。 */
+.unitActions {
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.unitRow:focus-within .unitActions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: hover) {
+  .unitRow:hover {
+    background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6));
+  }
+
+  .unitRow:hover .unitActions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* 触屏没有悬停，始终显示。 */
+@media (hover: none) {
+  .unitActions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
