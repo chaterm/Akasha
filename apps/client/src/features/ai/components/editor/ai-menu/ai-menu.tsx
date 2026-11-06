@@ -31,7 +31,6 @@ import {
   isFocusWithinAiMenu,
   isOutsideAiMenu,
 } from "./ai-menu.utils";
-import { getSlashCommandItems } from "./slash-items";
 import { useTranslation } from "react-i18next";
 import { notifyError } from "@/lib/errors";
 
@@ -82,14 +81,10 @@ const EditorAiMenu = ({
       setMode(editor?.state.selection.empty ? "generate" : "transform");
     }
   }
-  const currentItems = useMemo(() => {
-    if (mode === "generate" && !readOnly) {
-      const slashItems = getSlashCommandItems(prompt, editor);
-      if (slashItems) return slashItems;
-      if (prompt.trim()) return [];
-    }
-    return getVisibleCommandItems(mode, activeCommandSet, prompt, readOnly, t);
-  }, [mode, prompt, activeCommandSet, readOnly, t, editor]);
+  const currentItems = useMemo(
+    () => getVisibleCommandItems(mode, activeCommandSet, prompt, readOnly, t),
+    [mode, prompt, activeCommandSet, readOnly, t],
+  );
   const updateMenuPlacement = useCallback(() => {
     if (!editor || !showAiMenu) return;
 
@@ -251,11 +246,6 @@ const EditorAiMenu = ({
       }
       if (item.id === "back") {
         return setActiveCommandSet("main");
-      }
-      if (item.slashItem) {
-        const { from } = editor.state.selection;
-        item.slashItem.command({ editor, range: { from, to: from } });
-        return setShowAiMenu(false);
       }
       if (item.id === "result-replace" || item.id === "result-insert") {
         const html = (markdownToHtml(output) as string).trim();
@@ -458,7 +448,7 @@ const EditorAiMenu = ({
                 ? t("Tell AI how to edit the selection...")
                 : turns.length > 0
                   ? t("Ask a follow-up...")
-                  : t("Ask AI about this page, or type / to insert a block...")
+                  : t("Ask AI about this page...")
             }
             data-autofocus
             value={prompt}
