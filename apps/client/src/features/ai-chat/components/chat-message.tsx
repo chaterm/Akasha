@@ -11,7 +11,8 @@ import {
   IconExternalLink,
   IconPencil,
 } from "@tabler/icons-react";
-import { markdownToHtml } from "@docmost/editor-ext";
+import { AiMarkdown } from "@/features/ai/components/ai-markdown";
+import { stripAiTextWrapper } from "@/features/ai/utils/ai-text";
 import type {
   AiChatMessage,
   AiChatThinkingItem,
@@ -76,6 +77,9 @@ chatSanitizer.addHook("afterSanitizeAttributes", (node) => {
     node.setAttribute("rel", "noopener noreferrer");
   }
 });
+
+const sanitizeChatHtml = (html: string): string =>
+  chatSanitizer.sanitize(html, { ADD_ATTR: ["target", "rel"] }) as string;
 
 const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif"];
 
@@ -283,19 +287,16 @@ export default function ChatMessage({
         )}
         {content && (
           <div className={classes.answerContent}>
-            <div
+            <AiMarkdown
+              content={stripAiTextWrapper(content)}
+              sanitize={sanitizeChatHtml}
+              isStreaming={Boolean(isStreaming)}
               onClick={handleContentClick}
-              dangerouslySetInnerHTML={{
-                __html: chatSanitizer.sanitize(
-                  markdownToHtml(content) as string,
-                  { ADD_ATTR: ["target", "rel"] },
-                ),
-              }}
             />
             {!isStreaming && (
               <div className={classes.messageActions}>
                 <CopyTextButton
-                  text={message.content}
+                  text={stripAiTextWrapper(message.content || "")}
                   label={t("Copy assistant response")}
                 />
               </div>

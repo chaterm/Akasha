@@ -33,6 +33,7 @@ import {
 } from "./ai-menu.utils";
 import { useTranslation } from "react-i18next";
 import { notifyError } from "@/lib/errors";
+import { stripAiTextWrapper } from "@/features/ai/utils/ai-text";
 
 const GENERATE_SUGGESTIONS = [
   "Compare the key points in a table",
@@ -59,7 +60,7 @@ const EditorAiMenu = ({
   const streamAbortControllerRef = useRef<AbortController | null>(null);
   const [prompt, setPrompt] = useState("");
   const [turns, setTurns] = useState<AiTurn[]>([]);
-  const output = turns.at(-1)?.output ?? "";
+  const output = stripAiTextWrapper(turns.at(-1)?.output ?? "");
   const [isLoading, setIsLoading] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [activeCommandSet, setActiveCommandSet] = useState<CommandSet>("main");
@@ -78,13 +79,26 @@ const EditorAiMenu = ({
   if (showAiMenu !== wasOpen) {
     setWasOpen(showAiMenu);
     if (showAiMenu) {
-      setMode(editor?.state.selection.empty ? "generate" : "transform");
+      setMode(
+        readOnly || editor?.state.selection.empty ? "generate" : "transform",
+      );
     }
   }
+  // Read-only pages only support asking questions, so no command list.
   const currentItems = useMemo(
-    () => getVisibleCommandItems(mode, activeCommandSet, prompt, readOnly, t),
+    () =>
+      readOnly
+        ? []
+        : getVisibleCommandItems(mode, activeCommandSet, prompt, readOnly, t),
     [mode, prompt, activeCommandSet, readOnly, t],
   );
+  const placeholder = readOnly
+    ? t("Ask a question about this page...")
+    : mode === "transform"
+      ? t("Tell AI how to edit the selection...")
+      : turns.length > 0
+        ? t("Ask a follow-up...")
+        : t("Ask AI about this page...");
   const updateMenuPlacement = useCallback(() => {
     if (!editor || !showAiMenu) return;
 
@@ -415,7 +429,7 @@ const EditorAiMenu = ({
           isLoading={isLoading}
           showPrompts={mode === "generate"}
         />
-        {mode === "generate" && turns.length === 0 && !prompt && (
+        {mode === "generate" && !readOnly && turns.length === 0 && !prompt && (
           <div className={classes.suggestions}>
             {GENERATE_SUGGESTIONS.map((suggestion) => (
               <button
@@ -443,13 +457,7 @@ const EditorAiMenu = ({
           <TextInput
             ref={inputRef}
             className={classes.aiInput}
-            placeholder={
-              mode === "transform"
-                ? t("Tell AI how to edit the selection...")
-                : turns.length > 0
-                  ? t("Ask a follow-up...")
-                  : t("Ask AI about this page...")
-            }
+            placeholder={placeholder}
             data-autofocus
             value={prompt}
             disabled={isLoading}

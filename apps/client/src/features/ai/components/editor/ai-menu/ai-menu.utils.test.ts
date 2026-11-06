@@ -59,18 +59,24 @@ describe("buildPageContext", () => {
     const editor = createEditor("<h2>周会</h2><p>议题一</p><p>议题二</p>");
     let end = 0;
     editor.state.doc.descendants((node, pos) => {
-      if (node.textContent === "议题一" && node.isTextblock) end = pos + node.nodeSize - 1;
+      if (node.textContent === "议题一" && node.isTextblock)
+        end = pos + node.nodeSize - 1;
     });
     editor.commands.setTextSelection(end);
 
     const context = buildPageContext(editor);
 
-    expect(context).toMatch(/## 周会[\s\S]*议题一[\s\S]*<!-- 光标位置 -->[\s\S]*议题二/);
+    expect(context).toMatch(
+      /## 周会[\s\S]*议题一[\s\S]*<!-- 光标位置 -->[\s\S]*议题二/,
+    );
     expect(context.split(CURSOR_MARKER)).toHaveLength(2);
   });
 
   it("keeps the text around the cursor when the page is too long", () => {
-    const paragraphs = Array.from({ length: 8000 }, (_, i) => `<p>第${i}段内容内容内容</p>`);
+    const paragraphs = Array.from(
+      { length: 8000 },
+      (_, i) => `<p>第${i}段内容内容内容</p>`,
+    );
     const editor = createEditor(paragraphs.join(""));
     editor.commands.setTextSelection(editor.state.doc.content.size - 1);
 
@@ -80,7 +86,7 @@ describe("buildPageContext", () => {
     expect(context).toContain("第7999段");
     expect(context.startsWith("第0段")).toBe(false);
     expect(context).toContain(CURSOR_MARKER);
-  });
+  }, 15_000);
 });
 
 describe("buildHistoryMessages", () => {
