@@ -177,7 +177,10 @@
 
   .selection,
   *::selection {
-    background-color: light-dark(Highlight, var(--mantine-color-gray-7));
+    background-color: light-dark(
+      var(--mantine-color-blue-2),
+      var(--mantine-color-blue-9)
+    );
   }
 
   .comment-mark {

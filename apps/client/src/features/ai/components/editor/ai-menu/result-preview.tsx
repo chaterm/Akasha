@@ -1,7 +1,7 @@
 import { Loader, Paper, ScrollArea } from "@mantine/core";
-import DOMPurify from "dompurify";
-import { markdownToHtml } from "@docmost/editor-ext";
 import { memo, useEffect, useRef } from "react";
+import { AiMarkdown } from "@/features/ai/components/ai-markdown";
+import { stripAiTextWrapper } from "@/features/ai/utils/ai-text";
 import type { AiTurn } from "./ai-menu.utils";
 import classes from "./ai-menu.module.css";
 
@@ -34,14 +34,13 @@ const ResultPreview = memo(
           <div className={classes.resultPreviewWrapper}>
             {turns.map((turn, index) => (
               <div key={index} className={classes.turn}>
-                {showPrompts && <div className={classes.turnPrompt}>{turn.prompt}</div>}
+                {showPrompts && (
+                  <div className={classes.turnPrompt}>{turn.prompt}</div>
+                )}
                 {turn.output && (
-                  <div
-                    dangerouslySetInnerHTML={{
-                      __html: DOMPurify.sanitize(
-                        markdownToHtml(turn.output) as string,
-                      ),
-                    }}
+                  <AiMarkdown
+                    content={stripAiTextWrapper(turn.output)}
+                    isStreaming={isLoading && index === turns.length - 1}
                   />
                 )}
               </div>

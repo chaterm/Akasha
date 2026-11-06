@@ -15,7 +15,12 @@ import { InfiniteData } from "@tanstack/react-query";
 import { IFileTask } from "@/features/file-task/types/file-task.types.ts";
 import { IAttachment } from "@/features/attachments/types/attachment.types.ts";
 
-export async function createPage(data: Partial<IPage>): Promise<IPage> {
+export async function createPage(
+  data: Partial<Omit<IPage, "content">> & {
+    content?: unknown;
+    format?: "json" | "markdown" | "html";
+  },
+): Promise<IPage> {
   const req = await api.post<IPage>("/pages/create", data);
   return req.data;
 }

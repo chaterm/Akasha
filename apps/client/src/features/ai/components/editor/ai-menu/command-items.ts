@@ -1,5 +1,4 @@
 import { AiAction } from "@/features/ai/types/ai.types.ts";
-import type { SlashMenuItemType } from "@/features/editor/components/slash-menu/types";
 import {
   IconSparkles,
   IconArrowsMaximize,
@@ -24,7 +23,6 @@ interface CommandItem {
   action?: AiAction;
   prompt?: string;
   subCommandSet?: CommandSet;
-  slashItem?: SlashMenuItemType;
 }
 
 type AiMenuMode = "transform" | "generate";

@@ -93,6 +93,15 @@ import {
 } from "@/features/page/queries/watcher-query";
 import type { KnowledgePageIndexModeChoice } from "@/features/page/services/page-service";
 import { notifyError } from "@/lib/errors";
+import { formatBytes } from "@/lib/utils.tsx";
+import { IPage } from "@/features/page/types/page.types.ts";
+import { PageSplitWarning } from "@/features/page-split/components/page-split-warning.tsx";
+import { usePageContentStats } from "@/features/page-split/hooks/use-page-content-stats.ts";
+import {
+  PAGE_IMAGE_LIMIT,
+  PAGE_SIZE_LIMIT_BYTES,
+  PAGE_WORD_LIMIT,
+} from "@/features/page-split/page-split.utils.ts";
 
 const PUBLISH_COOLDOWNS = [10 * 60_000, 30 * 60_000, 2 * 60 * 60_000];
 const publishCooldownKey = (pageId: string) =>
@@ -150,6 +159,8 @@ export default function PageHeaderMenu({ readOnly }: PageHeaderMenuProps) {
   return (
     <>
       <ConnectionWarning />
+
+      {!readOnly && page && <PageSplitWarning page={page} />}
 
       {!readOnly && <PageEditModeControls size="xs" />}
 
@@ -713,38 +724,7 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
 
           <Menu.Divider />
 
-          <>
-            <Group px="sm" wrap="nowrap" style={{ cursor: "pointer" }}>
-              <Tooltip
-                label={t("Edited by {{name}} {{time}}", {
-                  name: page.lastUpdatedBy.name,
-                  time: pageUpdatedAt,
-                })}
-                position="left-start"
-              >
-                <div style={{ width: 210 }}>
-                  <Text size="xs" c="dimmed" truncate="end">
-                    {t("Word count: {{wordCount}}", {
-                      wordCount: pageEditor?.storage?.characterCount?.words(),
-                    })}
-                  </Text>
-
-                  <Text size="xs" c="dimmed" lineClamp={1}>
-                    <Trans
-                      defaults="Created by: <b>{{creatorName}}</b>"
-                      values={{ creatorName: page?.creator?.name }}
-                      components={{ b: <Text span fw={500} /> }}
-                    />
-                  </Text>
-                  <Text size="xs" c="dimmed" truncate="end">
-                    {t("Created at: {{time}}", {
-                      time: formattedDate(page.createdAt),
-                    })}
-                  </Text>
-                </div>
-              </Tooltip>
-            </Group>
-          </>
+          <PageMenuFooter page={page} pageUpdatedAt={pageUpdatedAt} />
         </Menu.Dropdown>
       </Menu>
 
@@ -793,6 +773,60 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
           page={page}
         />
       )}
+    </>
+  );
+}
+
+interface PageMenuFooterProps {
+  page: IPage;
+  pageUpdatedAt: string;
+}
+function PageMenuFooter({ page, pageUpdatedAt }: PageMenuFooterProps) {
+  const { t } = useTranslation();
+  const pageEditor = useAtomValue(pageEditorAtom);
+  const stats = usePageContentStats(pageEditor);
+  const overImages = stats.imageCount > PAGE_IMAGE_LIMIT;
+  const overSize = stats.bytes > PAGE_SIZE_LIMIT_BYTES;
+  const overWords = stats.words > PAGE_WORD_LIMIT;
+
+  return (
+    <>
+      <Group px="sm" wrap="nowrap" style={{ cursor: "pointer" }}>
+        <Tooltip
+          label={t("Edited by {{name}} {{time}}", {
+            name: page.lastUpdatedBy.name,
+            time: pageUpdatedAt,
+          })}
+          position="left-start"
+        >
+          <div style={{ width: 210 }}>
+            <Text size="xs" c={overWords ? "red" : "dimmed"} truncate="end">
+              {t("Word count: {{wordCount}}", {
+                wordCount: pageEditor?.storage?.characterCount?.words(),
+              })}
+            </Text>
+            <Text size="xs" c={overImages ? "red" : "dimmed"} truncate="end">
+              {t("Images: {{imageCount}}", { imageCount: stats.imageCount })}
+            </Text>
+            <Text size="xs" c={overSize ? "red" : "dimmed"} truncate="end">
+              {t("Page size: {{size}}", { size: formatBytes(stats.bytes) })}
+            </Text>
+
+            <Text size="xs" c="dimmed" lineClamp={1}>
+              <Trans
+                defaults="Created by: <b>{{creatorName}}</b>"
+                values={{ creatorName: page?.creator?.name }}
+                components={{ b: <Text span fw={500} /> }}
+              />
+            </Text>
+            <Text size="xs" c="dimmed" truncate="end">
+              {t("Created at: {{time}}", {
+                time: formattedDate(page.createdAt),
+              })}
+            </Text>
+          </div>
+        </Tooltip>
+      </Group>
     </>
   );
 }
