@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useDebouncedValue } from "@mantine/hooks";
 import { Group, Select, SelectProps, Text } from "@mantine/core";
 import { useGetSpacesQuery } from "@/features/space/queries/space-query.ts";
@@ -49,31 +49,23 @@ export function SpaceSelect({
     query: debouncedQuery,
     limit: 50,
   });
-  const [data, setData] = useState([]);
 
-  useEffect(() => {
-    if (spaces) {
-      const spaceData = spaces?.items
+  const options = useMemo(
+    () =>
+      (spaces?.items ?? [])
         .filter((space: ISpace) => space.slug !== value)
-        .map((space: ISpace) => {
-          return {
-            label: space.name,
-            value: space.slug,
-            icon: space.logo,
-          };
-        });
-
-      const filteredSpaceData = spaceData.filter(
-        (space) =>
-          !data.find((existingSpace) => existingSpace.value === space.value),
-      );
-      setData((prevData) => [...prevData, ...filteredSpaceData]);
-    }
-  }, [spaces]);
+        .map((space: ISpace) => ({
+          label: space.name,
+          value: space.slug,
+          icon: space.logo,
+          space,
+        })),
+    [spaces, value],
+  );
 
   return (
     <Select
-      data={data}
+      data={options}
       renderOption={renderSelectOption}
       maxDropdownHeight={300}
       //label={label || 'Select space'}
@@ -83,9 +75,10 @@ export function SpaceSelect({
       onSearchChange={setSearchValue}
       clearable={clearable}
       variant="filled"
-      onChange={(slug) =>
-        onChange(spaces.items?.find((item) => item.slug === slug))
-      }
+      onChange={(slug) => {
+        const space = options.find((option) => option.value === slug)?.space;
+        if (space) onChange(space);
+      }}
       onClick={(e) => e.stopPropagation()}
       nothingFoundMessage={t("No space found")}
       limit={50}
