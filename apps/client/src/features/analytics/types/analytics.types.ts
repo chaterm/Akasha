@@ -1,4 +1,10 @@
-export type AnalyticsRangeKey = "7d" | "30d" | "90d";
+export type AnalyticsRangeKey =
+  | "today"
+  | "yesterday"
+  | "7d"
+  | "30d"
+  | "90d"
+  | "custom";
 
 export interface IAnalyticsCards {
   pv: number;
@@ -112,4 +118,86 @@ export interface ITrackPageView {
   route: string;
   spaceSlug?: string;
   pageSlugId?: string;
+}
+
+export interface AnalyticsDateFilter {
+  range: AnalyticsRangeKey;
+  from?: string;
+  to?: string;
+}
+
+export type UsageGroup = "agent" | "user" | "key";
+export interface AnalyticsUsageFilter extends AnalyticsDateFilter {
+  groupBy: UsageGroup;
+  search?: string;
+  keyType?: string;
+  channel?: string;
+  outcome?: string;
+  op?: string;
+  entityId?: string;
+  sort?: "ops" | "failedOps" | "lastOpAt";
+  direction?: "asc" | "desc";
+  page?: number;
+  limit?: number;
+}
+
+export interface AnalyticsUsageRow {
+  id: string;
+  name: string | null;
+  email: string | null;
+  keyTypes: string[];
+  actors: string | null;
+  creators: string | null;
+  status: string;
+  ops: number;
+  api: number;
+  mcp: number;
+  failedOps: number;
+  unknownOps: number;
+  keyCount: number;
+  lastOpAt: string | null;
+}
+
+export interface AnalyticsUsageOverview {
+  updatedAt: string;
+  summary: {
+    ops: number;
+    api: number;
+    mcp: number;
+    failedOps: number;
+    unknownOps: number;
+    activeAgents: number;
+    activeUsers: number;
+    activeKeys: number;
+  };
+  total: number;
+  page: number;
+  limit: number;
+  items: AnalyticsUsageRow[];
+  daily: { date: string; api: number; mcp: number }[];
+  byOp: { op: string; count: number }[];
+}
+
+export interface AnalyticsUsageEvent {
+  id: string;
+  createdAt: string;
+  op: string;
+  actorId: string | null;
+  actorName: string | null;
+  actorEmail: string | null;
+  userId: string | null;
+  userName: string | null;
+  userEmail: string | null;
+  keyId: string | null;
+  keyName: string | null;
+  keyType: string;
+  channel: string;
+  outcome: string;
+}
+
+export interface AnalyticsUsageEvents {
+  total: number;
+  page: number;
+  limit: number;
+  items: AnalyticsUsageEvent[];
 }

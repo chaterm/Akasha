@@ -1,7 +1,8 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { KnowledgeArtifactContribution } from '@akasha/db/types/entity.types';
 import { KNOWLEDGE_COMPILER_LLM_PROVIDER } from '../llm-wiki.constants';
+import { normalizeStoredContributionStructure } from '../adapters/knowledge-draft-structure';
 import {
   KnowledgeCompilerLlmError,
   KnowledgeCompilerLlmProvider,
@@ -18,6 +19,10 @@ const mergeResultSchema = z
 
 @Injectable()
 export class KnowledgeArtifactMaterializerService {
+  private readonly logger = new Logger(
+    KnowledgeArtifactMaterializerService.name,
+  );
+
   constructor(
     @Inject(KNOWLEDGE_COMPILER_LLM_PROVIDER)
     private readonly provider: KnowledgeCompilerLlmProvider,
@@ -49,10 +54,20 @@ export class KnowledgeArtifactMaterializerService {
       ) {
         continue;
       }
+      const stored = readStoredArtifact(contribution.artifact);
+      const normalized = normalizeStoredContributionStructure(stored);
+      if (!normalized) {
+        // Keep the stored shape rather than guess a source. Retrieval refuses
+        // parent expansion whose lineage does not match the child, so a
+        // colliding legacy parent cannot leak through this contribution.
+        this.logger.warn(
+          `Stored knowledge contribution ${contribution.id} for artifact ${contribution.artifactId} is not attributable to one source; structural keys left unchanged.`,
+        );
+      }
       pushArtifact(
         artifactsById,
         contribution.artifactId,
-        readStoredArtifact(contribution.artifact),
+        normalized ?? stored,
       );
     }
     for (const artifact of input.incomingArtifacts) {

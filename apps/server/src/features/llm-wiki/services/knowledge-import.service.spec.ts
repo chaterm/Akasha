@@ -641,6 +641,12 @@ describe('KnowledgeImportService', () => {
     ).resolves.toEqual({
       importedArtifactCount: 1,
       quarantinedArtifactCount: 0,
+      embedding: { reusedCount: 0, generatedCount: 1, profileMismatchCount: 0 },
+      largestSharedArtifact: {
+        artifactId: 'artifact-1',
+        canonicalKey: 'page:source-1',
+        chunkCount: 1,
+      },
     });
 
     expect(sourceRepo.upsertPageSource).toHaveBeenCalledWith(

@@ -87,10 +87,21 @@ describe('KnowledgePageCompilationService contract', () => {
         resultQuality: 'degraded',
       }),
     };
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation();
     const importService = {
       importCompileResult: jest.fn().mockResolvedValue({
         importedArtifactCount: 1,
         quarantinedArtifactCount: 0,
+        embedding: {
+          reusedCount: 7,
+          generatedCount: 3,
+          profileMismatchCount: 1,
+        },
+        largestSharedArtifact: {
+          artifactId: 'concept-1',
+          canonicalKey: 'processing_logic_subpage',
+          chunkCount: 118,
+        },
       }),
     };
     const compilationRepo = {
@@ -157,6 +168,20 @@ describe('KnowledgePageCompilationService contract', () => {
       qualityStatus: 'degraded',
     });
     expect(runRepo.requestRuns).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'Knowledge publication sizing',
+        sourcePageId: 'page-1',
+        compileTaskId: 'retry-task',
+        embeddingReused: 7,
+        embeddingGenerated: 3,
+        embeddingProfileMismatch: 1,
+        largestSharedArtifactKey: 'processing_logic_subpage',
+        largestSharedArtifactChunks: 118,
+        sharedArtifactChunkLimit: 500,
+      }),
+    );
+    logSpy.mockRestore();
   });
 
   it('logs provider diagnostics when compiler failures carry diagnostic metadata', async () => {

@@ -223,6 +223,11 @@ describe('SemanticKnowledgeCompilerRunner', () => {
     // The marker never survives into stored text or embedding input.
     expect(attachmentChunk?.text).not.toContain('AKASHA_ATTACHMENT');
     expect(attachmentChunk?.embeddingText).not.toContain('AKASHA_ATTACHMENT');
+    // Generated draft prose is memory; only deterministic evidence is evidence.
+    expect(concept?.chunks?.length).toBeGreaterThan(0);
+    expect(
+      concept?.chunks?.every((chunk) => chunk.retrievalChannel === 'memory'),
+    ).toBe(true);
     expect(attachmentChunk?.attachmentOccurrences).toHaveLength(1);
     const attachmentOccurrence = attachmentChunk?.attachmentOccurrences?.[0];
     expect(attachmentOccurrence).toEqual(

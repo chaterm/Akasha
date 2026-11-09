@@ -19,9 +19,11 @@ import {
   WorkspaceCaslSubject,
 } from '../casl/interfaces/workspace-ability.type';
 import { AnalyticsService } from './analytics.service';
+import { AnalyticsUsageService } from './analytics-usage.service';
 import {
   AnalyticsOverviewQueryDto,
   TrackPageViewDto,
+  AnalyticsUsageQueryDto,
 } from './dto/analytics.dto';
 
 @UseGuards(JwtAuthGuard)
@@ -30,6 +32,7 @@ export class AnalyticsController {
   constructor(
     private readonly analyticsService: AnalyticsService,
     private readonly workspaceAbility: WorkspaceAbilityFactory,
+    private readonly usageService: AnalyticsUsageService,
   ) {}
 
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -60,6 +63,37 @@ export class AnalyticsController {
       workspace,
       range: query.range ?? '30d',
       spaceId: query.spaceId,
+      from: query.from,
+      to: query.to,
     });
+  }
+
+  @Get('usage')
+  async usage(
+    @Query() query: AnalyticsUsageQueryDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertCanRead(user, workspace);
+    return this.usageService.query(workspace.id, query);
+  }
+
+  @Get('usage/events')
+  async events(
+    @Query() query: AnalyticsUsageQueryDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertCanRead(user, workspace);
+    return this.usageService.query(workspace.id, query, true);
+  }
+
+  private assertCanRead(user: User, workspace: Workspace) {
+    const ability = this.workspaceAbility.createForUser(user, workspace);
+    if (
+      ability.cannot(WorkspaceCaslAction.Manage, WorkspaceCaslSubject.Settings)
+    ) {
+      throw new ForbiddenException();
+    }
   }
 }

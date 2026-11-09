@@ -165,6 +165,38 @@ describe('KnowledgeCompilationRepo', () => {
     await db.destroy();
   });
 
+  it('treats memory and legacy evidence summary prose as a reusable compiled publication', async () => {
+    const queries: CompiledQuery[] = [];
+    const db = new Kysely<Record<string, never>>({
+      dialect: {
+        createAdapter: () => new PostgresAdapter(),
+        createDriver: () => new DummyDriver(),
+        createIntrospector: (db: Kysely<unknown>) =>
+          new PostgresIntrospector(db),
+        createQueryCompiler: () => new PostgresQueryCompiler(),
+      },
+      plugins: [new CamelCasePlugin()],
+      log: (event) => {
+        if (event.level === 'query') queries.push(event.query);
+      },
+    });
+    const repo = new KnowledgeCompilationRepo(db as never);
+
+    await repo.findSpaceReuseCandidates({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-1',
+      sourcePageIds: ['page-1'],
+    });
+
+    const query = queries[0];
+    expect(query.sql).toContain('("summary_chunk"."retrieval_channel" = $');
+    expect(query.sql).toContain('"summary_chunk"."stable_key" not like $');
+    expect(query.parameters).toEqual(
+      expect.arrayContaining(['memory', 'evidence', 'table-row:%', 'source:%']),
+    );
+    await db.destroy();
+  });
+
   it('starts before source export and fills the source snapshot afterward', async () => {
     const query = new FakeKyselyQuery();
     const repo = new KnowledgeCompilationRepo(query as never);

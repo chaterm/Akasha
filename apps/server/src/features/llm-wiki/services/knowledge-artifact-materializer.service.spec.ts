@@ -57,6 +57,49 @@ describe('KnowledgeArtifactMaterializerService', () => {
     });
   });
 
+  it('keeps each stored source parent for same-named headings instead of collapsing them', async () => {
+    const provider = createProvider();
+    provider.completeMerge.mockResolvedValue(
+      JSON.stringify({ title: 'Event sourcing', markdown: 'Merged body' }),
+    );
+    const service = new KnowledgeArtifactMaterializerService(provider);
+    const legacy = (sourcePageId: string, body: string) => ({
+      ...artifact(sourcePageId, 'Event sourcing', `# 概述\n\n${body}`),
+      // Pre-namespace contributions: identical heading path => identical key.
+      parentSections: [
+        { stableKey: 'collide', headingPath: ['概述'], text: body },
+      ],
+      chunks: [
+        { text: body, stableKey: `c-${body}`, parentStableKey: 'collide' },
+      ],
+    });
+
+    const result = await service.materializeSourceUpdate({
+      sourcePageId: 'page-1',
+      previousSourceContributions: [],
+      affectedContributions: [
+        contribution('page-2', legacy('page-2', 'Body from A')),
+        contribution('page-3', legacy('page-3', 'Body from B')),
+      ],
+      incomingArtifacts: [
+        artifact('page-1', 'Event sourcing', 'Incoming body'),
+      ],
+    });
+
+    const merged = result.artifacts[0];
+    const parentByKey = new Map(
+      merged.parentSections!.map((parent) => [parent.stableKey, parent]),
+    );
+    expect(parentByKey.has('collide')).toBe(false);
+    for (const sourcePageId of ['page-2', 'page-3']) {
+      const child = merged.chunks!.find(
+        (chunk) => chunk.inputSourceRefs?.[0]?.sourcePageId === sourcePageId,
+      )!;
+      const parent = parentByKey.get(child.parentStableKey!)!;
+      expect(parent.inputSourceRefs?.[0]?.sourcePageId).toBe(sourcePageId);
+    }
+  });
+
   it('marks an old artifact removed when the updated source no longer contributes it', async () => {
     const provider = createProvider();
     const service = new KnowledgeArtifactMaterializerService(provider);

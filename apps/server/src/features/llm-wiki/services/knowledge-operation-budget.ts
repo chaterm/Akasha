@@ -8,6 +8,16 @@ export const MAX_KNOWLEDGE_MATERIALIZATIONS_PER_PAGE = 16;
  */
 export const MAX_KNOWLEDGE_CHUNKS_PER_PAGE = 200;
 export const MAX_KNOWLEDGE_TABLE_ROWS_PER_PAGE = 2_000;
+/**
+ * Transitional guard for one shared artifact after merging every source
+ * contribution. It is checked per artifact, never summed across the artifacts
+ * a source page happens to touch, and is deliberately separate from the
+ * source-page limit above. Sized at roughly 4x the largest shared artifact
+ * measured in production on 2026-11-09 (130 chunks, 91 sources), leaving room
+ * for chunks restored by the source-namespace fix. Revisit with the
+ * `largestSharedArtifactChunks` publication log (see minimal-fix plan §3.2).
+ */
+export const MAX_SHARED_ARTIFACT_CHUNKS = 500;
 export const DEFAULT_KNOWLEDGE_SPACE_SLOT_WORST_CASE_MS =
   300_000 + 900_000 + 300_000 + 5_000;
 
@@ -28,6 +38,31 @@ export class KnowledgeComplexityLimitError extends Error {
   ) {
     super(`Knowledge page exceeded the ${limitKind} limit.`);
     this.name = 'KnowledgeComplexityLimitError';
+  }
+}
+
+/**
+ * A single shared artifact (after merging all contributions) is too large.
+ * Attributed to the artifact, not to the source page that triggered it.
+ */
+export class KnowledgeSharedArtifactLimitError extends Error {
+  readonly code = 'shared_artifact_complexity_limit';
+  readonly retryable = false;
+
+  constructor(
+    readonly limitKind: Extract<
+      KnowledgeComplexityLimitKind,
+      'chunks' | 'table_rows'
+    >,
+    readonly limit: number,
+    readonly actual: number,
+    readonly artifactId: string,
+    readonly canonicalKey: string | null,
+  ) {
+    super(
+      `Shared knowledge artifact ${canonicalKey ?? artifactId} exceeded the ${limitKind} limit (${actual}/${limit}).`,
+    );
+    this.name = 'KnowledgeSharedArtifactLimitError';
   }
 }
 
@@ -62,6 +97,32 @@ export class KnowledgeOperationBudget {
 
   assertTableRowCount(count: number): void {
     assertLimit('table_rows', count, MAX_KNOWLEDGE_TABLE_ROWS_PER_PAGE);
+  }
+
+  assertSharedArtifactCounts(input: {
+    artifactId: string;
+    canonicalKey: string | null;
+    chunkCount: number;
+    tableRowCount: number;
+  }): void {
+    if (input.chunkCount > MAX_SHARED_ARTIFACT_CHUNKS) {
+      throw new KnowledgeSharedArtifactLimitError(
+        'chunks',
+        MAX_SHARED_ARTIFACT_CHUNKS,
+        input.chunkCount,
+        input.artifactId,
+        input.canonicalKey,
+      );
+    }
+    if (input.tableRowCount > MAX_KNOWLEDGE_TABLE_ROWS_PER_PAGE) {
+      throw new KnowledgeSharedArtifactLimitError(
+        'table_rows',
+        MAX_KNOWLEDGE_TABLE_ROWS_PER_PAGE,
+        input.tableRowCount,
+        input.artifactId,
+        input.canonicalKey,
+      );
+    }
   }
 }
 

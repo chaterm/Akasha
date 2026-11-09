@@ -1034,6 +1034,72 @@ describe('KnowledgeCapsuleRepo', () => {
     ]);
   });
 
+  it('expands a parent only when its lineage is covered by the child lineage', async () => {
+    const chunk = (id: string, parentSectionId: string | null) => ({
+      id,
+      workspaceId: 'workspace-1',
+      knowledgePageId: 'concept-1',
+      parentSectionId,
+      staleAt: null,
+    });
+    const lineage = (sourcePageId: string) => ({
+      sourcePageId,
+      sourceVersion: 'v1',
+      contentHash: `${sourcePageId}-hash`,
+    });
+    const query = new FakeKyselyQuery({
+      knowledgeChunks: [
+        chunk('child-b-own-parent', 'parent-b'),
+        chunk('child-b-foreign-parent', 'parent-a'),
+        chunk('child-no-parent-lineage', 'parent-empty'),
+      ],
+      knowledgePages: [basePage('concept-1')],
+      knowledgeParentSections: [
+        { id: 'parent-a', knowledgePageId: 'concept-1', text: 'A text' },
+        { id: 'parent-b', knowledgePageId: 'concept-1', text: 'B text' },
+        { id: 'parent-empty', knowledgePageId: 'concept-1', text: 'x' },
+      ],
+      knowledgeChunkSources: [
+        { chunkId: 'child-b-own-parent', ...lineage('source-b') },
+        { chunkId: 'child-b-foreign-parent', ...lineage('source-b') },
+        { chunkId: 'child-no-parent-lineage', ...lineage('source-b') },
+      ],
+      knowledgeParentSectionSources: [
+        { parentSectionId: 'parent-a', ...lineage('source-a') },
+        { parentSectionId: 'parent-b', ...lineage('source-b') },
+      ],
+    });
+    const repo = createRepo(query) as unknown as {
+      hydrateRankedChunkCandidates: (
+        rows: Array<{ chunkId: string; score: number }>,
+        signal: string,
+        input: { workspaceId: string; spaceIds: string[]; principals: [] },
+      ) => Promise<
+        Array<{ chunk: { id: string }; parentSection?: { id: string } }>
+      >;
+    };
+
+    const result = await repo.hydrateRankedChunkCandidates(
+      [
+        { chunkId: 'child-b-own-parent', score: 0.1 },
+        { chunkId: 'child-b-foreign-parent', score: 0.2 },
+        { chunkId: 'child-no-parent-lineage', score: 0.3 },
+      ],
+      'semantic',
+      { workspaceId: 'workspace-1', spaceIds: ['space-1'], principals: [] },
+    );
+
+    expect(
+      result.map((entry) => [entry.chunk.id, entry.parentSection?.id ?? null]),
+    ).toEqual([
+      ['child-b-own-parent', 'parent-b'],
+      // Same knowledge page, but parent A carries lineage child B does not:
+      // the authorized child is returned without A's parent text.
+      ['child-b-foreign-parent', null],
+      ['child-no-parent-lineage', null],
+    ]);
+  });
+
   it('finds chunk source refs with ranges and quote hashes in one batch', async () => {
     const query = new FakeKyselyQuery({
       knowledgeChunkSources: [
