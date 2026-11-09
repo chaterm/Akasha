@@ -21,7 +21,7 @@ import {
   KnowledgeParentSectionSource,
 } from '@akasha/db/types/entity.types';
 import { sql } from 'kysely';
-import { toSql as vectorToSql } from 'pgvector';
+import { fromSql as vectorFromSql, toSql as vectorToSql } from 'pgvector';
 
 type SourcePageRow = { sourcePageId: string };
 type ChunkSourcePageRow = { chunkId: string; sourcePageId: string };
@@ -1248,6 +1248,76 @@ export class KnowledgeCapsuleRepo {
     );
   }
 
+  /**
+   * Stored vectors for chunk ids about to be republished. Chunk ids are derived
+   * from the exact embedding input, so a row with the same id carries a vector
+   * for the same input; callers still must match the embedding profile.
+   */
+  async findChunkEmbeddingsByIds(input: {
+    workspaceId: string;
+    chunkIds: string[];
+  }): Promise<
+    Array<{
+      id: string;
+      embedding: number[];
+      embeddingProfile: string;
+      embeddingModel: string | null;
+      embeddingDimensions: number;
+      embeddingTotalTokens: number | null;
+      embeddingDurationMs: number | null;
+    }>
+  > {
+    if (input.chunkIds.length === 0) return [];
+    const rows = await this.db
+      .selectFrom('knowledgeChunks')
+      .select([
+        'id',
+        'embedding',
+        'embeddingProfile',
+        'embeddingModel',
+        'embeddingDimensions',
+        'embeddingTotalTokens',
+        'embeddingDurationMs',
+      ])
+      .where('workspaceId', '=', input.workspaceId)
+      .where('id', 'in', input.chunkIds)
+      .where('embedding', 'is not', null)
+      .where('embeddingProfile', 'is not', null)
+      .where('embeddingDimensions', 'is not', null)
+      .execute();
+    return rows.map((row) => ({
+      id: row.id,
+      embedding: vectorFromSql(row.embedding as string),
+      embeddingProfile: row.embeddingProfile as string,
+      embeddingModel: row.embeddingModel,
+      embeddingDimensions: row.embeddingDimensions as number,
+      embeddingTotalTokens: row.embeddingTotalTokens,
+      embeddingDurationMs: row.embeddingDurationMs,
+    }));
+  }
+
+  async findPageSourcePageIdsByPageIds(input: {
+    workspaceId: string;
+    knowledgePageIds: string[];
+  }): Promise<Map<string, string[]>> {
+    if (input.knowledgePageIds.length === 0) return new Map();
+    const rows = await this.db
+      .selectFrom('knowledgePageSources')
+      .select(['knowledgePageId', 'sourcePageId'])
+      .where('workspaceId', '=', input.workspaceId)
+      .where('knowledgePageId', 'in', input.knowledgePageIds)
+      .execute();
+    const grouped = groupBy(rows, (row) => row.knowledgePageId);
+    return new Map(
+      input.knowledgePageIds.map((knowledgePageId) => [
+        knowledgePageId,
+        unique(
+          (grouped.get(knowledgePageId) ?? []).map((row) => row.sourcePageId),
+        ),
+      ]),
+    );
+  }
+
   async findChunkSourcePageIdsByChunkIds(
     input: { workspaceId: string; chunkIds: string[] },
     trx?: KyselyTransaction,
@@ -1643,8 +1713,18 @@ export class KnowledgeCapsuleRepo {
     const sourcesByChunkId = new Map(
       sourceRows.map((row) => [row.chunkId, row.sourcePageIds]),
     );
+    const expandableParentIds = await this.findExpandableParentIds(
+      {
+        workspaceId: input.workspaceId,
+        chunks,
+        parentSections,
+      },
+      trx,
+    );
     const parentById = new Map(
-      parentSections.map((parent) => [parent.id, parent]),
+      parentSections
+        .filter((parent) => expandableParentIds.has(parent.id))
+        .map((parent) => [parent.id, parent]),
     );
 
     return rows.flatMap((row) => {
@@ -1656,9 +1736,11 @@ export class KnowledgeCapsuleRepo {
         return [];
       }
 
-      const parentSection = chunk.parentSectionId
-        ? parentById.get(chunk.parentSectionId)
-        : undefined;
+      const parentSection =
+        chunk.parentSectionId &&
+        expandableParentIds.has(`${chunk.id}:${chunk.parentSectionId}`)
+          ? parentById.get(chunk.parentSectionId)
+          : undefined;
       return [
         {
           chunk,
@@ -1671,6 +1753,90 @@ export class KnowledgeCapsuleRepo {
         },
       ];
     });
+  }
+
+  /**
+   * Parent expansion replaces a child's text with its parent's text, so the
+   * parent must not carry any lineage the child does not. A parent is
+   * expandable for a child only when it belongs to the same knowledge page and
+   * every (source, version, content hash) of the parent also backs the child.
+   * Since the child's sources are authorized before it is returned, this also
+   * means every parent source is authorized. Missing lineage on either side is
+   * treated as not expandable, and the authorized child is returned as is.
+   *
+   * Returns parent ids that are expandable for at least one child, plus
+   * `${chunkId}:${parentId}` pairs for the exact child/parent decision.
+   */
+  private async findExpandableParentIds(
+    input: {
+      workspaceId: string;
+      chunks: KnowledgeChunk[];
+      parentSections: KnowledgeParentSection[];
+    },
+    trx?: KyselyTransaction,
+  ): Promise<Set<string>> {
+    const expandable = new Set<string>();
+    if (input.parentSections.length === 0) return expandable;
+    const linked = input.chunks.filter((chunk) => chunk.parentSectionId);
+    if (linked.length === 0) return expandable;
+
+    const db = dbOrTx(this.db, trx);
+    const [chunkSources, parentSources] = await Promise.all([
+      db
+        .selectFrom('knowledgeChunkSources')
+        .select(['chunkId', 'sourcePageId', 'sourceVersion', 'contentHash'])
+        .where('workspaceId', '=', input.workspaceId)
+        .where(
+          'chunkId',
+          'in',
+          linked.map((chunk) => chunk.id),
+        )
+        .execute(),
+      db
+        .selectFrom('knowledgeParentSectionSources')
+        .select([
+          'parentSectionId',
+          'sourcePageId',
+          'sourceVersion',
+          'contentHash',
+        ])
+        .where('workspaceId', '=', input.workspaceId)
+        .where(
+          'parentSectionId',
+          'in',
+          input.parentSections.map((parent) => parent.id),
+        )
+        .execute(),
+    ]);
+    const lineageKey = (row: {
+      sourcePageId: string;
+      sourceVersion: string;
+      contentHash: string;
+    }) => `${row.sourcePageId}@${row.sourceVersion}#${row.contentHash}`;
+    const chunkLineage = groupBy(chunkSources, (row) => row.chunkId);
+    const parentLineage = groupBy(parentSources, (row) => row.parentSectionId);
+    const parentById = new Map(
+      input.parentSections.map((parent) => [parent.id, parent]),
+    );
+
+    for (const chunk of linked) {
+      const parent = parentById.get(chunk.parentSectionId as string);
+      if (!parent || parent.knowledgePageId !== chunk.knowledgePageId) continue;
+      const childKeys = new Set(
+        (chunkLineage.get(chunk.id) ?? []).map(lineageKey),
+      );
+      const parentKeys = (parentLineage.get(parent.id) ?? []).map(lineageKey);
+      if (
+        childKeys.size === 0 ||
+        parentKeys.length === 0 ||
+        !parentKeys.every((key) => childKeys.has(key))
+      ) {
+        continue;
+      }
+      expandable.add(parent.id);
+      expandable.add(`${chunk.id}:${parent.id}`);
+    }
+    return expandable;
   }
 
   private async deleteChildArtifacts(

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectKysely } from 'nestjs-kysely';
+import { sql } from 'kysely';
 import { JsonValue } from '@akasha/db/types/db';
 import {
   KnowledgeArtifactContribution,
@@ -66,6 +67,36 @@ export class KnowledgeArtifactContributionRepo {
       .orderBy('spaceId', 'asc')
       .orderBy('sourcePageId', 'asc')
       .execute();
+  }
+
+  /**
+   * Title each source gave its own contribution to an artifact. Used when a
+   * reader cannot see every source of the merged artifact and must not see its
+   * merged title. Reads only the title field, not the whole payload.
+   */
+  async findContributionTitles(input: {
+    workspaceId: string;
+    pairs: Array<{ artifactId: string; sourcePageId: string }>;
+  }): Promise<
+    Array<{ artifactId: string; sourcePageId: string; title: string | null }>
+  > {
+    if (input.pairs.length === 0) return [];
+    const rows = await this.db
+      .selectFrom('knowledgeArtifactContributions')
+      .select([
+        'artifactId',
+        'sourcePageId',
+        sql<string | null>`artifact ->> 'title'`.as('title'),
+      ])
+      .where('workspaceId', '=', input.workspaceId)
+      .where('artifactId', 'in', [
+        ...new Set(input.pairs.map((pair) => pair.artifactId)),
+      ])
+      .where('sourcePageId', 'in', [
+        ...new Set(input.pairs.map((pair) => pair.sourcePageId)),
+      ])
+      .execute();
+    return rows;
   }
 
   async replaceSourceContributions(

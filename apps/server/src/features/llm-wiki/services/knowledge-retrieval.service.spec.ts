@@ -1,4 +1,5 @@
 import { KnowledgeCapsuleRepo } from '@akasha/db/repos/llm-wiki/knowledge-capsule.repo';
+import { KnowledgeArtifactContributionRepo } from '@akasha/db/repos/llm-wiki/knowledge-artifact-contribution.repo';
 import { GroupUserRepo } from '@akasha/db/repos/group/group-user.repo';
 import { UserRepo } from '@akasha/db/repos/user/user.repo';
 import { UserRole } from '../../../common/helpers/types/permission';
@@ -74,6 +75,120 @@ describe('KnowledgeRetrievalService', () => {
 
     expect(embeddingProvider.embedQuery).toHaveBeenCalledWith('bounded query', {
       abortSignal: abortController.signal,
+    });
+  });
+
+  it('withholds merged concept metadata from a reader of only some concept sources', async () => {
+    const capsuleRepo = {
+      findDenseChunkCandidates: jest
+        .fn()
+        .mockResolvedValue([
+          chunkCandidate(
+            'chunk-from-a',
+            'kp-concept',
+            ['source-a'],
+            ['semantic'],
+            [0.95, 0.05],
+            'Fact from source A',
+          ),
+        ]),
+      findChunkSourcePageIdsByChunkIds: jest
+        .fn()
+        .mockResolvedValue([
+          { chunkId: 'chunk-from-a', sourcePageIds: ['source-a'] },
+        ]),
+      findPageSourcePageIdsByPageIds: jest
+        .fn()
+        .mockResolvedValue(new Map([['kp-concept', ['source-a', 'source-b']]])),
+    };
+    const contributionRepo = {
+      findContributionTitles: jest
+        .fn()
+        .mockResolvedValue([
+          {
+            artifactId: 'kp-concept',
+            sourcePageId: 'source-a',
+            title: 'A title',
+          },
+        ]),
+    };
+    const service = createService({
+      capsuleRepo,
+      contributionRepo,
+      sourceAuthorization: {
+        filterReadableSources: jest
+          .fn()
+          .mockImplementation(async ({ sourcePageIds }) =>
+            sourcePageIds.filter((id: string) => id === 'source-a'),
+          ),
+      },
+    });
+
+    const result = await service.retrieve({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: 'fact',
+      spaceIds: ['space-1'],
+    });
+
+    expect(result.chunks).toHaveLength(1);
+    expect(result.chunks[0].chunk.id).toBe('chunk-from-a');
+    expect(result.chunks[0].page).toMatchObject({
+      id: 'kp-concept',
+      title: 'A title',
+      canonicalKey: null,
+      summary: null,
+      body: '',
+    });
+    expect(contributionRepo.findContributionTitles).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      pairs: [{ artifactId: 'kp-concept', sourcePageId: 'source-a' }],
+    });
+  });
+
+  it('keeps merged concept metadata for a reader of every concept source', async () => {
+    const capsuleRepo = {
+      findDenseChunkCandidates: jest
+        .fn()
+        .mockResolvedValue([
+          chunkCandidate(
+            'chunk-from-a',
+            'kp-concept',
+            ['source-a'],
+            ['semantic'],
+            [0.95, 0.05],
+            'Fact from source A',
+          ),
+        ]),
+      findChunkSourcePageIdsByChunkIds: jest
+        .fn()
+        .mockResolvedValue([
+          { chunkId: 'chunk-from-a', sourcePageIds: ['source-a'] },
+        ]),
+      findPageSourcePageIdsByPageIds: jest
+        .fn()
+        .mockResolvedValue(new Map([['kp-concept', ['source-a', 'source-b']]])),
+    };
+    const service = createService({
+      capsuleRepo,
+      contributionRepo: { findContributionTitles: jest.fn() },
+      sourceAuthorization: {
+        filterReadableSources: jest
+          .fn()
+          .mockImplementation(async ({ sourcePageIds }) => sourcePageIds),
+      },
+    });
+
+    const result = await service.retrieve({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      query: 'fact',
+      spaceIds: ['space-1'],
+    });
+
+    expect(result.chunks[0].page).toMatchObject({
+      title: 'Title kp-concept',
+      body: 'Body kp-concept',
     });
   });
 
@@ -1686,6 +1801,7 @@ function createService(
     groupUserRepo?: Partial<GroupUserRepo>;
     sourceAuthorization?: Partial<KnowledgeSourceAuthorizationService>;
     embeddingProvider?: Partial<KnowledgeEmbeddingProvider>;
+    contributionRepo?: Partial<KnowledgeArtifactContributionRepo>;
   } = {},
 ) {
   const userRepo = {
@@ -1730,6 +1846,7 @@ function createService(
     sourceAuthorization as unknown as KnowledgeSourceAuthorizationService,
     embeddingProvider as unknown as ConfiguredKnowledgeEmbeddingProvider,
     new KnowledgeRetrievalRankerService(),
+    overrides.contributionRepo as unknown as KnowledgeArtifactContributionRepo,
   );
 }
 

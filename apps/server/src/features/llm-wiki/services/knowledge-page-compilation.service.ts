@@ -9,6 +9,7 @@ import {
 import { KnowledgeCompilerAdapter } from '../adapters/knowledge-compiler.adapter';
 import {
   KnowledgeCompilationValidationError,
+  KnowledgeImportResult,
   KnowledgeImportService,
 } from './knowledge-import.service';
 import { KnowledgeAccessIndexerService } from './knowledge-access-indexer.service';
@@ -29,6 +30,8 @@ import { KnowledgeCompilerLlmError } from '../compiler/knowledge-compiler-llm.pr
 import {
   KnowledgeComplexityLimitError,
   KnowledgeOperationBudget,
+  KnowledgeSharedArtifactLimitError,
+  MAX_SHARED_ARTIFACT_CHUNKS,
 } from './knowledge-operation-budget';
 import { uniqueValues } from './knowledge-queue.utils';
 import { KnowledgeEmbeddingError } from './knowledge-embedding-provider.service';
@@ -370,6 +373,13 @@ export class KnowledgePageCompilationService {
         await this.skipCancelledAttempt({ data, sourcePageId, compileTaskId });
         return { outcome: 'noop', result: noOpPageResult(data, startedAt) };
       }
+      this.logPublicationSizing({
+        workspaceId: data.workspaceId,
+        spaceId: data.spaceId,
+        sourcePageId,
+        compileTaskId,
+        importResult,
+      });
       await this.accessIndexer.reindexSourcePages({
         workspaceId: data.workspaceId,
         sourcePageIds: [sourcePageId],
@@ -397,6 +407,9 @@ export class KnowledgePageCompilationService {
           sourceCount: sources.length,
           importedArtifactCount: importResult.importedArtifactCount,
           quarantinedArtifactCount: importResult.quarantinedArtifactCount,
+          ...(importResult.embedding
+            ? { embedding: importResult.embedding }
+            : {}),
           durationMs: Math.max(0, Date.now() - startedAt),
         },
       };
@@ -619,6 +632,13 @@ export class KnowledgePageCompilationService {
         });
         return { outcome: 'noop', result: noOpMergeResult(data, startedAt) };
       }
+      this.logPublicationSizing({
+        workspaceId: data.workspaceId,
+        spaceId: data.spaceId,
+        sourcePageId: data.sourcePageId,
+        compileTaskId,
+        importResult,
+      });
       await this.accessIndexer.reindexSourcePages({
         workspaceId: data.workspaceId,
         sourcePageIds: [data.sourcePageId],
@@ -633,6 +653,9 @@ export class KnowledgePageCompilationService {
           sourceCount: 1,
           importedArtifactCount: importResult.importedArtifactCount,
           quarantinedArtifactCount: importResult.quarantinedArtifactCount,
+          ...(importResult.embedding
+            ? { embedding: importResult.embedding }
+            : {}),
           durationMs: Math.max(0, Date.now() - startedAt),
         },
       };
@@ -748,6 +771,45 @@ export class KnowledgePageCompilationService {
       providerDiagnostic: error.diagnostic,
     });
   }
+
+  /**
+   * Vector reuse and shared-artifact size per publication. The SPACE runner and
+   * MERGE worker do not persist page results, so this log line is where the
+   * reuse rate and the largest merged artifact are observed before the
+   * transitional shared-artifact cap is tuned. Counts and ids only.
+   */
+  private logPublicationSizing(input: {
+    workspaceId: string;
+    spaceId: string;
+    sourcePageId: string;
+    compileTaskId: string;
+    importResult: KnowledgeImportResult;
+  }): void {
+    const { embedding, largestSharedArtifact } = input.importResult;
+    if (!embedding && !largestSharedArtifact) return;
+    this.logger.log({
+      message: 'Knowledge publication sizing',
+      workspaceId: input.workspaceId,
+      spaceId: input.spaceId,
+      sourcePageId: input.sourcePageId,
+      compileTaskId: input.compileTaskId,
+      ...(embedding
+        ? {
+            embeddingReused: embedding.reusedCount,
+            embeddingGenerated: embedding.generatedCount,
+            embeddingProfileMismatch: embedding.profileMismatchCount,
+          }
+        : {}),
+      ...(largestSharedArtifact
+        ? {
+            largestSharedArtifactId: largestSharedArtifact.artifactId,
+            largestSharedArtifactKey: largestSharedArtifact.canonicalKey,
+            largestSharedArtifactChunks: largestSharedArtifact.chunkCount,
+            sharedArtifactChunkLimit: MAX_SHARED_ARTIFACT_CHUNKS,
+          }
+        : {}),
+    });
+  }
 }
 
 function isSameSourceSnapshot(
@@ -815,7 +877,8 @@ function classifyCompilationFailure(error: unknown): {
     error instanceof KnowledgeCompilerLlmError ||
     error instanceof KnowledgeCompilationValidationError ||
     error instanceof KnowledgeEmbeddingError ||
-    error instanceof KnowledgeComplexityLimitError
+    error instanceof KnowledgeComplexityLimitError ||
+    error instanceof KnowledgeSharedArtifactLimitError
   ) {
     return {
       code: error.code,

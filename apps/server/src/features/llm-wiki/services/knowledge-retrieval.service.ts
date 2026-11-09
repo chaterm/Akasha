@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { GroupUserRepo } from '@akasha/db/repos/group/group-user.repo';
+import { KnowledgeArtifactContributionRepo } from '@akasha/db/repos/llm-wiki/knowledge-artifact-contribution.repo';
 import {
   KnowledgeCapsuleRepo,
   KnowledgeChunkCandidate,
@@ -137,6 +138,8 @@ export class KnowledgeRetrievalService {
     private readonly sourceAuthorization: KnowledgeSourceAuthorizationService,
     private readonly embeddingProvider: ConfiguredKnowledgeEmbeddingProvider,
     private readonly ranker: KnowledgeRetrievalRankerService,
+    @Optional()
+    private readonly contributionRepo?: KnowledgeArtifactContributionRepo,
   ) {}
 
   async retrieve(input: {
@@ -740,11 +743,29 @@ export class KnowledgeRetrievalService {
       graphThreshold: graphMaxCosineDistance,
     });
 
+    const disclosedChunks = await measureAiChatPhase(
+      input.debugTiming,
+      'retrieval.redact_page_metadata',
+      () =>
+        this.redactUnreadablePageMetadata({
+          workspaceId: input.workspaceId,
+          userId: input.userId,
+          supplementalUserId: input.supplementalUserId,
+          chunks: selectedChunks,
+          authCache,
+        }),
+      (result) => ({
+        redactedChunkCount: result.filter(
+          (candidate, index) => candidate.page !== selectedChunks[index].page,
+        ).length,
+      }),
+    );
+
     return {
       mode: accessPolicyFallbackUsed
         ? 'high_completeness_fallback'
         : 'high_completeness',
-      chunks: selectedChunks,
+      chunks: disclosedChunks,
       capsules: [],
       directHitChunkIds,
       retrievalObservation: {
@@ -790,6 +811,88 @@ export class KnowledgeRetrievalService {
         },
       },
     };
+  }
+
+  /**
+   * A chunk is authorized by its own sources, but its knowledge page's title,
+   * canonicalKey, summary and body are merged from every source of the page.
+   * When the reader cannot read all page sources, return a page copy with that
+   * concept-level metadata removed: the title becomes the title the chunk's own
+   * (authorized) source gave its contribution, and canonicalKey/summary/body
+   * are cleared. The artifact id stays as a non-semantic identifier.
+   */
+  private async redactUnreadablePageMetadata(input: {
+    workspaceId: string;
+    userId: string;
+    supplementalUserId?: string;
+    chunks: KnowledgeRetrievalResult['chunks'];
+    authCache: KnowledgeAuthorizationCache;
+  }): Promise<KnowledgeRetrievalResult['chunks']> {
+    if (input.chunks.length === 0) return input.chunks;
+    // Compatibility for injected test repos that predate page-level metadata
+    // authorization. The production repo always implements it.
+    if (typeof this.capsuleRepo.findPageSourcePageIdsByPageIds !== 'function') {
+      return input.chunks;
+    }
+    const pageIds = unique(input.chunks.map((candidate) => candidate.page.id));
+    const pageSources = await this.capsuleRepo.findPageSourcePageIdsByPageIds({
+      workspaceId: input.workspaceId,
+      knowledgePageIds: pageIds,
+    });
+    const readable = new Set(
+      await this.sourceAuthorization.filterReadableSources({
+        workspaceId: input.workspaceId,
+        userId: input.userId,
+        supplementalUserId: input.supplementalUserId,
+        sourcePageIds: unique([...pageSources.values()].flat()),
+        cache: input.authCache,
+      }),
+    );
+    const restricted = input.chunks.filter((candidate) => {
+      const sources = pageSources.get(candidate.page.id) ?? [];
+      return (
+        sources.length === 0 ||
+        !sources.every((sourcePageId) => readable.has(sourcePageId))
+      );
+    });
+    if (restricted.length === 0) return input.chunks;
+
+    const titleRows = this.contributionRepo
+      ? await this.contributionRepo.findContributionTitles({
+          workspaceId: input.workspaceId,
+          pairs: restricted.flatMap((candidate) =>
+            candidate.sourcePageIds.map((sourcePageId) => ({
+              artifactId: candidate.page.id,
+              sourcePageId,
+            })),
+          ),
+        })
+      : [];
+    const titleByPair = new Map(
+      titleRows
+        .filter((row) => row.title)
+        .map((row) => [`${row.artifactId}:${row.sourcePageId}`, row.title!]),
+    );
+    const restrictedSet = new Set(restricted);
+    return input.chunks.map((candidate) => {
+      if (!restrictedSet.has(candidate)) return candidate;
+      const title =
+        candidate.sourcePageIds
+          .map((sourcePageId) =>
+            titleByPair.get(`${candidate.page.id}:${sourcePageId}`),
+          )
+          .find(Boolean) ?? 'Untitled';
+      return {
+        ...candidate,
+        page: {
+          ...candidate.page,
+          title,
+          canonicalKey: null,
+          summary: null,
+          body: '',
+        },
+      };
+    });
   }
 
   private async expandGraph(input: {

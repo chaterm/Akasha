@@ -40,11 +40,25 @@ import { stableKnowledgeUuid } from './knowledge-stable-id';
 const KNOWLEDGE_EMBEDDING_BATCH_SIZE =
   BAILIAN_TEXT_EMBEDDING_V4_MAX_INPUTS_PER_REQUEST;
 
+export interface KnowledgeEmbeddingReuseStats {
+  reusedCount: number;
+  generatedCount: number;
+  /** Stored candidates re-embedded because their profile did not match. */
+  profileMismatchCount: number;
+}
+
 export interface KnowledgeImportResult {
   importedArtifactCount: number;
   quarantinedArtifactCount: number;
   degradedRetrievalProfiles?: string[];
   skippedReason?: 'run_superseded';
+  embedding?: KnowledgeEmbeddingReuseStats;
+  /** Largest merged shared artifact in this publication, for sizing the cap. */
+  largestSharedArtifact?: {
+    artifactId: string;
+    canonicalKey: string | null;
+    chunkCount: number;
+  };
 }
 
 export type KnowledgeImportStage =
@@ -54,6 +68,7 @@ export type KnowledgeImportStage =
   | 'import';
 
 type ArtifactChunk = NonNullable<CompiledKnowledgeArtifact['chunks']>[number];
+type ChunkIdentity = { id: string; stableKey: string };
 type EmbeddedArtifactChunk = Omit<ArtifactChunk, 'embedding'> & {
   embedding: KnowledgeEmbedding;
 };
@@ -140,6 +155,7 @@ export class KnowledgeImportService {
     }
 
     let artifactsToPublish = validation.accepted;
+    let largestSharedArtifact: KnowledgeImportResult['largestSharedArtifact'];
     let contributionPublication:
       | {
           sourcePageId: string;
@@ -183,9 +199,14 @@ export class KnowledgeImportService {
       artifactsToPublish = isOriginalPagePublication
         ? [...materialized.artifacts, ...validation.accepted]
         : materialized.artifacts;
-      // Materialization can union chunks from several source contributions, so
-      // enforce the same budgets again on the representation actually written.
-      assertPublicationChunkBudgets(operationBudget, artifactsToPublish);
+      // Materialized artifacts union chunks from every source contribution, so
+      // they are checked one artifact at a time against the shared limit. The
+      // source-page budget above already covered this page's own output; the
+      // history of other sources must not be charged to this page.
+      largestSharedArtifact = assertSharedArtifactChunkBudgets(
+        operationBudget,
+        materialized.artifacts,
+      );
       contributionPublication = {
         sourcePageId: source.sourcePageId,
         removedArtifactIds: materialized.removedArtifactIds,
@@ -223,8 +244,18 @@ export class KnowledgeImportService {
     await input.onStage?.('embedding');
 
     const artifactInputs: UpsertCompiledArtifactInput[] = [];
-    const embeddedChunksByArtifactId = await this.embedArtifactChunks(
+    const chunkIdentitiesByArtifactId = new Map(
+      artifactsToPublish.map((artifact) => [
+        artifact.artifactId,
+        buildChunkIdentities(artifact),
+      ]),
+    );
+    const {
+      chunksByArtifactId: embeddedChunksByArtifactId,
+      stats: embeddingStats,
+    } = await this.embedArtifactChunks(
       artifactsToPublish,
+      chunkIdentitiesByArtifactId,
       operationBudget,
     );
 
@@ -265,8 +296,10 @@ export class KnowledgeImportService {
           provenanceKind: 'source_evidence',
         })),
       );
+      const chunkIdentities =
+        chunkIdentitiesByArtifactId.get(artifact.artifactId) ?? [];
       const chunks = artifactChunks.map((chunk, index) => ({
-        id: stableKnowledgeUuid(`${artifact.artifactId}:chunk:${index}`),
+        id: chunkIdentities[index].id,
         workspaceId: artifact.workspaceId,
         spaceId: artifact.spaceId,
         knowledgePageId: artifact.artifactId,
@@ -281,8 +314,7 @@ export class KnowledgeImportService {
         parentSectionId: chunk.parentStableKey
           ? (parentIdByStableKey.get(chunk.parentStableKey) ?? null)
           : null,
-        stableKey:
-          chunk.stableKey ?? `${artifact.artifactId}:legacy-chunk:${index}`,
+        stableKey: chunkIdentities[index].stableKey,
         chunkRole: chunk.chunkRole ?? 'standalone',
         retrievalChannel: chunk.retrievalChannel ?? 'memory',
         headingPath: chunk.headingPath ?? [],
@@ -589,6 +621,8 @@ export class KnowledgeImportService {
     return {
       importedArtifactCount: validation.accepted.length,
       quarantinedArtifactCount: validation.quarantined.length,
+      embedding: embeddingStats,
+      ...(largestSharedArtifact ? { largestSharedArtifact } : {}),
       ...(degradedRetrievalProfiles.length > 0
         ? {
             degradedRetrievalProfiles: [
@@ -599,20 +633,43 @@ export class KnowledgeImportService {
     };
   }
 
+  /**
+   * Embeds the chunks about to be published, reusing stored vectors whose
+   * chunk id (which hashes the exact embedding input) is unchanged.
+   *
+   * The current embedding profile includes the output dimensions, which only a
+   * real provider response reveals, so it is never derived from configuration.
+   * Chunks without a stored candidate are embedded first; when every chunk has
+   * a candidate, the first one is re-embedded to learn the profile and its
+   * vector is used as its result. Only candidates whose profile equals that
+   * response profile are reused; the rest are embedded in a second pass. All
+   * responses in one publication must share a profile, otherwise the whole
+   * publication fails retryably instead of storing mixed profiles.
+   */
   private async embedArtifactChunks(
     artifacts: CompiledKnowledgeArtifact[],
+    identitiesByArtifactId: Map<string, ChunkIdentity[]>,
     operationBudget: KnowledgeOperationBudget,
-  ): Promise<Map<string, EmbeddedArtifactChunk[]>> {
+  ): Promise<{
+    chunksByArtifactId: Map<string, EmbeddedArtifactChunk[]>;
+    stats: KnowledgeEmbeddingReuseStats;
+  }> {
     const entries = artifacts.flatMap((artifact) =>
       (artifact.chunks ?? []).map((chunk, index) => ({
         artifactId: artifact.artifactId,
         compilerVersion: artifact.compilerVersion,
         chunk,
         index,
+        chunkId: identitiesByArtifactId.get(artifact.artifactId)![index].id,
       })),
     );
+    const stats: KnowledgeEmbeddingReuseStats = {
+      reusedCount: 0,
+      generatedCount: 0,
+      profileMismatchCount: 0,
+    };
     const resolved = new Map<number, KnowledgeEmbedding>();
-    const unresolvedIndexes: number[] = [];
+    const pendingIndexes: number[] = [];
 
     for (let index = 0; index < entries.length; index += 1) {
       const entry = entries[index];
@@ -624,46 +681,82 @@ export class KnowledgeImportService {
         resolved.set(index, supplied);
         continue;
       }
-      unresolvedIndexes.push(index);
+      pendingIndexes.push(index);
     }
 
-    if (unresolvedIndexes.length > 0) {
-      const batches = Array.from(
-        {
-          length: Math.ceil(
-            unresolvedIndexes.length / KNOWLEDGE_EMBEDDING_BATCH_SIZE,
-          ),
-        },
-        (_, index) =>
-          unresolvedIndexes.slice(
-            index * KNOWLEDGE_EMBEDDING_BATCH_SIZE,
-            (index + 1) * KNOWLEDGE_EMBEDDING_BATCH_SIZE,
-          ),
-      );
-      const embeddedBatches = await mapKnowledgeOperations(
-        batches,
-        (batch) =>
-          this.embedManyRequired(
-            batch.map(
-              (index) =>
-                entries[index].chunk.embeddingText ?? entries[index].chunk.text,
-            ),
-            operationBudget.signal,
-          ),
-        { batchSize: 20, concurrency: 2 },
-      );
-      const generated = embeddedBatches.flat();
-      if (generated.length !== unresolvedIndexes.length) {
-        throw new KnowledgeEmbeddingError(
-          'embedding_invalid_vector',
-          'Knowledge embedding provider returned an unexpected batch size.',
-          true,
-        );
-      }
-      unresolvedIndexes.forEach((entryIndex, index) => {
-        resolved.set(entryIndex, generated[index]);
-      });
+    const storedById = new Map(
+      pendingIndexes.length > 0 &&
+        typeof this.capsuleRepo.findChunkEmbeddingsByIds === 'function'
+        ? (
+            await this.capsuleRepo.findChunkEmbeddingsByIds({
+              workspaceId: artifacts[0].workspaceId,
+              chunkIds: pendingIndexes.map((index) => entries[index].chunkId),
+            })
+          ).map((row) => [row.id, row])
+        : [],
+    );
+    const withCandidate = pendingIndexes.filter((index) =>
+      storedById.has(entries[index].chunkId),
+    );
+    const firstPass = pendingIndexes.filter(
+      (index) => !storedById.has(entries[index].chunkId),
+    );
+    if (firstPass.length === 0 && withCandidate.length > 0) {
+      firstPass.push(withCandidate.shift()!);
     }
+
+    let currentProfile: string | null = null;
+    const embedPending = async (indexes: number[]) => {
+      if (indexes.length === 0) return;
+      const generated = await this.embedIndexes(
+        entries,
+        indexes,
+        operationBudget,
+      );
+      indexes.forEach((entryIndex, index) => {
+        const embedding = generated[index];
+        if (currentProfile === null) currentProfile = embedding.profile;
+        if (embedding.profile !== currentProfile) {
+          throw new KnowledgeEmbeddingError(
+            'embedding_provider_error',
+            'Knowledge embedding profile changed during one publication.',
+            true,
+          );
+        }
+        resolved.set(entryIndex, embedding);
+      });
+      stats.generatedCount += indexes.length;
+    };
+
+    await embedPending(firstPass);
+
+    const secondPass: number[] = [];
+    for (const index of withCandidate) {
+      const stored = storedById.get(entries[index].chunkId)!;
+      if (
+        currentProfile !== null &&
+        stored.embeddingProfile === currentProfile &&
+        stored.embedding.length === stored.embeddingDimensions
+      ) {
+        resolved.set(index, {
+          vector: stored.embedding,
+          profile: stored.embeddingProfile,
+          model: stored.embeddingModel ?? '',
+          dimensions: stored.embeddingDimensions,
+          ...(stored.embeddingTotalTokens !== null
+            ? { totalTokens: stored.embeddingTotalTokens }
+            : {}),
+          ...(stored.embeddingDurationMs !== null
+            ? { durationMs: stored.embeddingDurationMs }
+            : {}),
+        });
+        stats.reusedCount += 1;
+        continue;
+      }
+      secondPass.push(index);
+    }
+    stats.profileMismatchCount = secondPass.length;
+    await embedPending(secondPass);
 
     const result = new Map<string, EmbeddedArtifactChunk[]>();
     for (let index = 0; index < entries.length; index += 1) {
@@ -680,7 +773,43 @@ export class KnowledgeImportService {
       chunks[entry.index] = { ...entry.chunk, embedding };
       result.set(entry.artifactId, chunks);
     }
-    return result;
+    return { chunksByArtifactId: result, stats };
+  }
+
+  private async embedIndexes(
+    entries: Array<{ chunk: ArtifactChunk }>,
+    indexes: number[],
+    operationBudget: KnowledgeOperationBudget,
+  ): Promise<KnowledgeEmbedding[]> {
+    const batches = Array.from(
+      { length: Math.ceil(indexes.length / KNOWLEDGE_EMBEDDING_BATCH_SIZE) },
+      (_, index) =>
+        indexes.slice(
+          index * KNOWLEDGE_EMBEDDING_BATCH_SIZE,
+          (index + 1) * KNOWLEDGE_EMBEDDING_BATCH_SIZE,
+        ),
+    );
+    const embeddedBatches = await mapKnowledgeOperations(
+      batches,
+      (batch) =>
+        this.embedManyRequired(
+          batch.map(
+            (index) =>
+              entries[index].chunk.embeddingText ?? entries[index].chunk.text,
+          ),
+          operationBudget.signal,
+        ),
+      { batchSize: 20, concurrency: 2 },
+    );
+    const generated = embeddedBatches.flat();
+    if (generated.length !== indexes.length) {
+      throw new KnowledgeEmbeddingError(
+        'embedding_invalid_vector',
+        'Knowledge embedding provider returned an unexpected batch size.',
+        true,
+      );
+    }
+    return generated;
   }
 
   private async embedManyRequired(
@@ -747,6 +876,83 @@ function assertPublicationChunkBudgets(
   // table node to disable the ordinary 200-chunk guard for the entire page.
   budget.assertChunkCount(regularChunkCount);
   budget.assertTableRowCount(tableRowCount);
+}
+
+/**
+ * Content identity for each chunk row. The id hashes the stable key together
+ * with the exact embedding input, so reordering chunks keeps their ids, while
+ * any change to text, table-row values, title or heading breadcrumb yields a
+ * new id. Because the id pins the embedding input, a stored row with the same
+ * id is a valid vector-reuse candidate (subject to a profile match).
+ *
+ * Legacy chunks without a stable key get one from their source lineage and
+ * text instead of their array position; repeated identical legacy chunks are
+ * told apart by occurrence order.
+ */
+function buildChunkIdentities(
+  artifact: CompiledKnowledgeArtifact,
+): ChunkIdentity[] {
+  const legacyOccurrences = new Map<string, number>();
+  return (artifact.chunks ?? []).map((chunk) => {
+    let stableKey = chunk.stableKey;
+    if (!stableKey) {
+      const identity = hashContent(
+        `${JSON.stringify(
+          (chunk.inputSourceRefs ?? []).map(sourceRefIdentity),
+        )}|${chunk.text}`,
+      );
+      const occurrence = (legacyOccurrences.get(identity) ?? 0) + 1;
+      legacyOccurrences.set(identity, occurrence);
+      stableKey = `legacy:${identity.replace('sha256:', '').slice(0, 40)}:${occurrence}`;
+    }
+    return {
+      stableKey,
+      id: stableKnowledgeUuid(
+        `${artifact.artifactId}:chunk:${stableKey}:${hashContent(
+          chunk.embeddingText ?? chunk.text,
+        )}`,
+      ),
+    };
+  });
+}
+
+function sourceRefIdentity(source: KnowledgeSourceRef): string {
+  return [
+    source.sourcePageId,
+    source.sourceVersion,
+    source.contentHash,
+    source.sourceRange?.startOffset ?? '',
+    source.sourceRange?.endOffset ?? '',
+  ].join(':');
+}
+
+function assertSharedArtifactChunkBudgets(
+  budget: KnowledgeOperationBudget,
+  artifacts: CompiledKnowledgeArtifact[],
+): KnowledgeImportResult['largestSharedArtifact'] {
+  let largest: KnowledgeImportResult['largestSharedArtifact'];
+  for (const artifact of artifacts) {
+    let chunkCount = 0;
+    let tableRowCount = 0;
+    for (const chunk of artifact.chunks ?? []) {
+      if (isTableRowChunk(chunk)) tableRowCount += 1;
+      else chunkCount += 1;
+    }
+    budget.assertSharedArtifactCounts({
+      artifactId: artifact.artifactId,
+      canonicalKey: artifact.canonicalKey ?? null,
+      chunkCount,
+      tableRowCount,
+    });
+    if (!largest || chunkCount > largest.chunkCount) {
+      largest = {
+        artifactId: artifact.artifactId,
+        canonicalKey: artifact.canonicalKey ?? null,
+        chunkCount,
+      };
+    }
+  }
+  return largest;
 }
 
 function isTableRowChunk(chunk: ArtifactChunk): boolean {

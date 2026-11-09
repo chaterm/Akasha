@@ -26,8 +26,8 @@ import {
 import { KnowledgeSourceRef } from '../types/knowledge.types';
 import { KnowledgeSourceSnapshot } from '../types/source-snapshot.types';
 import { LlmWikiCompilerRunner } from './llm-wiki-file-compiler.runner';
-import { chunkKnowledgeSource } from '../chunking/knowledge-structural-chunker';
 import { buildAttachmentEvidenceContent } from './knowledge-attachment-evidence';
+import { buildDraftStructuralContent } from './knowledge-draft-structure';
 import { buildEffectiveKnowledgeHash } from '../services/knowledge-effective-hash';
 import { KnowledgeOperationBudget } from '../services/knowledge-operation-budget';
 import { SEMANTIC_COMPILER_LIMITS } from '../compiler/semantic-compiler.limits';
@@ -388,34 +388,12 @@ function toCompiledArtifact(input: {
     input.artifact.canonicalKey,
   );
   const sourceRef = toSourceRef(input.source);
-  const structuralParents = chunkKnowledgeSource({
-    pageTitle: input.artifact.title,
-    text: input.artifact.markdown,
-  });
-  const parentSections = structuralParents.map((parent) => ({
-    stableKey: parent.stableKey,
-    headingPath: parent.headingPath,
-    text: parent.text,
-    contentHash: parent.quoteHash,
-    startOffset: parent.startOffset,
-    endOffset: parent.endOffset,
-    inputSourceRefs: [sourceRef],
-  }));
-  const structuralChunks = structuralParents.flatMap((parent) =>
-    parent.children.map((child) => ({
-      text: child.text,
-      inputSourceRefs: [sourceRef],
-      contentHash: child.quoteHash,
-      stableKey: child.stableKey,
-      parentStableKey: parent.stableKey,
-      chunkRole: 'child' as const,
-      retrievalChannel: 'evidence' as const,
-      headingPath: parent.headingPath,
-      startOffset: child.startOffset,
-      endOffset: child.endOffset,
-      embeddingText: child.embeddingText,
-    })),
-  );
+  const { parentSections, chunks: structuralChunks } =
+    buildDraftStructuralContent({
+      title: input.artifact.title,
+      markdown: input.artifact.markdown,
+      sourceRef,
+    });
   const isSourceSummary = input.artifact.kind === 'source_summary';
   let tableRowChunks: ReturnType<typeof tableRowEvidenceChunks> = [];
   if (isSourceSummary) {

@@ -39,4 +39,10 @@ export type KnowledgePageCompilationResult = {
   importedArtifactCount: number;
   quarantinedArtifactCount: number;
   durationMs: number;
+  /** Stored-vector reuse vs. newly generated embeddings for this publication. */
+  embedding?: {
+    reusedCount: number;
+    generatedCount: number;
+    profileMismatchCount: number;
+  };
 };
