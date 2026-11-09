@@ -26,7 +26,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // Matches ANALYTICS_TIMEZONE (Asia/Shanghai, no DST).
 const TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
 
-const RANGE_DAYS: Record<AnalyticsRangeKey, number> = {
+const RANGE_DAYS: Partial<Record<AnalyticsRangeKey, number>> = {
+  today: 1,
+  yesterday: 1,
   '7d': 7,
   '30d': 30,
   '90d': 90,
@@ -36,12 +38,39 @@ const RANGE_DAYS: Record<AnalyticsRangeKey, number> = {
 export function resolveRange(
   key: AnalyticsRangeKey,
   now: Date = new Date(),
+  custom?: { from?: string; to?: string },
 ): { from: Date; to: Date } {
+  if (key === 'custom') {
+    const parseDay = (value?: string) => {
+      if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        throw new BadRequestException('Start and end dates are required');
+      }
+      const date = new Date(`${value}T00:00:00+08:00`);
+      if (
+        !Number.isFinite(date.getTime()) ||
+        new Date(date.getTime() + TZ_OFFSET_MS).toISOString().slice(0, 10) !==
+          value
+      ) {
+        throw new BadRequestException('Invalid analytics date');
+      }
+      return date;
+    };
+    const from = parseDay(custom?.from);
+    const to = new Date(parseDay(custom?.to).getTime() + DAY_MS);
+    if (
+      to <= from ||
+      to.getTime() - from.getTime() > EVENT_RETENTION_DAYS * DAY_MS
+    ) {
+      throw new BadRequestException(
+        'Select an ordered date range of at most 400 days',
+      );
+    }
+    return { from, to };
+  }
   const days = RANGE_DAYS[key];
   const localMidnight =
-    Math.floor((now.getTime() + TZ_OFFSET_MS) / DAY_MS) * DAY_MS -
-    TZ_OFFSET_MS;
-  const to = new Date(localMidnight + DAY_MS);
+    Math.floor((now.getTime() + TZ_OFFSET_MS) / DAY_MS) * DAY_MS - TZ_OFFSET_MS;
+  const to = new Date(localMidnight + (key === 'yesterday' ? 0 : DAY_MS));
   const from = new Date(to.getTime() - days * DAY_MS);
   return { from, to };
 }
@@ -129,6 +158,8 @@ export class AnalyticsService {
     workspace: Workspace;
     range: AnalyticsRangeKey;
     spaceId?: string;
+    from?: string;
+    to?: string;
   }) {
     const { workspace, spaceId } = input;
     if (spaceId) {
@@ -136,11 +167,11 @@ export class AnalyticsService {
       if (!space) throw new BadRequestException('Space not found');
     }
 
-    const cacheKey = `analytics:overview:${workspace.id}:${input.range}:${spaceId ?? 'all'}`;
+    const { from, to } = resolveRange(input.range, new Date(), input);
+    const cacheKey = `analytics:overview:${workspace.id}:${from.toISOString()}:${to.toISOString()}:${spaceId ?? 'all'}`;
     const cached = await this.readCache(cacheKey);
     if (cached) return cached;
 
-    const { from, to } = resolveRange(input.range);
     const range: AnalyticsRange = {
       workspaceId: workspace.id,
       from,
@@ -158,16 +189,16 @@ export class AnalyticsService {
       routes,
       agents,
     ] = await Promise.all([
-        this.analyticsEventRepo.findTrackingSince(workspace.id),
-        this.analyticsEventRepo.summarize(range),
-        this.analyticsEventRepo.dailySeries(range),
-        this.analyticsEventRepo.topPages(range),
-        this.analyticsEventRepo.topUsers(range),
-        spaceId ? null : this.analyticsEventRepo.topSpaces(range),
-        spaceId ? null : this.analyticsEventRepo.routeBreakdown(range),
-        // Agents act across spaces, so they are workspace-scope only.
-        spaceId ? null : this.analyticsEventRepo.agentSummary(range),
-      ]);
+      this.analyticsEventRepo.findTrackingSince(workspace.id),
+      this.analyticsEventRepo.summarize(range),
+      this.analyticsEventRepo.dailySeries(range),
+      this.analyticsEventRepo.topPages(range),
+      this.analyticsEventRepo.topUsers(range),
+      spaceId ? null : this.analyticsEventRepo.topSpaces(range),
+      spaceId ? null : this.analyticsEventRepo.routeBreakdown(range),
+      // Agents act across spaces, so they are workspace-scope only.
+      spaceId ? null : this.analyticsEventRepo.agentSummary(range),
+    ]);
 
     const overview = {
       range: {

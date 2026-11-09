@@ -10,11 +10,11 @@ import { Observable, tap } from 'rxjs';
 import { AnalyticsEventRepo } from '@akasha/db/repos/analytics/analytics-event.repo';
 import { getAgentAccessContext } from '../../common/auth/agent-access-context';
 import { AGENT_CAPABILITY } from '../../common/decorators/agent-callable.decorator';
+import { getApiKeyAccess } from '../../common/auth/api-key-access';
 
 /**
- * Records one agent_op event per REST call authenticated with an agent API
- * key. Runs after JwtAuthGuard, so `request.agentAccess` is already set;
- * human requests pass through untouched. Recording never affects the
+ * Records one operation per REST call authenticated with an API key.
+ * MCP tool calls are recorded separately by McpController. Recording never affects the
  * response.
  */
 @Injectable()
@@ -31,23 +31,31 @@ export class AgentOpInterceptor implements NestInterceptor {
 
     const request = context.switchToHttp().getRequest();
     const agentAccess = getAgentAccessContext(request);
-    if (!agentAccess) return next.handle();
+    const principal = request.user;
+    const access = principal?.user
+      ? getApiKeyAccess(principal.user)
+      : undefined;
+    const personal = !agentAccess && access?.apiKeyId && principal?.workspace;
+    if (!agentAccess && !personal) return next.handle();
 
     const capability = this.reflector.getAllAndOverride<string>(
       AGENT_CAPABILITY,
       [context.getHandler(), context.getClass()],
     );
-    const op = capability ?? 'other';
+    const op =
+      capability ??
+      `${request.method ?? 'HTTP'} ${request.routeOptions?.url ?? 'other'}`;
 
     const record = (outcome: 'ok' | 'error') => {
       this.analyticsEventRepo
         .insertAgentOp({
-          workspaceId: agentAccess.workspace.id,
-          agentUserId: agentAccess.agentUser.id,
+          workspaceId: agentAccess?.workspace.id ?? principal.workspace.id,
+          agentUserId: agentAccess?.agentUser.id ?? principal.user.id,
           op,
           channel: 'api',
-          apiKeyId: agentAccess.apiKeyId,
-          delegatedUserId: agentAccess.delegatedUser?.id,
+          apiKeyId: agentAccess?.apiKeyId ?? access.apiKeyId,
+          ...(personal ? { keyType: 'personal' as const } : {}),
+          delegatedUserId: agentAccess?.delegatedUser?.id,
           outcome,
         })
         .catch((error) =>

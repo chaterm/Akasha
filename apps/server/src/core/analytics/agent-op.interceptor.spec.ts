@@ -1,4 +1,6 @@
 import { lastValueFrom, of, throwError } from 'rxjs';
+import { withApiKeyAccess } from '../../common/auth/api-key-access';
+import { ApiKeyType } from '../../common/auth/api-key-type';
 import { AgentOpInterceptor } from './agent-op.interceptor';
 import {
   buildMcpAgentOps,
@@ -62,6 +64,42 @@ describe('AgentOpInterceptor', () => {
     expect(repo.insertAgentOp).toHaveBeenCalledWith(
       expect.objectContaining({ op: 'page.create', outcome: 'error' }),
     );
+  });
+
+  it('records personal API-key REST calls with their route and user', async () => {
+    const user = withApiKeyAccess({ id: 'human-1' } as any, {
+      apiKeyId: 'personal-1',
+      personalSpaceId: null,
+      keyType: ApiKeyType.PERSONAL,
+    });
+    const { interceptor, repo, context } = setup({
+      user: { user, workspace: { id: 'ws-1' } },
+      method: 'POST',
+      routeOptions: { url: '/api/pages/info' },
+    });
+    await lastValueFrom(
+      interceptor.intercept(context, { handle: () => of(1) }),
+    );
+    expect(repo.insertAgentOp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentUserId: 'human-1',
+        apiKeyId: 'personal-1',
+        keyType: 'personal',
+        channel: 'api',
+        op: 'POST /api/pages/info',
+        outcome: 'ok',
+      }),
+    );
+  });
+
+  it('does not record ordinary browser sessions', async () => {
+    const { interceptor, repo, context } = setup({
+      user: { user: { id: 'human-1' }, workspace: { id: 'ws-1' } },
+    });
+    await lastValueFrom(
+      interceptor.intercept(context, { handle: () => of(1) }),
+    );
+    expect(repo.insertAgentOp).not.toHaveBeenCalled();
   });
 
   it('ignores requests without an agent API key', async () => {
