@@ -62,9 +62,7 @@ describe('ConfiguredKnowledgeAnswerProvider', () => {
       ].join('\n'),
       temperature: 0,
       providerOptions: {
-        [ANSWER_PROVIDER_NAME]: {
-          chat_template_kwargs: { enable_thinking: false },
-        },
+        openaiCompatible: { reasoningEffort: 'none' },
       },
     });
     expect(generateText).toHaveBeenCalledWith(

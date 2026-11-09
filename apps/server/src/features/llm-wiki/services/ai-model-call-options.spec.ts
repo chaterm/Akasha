@@ -17,7 +17,7 @@ describe('resolveModelCallOptions', () => {
         }),
       ).toEqual({
         providerOptions: {
-          [PROVIDER]: { chat_template_kwargs: { enable_thinking: false } },
+          openaiCompatible: { reasoningEffort: 'none' },
         },
       });
     },
@@ -30,7 +30,7 @@ describe('resolveModelCallOptions', () => {
       }),
     ).toEqual({
       providerOptions: {
-        [PROVIDER]: { chat_template_kwargs: { enable_thinking: false } },
+        openaiCompatible: { reasoningEffort: 'none' },
       },
     });
   });
@@ -82,7 +82,7 @@ describe('resolveModelCallOptions', () => {
     ).toEqual({
       temperature: 0,
       providerOptions: {
-        [PROVIDER]: { chat_template_kwargs: { enable_thinking: false } },
+        openaiCompatible: { reasoningEffort: 'none' },
       },
     });
 
@@ -94,7 +94,7 @@ describe('resolveModelCallOptions', () => {
     ).toEqual({
       temperature: 0.7,
       providerOptions: {
-        [PROVIDER]: { chat_template_kwargs: { enable_thinking: false } },
+        openaiCompatible: { reasoningEffort: 'none' },
       },
     });
   });
@@ -131,7 +131,7 @@ describe('resolveModelCallOptions', () => {
         { providerOptionsName: PROVIDER },
       ).providerOptions,
     ).toEqual({
-      [PROVIDER]: { chat_template_kwargs: { enable_thinking: false } },
+      openaiCompatible: { reasoningEffort: 'none' },
     });
   });
 
@@ -145,9 +145,7 @@ describe('resolveModelCallOptions', () => {
       ),
     ).toEqual({
       providerOptions: {
-        [PROVIDER]: {
-          chat_template_kwargs: { enable_thinking: false },
-        },
+        openaiCompatible: { reasoningEffort: 'none' },
       },
     });
   });
@@ -170,7 +168,7 @@ describe('resolveModelCallOptions', () => {
     });
   });
 
-  it('drops reasoning_effort when Qwen thinking is off', () => {
+  it('overrides the configured effort with none when Qwen thinking is off', () => {
     const options = resolveModelCallOptions(
       config({
         thinkingMode: 'qwen',
@@ -179,10 +177,9 @@ describe('resolveModelCallOptions', () => {
       }),
       { providerOptionsName: PROVIDER },
     );
-    expect(
-      (options.providerOptions?.[PROVIDER] as Record<string, unknown>)
-        .chat_template_kwargs,
-    ).toEqual({ enable_thinking: false });
+    expect(options.providerOptions).toEqual({
+      openaiCompatible: { reasoningEffort: 'none' },
+    });
   });
 
   it('suppresses temperature and seed for the OpenAI reasoning dialect', () => {
@@ -216,7 +213,7 @@ describe('resolveModelCallOptions', () => {
       temperature: 0,
       seed: 7,
       providerOptions: {
-        [PROVIDER]: { chat_template_kwargs: { enable_thinking: false } },
+        openaiCompatible: { reasoningEffort: 'none' },
       },
     });
   });
@@ -229,7 +226,7 @@ describe('resolveModelCallOptions', () => {
     ).toEqual({
       temperature: 0.3,
       providerOptions: {
-        [PROVIDER]: { chat_template_kwargs: { enable_thinking: false } },
+        openaiCompatible: { reasoningEffort: 'none' },
       },
     });
   });
@@ -247,7 +244,7 @@ describe('resolveModelCallOptions', () => {
       ),
     ).toEqual({
       providerOptions: {
-        [PROVIDER]: { chat_template_kwargs: { enable_thinking: false } },
+        openaiCompatible: { reasoningEffort: 'none' },
       },
     });
   });
@@ -257,7 +254,23 @@ describe('thinking options in the SDK request body', () => {
   it.each([
     {
       parameters: {},
-      expected: { chat_template_kwargs: { enable_thinking: false } },
+      expected: { reasoning_effort: 'none' },
+    },
+    {
+      parameters: { thinkingMode: 'qwen' },
+      expected: { reasoning_effort: 'none' },
+    },
+    {
+      parameters: {
+        thinkingMode: 'qwen',
+        thinkingEnabled: false,
+        reasoningEffort: 'high',
+      },
+      expected: { reasoning_effort: 'none' },
+    },
+    {
+      parameters: { thinkingMode: 'openai' },
+      expected: { reasoning_effort: 'none' },
     },
     {
       parameters: { thinkingMode: 'openai', reasoningEffort: 'high' },
@@ -295,6 +308,7 @@ describe('thinking options in the SDK request body', () => {
 
       expect(requests).toHaveLength(1);
       expect(requests[0]).toMatchObject({ model: 'office-model', ...expected });
+      expect(requests[0]).not.toHaveProperty('chat_template_kwargs');
     },
   );
 });

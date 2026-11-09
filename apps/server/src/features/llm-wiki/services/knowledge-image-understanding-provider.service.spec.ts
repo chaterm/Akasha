@@ -101,7 +101,7 @@ describe('ConfiguredKnowledgeImageUnderstandingProvider', () => {
       ],
       temperature: 0,
       providerOptions: {
-        akashaImage: { chat_template_kwargs: { enable_thinking: false } },
+        openaiCompatible: { reasoningEffort: 'none' },
       },
       maxOutputTokens: 8_000,
       abortSignal: expect.any(AbortSignal),

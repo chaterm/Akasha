@@ -48,9 +48,7 @@ describe('AiModelConfigTestService', () => {
         model: 'lang-model',
         prompt: 'ping',
         providerOptions: {
-          akashaConfigTest: {
-            chat_template_kwargs: { enable_thinking: false },
-          },
+          openaiCompatible: { reasoningEffort: 'none' },
         },
       }),
     );

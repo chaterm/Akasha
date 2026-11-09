@@ -76,10 +76,10 @@ describe('EditorAiService', () => {
         temperature: 0,
       }),
     );
-    expect((generateText as jest.Mock).mock.calls[0][0].providerOptions).toEqual({
-      [EDITOR_PROVIDER_NAME]: {
-        chat_template_kwargs: { enable_thinking: false },
-      },
+    expect(
+      (generateText as jest.Mock).mock.calls[0][0].providerOptions,
+    ).toEqual({
+      openaiCompatible: { reasoningEffort: 'none' },
     });
   });
 
@@ -121,9 +121,7 @@ describe('EditorAiService', () => {
       }),
     );
     expect((streamText as jest.Mock).mock.calls[0][0].providerOptions).toEqual({
-      [EDITOR_PROVIDER_NAME]: {
-        chat_template_kwargs: { enable_thinking: false },
-      },
+      openaiCompatible: { reasoningEffort: 'none' },
     });
   });
 
@@ -202,9 +200,7 @@ describe('EditorAiService', () => {
 
     const request = (generateText as jest.Mock).mock.calls[0][0];
     expect(request.providerOptions).toEqual({
-      [EDITOR_PROVIDER_NAME]: {
-        chat_template_kwargs: { enable_thinking: false },
-      },
+      openaiCompatible: { reasoningEffort: 'none' },
     });
     expect(request.temperature).toBe(0.2);
     expect(request.seed).toBe(5);
