@@ -33,7 +33,7 @@ export function resolveModelCallOptions(
 ): ModelCallOptions {
   const parameters = readParameters(config);
   // Every generation feature defaults to thinking off, regardless of model name.
-  // The mode only selects how to encode that intent for the configured endpoint.
+  // Both modes send reasoning_effort: 'none' when thinking is off.
   const thinkingEnabled = parameters.thinkingEnabled ?? false;
   const thinkingMode =
     parameters.thinkingMode ?? input.defaultThinkingMode ?? 'qwen';
@@ -65,7 +65,7 @@ function buildProviderOptions(
   providerOptionsName: string,
   thinkingEnabled: boolean,
 ): { providerOptions?: ProviderOptions } {
-  if (thinkingMode === 'openai') {
+  if (!thinkingEnabled || thinkingMode === 'openai') {
     const reasoningEffort = thinkingEnabled
       ? parameters.reasoningEffort
       : 'none';

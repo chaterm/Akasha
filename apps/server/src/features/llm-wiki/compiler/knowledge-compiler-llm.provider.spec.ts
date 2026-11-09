@@ -104,14 +104,12 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     );
     const request = (generateText as jest.Mock).mock.calls[0][0];
     expect(request.providerOptions).toEqual({
-      [COMPILER_PROVIDER_NAME]: {
-        chat_template_kwargs: { enable_thinking: false },
-      },
+      openaiCompatible: { reasoningEffort: 'none' },
     });
     expect(request.temperature).toBe(0.1);
   });
 
-  it('disables Qwen thinking through chat_template_kwargs when configured', async () => {
+  it('disables Qwen thinking through reasoning_effort when configured', async () => {
     (createOpenAICompatible as jest.Mock).mockReturnValue(
       jest.fn().mockReturnValue('compiler-model'),
     );
@@ -127,9 +125,7 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
     expect(
       (generateText as jest.Mock).mock.calls[0][0].providerOptions,
     ).toEqual({
-      [COMPILER_PROVIDER_NAME]: {
-        chat_template_kwargs: { enable_thinking: false },
-      },
+      openaiCompatible: { reasoningEffort: 'none' },
     });
   });
 
@@ -149,7 +145,9 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
         parameters,
       }).analyze({ system: 'system', prompt: 'prompt' });
 
-      expect((generateText as jest.Mock).mock.calls[0][0].providerOptions).toEqual({
+      expect(
+        (generateText as jest.Mock).mock.calls[0][0].providerOptions,
+      ).toEqual({
         openaiCompatible: { reasoningEffort: 'none' },
       });
     },
