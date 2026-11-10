@@ -1,0 +1,33 @@
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 72px 16px;
+  border-radius: var(--mantine-radius-lg);
+  border: 1px dashed
+    light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+}
+
+.emptyIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  color: var(--mantine-color-blue-filled);
+  background: var(--mantine-color-blue-light);
+}
+
+.previewBody {
+  border: 1px solid
+    light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  border-radius: var(--mantine-radius-md);
+  padding: var(--mantine-spacing-md) 0;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.section + .section {
+  margin-top: var(--mantine-spacing-xl);
+}

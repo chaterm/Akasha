@@ -480,4 +480,35 @@ export class SearchService {
 
     return { users, groups, pages };
   }
+
+  /**
+   * Title, icon and link of the given pages, limited to the ones the user can
+   * read: same workspace, not deleted, in a space they belong to, and allowed
+   * by page-level permissions. Pages they cannot see are simply left out.
+   */
+  async resolvePages(pageIds: string[], userId: string, workspaceId: string) {
+    const ids = [...new Set(pageIds)];
+    if (!ids.length) return { pages: [] };
+    const spaceIds = await this.spaceMemberRepo.getUserSpaceIds(userId);
+    if (!spaceIds?.length) return { pages: [] };
+
+    const pages = await this.db
+      .selectFrom('pages')
+      .select(['id', 'slugId', 'title', 'icon', 'spaceId'])
+      .select((eb) => this.pageRepo.withSpace(eb))
+      .where('id', 'in', ids)
+      .where('workspaceId', '=', workspaceId)
+      .where('deletedAt', 'is', null)
+      .where('spaceId', 'in', spaceIds)
+      .execute();
+    if (!pages.length) return { pages: [] };
+
+    const accessible = new Set(
+      await this.pagePermissionRepo.filterAccessiblePageIds({
+        pageIds: pages.map((page) => page.id),
+        userId,
+      }),
+    );
+    return { pages: pages.filter((page) => accessible.has(page.id)) };
+  }
 }

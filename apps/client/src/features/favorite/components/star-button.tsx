@@ -14,7 +14,6 @@ type StarButtonProps = {
   type: FavoriteType;
   pageId?: string;
   spaceId?: string;
-  templateId?: string;
   /** Name of the item being favorited, used to make the button's accessible name descriptive. */
   name?: string;
   size?: number;
@@ -23,7 +22,6 @@ type StarButtonProps = {
 function getEntityId(props: StarButtonProps): string | undefined {
   if (props.type === "page") return props.pageId;
   if (props.type === "space") return props.spaceId;
-  if (props.type === "template") return props.templateId;
   return undefined;
 }
 
@@ -46,7 +44,6 @@ export default function StarButton(props: StarButtonProps) {
       type,
       pageId: props.pageId,
       spaceId: props.spaceId,
-      templateId: props.templateId,
     };
 
     if (isFavorited) {

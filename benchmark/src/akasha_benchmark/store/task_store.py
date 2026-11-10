@@ -4,6 +4,7 @@ import sqlite3
 from typing import Any
 
 from .db import dumps, loads, utc_now
+from .run_store import RUN_PARENTS, RUN_TABLES, set_run_status, stage_input
 
 QUEUED = "queued"
 RUNNING = "running"
@@ -12,6 +13,7 @@ SUCCEEDED = "succeeded"
 FAILED = "failed"
 
 ACTIVE = (QUEUED, RUNNING)
+_ACTIVE_MARKS = ", ".join("?" for _ in ACTIVE)
 
 
 def create_task(connection: sqlite3.Connection, *, stage: str, params: dict[str, Any]) -> int:
@@ -25,8 +27,6 @@ def create_task(connection: sqlite3.Connection, *, stage: str, params: dict[str,
 def transition(
     connection: sqlite3.Connection, task_id: int, status: str, *, error: str | None = None
 ) -> None:
-    from .run_store import RUN_TABLES, set_run_status
-
     connection.execute(
         "UPDATE task SET status = ?, error = ?, "
         "started_at = CASE WHEN ? = 'running' THEN COALESCE(started_at, ?) ELSE started_at END, "
@@ -78,7 +78,6 @@ def set_task_chain(
 def task_chain(
     connection: sqlite3.Connection, task_id: int
 ) -> tuple[int | None, list[dict], bool]:
-    """返回 (chain_id, 剩余步骤, 是否跑契约校验)。"""
     row = connection.execute(
         "SELECT chain_id, chain_json FROM task WHERE id = ?", (task_id,)
     ).fetchone()
@@ -115,25 +114,18 @@ def list_tasks(
 
 
 def count_inactive_tasks(connection: sqlite3.Connection) -> int:
-    marks = ", ".join("?" for _ in ACTIVE)
     row = connection.execute(
-        f"SELECT COUNT(*) AS n FROM task WHERE status NOT IN ({marks})", ACTIVE
+        f"SELECT COUNT(*) AS n FROM task WHERE status NOT IN ({_ACTIVE_MARKS})", ACTIVE
     ).fetchone()
-    return int(row["n"] if row else 0)
+    return int(row["n"])
 
 
 def task_tree(connection: sqlite3.Connection) -> dict[str, Any]:
-    from ..stages import STAGES
-
     nodes: dict[tuple[str, int], dict[str, Any]] = {}
     roots: list[dict[str, Any]] = []
-    for definition in STAGES.values():
-        kind = definition.run_kind
-        if kind is None:
-            continue
-        table = f"{kind}_run"
+    for kind, table in RUN_TABLES.items():
         name_column = "run_id" if kind == "compile" else "name"
-        parent_kind, parent_column = definition.input or (None, None)
+        parent_kind, parent_column = RUN_PARENTS.get(kind, (None, None))
         for row in connection.execute(f"SELECT * FROM {table} ORDER BY id DESC"):
             record = dict(row)
             node = {
@@ -160,17 +152,12 @@ def task_tree(connection: sqlite3.Connection) -> dict[str, Any]:
     for task in tasks:
         target_kind = task.get("target_kind")
         target_id = task.get("target_id")
-        target = (
-            nodes.get((str(target_kind), int(target_id)))
-            if target_kind is not None and target_id is not None
-            else None
-        )
+        target = nodes.get((target_kind, target_id))
         if target is not None:
             target["tasks"].append(task)
             continue
 
-        definition = STAGES.get(str(task["stage"]))
-        input_spec = definition.input if definition else None
+        input_spec = stage_input(str(task["stage"]))
         parent = None
         if target_kind is None and input_spec is not None:
             parent_kind, parameter = input_spec
@@ -193,23 +180,20 @@ def task_tree(connection: sqlite3.Connection) -> dict[str, Any]:
 
 
 def _prune_empty(node: dict[str, Any]) -> bool:
-    """剪掉任务记录已清理的运行节点，保留仍有任务的子树。"""
     node["children"] = [child for child in node["children"] if _prune_empty(child)]
     return bool(node["tasks"] or node["pending_tasks"] or node["children"])
 
 
 def active_tasks(connection: sqlite3.Connection) -> list[dict[str, Any]]:
-    marks = ", ".join("?" for _ in ACTIVE)
     return [
         _task(row)
         for row in connection.execute(
-            f"SELECT * FROM task WHERE status IN ({marks}) ORDER BY id", ACTIVE
+            f"SELECT * FROM task WHERE status IN ({_ACTIVE_MARKS}) ORDER BY id", ACTIVE
         )
     ]
 
 
 def delete_task(connection: sqlite3.Connection, task_id: int) -> int:
-
     row = connection.execute("SELECT status FROM task WHERE id = ?", (task_id,)).fetchone()
     if row is None:
         return 0
@@ -219,8 +203,7 @@ def delete_task(connection: sqlite3.Connection, task_id: int) -> int:
 
 
 def delete_inactive_tasks(connection: sqlite3.Connection) -> int:
-    marks = ", ".join("?" for _ in ACTIVE)
-    return connection.execute(f"DELETE FROM task WHERE status NOT IN ({marks})", ACTIVE).rowcount
+    return connection.execute(f"DELETE FROM task WHERE status NOT IN ({_ACTIVE_MARKS})", ACTIVE).rowcount
 
 
 def log(

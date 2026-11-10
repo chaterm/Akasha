@@ -19,6 +19,7 @@
     "migration:up": "tsx src/database/migrate.ts up",
     "migration:down": "tsx src/database/migrate.ts down",
     "migration:latest": "tsx src/database/migrate.ts latest",
+    "migration:prune-history": "tsx src/database/prune-migration-history.ts",
     "migration:redo": "tsx src/database/migrate.ts redo",
     "migration:reset": "tsx src/database/migrate.ts down-to NO_MIGRATIONS",
     "backfill:zh-search": "tsx src/database/scripts/backfill-knowledge-chunk-zh-search.ts",

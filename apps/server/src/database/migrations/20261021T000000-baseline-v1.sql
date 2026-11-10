@@ -54,7 +54,7 @@ COMMENT ON EXTENSION vector IS 'vector data type and ivfflat and hnsw access met
 -- Name: ai_chat_messages_tsvector_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.ai_chat_messages_tsvector_trigger() RETURNS trigger
+CREATE OR REPLACE FUNCTION public.ai_chat_messages_tsvector_trigger() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
     BEGIN
@@ -67,7 +67,7 @@ CREATE FUNCTION public.ai_chat_messages_tsvector_trigger() RETURNS trigger
 -- Name: f_unaccent(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.f_unaccent(text) RETURNS text
+CREATE OR REPLACE FUNCTION public.f_unaccent(text) RETURNS text
     LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
     AS $_$
       SELECT unaccent('unaccent', $1);
@@ -77,7 +77,7 @@ CREATE FUNCTION public.f_unaccent(text) RETURNS text
 -- Name: gen_uuid_v7(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.gen_uuid_v7() RETURNS uuid
+CREATE OR REPLACE FUNCTION public.gen_uuid_v7() RETURNS uuid
     LANGUAGE plpgsql
     AS $$
         declare
@@ -124,7 +124,7 @@ CREATE FUNCTION public.gen_uuid_v7() RETURNS uuid
 -- Name: knowledge_chunks_search_tsv_zh_refresh(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.knowledge_chunks_search_tsv_zh_refresh() RETURNS trigger
+CREATE OR REPLACE FUNCTION public.knowledge_chunks_search_tsv_zh_refresh() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
     BEGIN
@@ -137,7 +137,7 @@ CREATE FUNCTION public.knowledge_chunks_search_tsv_zh_refresh() RETURNS trigger
 -- Name: knowledge_zh_query_terms(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.knowledge_zh_query_terms(query text) RETURNS tsquery[]
+CREATE OR REPLACE FUNCTION public.knowledge_zh_query_terms(query text) RETURNS tsquery[]
     LANGUAGE sql STABLE PARALLEL SAFE
     AS $_$
       SELECT coalesce(
@@ -162,7 +162,7 @@ CREATE FUNCTION public.knowledge_zh_query_terms(query text) RETURNS tsquery[]
 -- Name: knowledge_zh_tsquery(text, boolean); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.knowledge_zh_tsquery(query text, match_all boolean DEFAULT false) RETURNS tsquery
+CREATE OR REPLACE FUNCTION public.knowledge_zh_tsquery(query text, match_all boolean DEFAULT false) RETURNS tsquery
     LANGUAGE sql STABLE PARALLEL SAFE
     AS $$
       SELECT string_agg(
@@ -176,7 +176,7 @@ CREATE FUNCTION public.knowledge_zh_tsquery(query text, match_all boolean DEFAUL
 -- Name: pages_tsvector_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.pages_tsvector_trigger() RETURNS trigger
+CREATE OR REPLACE FUNCTION public.pages_tsvector_trigger() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
     begin
@@ -191,7 +191,7 @@ CREATE FUNCTION public.pages_tsvector_trigger() RETURNS trigger
 -- Name: templates_tsvector_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.templates_tsvector_trigger() RETURNS trigger
+CREATE OR REPLACE FUNCTION public.templates_tsvector_trigger() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
     begin
@@ -250,7 +250,7 @@ CREATE TABLE IF NOT EXISTS public.ai_model_configs (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT ai_model_configs_feature_check CHECK (((feature)::text = ANY (ARRAY[('compiler'::character varying)::text, ('answer'::character varying)::text, ('image'::character varying)::text, ('embedding'::character varying)::text]))),
-    CONSTRAINT ai_model_configs_provider_check CHECK (((provider)::text = ANY (ARRAY[('openai'::character varying)::text, ('openai-compatible'::character varying)::text, ('gemini'::character varying)::text, ('ollama'::character varying)::text])))
+    CONSTRAINT ai_model_configs_provider_check CHECK (((provider)::text = 'openai-compatible'::text))
 );
 
 --
@@ -707,7 +707,6 @@ CREATE TABLE IF NOT EXISTS public.knowledge_graph_edges (
     compile_task_id character varying,
     stale_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    relation_type character varying,
     target_artifact_kind character varying,
     target_canonical_key character varying,
     is_dangling boolean DEFAULT false NOT NULL
@@ -853,7 +852,7 @@ CREATE TABLE IF NOT EXISTS public.knowledge_pages (
     stale_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    generation_mode character varying DEFAULT 'legacy'::character varying NOT NULL,
+    generation_mode character varying(32) DEFAULT 'legacy'::character varying NOT NULL,
     canonical_key character varying,
     CONSTRAINT chk_knowledge_pages_active_page_publication CHECK (((stale_at IS NOT NULL) OR (((compile_scope)::text = 'page'::text) AND ((page_type)::text IS DISTINCT FROM 'overview'::text))))
 );
@@ -1709,7 +1708,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.ai_chat_messages
       ADD CONSTRAINT ai_chat_messages_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1718,7 +1717,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.ai_chats
       ADD CONSTRAINT ai_chats_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1727,7 +1726,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.ai_model_configs
       ADD CONSTRAINT ai_model_configs_feature_key UNIQUE (feature);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1736,7 +1735,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.ai_model_configs
       ADD CONSTRAINT ai_model_configs_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1745,7 +1744,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.analytics_events
       ADD CONSTRAINT analytics_events_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1754,7 +1753,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.api_key_spaces
       ADD CONSTRAINT api_key_spaces_pkey PRIMARY KEY (api_key_id, space_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1763,7 +1762,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.api_keys
       ADD CONSTRAINT api_keys_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1772,7 +1771,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.attachments
       ADD CONSTRAINT attachments_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1781,7 +1780,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.audit
       ADD CONSTRAINT audit_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1790,7 +1789,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.auth_accounts
       ADD CONSTRAINT auth_accounts_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1799,7 +1798,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.auth_accounts
       ADD CONSTRAINT auth_accounts_user_id_auth_provider_id_unique UNIQUE (user_id, auth_provider_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1808,7 +1807,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.auth_providers
       ADD CONSTRAINT auth_providers_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1817,7 +1816,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.backlinks
       ADD CONSTRAINT backlinks_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1826,7 +1825,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.backlinks
       ADD CONSTRAINT backlinks_source_page_id_target_page_id_unique UNIQUE (source_page_id, target_page_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1835,7 +1834,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.billing
       ADD CONSTRAINT billing_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1844,7 +1843,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.billing
       ADD CONSTRAINT billing_stripe_subscription_id_unique UNIQUE (stripe_subscription_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1853,7 +1852,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.comments
       ADD CONSTRAINT comments_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1862,7 +1861,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.favorites
       ADD CONSTRAINT favorites_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1871,7 +1870,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.file_tasks
       ADD CONSTRAINT file_tasks_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1880,7 +1879,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.group_users
       ADD CONSTRAINT group_users_group_id_user_id_unique UNIQUE (group_id, user_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1889,7 +1888,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.group_users
       ADD CONSTRAINT group_users_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1898,7 +1897,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.groups
       ADD CONSTRAINT groups_name_workspace_id_unique UNIQUE (name, workspace_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1907,7 +1906,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.groups
       ADD CONSTRAINT groups_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1916,7 +1915,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.workspace_invitations
       ADD CONSTRAINT invitations_email_workspace_id_unique UNIQUE (email, workspace_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1925,7 +1924,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_artifact_contributions
       ADD CONSTRAINT knowledge_artifact_contributions_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1934,7 +1933,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_chunk_attachments
       ADD CONSTRAINT knowledge_chunk_attachments_pkey PRIMARY KEY (chunk_id, occurrence_order);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1943,7 +1942,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_chunks
       ADD CONSTRAINT knowledge_chunks_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1952,7 +1951,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_chunks
       ADD CONSTRAINT knowledge_chunks_stable_key_unique UNIQUE (workspace_id, knowledge_page_id, stable_key);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1961,7 +1960,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_compilation_attempts
       ADD CONSTRAINT knowledge_compilation_attempts_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1970,7 +1969,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_embedding_rebuild_batches
       ADD CONSTRAINT knowledge_embedding_rebuild_batches_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1979,7 +1978,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_graph_edges
       ADD CONSTRAINT knowledge_graph_edges_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1988,7 +1987,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_image_extractions
       ADD CONSTRAINT knowledge_image_extractions_cache_fingerprint_unique UNIQUE (workspace_id, attachment_id, cache_fingerprint);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -1997,7 +1996,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_image_extractions
       ADD CONSTRAINT knowledge_image_extractions_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2006,7 +2005,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_links
       ADD CONSTRAINT knowledge_links_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2015,7 +2014,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_page_compile_schedules
       ADD CONSTRAINT knowledge_page_compile_schedules_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2024,7 +2023,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_page_index_settings
       ADD CONSTRAINT knowledge_page_index_settings_pk PRIMARY KEY (workspace_id, source_page_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2033,7 +2032,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_pages
       ADD CONSTRAINT knowledge_pages_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2042,7 +2041,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_parent_section_sources
       ADD CONSTRAINT knowledge_parent_section_sources_pkey PRIMARY KEY (parent_section_id, source_page_id, source_version);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2051,7 +2050,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_parent_sections
       ADD CONSTRAINT knowledge_parent_sections_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2060,7 +2059,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_parent_sections
       ADD CONSTRAINT knowledge_parent_sections_workspace_id_knowledge_page_id_st_key UNIQUE (workspace_id, knowledge_page_id, stable_key);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2069,7 +2068,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_quarantined_artifacts
       ADD CONSTRAINT knowledge_quarantined_artifacts_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2078,7 +2077,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_query_audit
       ADD CONSTRAINT knowledge_query_audit_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2087,7 +2086,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_review_applications
       ADD CONSTRAINT knowledge_review_applications_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2096,7 +2095,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_review_snapshots
       ADD CONSTRAINT knowledge_review_snapshots_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2105,7 +2104,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_review_snapshots
       ADD CONSTRAINT knowledge_review_snapshots_workspace_space_unique UNIQUE (workspace_id, space_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2114,7 +2113,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_source_access_policy
       ADD CONSTRAINT knowledge_source_access_policy_pk PRIMARY KEY (workspace_id, source_page_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2123,7 +2122,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_source_access_requirements
       ADD CONSTRAINT knowledge_source_access_requirements_pk PRIMARY KEY (workspace_id, source_page_id, requirement_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2132,7 +2131,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_source_analyses
       ADD CONSTRAINT knowledge_source_analyses_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2141,7 +2140,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_source_chunks
       ADD CONSTRAINT knowledge_source_chunks_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2150,7 +2149,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_sources
       ADD CONSTRAINT knowledge_sources_page_version_unique UNIQUE (workspace_id, source_page_id, source_version);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2159,7 +2158,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_sources
       ADD CONSTRAINT knowledge_sources_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2168,7 +2167,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_space_compile_run_images
       ADD CONSTRAINT knowledge_space_compile_run_images_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2177,7 +2176,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_space_compile_run_pages
       ADD CONSTRAINT knowledge_space_compile_run_pages_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2186,7 +2185,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_space_compile_runs
       ADD CONSTRAINT knowledge_space_compile_runs_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2195,7 +2194,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.labels
       ADD CONSTRAINT labels_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2204,7 +2203,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.legacy_link_mappings
       ADD CONSTRAINT legacy_link_mappings_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2213,7 +2212,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.notifications
       ADD CONSTRAINT notifications_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2222,7 +2221,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_permissions
       ADD CONSTRAINT page_access_group_unique UNIQUE (page_access_id, group_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2231,7 +2230,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_access
       ADD CONSTRAINT page_access_page_id_key UNIQUE (page_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2240,7 +2239,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_access
       ADD CONSTRAINT page_access_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2249,7 +2248,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_permissions
       ADD CONSTRAINT page_access_user_unique UNIQUE (page_access_id, user_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2258,7 +2257,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_history
       ADD CONSTRAINT page_history_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2267,7 +2266,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_labels
       ADD CONSTRAINT page_labels_page_id_label_id_unique UNIQUE (page_id, label_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2276,7 +2275,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_labels
       ADD CONSTRAINT page_labels_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2285,7 +2284,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_permissions
       ADD CONSTRAINT page_permissions_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2294,7 +2293,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_transclusion_references
       ADD CONSTRAINT page_transclusion_references_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2303,7 +2302,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_transclusion_references
       ADD CONSTRAINT page_transclusion_references_unique UNIQUE (reference_page_id, source_page_id, transclusion_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2312,7 +2311,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_transclusions
       ADD CONSTRAINT page_transclusions_page_transclusion_unique UNIQUE (page_id, transclusion_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2321,7 +2320,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_transclusions
       ADD CONSTRAINT page_transclusions_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2330,7 +2329,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_verifications
       ADD CONSTRAINT page_verifications_page_id_key UNIQUE (page_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2339,7 +2338,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_verifications
       ADD CONSTRAINT page_verifications_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2348,7 +2347,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_verifiers
       ADD CONSTRAINT page_verifiers_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2357,7 +2356,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_verifiers
       ADD CONSTRAINT page_verifiers_verification_user_unique UNIQUE (page_verification_id, user_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2366,7 +2365,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_visits
       ADD CONSTRAINT page_visits_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2375,7 +2374,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_visits
       ADD CONSTRAINT page_visits_user_page_unique UNIQUE (user_id, page_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2384,7 +2383,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.pages
       ADD CONSTRAINT pages_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2393,7 +2392,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.pages
       ADD CONSTRAINT pages_slug_id_unique UNIQUE (slug_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2402,7 +2401,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.scim_tokens
       ADD CONSTRAINT scim_tokens_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2411,7 +2410,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.shares
       ADD CONSTRAINT shares_key_workspace_id_unique UNIQUE (key, workspace_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2420,7 +2419,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.shares
       ADD CONSTRAINT shares_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2429,7 +2428,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.space_members
       ADD CONSTRAINT space_members_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2438,7 +2437,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.space_members
       ADD CONSTRAINT space_members_space_id_group_id_unique UNIQUE (space_id, group_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2447,7 +2446,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.space_members
       ADD CONSTRAINT space_members_space_id_user_id_unique UNIQUE (space_id, user_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2456,7 +2455,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.spaces
       ADD CONSTRAINT spaces_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2465,7 +2464,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.spaces
       ADD CONSTRAINT spaces_slug_workspace_id_unique UNIQUE (slug, workspace_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2474,7 +2473,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.spaces
       ADD CONSTRAINT spaces_workspace_personal_owner_unique UNIQUE (workspace_id, personal_owner_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2483,7 +2482,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.templates
       ADD CONSTRAINT templates_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2492,7 +2491,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.user_mfa
       ADD CONSTRAINT user_mfa_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2501,7 +2500,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.user_mfa
       ADD CONSTRAINT user_mfa_user_id_unique UNIQUE (user_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2510,7 +2509,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.user_sessions
       ADD CONSTRAINT user_sessions_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2519,7 +2518,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.user_tokens
       ADD CONSTRAINT user_tokens_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2528,7 +2527,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.users
       ADD CONSTRAINT users_email_workspace_id_unique UNIQUE (email, workspace_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2537,7 +2536,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.users
       ADD CONSTRAINT users_id_workspace_unique UNIQUE (id, workspace_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2546,7 +2545,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.users
       ADD CONSTRAINT users_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2555,7 +2554,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.watchers
       ADD CONSTRAINT watchers_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2564,7 +2563,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.workspace_invitations
       ADD CONSTRAINT workspace_invitations_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2573,7 +2572,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.workspaces
       ADD CONSTRAINT workspaces_custom_domain_unique UNIQUE (custom_domain);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2582,7 +2581,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.workspaces
       ADD CONSTRAINT workspaces_hostname_unique UNIQUE (hostname);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2591,7 +2590,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.workspaces
       ADD CONSTRAINT workspaces_pkey PRIMARY KEY (id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2600,7 +2599,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.workspaces
       ADD CONSTRAINT workspaces_stripe_customer_id_unique UNIQUE (stripe_customer_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -2780,12 +2779,6 @@ CREATE INDEX IF NOT EXISTS idx_groups_workspace_id ON public.groups USING btree 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_workspace_scim_external_id ON public.groups USING btree (workspace_id, scim_external_id) WHERE (scim_external_id IS NOT NULL);
 
 --
--- Name: idx_kc_hnsw_b275b56d8daa_1024; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX IF NOT EXISTS idx_kc_hnsw_b275b56d8daa_1024 ON public.knowledge_chunks USING hnsw (((embedding)::public.vector(1024)) public.vector_cosine_ops) WHERE (((embedding_profile)::text = 'b275b56d8daa2a5aea4867fba96978cca04154d71ae143dc519aa7c894e1269e'::text) AND (embedding_dimensions = 1024) AND (stale_at IS NULL) AND (embedding IS NOT NULL));
-
---
 -- Name: idx_knowledge_access_policy_fresh; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2808,6 +2801,12 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_access_principals_lookup ON public.know
 --
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_access_principals_requirement ON public.knowledge_source_access_principals USING btree (workspace_id, source_page_id, requirement_id, principal_type, principal_id);
+
+--
+-- Name: idx_knowledge_access_principals_source_page; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_access_principals_source_page ON public.knowledge_source_access_principals USING btree (workspace_id, source_page_id);
 
 --
 -- Name: idx_knowledge_artifact_contributions_artifact; Type: INDEX; Schema: public; Owner: -
@@ -3092,6 +3091,12 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_run_pages_latest_source ON public.knowl
 CREATE INDEX IF NOT EXISTS idx_knowledge_run_pages_merge_dispatch ON public.knowledge_space_compile_run_pages USING btree (merge_status, merge_dispatched_at, updated_at);
 
 --
+-- Name: idx_knowledge_source_analyses_workspace_space; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_source_analyses_workspace_space ON public.knowledge_source_analyses USING btree (workspace_id, space_id);
+
+--
 -- Name: idx_knowledge_source_chunks_page; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3102,6 +3107,13 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_source_chunks_page ON public.knowledge_
 --
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_sources_workspace_space ON public.knowledge_sources USING btree (workspace_id, source_space_id);
+
+--
+-- Name: idx_knowledge_space_compile_run_images_diagnostics_scope; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_space_compile_run_images_diagnostics_scope ON public.knowledge_space_compile_run_images USING btree (workspace_id, space_id, status);
+
 
 --
 -- Name: idx_knowledge_space_compile_run_images_extraction_id; Type: INDEX; Schema: public; Owner: -
@@ -3122,6 +3134,13 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_space_compile_run_images_reaper ON publ
 CREATE INDEX IF NOT EXISTS idx_knowledge_space_compile_run_images_run_status ON public.knowledge_space_compile_run_images USING btree (run_id, status, created_at);
 
 --
+-- Name: idx_knowledge_space_compile_run_pages_diagnostics_failed; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_space_compile_run_pages_diagnostics_failed ON public.knowledge_space_compile_run_pages USING btree (workspace_id, space_id, error_code) WHERE (((status)::text = 'failed'::text) OR ((merge_status)::text = 'failed'::text));
+
+
+--
 -- Name: idx_knowledge_space_compile_run_pages_dispatch; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3132,6 +3151,13 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_space_compile_run_pages_dispatch ON pub
 --
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_space_compile_runs_diagnostics ON public.knowledge_space_compile_runs USING btree (workspace_id, space_id, created_at);
+
+--
+-- Name: idx_knowledge_space_compile_runs_diagnostics_scope_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_space_compile_runs_diagnostics_scope_status ON public.knowledge_space_compile_runs USING btree (workspace_id, space_id, status, phase);
+
 
 --
 -- Name: idx_knowledge_space_compile_runs_dispatch; Type: INDEX; Schema: public; Owner: -
@@ -3605,7 +3631,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.ai_chat_messages
       ADD CONSTRAINT ai_chat_messages_chat_id_fkey FOREIGN KEY (chat_id) REFERENCES public.ai_chats(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3614,7 +3640,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.ai_chat_messages
       ADD CONSTRAINT ai_chat_messages_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3623,7 +3649,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.ai_chat_messages
       ADD CONSTRAINT ai_chat_messages_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3632,7 +3658,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.ai_chats
       ADD CONSTRAINT ai_chats_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public.users(id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3641,7 +3667,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.ai_chats
       ADD CONSTRAINT ai_chats_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3650,7 +3676,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.analytics_events
       ADD CONSTRAINT analytics_events_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3659,7 +3685,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.analytics_events
       ADD CONSTRAINT analytics_events_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3668,7 +3694,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.api_key_spaces
       ADD CONSTRAINT api_key_spaces_api_key_id_fkey FOREIGN KEY (api_key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3677,7 +3703,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.api_key_spaces
       ADD CONSTRAINT api_key_spaces_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3686,7 +3712,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.api_keys
       ADD CONSTRAINT api_keys_agent_user_id_fkey FOREIGN KEY (agent_user_id) REFERENCES public.users(id) ON DELETE RESTRICT;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3695,7 +3721,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.api_keys
       ADD CONSTRAINT api_keys_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public.users(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3704,7 +3730,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.api_keys
       ADD CONSTRAINT api_keys_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3713,7 +3739,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.attachments
       ADD CONSTRAINT attachments_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public.users(id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3722,7 +3748,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.attachments
       ADD CONSTRAINT attachments_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3731,7 +3757,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.audit
       ADD CONSTRAINT audit_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3740,7 +3766,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.auth_accounts
       ADD CONSTRAINT auth_accounts_auth_provider_id_fkey FOREIGN KEY (auth_provider_id) REFERENCES public.auth_providers(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3749,7 +3775,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.auth_accounts
       ADD CONSTRAINT auth_accounts_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3758,7 +3784,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.auth_accounts
       ADD CONSTRAINT auth_accounts_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3767,7 +3793,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.auth_providers
       ADD CONSTRAINT auth_providers_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3776,7 +3802,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.auth_providers
       ADD CONSTRAINT auth_providers_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3785,7 +3811,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.backlinks
       ADD CONSTRAINT backlinks_source_page_id_fkey FOREIGN KEY (source_page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3794,7 +3820,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.backlinks
       ADD CONSTRAINT backlinks_target_page_id_fkey FOREIGN KEY (target_page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3803,7 +3829,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.backlinks
       ADD CONSTRAINT backlinks_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3812,7 +3838,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.billing
       ADD CONSTRAINT billing_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3821,7 +3847,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.comments
       ADD CONSTRAINT comments_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public.users(id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3830,7 +3856,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.comments
       ADD CONSTRAINT comments_last_edited_by_id_fkey FOREIGN KEY (last_edited_by_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3839,7 +3865,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.comments
       ADD CONSTRAINT comments_page_id_fkey FOREIGN KEY (page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3848,7 +3874,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.comments
       ADD CONSTRAINT comments_parent_comment_id_fkey FOREIGN KEY (parent_comment_id) REFERENCES public.comments(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3857,7 +3883,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.comments
       ADD CONSTRAINT comments_resolved_by_id_fkey FOREIGN KEY (resolved_by_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3866,7 +3892,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.comments
       ADD CONSTRAINT comments_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3875,7 +3901,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.comments
       ADD CONSTRAINT comments_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3884,7 +3910,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.favorites
       ADD CONSTRAINT favorites_page_id_fkey FOREIGN KEY (page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3893,7 +3919,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.favorites
       ADD CONSTRAINT favorites_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3902,7 +3928,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.favorites
       ADD CONSTRAINT favorites_template_id_fkey FOREIGN KEY (template_id) REFERENCES public.templates(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3911,7 +3937,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.favorites
       ADD CONSTRAINT favorites_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3920,7 +3946,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.favorites
       ADD CONSTRAINT favorites_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3929,7 +3955,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.file_tasks
       ADD CONSTRAINT file_tasks_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public.users(id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3938,7 +3964,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.file_tasks
       ADD CONSTRAINT file_tasks_page_id_fkey FOREIGN KEY (page_id) REFERENCES public.pages(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3947,7 +3973,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.file_tasks
       ADD CONSTRAINT file_tasks_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3956,7 +3982,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.file_tasks
       ADD CONSTRAINT file_tasks_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3965,7 +3991,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.group_users
       ADD CONSTRAINT group_users_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.groups(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3974,7 +4000,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.group_users
       ADD CONSTRAINT group_users_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3983,7 +4009,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.groups
       ADD CONSTRAINT groups_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public.users(id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -3992,7 +4018,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.groups
       ADD CONSTRAINT groups_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4001,7 +4027,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_artifact_contributions
       ADD CONSTRAINT knowledge_artifact_contributions_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4010,7 +4036,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_artifact_contributions
       ADD CONSTRAINT knowledge_artifact_contributions_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4019,7 +4045,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_chunk_attachments
       ADD CONSTRAINT knowledge_chunk_attachments_chunk_id_fkey FOREIGN KEY (chunk_id) REFERENCES public.knowledge_chunks(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4028,7 +4054,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_chunk_sources
       ADD CONSTRAINT knowledge_chunk_sources_chunk_id_fkey FOREIGN KEY (chunk_id) REFERENCES public.knowledge_chunks(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4037,7 +4063,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_chunk_sources
       ADD CONSTRAINT knowledge_chunk_sources_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4046,7 +4072,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_chunks
       ADD CONSTRAINT knowledge_chunks_knowledge_page_id_fkey FOREIGN KEY (knowledge_page_id) REFERENCES public.knowledge_pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4055,7 +4081,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_chunks
       ADD CONSTRAINT knowledge_chunks_parent_section_id_fkey FOREIGN KEY (parent_section_id) REFERENCES public.knowledge_parent_sections(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4064,7 +4090,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_chunks
       ADD CONSTRAINT knowledge_chunks_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4073,7 +4099,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_chunks
       ADD CONSTRAINT knowledge_chunks_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4082,7 +4108,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_compilation_attempts
       ADD CONSTRAINT knowledge_compilation_attempts_source_page_id_fkey FOREIGN KEY (source_page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4091,7 +4117,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_compilation_attempts
       ADD CONSTRAINT knowledge_compilation_attempts_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4100,7 +4126,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_compilation_attempts
       ADD CONSTRAINT knowledge_compilation_attempts_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4109,7 +4135,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_embedding_rebuild_batches
       ADD CONSTRAINT knowledge_embedding_rebuild_batches_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4118,7 +4144,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_embedding_rebuild_batches
       ADD CONSTRAINT knowledge_embedding_rebuild_batches_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4127,7 +4153,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_graph_edge_sources
       ADD CONSTRAINT knowledge_graph_edge_sources_graph_edge_id_fkey FOREIGN KEY (graph_edge_id) REFERENCES public.knowledge_graph_edges(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4136,7 +4162,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_graph_edge_sources
       ADD CONSTRAINT knowledge_graph_edge_sources_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4145,7 +4171,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_graph_edges
       ADD CONSTRAINT knowledge_graph_edges_from_knowledge_page_id_fkey FOREIGN KEY (from_knowledge_page_id) REFERENCES public.knowledge_pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4154,7 +4180,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_graph_edges
       ADD CONSTRAINT knowledge_graph_edges_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4163,7 +4189,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_graph_edges
       ADD CONSTRAINT knowledge_graph_edges_to_knowledge_page_id_fkey FOREIGN KEY (to_knowledge_page_id) REFERENCES public.knowledge_pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4172,7 +4198,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_graph_edges
       ADD CONSTRAINT knowledge_graph_edges_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4181,7 +4207,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_image_extractions
       ADD CONSTRAINT knowledge_image_extractions_attachment_id_fkey FOREIGN KEY (attachment_id) REFERENCES public.attachments(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4190,7 +4216,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_image_extractions
       ADD CONSTRAINT knowledge_image_extractions_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4199,7 +4225,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_link_sources
       ADD CONSTRAINT knowledge_link_sources_link_id_fkey FOREIGN KEY (link_id) REFERENCES public.knowledge_links(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4208,7 +4234,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_link_sources
       ADD CONSTRAINT knowledge_link_sources_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4217,7 +4243,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_links
       ADD CONSTRAINT knowledge_links_from_knowledge_page_id_fkey FOREIGN KEY (from_knowledge_page_id) REFERENCES public.knowledge_pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4226,7 +4252,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_links
       ADD CONSTRAINT knowledge_links_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4235,7 +4261,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_links
       ADD CONSTRAINT knowledge_links_target_page_id_fkey FOREIGN KEY (target_page_id) REFERENCES public.pages(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4244,7 +4270,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_links
       ADD CONSTRAINT knowledge_links_target_space_id_fkey FOREIGN KEY (target_space_id) REFERENCES public.spaces(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4253,7 +4279,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_links
       ADD CONSTRAINT knowledge_links_to_knowledge_page_id_fkey FOREIGN KEY (to_knowledge_page_id) REFERENCES public.knowledge_pages(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4262,7 +4288,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_links
       ADD CONSTRAINT knowledge_links_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4271,7 +4297,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_page_compile_schedules
       ADD CONSTRAINT knowledge_page_compile_schedules_source_page_id_fkey FOREIGN KEY (source_page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4280,7 +4306,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_page_compile_schedules
       ADD CONSTRAINT knowledge_page_compile_schedules_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4289,7 +4315,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_page_compile_schedules
       ADD CONSTRAINT knowledge_page_compile_schedules_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4298,7 +4324,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_page_index_settings
       ADD CONSTRAINT knowledge_page_index_settings_source_page_id_fkey FOREIGN KEY (source_page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4307,7 +4333,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_page_index_settings
       ADD CONSTRAINT knowledge_page_index_settings_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4316,7 +4342,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_page_index_settings
       ADD CONSTRAINT knowledge_page_index_settings_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4325,7 +4351,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_page_sources
       ADD CONSTRAINT knowledge_page_sources_knowledge_page_id_fkey FOREIGN KEY (knowledge_page_id) REFERENCES public.knowledge_pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4334,7 +4360,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_page_sources
       ADD CONSTRAINT knowledge_page_sources_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4343,7 +4369,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_pages
       ADD CONSTRAINT knowledge_pages_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4352,7 +4378,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_pages
       ADD CONSTRAINT knowledge_pages_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4361,7 +4387,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_parent_section_sources
       ADD CONSTRAINT knowledge_parent_section_sources_parent_section_id_fkey FOREIGN KEY (parent_section_id) REFERENCES public.knowledge_parent_sections(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4370,7 +4396,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_parent_section_sources
       ADD CONSTRAINT knowledge_parent_section_sources_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4379,7 +4405,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_parent_sections
       ADD CONSTRAINT knowledge_parent_sections_knowledge_page_id_fkey FOREIGN KEY (knowledge_page_id) REFERENCES public.knowledge_pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4388,7 +4414,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_parent_sections
       ADD CONSTRAINT knowledge_parent_sections_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4397,7 +4423,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_parent_sections
       ADD CONSTRAINT knowledge_parent_sections_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4406,7 +4432,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_quarantined_artifacts
       ADD CONSTRAINT knowledge_quarantined_artifacts_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4415,7 +4441,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_quarantined_artifacts
       ADD CONSTRAINT knowledge_quarantined_artifacts_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4424,7 +4450,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_query_audit
       ADD CONSTRAINT knowledge_query_audit_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4433,7 +4459,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_query_audit
       ADD CONSTRAINT knowledge_query_audit_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4442,7 +4468,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_review_applications
       ADD CONSTRAINT knowledge_review_applications_applied_by_fkey FOREIGN KEY (applied_by) REFERENCES public.users(id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4451,7 +4477,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_review_applications
       ADD CONSTRAINT knowledge_review_applications_created_page_id_fkey FOREIGN KEY (created_page_id) REFERENCES public.pages(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4460,7 +4486,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_review_applications
       ADD CONSTRAINT knowledge_review_applications_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4469,7 +4495,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_review_applications
       ADD CONSTRAINT knowledge_review_applications_target_page_id_fkey FOREIGN KEY (target_page_id) REFERENCES public.pages(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4478,7 +4504,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_review_applications
       ADD CONSTRAINT knowledge_review_applications_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4487,7 +4513,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_review_snapshots
       ADD CONSTRAINT knowledge_review_snapshots_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4496,7 +4522,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_review_snapshots
       ADD CONSTRAINT knowledge_review_snapshots_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4505,7 +4531,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_source_access_policy
       ADD CONSTRAINT knowledge_source_access_policy_source_space_id_fkey FOREIGN KEY (source_space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4514,16 +4540,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_source_access_policy
       ADD CONSTRAINT knowledge_source_access_policy_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
-  NULL;
-END;
-$wrap$;
-
-DO $wrap$
-BEGIN
-  ALTER TABLE ONLY public.knowledge_source_access_principals
-      ADD CONSTRAINT knowledge_source_access_principals_source_page_id_fkey FOREIGN KEY (source_page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4532,7 +4549,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_source_access_principals
       ADD CONSTRAINT knowledge_source_access_principals_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4541,7 +4558,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_source_access_requirements
       ADD CONSTRAINT knowledge_source_access_requirements_restricted_page_id_fkey FOREIGN KEY (restricted_page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4550,7 +4567,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_source_access_requirements
       ADD CONSTRAINT knowledge_source_access_requirements_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4559,7 +4576,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_source_analyses
       ADD CONSTRAINT knowledge_source_analyses_source_page_id_fkey FOREIGN KEY (source_page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4568,7 +4585,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_source_analyses
       ADD CONSTRAINT knowledge_source_analyses_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4577,7 +4594,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_source_analyses
       ADD CONSTRAINT knowledge_source_analyses_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4586,7 +4603,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_source_chunks
       ADD CONSTRAINT knowledge_source_chunks_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.knowledge_sources(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4595,7 +4612,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_source_chunks
       ADD CONSTRAINT knowledge_source_chunks_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4604,7 +4621,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_sources
       ADD CONSTRAINT knowledge_sources_attachment_id_fkey FOREIGN KEY (attachment_id) REFERENCES public.attachments(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4613,7 +4630,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_sources
       ADD CONSTRAINT knowledge_sources_source_space_id_fkey FOREIGN KEY (source_space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4622,7 +4639,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_sources
       ADD CONSTRAINT knowledge_sources_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4631,7 +4648,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_space_compile_run_images
       ADD CONSTRAINT knowledge_space_compile_run_images_extraction_id_fkey FOREIGN KEY (extraction_id) REFERENCES public.knowledge_image_extractions(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4640,7 +4657,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_space_compile_run_images
       ADD CONSTRAINT knowledge_space_compile_run_images_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.knowledge_space_compile_runs(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4649,7 +4666,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_space_compile_run_images
       ADD CONSTRAINT knowledge_space_compile_run_images_run_page_id_fkey FOREIGN KEY (run_page_id) REFERENCES public.knowledge_space_compile_run_pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4658,7 +4675,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_space_compile_run_images
       ADD CONSTRAINT knowledge_space_compile_run_images_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4667,7 +4684,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_space_compile_run_images
       ADD CONSTRAINT knowledge_space_compile_run_images_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4676,7 +4693,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_space_compile_run_pages
       ADD CONSTRAINT knowledge_space_compile_run_pages_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.knowledge_space_compile_runs(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4685,7 +4702,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_space_compile_run_pages
       ADD CONSTRAINT knowledge_space_compile_run_pages_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4694,7 +4711,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_space_compile_run_pages
       ADD CONSTRAINT knowledge_space_compile_run_pages_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4703,7 +4720,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_space_compile_runs
       ADD CONSTRAINT knowledge_space_compile_runs_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4712,7 +4729,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.knowledge_space_compile_runs
       ADD CONSTRAINT knowledge_space_compile_runs_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4721,7 +4738,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.labels
       ADD CONSTRAINT labels_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4730,7 +4747,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.legacy_link_mappings
       ADD CONSTRAINT legacy_link_mappings_import_task_id_fkey FOREIGN KEY (import_task_id) REFERENCES public.file_tasks(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4739,7 +4756,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.legacy_link_mappings
       ADD CONSTRAINT legacy_link_mappings_target_attachment_id_fkey FOREIGN KEY (target_attachment_id) REFERENCES public.attachments(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4748,7 +4765,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.legacy_link_mappings
       ADD CONSTRAINT legacy_link_mappings_target_page_id_fkey FOREIGN KEY (target_page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4757,7 +4774,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.legacy_link_mappings
       ADD CONSTRAINT legacy_link_mappings_target_space_id_fkey FOREIGN KEY (target_space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4766,7 +4783,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.legacy_link_mappings
       ADD CONSTRAINT legacy_link_mappings_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4775,7 +4792,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.notifications
       ADD CONSTRAINT notifications_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4784,7 +4801,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.notifications
       ADD CONSTRAINT notifications_comment_id_fkey FOREIGN KEY (comment_id) REFERENCES public.comments(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4793,7 +4810,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.notifications
       ADD CONSTRAINT notifications_page_id_fkey FOREIGN KEY (page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4802,7 +4819,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.notifications
       ADD CONSTRAINT notifications_page_verification_id_fkey FOREIGN KEY (page_verification_id) REFERENCES public.page_verifications(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4811,7 +4828,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.notifications
       ADD CONSTRAINT notifications_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4820,7 +4837,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.notifications
       ADD CONSTRAINT notifications_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4829,7 +4846,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.notifications
       ADD CONSTRAINT notifications_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4838,7 +4855,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_access
       ADD CONSTRAINT page_access_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4847,7 +4864,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_access
       ADD CONSTRAINT page_access_page_id_fkey FOREIGN KEY (page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4856,7 +4873,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_access
       ADD CONSTRAINT page_access_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4865,7 +4882,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_access
       ADD CONSTRAINT page_access_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4874,7 +4891,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_history
       ADD CONSTRAINT page_history_last_updated_by_id_fkey FOREIGN KEY (last_updated_by_id) REFERENCES public.users(id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4883,7 +4900,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_history
       ADD CONSTRAINT page_history_page_id_fkey FOREIGN KEY (page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4892,7 +4909,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_history
       ADD CONSTRAINT page_history_previous_history_id_fkey FOREIGN KEY (previous_history_id) REFERENCES public.page_history(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4901,7 +4918,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_history
       ADD CONSTRAINT page_history_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4910,7 +4927,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_history
       ADD CONSTRAINT page_history_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4919,7 +4936,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_labels
       ADD CONSTRAINT page_labels_label_id_fkey FOREIGN KEY (label_id) REFERENCES public.labels(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4928,7 +4945,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_labels
       ADD CONSTRAINT page_labels_page_id_fkey FOREIGN KEY (page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4937,7 +4954,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_permissions
       ADD CONSTRAINT page_permissions_added_by_id_fkey FOREIGN KEY (added_by_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4946,7 +4963,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_permissions
       ADD CONSTRAINT page_permissions_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.groups(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4955,7 +4972,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_permissions
       ADD CONSTRAINT page_permissions_page_access_id_fkey FOREIGN KEY (page_access_id) REFERENCES public.page_access(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4964,7 +4981,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_permissions
       ADD CONSTRAINT page_permissions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4973,7 +4990,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_transclusion_references
       ADD CONSTRAINT page_transclusion_references_reference_page_id_fkey FOREIGN KEY (reference_page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4982,7 +4999,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_transclusion_references
       ADD CONSTRAINT page_transclusion_references_source_page_id_fkey FOREIGN KEY (source_page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -4991,7 +5008,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_transclusion_references
       ADD CONSTRAINT page_transclusion_references_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5000,7 +5017,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_transclusions
       ADD CONSTRAINT page_transclusions_page_id_fkey FOREIGN KEY (page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5009,7 +5026,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_transclusions
       ADD CONSTRAINT page_transclusions_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5018,7 +5035,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_verifications
       ADD CONSTRAINT page_verifications_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5027,7 +5044,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_verifications
       ADD CONSTRAINT page_verifications_page_id_fkey FOREIGN KEY (page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5036,7 +5053,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_verifications
       ADD CONSTRAINT page_verifications_rejected_by_id_fkey FOREIGN KEY (rejected_by_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5045,7 +5062,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_verifications
       ADD CONSTRAINT page_verifications_requested_by_id_fkey FOREIGN KEY (requested_by_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5054,7 +5071,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_verifications
       ADD CONSTRAINT page_verifications_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5063,7 +5080,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_verifications
       ADD CONSTRAINT page_verifications_verified_by_id_fkey FOREIGN KEY (verified_by_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5072,7 +5089,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_verifications
       ADD CONSTRAINT page_verifications_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5081,7 +5098,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_verifiers
       ADD CONSTRAINT page_verifiers_added_by_id_fkey FOREIGN KEY (added_by_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5090,7 +5107,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_verifiers
       ADD CONSTRAINT page_verifiers_page_verification_id_fkey FOREIGN KEY (page_verification_id) REFERENCES public.page_verifications(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5099,7 +5116,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_verifiers
       ADD CONSTRAINT page_verifiers_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5108,7 +5125,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_visits
       ADD CONSTRAINT page_visits_page_id_fkey FOREIGN KEY (page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5117,7 +5134,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_visits
       ADD CONSTRAINT page_visits_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5126,7 +5143,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.page_visits
       ADD CONSTRAINT page_visits_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5135,7 +5152,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.pages
       ADD CONSTRAINT pages_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public.users(id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5144,7 +5161,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.pages
       ADD CONSTRAINT pages_deleted_by_id_fkey FOREIGN KEY (deleted_by_id) REFERENCES public.users(id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5153,7 +5170,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.pages
       ADD CONSTRAINT pages_last_updated_by_id_fkey FOREIGN KEY (last_updated_by_id) REFERENCES public.users(id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5162,7 +5179,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.pages
       ADD CONSTRAINT pages_parent_page_id_fkey FOREIGN KEY (parent_page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5171,7 +5188,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.pages
       ADD CONSTRAINT pages_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5180,7 +5197,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.pages
       ADD CONSTRAINT pages_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5189,7 +5206,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.scim_tokens
       ADD CONSTRAINT scim_tokens_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5198,7 +5215,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.scim_tokens
       ADD CONSTRAINT scim_tokens_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5207,7 +5224,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.shares
       ADD CONSTRAINT shares_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public.users(id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5216,7 +5233,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.shares
       ADD CONSTRAINT shares_page_id_fkey FOREIGN KEY (page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5225,7 +5242,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.shares
       ADD CONSTRAINT shares_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5234,7 +5251,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.shares
       ADD CONSTRAINT shares_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5243,7 +5260,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.space_members
       ADD CONSTRAINT space_members_added_by_id_fkey FOREIGN KEY (added_by_id) REFERENCES public.users(id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5252,7 +5269,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.space_members
       ADD CONSTRAINT space_members_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.groups(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5261,7 +5278,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.space_members
       ADD CONSTRAINT space_members_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5270,7 +5287,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.space_members
       ADD CONSTRAINT space_members_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5279,7 +5296,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.spaces
       ADD CONSTRAINT spaces_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public.users(id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5288,7 +5305,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.spaces
       ADD CONSTRAINT spaces_personal_owner_workspace_fk FOREIGN KEY (personal_owner_id, workspace_id) REFERENCES public.users(id, workspace_id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5297,7 +5314,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.spaces
       ADD CONSTRAINT spaces_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5306,7 +5323,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.templates
       ADD CONSTRAINT templates_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5315,7 +5332,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.templates
       ADD CONSTRAINT templates_last_updated_by_id_fkey FOREIGN KEY (last_updated_by_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5324,7 +5341,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.templates
       ADD CONSTRAINT templates_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5333,7 +5350,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.templates
       ADD CONSTRAINT templates_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5342,7 +5359,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.user_mfa
       ADD CONSTRAINT user_mfa_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5351,7 +5368,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.user_mfa
       ADD CONSTRAINT user_mfa_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5360,7 +5377,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.user_sessions
       ADD CONSTRAINT user_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5369,7 +5386,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.user_sessions
       ADD CONSTRAINT user_sessions_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5378,7 +5395,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.user_tokens
       ADD CONSTRAINT user_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5387,7 +5404,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.user_tokens
       ADD CONSTRAINT user_tokens_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5396,7 +5413,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.users
       ADD CONSTRAINT users_invited_by_id_fkey FOREIGN KEY (invited_by_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5405,7 +5422,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.users
       ADD CONSTRAINT users_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5414,7 +5431,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.watchers
       ADD CONSTRAINT watchers_added_by_id_fkey FOREIGN KEY (added_by_id) REFERENCES public.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5423,7 +5440,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.watchers
       ADD CONSTRAINT watchers_page_id_fkey FOREIGN KEY (page_id) REFERENCES public.pages(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5432,7 +5449,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.watchers
       ADD CONSTRAINT watchers_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5441,7 +5458,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.watchers
       ADD CONSTRAINT watchers_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5450,7 +5467,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.watchers
       ADD CONSTRAINT watchers_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5459,7 +5476,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.workspace_invitations
       ADD CONSTRAINT workspace_invitations_invited_by_id_fkey FOREIGN KEY (invited_by_id) REFERENCES public.users(id);
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5468,7 +5485,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.workspace_invitations
       ADD CONSTRAINT workspace_invitations_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;
@@ -5477,7 +5494,7 @@ DO $wrap$
 BEGIN
   ALTER TABLE ONLY public.workspaces
       ADD CONSTRAINT workspaces_default_space_id_fkey FOREIGN KEY (default_space_id) REFERENCES public.spaces(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR duplicate_table OR invalid_table_definition THEN
   NULL;
 END;
 $wrap$;

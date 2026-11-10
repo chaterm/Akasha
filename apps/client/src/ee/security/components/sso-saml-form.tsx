@@ -98,7 +98,7 @@ export function SsoSamlForm({ provider, onClose }: SsoFormProps) {
             {...form.getInputProps("name")}
           />
           <TextInput
-            label="Entity ID"
+            label={t("Entity ID")}
             variant="filled"
             value={buildSamlEntityId(provider.id)}
             rightSection={<CopyTextButton text={samlEntityId} />}
@@ -106,7 +106,7 @@ export function SsoSamlForm({ provider, onClose }: SsoFormProps) {
             readOnly
           />
           <TextInput
-            label="Callback URL (ACS)"
+            label={t("Callback URL (ACS)")}
             variant="filled"
             value={callbackUrl}
             pointer
@@ -114,14 +114,14 @@ export function SsoSamlForm({ provider, onClose }: SsoFormProps) {
             rightSection={<CopyTextButton text={callbackUrl} />}
           />
           <TextInput
-            label="IDP Login URL"
-            description="Enter your IDP login URL"
+            label={t("IDP Login URL")}
+            description={t("Enter your IDP login URL")}
             placeholder="e.g https://login.microsoftonline.com/7d6246d1-273b-4981-ad1e-e7bb27b86569/saml2"
             {...form.getInputProps("samlUrl")}
           />
           <Textarea
-            label="IDP Certificate"
-            description="Enter your IDP certificate"
+            label={t("IDP Certificate")}
+            description={t("Enter your IDP certificate")}
             placeholder="-----BEGIN CERTIFICATE-----"
             autosize
             minRows={3}

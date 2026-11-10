@@ -7,11 +7,13 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { IMAGE_VIEWER_EVENT } from "@docmost/editor-ext";
 
 type ImageDetail = { src: string; alt?: string };
 
 export default function ImageViewer() {
+  const { t } = useTranslation();
   const [image, setImage] = useState<ImageDetail | null>(null);
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -60,7 +62,7 @@ export default function ImageViewer() {
             {image?.alt || "Image preview"}
           </Text>
           <ActionIcon
-            aria-label="Close"
+            aria-label={t("Close")}
             onClick={() => setImage(null)}
             variant="subtle"
             c="white"
@@ -125,7 +127,7 @@ export default function ImageViewer() {
         </div>
         <Group justify="center" gap={4} py="sm" bg="dark.8">
           <ActionIcon
-            aria-label="Zoom out"
+            aria-label={t("Zoom out")}
             onClick={() => setScale((v) => Math.max(0.1, v / 1.2))}
             variant="filled"
             color="dark.5"
@@ -134,7 +136,7 @@ export default function ImageViewer() {
             <IconMinus size={18} />
           </ActionIcon>
           <ActionIcon
-            aria-label="Zoom in"
+            aria-label={t("Zoom in")}
             onClick={() => setScale((v) => Math.min(8, v * 1.2))}
             variant="filled"
             color="dark.5"
@@ -143,7 +145,7 @@ export default function ImageViewer() {
             <IconPlus size={18} />
           </ActionIcon>
           <ActionIcon
-            aria-label="Reset zoom"
+            aria-label={t("Reset zoom")}
             onClick={() => {
               setScale(1);
               setOffset({ x: 0, y: 0 });
@@ -155,7 +157,7 @@ export default function ImageViewer() {
             <IconRefresh size={18} />
           </ActionIcon>
           <ActionIcon
-            aria-label="Fullscreen"
+            aria-label={t("Fullscreen")}
             onClick={() => document.documentElement.requestFullscreen?.()}
             variant="filled"
             color="dark.5"

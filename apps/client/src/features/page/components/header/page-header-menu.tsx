@@ -34,6 +34,8 @@ import {
   IconCircleCheck,
   IconLoader2,
   IconCircle,
+  IconTemplate,
+  IconDeviceFloppy,
 } from "@tabler/icons-react";
 import React, { useEffect, useRef, useState } from "react";
 import { useAsideTriggerProps } from "@/hooks/use-toggle-aside.tsx";
@@ -45,6 +47,7 @@ import { useParams } from "react-router-dom";
 import {
   usePageQuery,
   usePublishPageKnowledgeMutation,
+  useSetPageIndexModeMutation,
   usePagePublishCooldownQuery,
   usePageCompileStatusQuery,
 } from "@/features/page/queries/page-query.ts";
@@ -60,17 +63,24 @@ import ExportModal from "@/components/common/export-modal";
 import { htmlToMarkdown } from "@docmost/editor-ext";
 import {
   pageEditorAtom,
+  titleEditorAtom,
   yjsConnectionStatusAtom,
 } from "@/features/editor/atoms/editor-atoms.ts";
+import { useHasFeature } from "@/ee/hooks/use-feature";
+import { Feature } from "@/ee/features";
+import { TemplateQuickPicker } from "@/features/template/components/template-quick-picker";
+import { SaveAsTemplateModal } from "@/features/template/components/save-as-template-modal";
+import { applyTemplateToEditor } from "@/features/template/lib/apply-template";
 import { formattedDate } from "@/lib/time.ts";
 import { PageEditModeControls } from "@/features/editor/components/page-edit-mode-toggle.tsx";
 import MovePageModal from "@/features/page/components/move-page-modal.tsx";
 import { useTimeAgo } from "@/hooks/use-time-ago.tsx";
+import useUserRole from "@/hooks/use-user-role.tsx";
 import { PageShareModal } from "@/ee/page-permission";
 import {
   PageVerificationMenuItem,
   PageVerificationModal,
-} from "@/ee/page-verification";
+} from "@/features/page-verification";
 import {
   useFavoriteIds,
   useAddFavoriteMutation,
@@ -81,7 +91,17 @@ import {
   useWatchPageMutation,
   useUnwatchPageMutation,
 } from "@/features/page/queries/watcher-query";
-import type { KnowledgeIndexMode } from "@/features/page/services/page-service";
+import type { KnowledgePageIndexModeChoice } from "@/features/page/services/page-service";
+import { notifyError } from "@/lib/errors";
+import { formatBytes } from "@/lib/utils.tsx";
+import { IPage } from "@/features/page/types/page.types.ts";
+import { PageSplitWarning } from "@/features/page-split/components/page-split-warning.tsx";
+import { usePageContentStats } from "@/features/page-split/hooks/use-page-content-stats.ts";
+import {
+  PAGE_IMAGE_LIMIT,
+  PAGE_SIZE_LIMIT_BYTES,
+  PAGE_WORD_LIMIT,
+} from "@/features/page-split/page-split.utils.ts";
 
 const PUBLISH_COOLDOWNS = [10 * 60_000, 30 * 60_000, 2 * 60 * 60_000];
 const publishCooldownKey = (pageId: string) =>
@@ -140,6 +160,8 @@ export default function PageHeaderMenu({ readOnly }: PageHeaderMenuProps) {
     <>
       <ConnectionWarning />
 
+      {!readOnly && page && <PageSplitWarning page={page} />}
+
       {!readOnly && <PageEditModeControls size="xs" />}
 
       <PageShareModal readOnly={readOnly} />
@@ -195,6 +217,17 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
     { open: openVerificationModal, close: closeVerificationModal },
   ] = useDisclosure(false);
   const [pageEditor] = useAtom(pageEditorAtom);
+  const titleEditor = useAtomValue(titleEditorAtom);
+  const hasTemplates = useHasFeature(Feature.TEMPLATES);
+  const canSaveAsTemplate = hasTemplates;
+  const [
+    insertTemplateOpened,
+    { open: openInsertTemplate, close: closeInsertTemplate },
+  ] = useDisclosure(false);
+  const [
+    saveTemplateOpened,
+    { open: openSaveTemplate, close: closeSaveTemplate },
+  ] = useDisclosure(false);
   const pageUpdatedAt = useTimeAgo(page?.updatedAt);
   const favoriteIds = useFavoriteIds("page", page?.spaceId);
   const addFavoriteMutation = useAddFavoriteMutation();
@@ -203,7 +236,9 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
   const { data: watchStatus } = useWatchStatusQuery(page?.id);
   const watchPage = useWatchPageMutation();
   const unwatchPage = useUnwatchPageMutation();
+  const { isOwner } = useUserRole();
   const publishPageKnowledge = usePublishPageKnowledgeMutation();
+  const setPageIndexMode = useSetPageIndexModeMutation();
   const { data: serverCooldown, refetch: refetchCooldown } =
     usePagePublishCooldownQuery(page?.id);
   const { data: compileStatus, refetch: refetchCompileStatus } =
@@ -213,7 +248,8 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
     step: number;
   } | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const [indexMode, setIndexMode] = useState<KnowledgeIndexMode>("compiled");
+  const [indexMode, setIndexMode] =
+    useState<KnowledgePageIndexModeChoice>("inherit");
   const publishCooldownRemaining = publishCooldown
     ? publishCooldown.expiresAt - now
     : 0;
@@ -225,12 +261,25 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
       });
     }
   }, [serverCooldown]);
-  const publishCoolingDown = publishCooldownRemaining > 0;
+  const publishCoolingDown = !isOwner && publishCooldownRemaining > 0;
   const isPublishing = compileStatus?.status === "compiling";
 
   useEffect(() => {
-    setIndexMode(compileStatus?.configuredIndexMode ?? "compiled");
-  }, [page?.id, compileStatus?.configuredIndexMode]);
+    setIndexMode(compileStatus?.pageIndexMode ?? "inherit");
+  }, [page?.id, compileStatus?.pageIndexMode]);
+  // A space set to a specific mode locks every page; "default" lets the page
+  // choose and falls back to smart compilation.
+  const spaceIndexMode = compileStatus?.spaceIndexMode ?? "default";
+  const spaceLocksIndexMode = spaceIndexMode !== "default";
+  const effectiveIndexMode = spaceLocksIndexMode
+    ? spaceIndexMode
+    : indexMode === "inherit"
+      ? "compiled"
+      : indexMode;
+  const effectiveIndexModeLabel =
+    effectiveIndexMode === "original"
+      ? t("Original text indexing")
+      : t("Smart compilation");
 
   useEffect(() => {
     setPublishCooldown(null);
@@ -306,6 +355,7 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
     if (
       !page?.id ||
       !compileStatus ||
+      setPageIndexMode.isPending ||
       publishPageKnowledge.isPending ||
       publishCoolingDown ||
       isPublishing
@@ -315,15 +365,19 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
       { pageId: page.id, indexMode },
       {
         onSuccess: () => {
-          const step = (publishCooldown?.step ?? 0) + 1;
-          const expiresAt =
-            Date.now() +
-            PUBLISH_COOLDOWNS[Math.min(step - 1, PUBLISH_COOLDOWNS.length - 1)];
-          setPublishCooldown({ expiresAt, step });
-          localStorage.setItem(
-            publishCooldownKey(page.id),
-            JSON.stringify({ expiresAt, step }),
-          );
+          if (!isOwner) {
+            const step = (publishCooldown?.step ?? 0) + 1;
+            const expiresAt =
+              Date.now() +
+              PUBLISH_COOLDOWNS[
+                Math.min(step - 1, PUBLISH_COOLDOWNS.length - 1)
+              ];
+            setPublishCooldown({ expiresAt, step });
+            localStorage.setItem(
+              publishCooldownKey(page.id),
+              JSON.stringify({ expiresAt, step }),
+            );
+          }
           notifications.show({ message: t("Page publish started") });
           void refetchCompileStatus();
         },
@@ -331,11 +385,23 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
           if (error?.response?.status === 429) {
             void refetchCooldown();
           }
-          notifications.show({
-            message:
-              error?.response?.data?.message || t("Failed to publish page"),
-            color: "red",
-          });
+          notifyError(error, "Failed to publish page");
+        },
+      },
+    );
+  };
+
+  // Saved immediately; independent of publishing and its cooldown.
+  const handleIndexModeChange = (value: string) => {
+    if (!page?.id || (value !== "compiled" && value !== "original")) return;
+    const previous = indexMode;
+    setIndexMode(value);
+    setPageIndexMode.mutate(
+      { pageId: page.id, indexMode: value },
+      {
+        onError: (error: any) => {
+          setIndexMode(previous);
+          notifyError(error, "Failed to save publish mode");
         },
       },
     );
@@ -378,9 +444,7 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
     return (
       <Tooltip
         label={
-          status === "failed"
-            ? compileStatus.errorMessage || t("Publish failed")
-            : config.label
+          status === "failed" ? t("Publish failed") : config.label
         }
         withArrow
       >
@@ -518,27 +582,39 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
                   fullWidth
                   size="xs"
                   styles={{ label: { whiteSpace: "normal" } }}
-                  value={indexMode}
+                  value={effectiveIndexMode}
                   data={[
                     { value: "compiled", label: t("Smart compilation") },
                     { value: "original", label: t("Original text indexing") },
                   ]}
-                  onChange={(value) => {
-                    if (value === "compiled" || value === "original") {
-                      setIndexMode(value);
-                    }
-                  }}
+                  onChange={handleIndexModeChange}
                   onKeyDown={(event) => {
                     if (event.key.startsWith("Arrow")) event.stopPropagation();
                   }}
                   disabled={
                     !compileStatus ||
+                    spaceLocksIndexMode ||
+                    setPageIndexMode.isPending ||
                     publishPageKnowledge.isPending ||
-                    publishCoolingDown ||
                     isPublishing
                   }
                   aria-label={t("Publish mode")}
                 />
+                {compileStatus && (
+                  <Text size="xs" c="dimmed" mt={4}>
+                    {spaceLocksIndexMode
+                      ? t("Current: {{mode}} (set by space)", {
+                          mode: effectiveIndexModeLabel,
+                        })
+                      : indexMode === "inherit"
+                        ? t("Current: {{mode}} (default)", {
+                            mode: effectiveIndexModeLabel,
+                          })
+                        : t("Current: {{mode}} (page setting)", {
+                            mode: effectiveIndexModeLabel,
+                          })}
+                  </Text>
+                )}
               </Box>
             </>
           )}
@@ -549,6 +625,7 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
               onClick={handlePublishPage}
               disabled={
                 !compileStatus ||
+                setPageIndexMode.isPending ||
                 publishPageKnowledge.isPending ||
                 publishCoolingDown ||
                 isPublishing
@@ -583,6 +660,28 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
               pageId={page?.id}
               onClick={openVerificationModal}
             />
+          )}
+
+          {hasTemplates && (!readOnly || canSaveAsTemplate) && (
+            <>
+              <Menu.Divider />
+              {!readOnly && (
+                <Menu.Item
+                  leftSection={<IconTemplate size={16} />}
+                  onClick={openInsertTemplate}
+                >
+                  {t("Insert template")}
+                </Menu.Item>
+              )}
+              {canSaveAsTemplate && (
+                <Menu.Item
+                  leftSection={<IconDeviceFloppy size={16} />}
+                  onClick={openSaveTemplate}
+                >
+                  {t("Save as template")}
+                </Menu.Item>
+              )}
+            </>
           )}
 
           <Menu.Divider />
@@ -625,38 +724,7 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
 
           <Menu.Divider />
 
-          <>
-            <Group px="sm" wrap="nowrap" style={{ cursor: "pointer" }}>
-              <Tooltip
-                label={t("Edited by {{name}} {{time}}", {
-                  name: page.lastUpdatedBy.name,
-                  time: pageUpdatedAt,
-                })}
-                position="left-start"
-              >
-                <div style={{ width: 210 }}>
-                  <Text size="xs" c="dimmed" truncate="end">
-                    {t("Word count: {{wordCount}}", {
-                      wordCount: pageEditor?.storage?.characterCount?.words(),
-                    })}
-                  </Text>
-
-                  <Text size="xs" c="dimmed" lineClamp={1}>
-                    <Trans
-                      defaults="Created by: <b>{{creatorName}}</b>"
-                      values={{ creatorName: page?.creator?.name }}
-                      components={{ b: <Text span fw={500} /> }}
-                    />
-                  </Text>
-                  <Text size="xs" c="dimmed" truncate="end">
-                    {t("Created at: {{time}}", {
-                      time: formattedDate(page.createdAt),
-                    })}
-                  </Text>
-                </div>
-              </Tooltip>
-            </Group>
-          </>
+          <PageMenuFooter page={page} pageUpdatedAt={pageUpdatedAt} />
         </Menu.Dropdown>
       </Menu>
 
@@ -680,6 +748,85 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
         opened={verificationOpened}
         onClose={closeVerificationModal}
       />
+
+      {hasTemplates && insertTemplateOpened && (
+        <TemplateQuickPicker
+          opened={insertTemplateOpened}
+          onClose={closeInsertTemplate}
+          title={t("Insert template")}
+          confirmLabel={
+            pageEditor?.isEmpty ? t("Apply to page") : t("Insert at cursor")
+          }
+          preferredSpaceId={page.spaceId}
+          onConfirm={(template) => {
+            closeInsertTemplate();
+            if (!pageEditor || pageEditor.isDestroyed) return;
+            applyTemplateToEditor(pageEditor, titleEditor, template);
+          }}
+        />
+      )}
+
+      {canSaveAsTemplate && (
+        <SaveAsTemplateModal
+          opened={saveTemplateOpened}
+          onClose={closeSaveTemplate}
+          page={page}
+        />
+      )}
+    </>
+  );
+}
+
+interface PageMenuFooterProps {
+  page: IPage;
+  pageUpdatedAt: string;
+}
+function PageMenuFooter({ page, pageUpdatedAt }: PageMenuFooterProps) {
+  const { t } = useTranslation();
+  const pageEditor = useAtomValue(pageEditorAtom);
+  const stats = usePageContentStats(pageEditor);
+  const overImages = stats.imageCount > PAGE_IMAGE_LIMIT;
+  const overSize = stats.bytes > PAGE_SIZE_LIMIT_BYTES;
+  const overWords = stats.words > PAGE_WORD_LIMIT;
+
+  return (
+    <>
+      <Group px="sm" wrap="nowrap" style={{ cursor: "pointer" }}>
+        <Tooltip
+          label={t("Edited by {{name}} {{time}}", {
+            name: page.lastUpdatedBy.name,
+            time: pageUpdatedAt,
+          })}
+          position="left-start"
+        >
+          <div style={{ width: 210 }}>
+            <Text size="xs" c={overWords ? "red" : "dimmed"} truncate="end">
+              {t("Word count: {{wordCount}}", {
+                wordCount: pageEditor?.storage?.characterCount?.words(),
+              })}
+            </Text>
+            <Text size="xs" c={overImages ? "red" : "dimmed"} truncate="end">
+              {t("Images: {{imageCount}}", { imageCount: stats.imageCount })}
+            </Text>
+            <Text size="xs" c={overSize ? "red" : "dimmed"} truncate="end">
+              {t("Page size: {{size}}", { size: formatBytes(stats.bytes) })}
+            </Text>
+
+            <Text size="xs" c="dimmed" lineClamp={1}>
+              <Trans
+                defaults="Created by: <b>{{creatorName}}</b>"
+                values={{ creatorName: page?.creator?.name }}
+                components={{ b: <Text span fw={500} /> }}
+              />
+            </Text>
+            <Text size="xs" c="dimmed" truncate="end">
+              {t("Created at: {{time}}", {
+                time: formattedDate(page.createdAt),
+              })}
+            </Text>
+          </div>
+        </Tooltip>
+      </Group>
     </>
   );
 }

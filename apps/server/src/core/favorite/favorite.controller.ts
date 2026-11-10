@@ -22,7 +22,6 @@ import { PageRepo } from '@akasha/db/repos/page/page.repo';
 import { SpaceRepo } from '@akasha/db/repos/space/space.repo';
 import { SpaceMemberRepo } from '@akasha/db/repos/space/space-member.repo';
 import { PageAccessService } from '../page/page-access/page-access.service';
-import { TemplateRepo } from '@akasha/db/repos/template/template.repo';
 import { FavoriteType } from '@akasha/db/repos/favorite/favorite.repo';
 
 @UseGuards(JwtAuthGuard)
@@ -34,7 +33,6 @@ export class FavoriteController {
     private readonly spaceRepo: SpaceRepo,
     private readonly spaceMemberRepo: SpaceMemberRepo,
     private readonly pageAccessService: PageAccessService,
-    private readonly templateRepo: TemplateRepo,
   ) {}
 
   @HttpCode(HttpStatus.OK)
@@ -44,7 +42,12 @@ export class FavoriteController {
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
   ) {
-    const resolved = await this.resolveAndValidate(dto, user, workspace.id);
+    const resolved = await this.resolveAndValidate(
+      dto,
+      user,
+      workspace.id,
+      'add',
+    );
 
     await this.favoriteService.addFavorite(user.id, workspace.id, {
       type: dto.type,
@@ -61,7 +64,7 @@ export class FavoriteController {
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
   ) {
-    await this.resolveAndValidate(dto, user, workspace.id);
+    await this.resolveAndValidate(dto, user, workspace.id, 'remove');
 
     await this.favoriteService.removeFavorite(user.id, {
       type: dto.type,
@@ -107,7 +110,8 @@ export class FavoriteController {
     dto: AddFavoriteDto | RemoveFavoriteDto,
     user: User,
     workspaceId: string,
-  ): Promise<{ spaceId: string; page?: Page }> {
+    intent: 'add' | 'remove',
+  ): Promise<{ spaceId: string | null; page?: Page }> {
     if (dto.type === 'page') {
       if (!dto.pageId) throw new BadRequestException('pageId is required');
       const page = await this.pageRepo.findById(dto.pageId);
@@ -125,17 +129,13 @@ export class FavoriteController {
     }
 
     if (dto.type === 'template') {
+      // 模板已不支持收藏：只允许移除历史收藏，移除自己的记录无需再校验模板权限
       if (!dto.templateId)
         throw new BadRequestException('templateId is required');
-      const template = await this.templateRepo.findById(
-        dto.templateId,
-        workspaceId,
-      );
-      if (!template) throw new NotFoundException('Template not found');
-      if (template.spaceId) {
-        await this.validateSpaceAccess(user.id, template.spaceId);
+      if (intent === 'add') {
+        throw new BadRequestException('Templates can no longer be favorited');
       }
-      return { spaceId: template.spaceId };
+      return { spaceId: null };
     }
 
     throw new BadRequestException('Invalid favorite type');

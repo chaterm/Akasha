@@ -11,6 +11,7 @@ import { SpaceListOptions } from '@akasha/db/repos/space/types';
 import { SpaceRepo } from '@akasha/db/repos/space/space.repo';
 import { KyselyDB, KyselyTransaction } from '@akasha/db/types/kysely.types';
 import { Space, User } from '@akasha/db/types/entity.types';
+import { readSpaceKnowledgeIndexMode } from '@akasha/db/types/knowledge-index-mode.types';
 import { UpdateSpaceDto } from '../dto/update-space.dto';
 import { executeTx } from '@akasha/db/utils';
 import { InjectKysely } from 'nestjs-kysely';
@@ -33,6 +34,7 @@ import {
   AUDIT_SERVICE,
   IAuditService,
 } from '../../../integrations/audit/audit.service';
+import { ErrorCode, errorBody } from '../../../common/errors/error-codes';
 
 @Injectable()
 export class SpaceService {
@@ -109,7 +111,10 @@ export class SpaceService {
     );
     if (slugExists) {
       throw new BadRequestException(
-        'Space slug exists. Please use a unique space slug',
+        errorBody(
+          ErrorCode.SPACE_SLUG_TAKEN,
+          'Space slug exists. Please use a unique space slug',
+        ),
       );
     }
 
@@ -137,7 +142,10 @@ export class SpaceService {
 
       if (slugExists) {
         throw new BadRequestException(
-          'Space slug exists. Please use a unique space slug',
+          errorBody(
+            ErrorCode.SPACE_SLUG_TAKEN,
+            'Space slug exists. Please use a unique space slug',
+          ),
         );
       }
     }
@@ -158,7 +166,12 @@ export class SpaceService {
           workspace.plan,
         )
       ) {
-        throw new ForbiddenException('This feature requires a valid license');
+        throw new ForbiddenException(
+          errorBody(
+            ErrorCode.LICENSE_REQUIRED,
+            'This feature requires a valid license',
+          ),
+        );
       }
     }
 
@@ -206,6 +219,22 @@ export class SpaceService {
           workspaceId,
           'allowViewerComments',
           updateSpaceDto.allowViewerComments,
+          trx,
+        );
+      }
+
+      if (typeof updateSpaceDto.knowledgeIndexMode !== 'undefined') {
+        const prev = readSpaceKnowledgeIndexMode(settingsBefore);
+        if (prev !== updateSpaceDto.knowledgeIndexMode) {
+          before.knowledgeIndexMode = prev;
+          after.knowledgeIndexMode = updateSpaceDto.knowledgeIndexMode;
+        }
+
+        await this.spaceRepo.updateKnowledgeSettings(
+          updateSpaceDto.spaceId,
+          workspaceId,
+          'indexMode',
+          updateSpaceDto.knowledgeIndexMode,
           trx,
         );
       }
@@ -279,7 +308,12 @@ export class SpaceService {
       throw new NotFoundException('Space not found');
     }
     if (space.personalOwnerId) {
-      throw new BadRequestException('Personal spaces cannot be deleted');
+      throw new BadRequestException(
+        errorBody(
+          ErrorCode.PERSONAL_SPACE_PROTECTED,
+          'Personal spaces cannot be deleted',
+        ),
+      );
     }
 
     await this.spaceRepo.deleteSpace(spaceId, workspaceId);

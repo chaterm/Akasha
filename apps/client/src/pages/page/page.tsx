@@ -13,7 +13,11 @@ import { IconAlertTriangle, IconFileOff } from "@tabler/icons-react";
 import { Button } from "@mantine/core";
 import { Link } from "react-router-dom";
 import { ErrorBoundary } from "react-error-boundary";
-import { PageEditModeProvider } from "@/features/editor/page-edit-mode-context";
+import {
+  PageEditMode,
+  PageEditModeProvider,
+} from "@/features/editor/page-edit-mode-context";
+import { useOpenInEditModeOnce } from "@/features/editor/use-open-in-edit-mode";
 import { recordPageVisit } from "@/features/page-visit/services/page-visit-service";
 import { queryClient } from "@/main";
 import { RECENT_PAGE_VISITS_QUERY_KEY } from "@/features/page-visit/queries/page-visit-query";
@@ -74,6 +78,7 @@ function PageContent({ pageSlug }: { pageSlug: string | undefined }) {
   }, [page?.id, isLoading, isError]);
 
   const canEdit = !page?.deletedAt && (page?.permissions?.canEdit ?? false);
+  const openInEditMode = useOpenInEditModeOnce(page?.id);
   const canComment =
     canEdit || space?.settings?.comments?.allowViewerComments === true;
 
@@ -120,7 +125,12 @@ function PageContent({ pageSlug }: { pageSlug: string | undefined }) {
           <title>{`${page?.icon || ""}  ${page?.title || t("untitled")}`}</title>
         </Helmet>
 
-        <PageEditModeProvider key={page.id}>
+        <PageEditModeProvider
+          key={page.id}
+          initialMode={
+            canEdit && openInEditMode ? PageEditMode.Edit : PageEditMode.Read
+          }
+        >
           <MemoizedPageHeader readOnly={!canEdit} />
 
           <MemoizedFullEditor

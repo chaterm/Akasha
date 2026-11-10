@@ -110,6 +110,13 @@ def compile_samples(
     ]
 
 
+_DOCS_FROM = (
+    "FROM compile_doc cd "
+    "LEFT JOIN corpus_doc ON corpus_doc.dataset = cd.dataset AND corpus_doc.doc_id = cd.doc_id"
+)
+_DOC_COLUMNS = "cd.*, COALESCE(corpus_doc.title, '') AS title"
+
+
 def compile_docs(
     connection: sqlite3.Connection,
     compile_id: int,
@@ -117,12 +124,7 @@ def compile_docs(
     *,
     pending_only: bool = False,
 ) -> list[dict[str, Any]]:
-    sql = (
-        "SELECT cd.*, COALESCE(corpus_doc.title, '') AS title "
-        "FROM compile_doc cd "
-        "LEFT JOIN corpus_doc ON corpus_doc.dataset = cd.dataset AND corpus_doc.doc_id = cd.doc_id "
-        "WHERE cd.compile_id = ?"
-    )
+    sql = f"SELECT {_DOC_COLUMNS} {_DOCS_FROM} WHERE cd.compile_id = ?"
     params: list[Any] = [compile_id]
     if dataset:
         sql += " AND cd.dataset = ?"
@@ -157,30 +159,17 @@ def compile_doc_page(
         )
         params.extend((needle, needle, needle))
     scope = " AND ".join(where)
-    from_sql = (
-        "FROM compile_doc cd "
-        "LEFT JOIN corpus_doc ON corpus_doc.dataset = cd.dataset AND corpus_doc.doc_id = cd.doc_id"
-    )
     summary = connection.execute(
-        f"SELECT COUNT(*) AS total, "
-        f"SUM(CASE WHEN cd.page_id IS NOT NULL THEN 1 ELSE 0 END) AS imported "
-        f"{from_sql} WHERE {scope}",
+        f"SELECT COUNT(*) AS total, SUM(cd.page_id IS NOT NULL) AS imported "
+        f"{_DOCS_FROM} WHERE {scope}",
         params,
     ).fetchone()
-    total = int(summary["total"] or 0)
-    imported = int(summary["imported"] or 0)
     rows = connection.execute(
-        f"""
-        SELECT cd.*, COALESCE(corpus_doc.title, '') AS title
-        {from_sql}
-        WHERE {scope}
-        ORDER BY cd.dataset, cd.doc_id
-        LIMIT ? OFFSET ?
-        """,
+        f"SELECT {_DOC_COLUMNS} {_DOCS_FROM} WHERE {scope} "
+        "ORDER BY cd.dataset, cd.doc_id LIMIT ? OFFSET ?",
         (*params, limit, offset),
     )
-    page = [dict(row) for row in rows]
-    return total, imported, page
+    return int(summary["total"]), int(summary["imported"] or 0), [dict(row) for row in rows]
 
 
 def record_page(
@@ -199,7 +188,6 @@ def record_page(
 
 
 def page_to_doc(connection: sqlite3.Connection, compile_id: int, dataset: str) -> dict[str, str]:
-
     return {
         row["page_id"]: row["doc_id"]
         for row in connection.execute(
@@ -255,7 +243,6 @@ def workspace_mismatch(
 
 
 def compile_ready(connection: sqlite3.Connection, compile_id: int) -> dict[str, Any]:
-
     run = get_compile_run(connection, compile_id)
     if run is None:
         return {"ready": False, "reasons": ["编译记录不存在"], "warnings": []}
@@ -268,31 +255,21 @@ def compile_ready(connection: sqlite3.Connection, compile_id: int) -> dict[str, 
     return compile_readiness(run, missing=int(doc_counts["missing"] or 0))
 
 
-def compile_readiness(run: dict[str, Any], *, missing: int) -> dict[str, Any]:
+def _count(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
+
+def compile_readiness(run: dict[str, Any], *, missing: int) -> dict[str, Any]:
     reasons: list[str] = []
     warnings: list[str] = []
     quality = loads(run["quality_json"]) or {}
     progress = quality.get("progress") or {}
-    succeeded = progress.get("succeeded")
-    failed = progress.get("failed")
-    skipped = progress.get("skipped")
-    unsuccessful = sum(
-        value
-        for value in (failed, skipped)
-        if isinstance(value, int) and not isinstance(value, bool)
-    )
-    progress_proves_partial = (
-        run["status"] == STATUS_FAILED
-        and isinstance(succeeded, int)
-        and not isinstance(succeeded, bool)
-        and succeeded > 0
-        and unsuccessful > 0
-    )
-    partial = progress_proves_partial
+    succeeded = _count(progress.get("succeeded"))
+    unsuccessful = _count(progress.get("failed")) + _count(progress.get("skipped"))
+    partial = run["status"] == STATUS_FAILED and succeeded > 0 and unsuccessful > 0
     if run["status"] != STATUS_SUCCEEDED and not partial:
         reasons.append(f"编译状态为 {run['status']}，未成功结束")
-    elif progress_proves_partial:
+    elif partial:
         warnings.append(
             f"编译仅部分成功：{succeeded} 篇可用，{unsuccessful} 篇失败或跳过；"
             "查询结果可能不完整"

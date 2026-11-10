@@ -76,7 +76,11 @@ export default function SpaceSettingsModal({
                 <Tabs.Panel value="general">
                   <ScrollArea h={580} scrollbarSize={5} pr={8}>
                     <div style={{ paddingBottom: "100px" }}>
-                      <SpaceDetails spaceId={space?.id} readOnly={!isOwner} />
+                      <SpaceDetails
+                        spaceId={space?.id}
+                        readOnly={!isOwner}
+                        canEditIcon={canManageSettings}
+                      />
                     </div>
                   </ScrollArea>
                 </Tabs.Panel>

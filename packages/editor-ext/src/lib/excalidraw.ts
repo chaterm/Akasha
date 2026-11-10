@@ -35,6 +35,8 @@ export interface ExcalidrawAttributes {
   aspectRatio?: number;
   align?: string;
   attachmentId?: string;
+  /** 首次打开画布时载入的 Excalidraw scene（模板预置内容用）。 */
+  initialScene?: Record<string, any> | null;
 }
 
 declare module "@tiptap/core" {
@@ -139,6 +141,11 @@ export const Excalidraw = Node.create<ExcalidrawOptions>({
         renderHTML: (attributes: ExcalidrawAttributes) => ({
           "data-attachment-id": attributes.attachmentId,
         }),
+      },
+      initialScene: {
+        default: null,
+        parseHTML: () => null,
+        renderHTML: () => ({}),
       },
     };
   },

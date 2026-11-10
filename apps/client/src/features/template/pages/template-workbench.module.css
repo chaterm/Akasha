@@ -1,0 +1,136 @@
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mantine-spacing-sm);
+  height: 48px;
+  padding: 0 var(--mantine-spacing-md);
+  background: var(--mantine-color-body);
+  border-bottom: 1px solid
+    light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.crumbSep {
+  color: var(--mantine-color-dimmed);
+  flex-shrink: 0;
+}
+
+.crumbCurrent {
+  min-width: 0;
+}
+
+.statusSlot {
+  min-width: 86px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.status {
+  white-space: nowrap;
+}
+
+.canvas {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 56px var(--mantine-spacing-md) 0;
+}
+
+.metaBlock {
+  /* 与编辑器正文左侧对齐（.ProseMirror 左右各 3rem） */
+  padding: 0 3rem;
+  margin-bottom: var(--mantine-spacing-lg);
+}
+
+.iconRow {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  margin-left: -6px;
+}
+
+.iconGlyph {
+  font-size: 40px;
+  line-height: 1;
+}
+
+.addIcon {
+  font-size: var(--mantine-font-size-sm);
+  color: var(--mantine-color-dimmed);
+  padding: 2px 6px;
+}
+
+.titleInput {
+  all: unset;
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  font-size: 2.25rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--mantine-color-text);
+
+  &::placeholder {
+    color: light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-3));
+  }
+}
+
+.descriptionInput {
+  color: var(--mantine-color-dimmed);
+  font-size: var(--mantine-font-size-md);
+  padding: 4px 0 0;
+}
+
+.metaRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: var(--mantine-spacing-md);
+}
+
+.metaDot {
+  color: var(--mantine-color-dimmed);
+}
+
+.hint {
+  margin-top: var(--mantine-spacing-md);
+  padding-top: var(--mantine-spacing-md);
+  border-top: 1px solid
+    light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+  font-size: var(--mantine-font-size-xs);
+  color: light-dark(var(--mantine-color-gray-5), var(--mantine-color-dark-2));
+}
+
+.notice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 80px 16px;
+}
+
+@media (max-width: 640px) {
+  .toolbar {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 8px var(--mantine-spacing-sm);
+  }
+  .canvas {
+    padding-top: var(--mantine-spacing-lg);
+  }
+  .metaBlock {
+    padding: 0 1rem;
+  }
+  .titleInput {
+    font-size: 1.75rem;
+  }
+}

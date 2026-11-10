@@ -15,6 +15,7 @@ import { notifications } from "@mantine/notifications";
 import { useHasFeature } from "@/ee/hooks/use-feature";
 import { Feature } from "@/ee/features";
 import { useUpgradeLabel } from "@/ee/hooks/use-upgrade-label.ts";
+import { notifyError } from "@/lib/errors";
 
 type RetentionUnit = "days" | "months" | "years";
 
@@ -81,11 +82,7 @@ export default function TrashRetention() {
         message: t("Trash retention updated"),
       });
     } catch (err: any) {
-      notifications.show({
-        message:
-          err?.response?.data?.message || t("Failed to update trash retention"),
-        color: "red",
-      });
+      notifyError(err, "Failed to update trash retention");
       const { amount, unit } = daysToRetention(currentDays);
       setRetentionAmount(amount);
       setRetentionUnit(unit);

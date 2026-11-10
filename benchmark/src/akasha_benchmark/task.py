@@ -5,6 +5,8 @@ import threading
 from collections.abc import Callable
 from typing import Any, Protocol
 
+from .store import dumps, run_store, task_store
+
 
 class Paused(BaseException):
     pass
@@ -27,9 +29,6 @@ class TaskContext:
         self._pause = pause_event
 
     def freeze(self, **params: Any) -> None:
-
-        from .store import dumps
-
         self.params.update(params)
         self.db.execute(
             "UPDATE task SET params_json = ? WHERE id = ?", (dumps(self.params), self.task_id)
@@ -37,8 +36,6 @@ class TaskContext:
         self.db.commit()
 
     def target(self, kind: str) -> int | None:
-        from .store import run_store, task_store
-
         task = task_store.get_task(self.db, self.task_id)
         if task is None:
             raise ValueError(f"任务 #{self.task_id} 不存在")
@@ -56,28 +53,20 @@ class TaskContext:
         return self._pause.is_set()
 
     def checkpoint(self) -> None:
-
         if self._pause.is_set():
             raise Paused(f"任务 #{self.task_id} 已暂停")
 
     def log(self, message: str, level: str = "info") -> None:
-        from .store import task_store
-
         task_store.log(
             self.db, task_id=self.task_id, stage=self.stage, level=level, message=message
         )
         self.db.commit()
 
     def progress(self, done: int, total: int | None, note: str | None = None) -> None:
-        from .store import task_store
-
         task_store.update_progress(self.db, self.task_id, done=done, total=total, note=note)
         self.db.commit()
 
     def bind(self, kind: str, target_id: int) -> None:
-
-        from .store import task_store
-
         task_store.set_task_target(self.db, self.task_id, kind, target_id)
         self.db.commit()
 
@@ -87,9 +76,6 @@ class Stage(Protocol):
 
 
 def execute(stage: Stage, ctx: TaskContext, verify: Callable[[], None] | None = None) -> None:
-
-    from .store import task_store
-
     task = task_store.get_task(ctx.db, ctx.task_id)
     if task is None:
         raise ValueError(f"任务 #{ctx.task_id} 不存在")

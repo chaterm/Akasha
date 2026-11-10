@@ -9,6 +9,7 @@ import {
   IInvitationLink,
   IVersion,
   IWorkspaceSkillSettings,
+  IWorkspaceCompileWindowSettings,
   IWorkspaceMemberDetail,
 } from "../types/workspace.types";
 import { IPagination, QueryParams } from "@/lib/types.ts";
@@ -83,6 +84,25 @@ export async function updateSkillSettings(
 ): Promise<IWorkspaceSkillSettings> {
   const req = await api.put<IWorkspaceSkillSettings>(
     "/workspace/settings/ai/skill",
+    data,
+  );
+  return req.data;
+}
+
+export async function getCompileWindowSettings(): Promise<
+  IWorkspaceCompileWindowSettings
+> {
+  const req = await api.get<IWorkspaceCompileWindowSettings>(
+    "/workspace/settings/ai/compile-window",
+  );
+  return req.data;
+}
+
+export async function updateCompileWindowSettings(
+  data: IWorkspaceCompileWindowSettings,
+): Promise<IWorkspaceCompileWindowSettings> {
+  const req = await api.put<IWorkspaceCompileWindowSettings>(
+    "/workspace/settings/ai/compile-window",
     data,
   );
   return req.data;

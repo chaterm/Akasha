@@ -1,0 +1,725 @@
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { createHash } from 'node:crypto';
+import { KnowledgeCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-compilation.repo';
+import { JsonValue } from '@akasha/db/types/db';
+import { KNOWLEDGE_COMPILER_LLM_PROVIDER } from '../llm-wiki.constants';
+import {
+  KnowledgeCompilerLlmError,
+  KnowledgeCompilerLlmProvider,
+} from '../compiler/knowledge-compiler-llm.provider';
+import {
+  buildSemanticAnalysisMessages,
+  buildSemanticGenerationMessages,
+  SemanticAttachmentHint,
+} from '../compiler/semantic-compiler.prompts';
+import {
+  SemanticAnalysis,
+  semanticAnalysisSchema,
+  SemanticGeneratedArtifact,
+} from '../compiler/semantic-compiler.schema';
+import {
+  CompiledKnowledgeArtifact,
+  CompileDiagnostic,
+  CompileSpaceInput,
+  CompileSpaceResult,
+} from '../types/compiler-artifact.types';
+import { KnowledgeSourceRef } from '../types/knowledge.types';
+import { KnowledgeSourceSnapshot } from '../types/source-snapshot.types';
+import { LlmWikiCompilerRunner } from './llm-wiki-file-compiler.runner';
+import { buildAttachmentEvidenceContent } from './knowledge-attachment-evidence';
+import { buildDraftStructuralContent } from './knowledge-draft-structure';
+import { buildEffectiveKnowledgeHash } from '../services/knowledge-effective-hash';
+import { KnowledgeOperationBudget } from '../services/knowledge-operation-budget';
+import { SEMANTIC_COMPILER_LIMITS } from '../compiler/semantic-compiler.limits';
+import {
+  countKnowledgeTableRows,
+  extractKnowledgeTableRows,
+} from '../../../common/helpers/prosemirror/table-text';
+import {
+  CompilerCatalogSelection,
+  KnowledgeArtifactCatalogService,
+} from '../services/knowledge-artifact-catalog.service';
+import { stableKnowledgeUuid } from '../services/knowledge-stable-id';
+
+@Injectable()
+export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
+  constructor(
+    @Inject(KNOWLEDGE_COMPILER_LLM_PROVIDER)
+    private readonly provider: KnowledgeCompilerLlmProvider,
+    private readonly compilationRepo: KnowledgeCompilationRepo,
+    @Optional()
+    private readonly catalogService?: KnowledgeArtifactCatalogService,
+  ) {}
+
+  async compileSpace(input: CompileSpaceInput): Promise<CompileSpaceResult> {
+    if (input.sources.length !== 1) {
+      throw new Error('semantic compilation requires exactly one source page');
+    }
+    const source = input.sources[0];
+    const operationBudget =
+      input.operationBudget ?? new KnowledgeOperationBudget();
+    input.operationBudget = operationBudget;
+    operationBudget.throwIfAborted();
+    if (!source.text.trim()) {
+      throw new Error(
+        'semantic compilation cannot compile an empty source page',
+      );
+    }
+    // Enforce the table budget before any LLM call or row serialization. The
+    // importer validates the generated/materialized output again, but waiting
+    // until import would still let a 10k-row page consume compiler memory/time.
+    operationBudget.assertTableRowCount(
+      countKnowledgeTableRows(source.content),
+    );
+
+    const compilerRunId = `${input.workspaceId}:${input.spaceId}:${this.now().toISOString()}`;
+    const compileTaskId =
+      input.compileTaskId ?? `akasha-page:${source.sourcePageId}`;
+    const warnings: CompileDiagnostic[] = [];
+
+    await this.compilationRepo.updateStage({
+      workspaceId: input.workspaceId,
+      sourcePageId: source.sourcePageId,
+      compileTaskId,
+      stage: 'analysis',
+    });
+    const analysisStage = await this.loadOrAnalyze(
+      input,
+      source,
+      compileTaskId,
+    );
+    const analysis = analysisStage.analysis;
+
+    const generationCatalog = this.catalogService
+      ? await this.catalogService.findGenerationCandidates({
+          source,
+          analysis,
+          analysisCandidates: analysisStage.catalog.entries,
+        })
+      : legacyCatalogSelection(input.catalog ?? []);
+
+    await this.compilationRepo.updateStage({
+      workspaceId: input.workspaceId,
+      sourcePageId: source.sourcePageId,
+      compileTaskId,
+      stage: 'generation',
+    });
+    const generationMessages = buildSemanticGenerationMessages({
+      sourcePageId: source.sourcePageId,
+      sourceTitle: source.title,
+      sourceText: source.text,
+      analysis,
+      purpose: input.purpose,
+      schema: input.schema,
+      catalog: generationCatalog.entries,
+      attachmentHints: attachmentHints(source),
+    });
+    await this.recordCandidates({
+      input,
+      source,
+      compileTaskId,
+      stage: 'generation',
+      selection: {
+        ...generationCatalog,
+        candidateHash:
+          generationMessages.catalogCandidateHash ??
+          generationCatalog.candidateHash,
+      },
+    });
+    const generation = operationBudget.signal
+      ? await this.provider.generate(generationMessages, {
+          abortSignal: operationBudget.signal,
+        })
+      : await this.provider.generate(generationMessages);
+    operationBudget.assertArtifactCount(generation.artifacts.length);
+    if (generation.compilerRecovery) {
+      warnings.push({
+        code: 'compiler_output_repaired',
+        message:
+          'The compiler normalized or repaired the model output before validation.',
+        sourcePageId: source.sourcePageId,
+      });
+    }
+
+    const summaries = generation.artifacts.filter(
+      (artifact) => artifact.kind === 'source_summary',
+    );
+    if (summaries.length !== 1) {
+      throw new Error('generation must contain exactly one source_summary');
+    }
+
+    const normalizedDrafts = generation.artifacts.map((artifact) => ({
+      ...artifact,
+      canonicalKey:
+        artifact.kind === 'source_summary'
+          ? source.sourcePageId
+          : normalizeCanonicalKey(artifact.canonicalKey),
+    }));
+    assertUniqueArtifacts(normalizedDrafts);
+    const idByKey = new Map<string, string>();
+    for (const entry of generationCatalog.entries) {
+      if (!entry.artifactId) continue;
+      const normalizedKey = normalizeCanonicalKey(entry.canonicalKey);
+      // Artifacts without a canonical key (for example source_summary) cannot
+      // be resolved as link targets, and would otherwise collide on "kind:".
+      if (!normalizedKey) continue;
+      idByKey.set(
+        artifactLookupKey(entry.artifactKind, normalizedKey),
+        entry.artifactId,
+      );
+    }
+    for (const artifact of normalizedDrafts) {
+      idByKey.set(
+        artifactLookupKey(artifact.kind, artifact.canonicalKey),
+        stableArtifactId(input, artifact.kind, artifact.canonicalKey),
+      );
+    }
+
+    const compiledArtifacts = normalizedDrafts.map((artifact) =>
+      toCompiledArtifact({
+        input,
+        source,
+        artifact,
+        compilerRunId,
+        compileTaskId,
+        idByKey,
+        warnings,
+      }),
+    );
+    const artifacts = enrichArtifactRelationships({
+      artifacts: compiledArtifacts,
+      input: { ...input, catalog: generationCatalog.entries },
+      source,
+    });
+    return {
+      workspaceId: input.workspaceId,
+      spaceId: input.spaceId,
+      sources: [toSourceRef(source)],
+      compilerVersion: input.compilerVersion,
+      promptVersion: input.promptVersion,
+      compilerRunId,
+      artifacts,
+      diagnostics: { warnings, errors: [] },
+      resultQuality: 'normal',
+    };
+  }
+
+  protected now(): Date {
+    return new Date();
+  }
+
+  private async loadOrAnalyze(
+    input: CompileSpaceInput,
+    source: KnowledgeSourceSnapshot,
+    compileTaskId: string,
+  ): Promise<{
+    analysis: SemanticAnalysis;
+    catalog: CompilerCatalogSelection;
+  }> {
+    const catalog = this.catalogService
+      ? await this.catalogService.findAnalysisCandidates({ source })
+      : legacyCatalogSelection(input.catalog ?? []);
+    const sourceEffectiveKnowledgeHash =
+      source.effectiveKnowledgeHash ??
+      buildEffectiveKnowledgeHash({
+        sourceContentHash: source.contentHash,
+        sourceTextHash: `sha256:${sha256(source.text)}`,
+        compilerVersion: input.compilerVersion,
+        promptVersion: input.promptVersion,
+        readyImages: [],
+      });
+    const messages = buildSemanticAnalysisMessages({
+      sourceTitle: source.title,
+      sourceText: source.text,
+      purpose: input.purpose,
+      schema: input.schema,
+      catalog: catalog.entries,
+      attachmentHints: attachmentHints(source),
+    });
+    const candidateHash =
+      messages.catalogCandidateHash ?? catalog.candidateHash;
+    await this.recordCandidates({
+      input,
+      source,
+      compileTaskId,
+      stage: 'analysis',
+      selection: { ...catalog, candidateHash },
+    });
+    const effectiveKnowledgeHash = analysisCacheHash({
+      sourceEffectiveKnowledgeHash,
+      providerIdentity:
+        (await this.provider.getCacheIdentity?.()) ?? 'provider:unspecified',
+      promptVersion: input.promptVersion,
+      catalogCandidateHash: candidateHash,
+    });
+    const cacheKey = {
+      workspaceId: input.workspaceId,
+      sourcePageId: source.sourcePageId,
+      effectiveKnowledgeHash,
+      compilerVersion: input.compilerVersion,
+      promptVersion: input.promptVersion,
+    };
+    const cached = input.bypassCache
+      ? undefined
+      : await this.compilationRepo.findAnalysis(cacheKey);
+    const parsedCache = semanticAnalysisSchema.safeParse(cached);
+    if (parsedCache.success) return { analysis: parsedCache.data, catalog };
+
+    const analysis = input.operationBudget?.signal
+      ? await this.provider.analyze(messages, {
+          abortSignal: input.operationBudget.signal,
+        })
+      : await this.provider.analyze(messages);
+    await this.compilationRepo.saveAnalysis({
+      ...cacheKey,
+      spaceId: input.spaceId,
+      sourceVersion: source.sourceVersion,
+      analysis: analysis as unknown as JsonValue,
+      publicationGuard: input.publicationGuard,
+    });
+    return { analysis, catalog };
+  }
+
+  private async recordCandidates(input: {
+    input: CompileSpaceInput;
+    source: KnowledgeSourceSnapshot;
+    compileTaskId: string;
+    stage: 'analysis' | 'generation';
+    selection: CompilerCatalogSelection;
+  }): Promise<void> {
+    const repo = this.compilationRepo as KnowledgeCompilationRepo & {
+      recordCompilerCandidates?: KnowledgeCompilationRepo['recordCompilerCandidates'];
+    };
+    await repo.recordCompilerCandidates?.({
+      workspaceId: input.input.workspaceId,
+      sourcePageId: input.source.sourcePageId,
+      compileTaskId: input.compileTaskId,
+      stage: input.stage,
+      compilerModel:
+        (await this.provider.getCompilerModel?.()) ??
+        input.input.compilerVersion,
+      compilerProfile:
+        (await this.provider.getCacheIdentity?.()) ?? 'provider:unspecified',
+      candidateIds: input.selection.candidateIds,
+      candidateHash: input.selection.candidateHash,
+    });
+  }
+}
+
+function attachmentHints(
+  source: KnowledgeSourceSnapshot,
+): SemanticAttachmentHint[] {
+  const text = source.attachmentSerializedText;
+  if (!text) return [];
+
+  return (source.attachmentOccurrences ?? [])
+    .slice(0, 20)
+    .map((occurrence, index) => {
+      const occurrenceText = text.slice(
+        occurrence.startOffset,
+        occurrence.endOffset,
+      );
+      const fileName = occurrenceText
+        .replace(/ ?\[\[AKASHA_ATTACHMENT:v1:[^\]]*\]\]/gu, '')
+        .trim();
+      const contextStart = Math.max(0, occurrence.startOffset - 160);
+      const contextEnd = Math.min(text.length, occurrence.endOffset + 160);
+      const context = text
+        .slice(contextStart, contextEnd)
+        .replace(/ ?\[\[AKASHA_ATTACHMENT:v1:[^\]]*\]\]/gu, '')
+        .replace(/\s+/gu, ' ')
+        .trim()
+        .slice(0, 320);
+      return { ordinal: index + 1, fileName, context };
+    });
+}
+
+function legacyCatalogSelection(
+  entries: CompileSpaceInput['catalog'] extends infer T
+    ? NonNullable<T>
+    : never,
+): CompilerCatalogSelection {
+  const bounded = entries.slice(0, 64);
+  return {
+    entries: bounded,
+    candidateIds: bounded.flatMap((entry) =>
+      entry.artifactId ? [entry.artifactId] : [],
+    ),
+    candidateHash: `sha256:${sha256(
+      JSON.stringify(
+        bounded.map(({ artifactKind, canonicalKey, title }) => ({
+          artifactKind,
+          canonicalKey,
+          title,
+        })),
+      ),
+    )}`,
+  };
+}
+
+function analysisCacheHash(input: {
+  sourceEffectiveKnowledgeHash: string;
+  providerIdentity: string;
+  promptVersion: string;
+  catalogCandidateHash: string;
+}): string {
+  return `sha256:${sha256(
+    JSON.stringify({
+      sourceEffectiveKnowledgeHash: input.sourceEffectiveKnowledgeHash,
+      providerIdentity: input.providerIdentity,
+      promptVersion: input.promptVersion,
+      catalogCandidateHash: input.catalogCandidateHash,
+    }),
+  )}`;
+}
+
+function toCompiledArtifact(input: {
+  input: CompileSpaceInput;
+  source: KnowledgeSourceSnapshot;
+  artifact: SemanticGeneratedArtifact;
+  compilerRunId: string;
+  compileTaskId: string;
+  idByKey: Map<string, string>;
+  warnings: CompileDiagnostic[];
+}): CompiledKnowledgeArtifact {
+  const artifactId = stableArtifactId(
+    input.input,
+    input.artifact.kind,
+    input.artifact.canonicalKey,
+  );
+  const sourceRef = toSourceRef(input.source);
+  const { parentSections, chunks: structuralChunks } =
+    buildDraftStructuralContent({
+      title: input.artifact.title,
+      markdown: input.artifact.markdown,
+      sourceRef,
+    });
+  const isSourceSummary = input.artifact.kind === 'source_summary';
+  let tableRowChunks: ReturnType<typeof tableRowEvidenceChunks> = [];
+  if (isSourceSummary) {
+    // Reject before extractKnowledgeTableRows serializes every row. Import
+    // repeats the check after validation/materialization as defense in depth.
+    input.input.operationBudget!.assertTableRowCount(
+      countKnowledgeTableRows(input.source.content),
+    );
+    tableRowChunks = tableRowEvidenceChunks(
+      input.source,
+      input.artifact.title,
+      sourceRef,
+    );
+  }
+  // Attachment evidence attaches only to the source-page artifact (§5.3): the
+  // deterministic original-content blocks belong to the page itself, not to the
+  // derived concept/entity artifacts. Covers semantic, raw_fallback, retry and
+  // merge paths because every artifact flows through this single builder.
+  const attachmentEvidence = isSourceSummary
+    ? buildAttachmentEvidenceContent({
+        source: input.source,
+        sourceRef,
+        pageTitle: input.source.title || input.artifact.title,
+        existingChunkStableKeys: [
+          ...structuralChunks.map((chunk) => chunk.stableKey),
+          ...tableRowChunks.map((chunk) => chunk.stableKey),
+        ],
+      })
+    : { parentSections: [], chunks: [] };
+  const chunks = [
+    ...structuralChunks,
+    ...tableRowChunks,
+    ...attachmentEvidence.chunks,
+  ];
+  const links = input.artifact.links.map((link) => {
+    const lookupKey = artifactLookupKey(
+      link.targetKind,
+      normalizeCanonicalKey(link.targetCanonicalKey),
+    );
+    const generatedTarget = input.idByKey.get(lookupKey);
+    return {
+      linkType: link.relation,
+      linkText: link.targetCanonicalKey,
+      targetSpaceId: input.input.spaceId,
+      targetArtifactKind: link.targetKind,
+      targetCanonicalKey: normalizeCanonicalKey(link.targetCanonicalKey),
+      toKnowledgePageId: generatedTarget,
+      isOpaque: false,
+      isDangling: !generatedTarget,
+      inputSourceRefs: [
+        sourceRefForEvidence(input.source, link.evidenceQuote, input.warnings),
+      ],
+    };
+  });
+
+  return {
+    artifactId,
+    artifactKind: input.artifact.kind,
+    canonicalKey: input.artifact.canonicalKey,
+    workspaceId: input.input.workspaceId,
+    spaceId: input.input.spaceId,
+    title: input.artifact.title,
+    contentMarkdown: input.artifact.markdown,
+    sourcePageIds: [input.source.sourcePageId],
+    compilerVersion: input.input.compilerVersion,
+    promptVersion: input.input.promptVersion,
+    generationMode: 'semantic',
+    compilerRunId: input.compilerRunId,
+    compileTaskId: input.compileTaskId,
+    inputSourceRefs: [sourceRef],
+    parentSections: [...parentSections, ...attachmentEvidence.parentSections],
+    chunks,
+    links,
+    rawArtifactKey: `${input.artifact.kind}:${input.artifact.canonicalKey}`,
+  };
+}
+
+function tableRowEvidenceChunks(
+  source: KnowledgeSourceSnapshot,
+  artifactTitle: string,
+  sourceRef: KnowledgeSourceRef,
+) {
+  let sourceCursor = 0;
+  return extractKnowledgeTableRows(source.content).map((row) => {
+    const rawOffset = source.text.indexOf(row.text, sourceCursor);
+    const startOffset = rawOffset >= 0 ? rawOffset : null;
+    const endOffset =
+      startOffset !== null ? startOffset + row.text.length : null;
+    if (startOffset !== null) sourceCursor = endOffset!;
+    const rowSourceRef =
+      startOffset !== null
+        ? {
+            ...sourceRef,
+            sourceRange: { startOffset, endOffset: endOffset! },
+            quoteHash: `sha256:${sha256(row.text)}`,
+          }
+        : sourceRef;
+    const text = `${artifactTitle} Table row ${row.rowIndex + 1}: ${row.text}`;
+    return {
+      text,
+      inputSourceRefs: [rowSourceRef],
+      contentHash: `sha256:${sha256(row.text)}`,
+      stableKey: `table-row:${row.tableIndex}:${row.rowIndex}`,
+      parentStableKey: null,
+      chunkRole: 'standalone' as const,
+      retrievalChannel: 'evidence' as const,
+      headingPath: [],
+      startOffset,
+      endOffset,
+      embeddingText: `${source.title}\n${text}`,
+    };
+  });
+}
+
+type RelationshipTarget = {
+  artifactId: string;
+  artifactKind: NonNullable<CompiledKnowledgeArtifact['artifactKind']>;
+  canonicalKey: string;
+  title: string;
+  local: boolean;
+};
+
+function enrichArtifactRelationships(input: {
+  artifacts: CompiledKnowledgeArtifact[];
+  input: CompileSpaceInput;
+  source: KnowledgeSourceSnapshot;
+}): CompiledKnowledgeArtifact[] {
+  const sourceRef = toSourceRef(input.source);
+  const targets = relationshipTargets(input.artifacts, input.input.catalog);
+  const localTargets = targets.filter((target) => target.local);
+  const summary = localTargets.find(
+    (target) => target.artifactKind === 'source_summary',
+  );
+
+  return input.artifacts.map((artifact) => {
+    const links = [...(artifact.links ?? [])];
+    const linkedTargetIds = new Set(
+      links
+        .map((link) => link.toKnowledgePageId)
+        .filter((id): id is string => Boolean(id)),
+    );
+
+    if (summary?.artifactId === artifact.artifactId) {
+      for (const target of localTargets) {
+        if (
+          target.artifactId === summary.artifactId ||
+          linkedTargetIds.has(target.artifactId)
+        ) {
+          continue;
+        }
+        links.push(
+          directLink({
+            target,
+            linkType: 'mentions',
+            linkText: target.title,
+            sourceRef,
+          }),
+        );
+        linkedTargetIds.add(target.artifactId);
+      }
+    }
+
+    for (const target of targets) {
+      if (
+        target.artifactId === artifact.artifactId ||
+        linkedTargetIds.has(target.artifactId) ||
+        !containsExactTitle(
+          `${artifact.title}\n${artifact.contentMarkdown}`,
+          target.title,
+        )
+      ) {
+        continue;
+      }
+      links.push(
+        directLink({
+          target,
+          linkType: 'catalog_mention',
+          linkText: target.title,
+          sourceRef,
+        }),
+      );
+      linkedTargetIds.add(target.artifactId);
+      if (linkedTargetIds.size >= 12) break;
+    }
+
+    return { ...artifact, links };
+  });
+}
+
+function relationshipTargets(
+  artifacts: CompiledKnowledgeArtifact[],
+  catalog: CompileSpaceInput['catalog'],
+): RelationshipTarget[] {
+  const targetsByLookupKey = new Map<string, RelationshipTarget>();
+  for (const entry of catalog ?? []) {
+    if (!entry.artifactId) continue;
+    targetsByLookupKey.set(
+      artifactLookupKey(
+        entry.artifactKind,
+        normalizeCanonicalKey(entry.canonicalKey),
+      ),
+      {
+        artifactId: entry.artifactId,
+        artifactKind: entry.artifactKind,
+        canonicalKey: normalizeCanonicalKey(entry.canonicalKey),
+        title: entry.title,
+        local: false,
+      },
+    );
+  }
+  for (const artifact of artifacts) {
+    if (!artifact.artifactKind || !artifact.canonicalKey) continue;
+    targetsByLookupKey.set(
+      artifactLookupKey(artifact.artifactKind, artifact.canonicalKey),
+      {
+        artifactId: artifact.artifactId,
+        artifactKind: artifact.artifactKind,
+        canonicalKey: artifact.canonicalKey,
+        title: artifact.title,
+        local: true,
+      },
+    );
+  }
+  return [...targetsByLookupKey.values()];
+}
+
+function directLink(input: {
+  target: RelationshipTarget;
+  linkType: string;
+  linkText: string;
+  sourceRef: KnowledgeSourceRef;
+}): NonNullable<CompiledKnowledgeArtifact['links']>[number] {
+  return {
+    linkType: input.linkType,
+    linkText: input.linkText,
+    targetSpaceId: input.sourceRef.spaceId,
+    targetArtifactKind: input.target.artifactKind,
+    targetCanonicalKey: input.target.canonicalKey,
+    toKnowledgePageId: input.target.artifactId,
+    isOpaque: false,
+    isDangling: false,
+    inputSourceRefs: [input.sourceRef],
+  };
+}
+
+function containsExactTitle(haystack: string, title: string): boolean {
+  const needle = title.trim();
+  if (needle.length < 2) return false;
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const boundary = isAscii(needle)
+    ? `(?:^|[^\\p{L}\\p{N}])${escaped}(?:$|[^\\p{L}\\p{N}])`
+    : escaped;
+  return new RegExp(boundary, 'iu').test(haystack);
+}
+
+function isAscii(value: string): boolean {
+  return [...value].every((character) => character.codePointAt(0)! <= 0x7f);
+}
+
+function sourceRefForEvidence(
+  source: KnowledgeSourceSnapshot,
+  evidenceQuote: string | undefined,
+  warnings: CompileDiagnostic[],
+): KnowledgeSourceRef {
+  const base = toSourceRef(source);
+  if (!evidenceQuote) return base;
+  const startOffset = source.text.indexOf(evidenceQuote);
+  if (startOffset < 0) {
+    warnings.push({
+      code: 'evidence_quote_not_found',
+      message: 'Generated evidence quote was not found in the source snapshot.',
+      sourcePageId: source.sourcePageId,
+    });
+    return base;
+  }
+  return {
+    ...base,
+    sourceRange: {
+      startOffset,
+      endOffset: startOffset + evidenceQuote.length,
+    },
+    quoteHash: `sha256:${sha256(evidenceQuote)}`,
+  };
+}
+
+function toSourceRef(source: KnowledgeSourceSnapshot): KnowledgeSourceRef {
+  return {
+    workspaceId: source.workspaceId,
+    spaceId: source.spaceId,
+    sourcePageId: source.sourcePageId,
+    sourceVersion: source.sourceVersion,
+    contentHash: source.contentHash,
+  };
+}
+
+function normalizeCanonicalKey(value: string | null | undefined): string {
+  // Stored source_summary artifacts legitimately have a null
+  // canonicalKey, so guard against it rather than assuming a string.
+  return (value ?? '').trim().toLocaleLowerCase('en-US');
+}
+
+function artifactLookupKey(kind: string, canonicalKey: string): string {
+  return `${kind}:${canonicalKey}`;
+}
+
+function stableArtifactId(
+  input: Pick<CompileSpaceInput, 'workspaceId' | 'spaceId'>,
+  kind: string,
+  canonicalKey: string,
+): string {
+  return stableKnowledgeUuid(
+    `${input.workspaceId}:${input.spaceId}:${kind}:${canonicalKey}`,
+  );
+}
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function assertUniqueArtifacts(
+  artifacts: Array<Pick<SemanticGeneratedArtifact, 'kind' | 'canonicalKey'>>,
+): void {
+  const keys = artifacts.map((artifact) =>
+    artifactLookupKey(artifact.kind, artifact.canonicalKey),
+  );
+  if (new Set(keys).size !== keys.length) {
+    throw new Error('generation contains duplicate canonical artifacts');
+  }
+}

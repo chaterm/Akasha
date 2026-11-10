@@ -19,14 +19,23 @@ import {
   ResponsiveSettingsRow,
 } from "@/components/ui/responsive-settings-row.tsx";
 import { isPersonalSpace } from "@/features/space/personal-space.ts";
+import SpaceKnowledgeSettings from "@/features/space/components/space-knowledge-settings.tsx";
+import useUserRole from "@/hooks/use-user-role.tsx";
 
 interface SpaceDetailsProps {
   spaceId: string;
   readOnly?: boolean;
+  // Space admins can change the icon even when other settings are read-only.
+  canEditIcon?: boolean;
 }
-export default function SpaceDetails({ spaceId, readOnly }: SpaceDetailsProps) {
+export default function SpaceDetails({
+  spaceId,
+  readOnly,
+  canEditIcon,
+}: SpaceDetailsProps) {
   const { t } = useTranslation();
   const { data: space, isLoading, refetch } = useSpaceQuery(spaceId);
+  const { isAdmin } = useUserRole();
   const [exportOpened, { open: openExportModal, close: closeExportModal }] =
     useDisclosure(false);
   const [isIconUploading, setIsIconUploading] = useState(false);
@@ -82,11 +91,19 @@ export default function SpaceDetails({ spaceId, readOnly }: SpaceDetailsProps) {
               onUpload={handleIconUpload}
               onRemove={handleIconRemove}
               isLoading={isIconUploading}
-              disabled={readOnly}
+              disabled={readOnly && !canEditIcon}
             />
           </div>
 
           <EditSpaceForm space={space} readOnly={readOnly} />
+
+          {/* Workspace admins only, like the knowledge diagnostics page. */}
+          {isAdmin && (
+            <>
+              <Divider my="lg" />
+              <SpaceKnowledgeSettings space={space} />
+            </>
+          )}
 
           {!readOnly && (
             <>

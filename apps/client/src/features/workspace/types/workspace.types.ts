@@ -55,6 +55,16 @@ export interface IWorkspaceSkillSettings {
   upgradeUrl: string;
 }
 
+export interface IWorkspaceCompileWindowSettings {
+  enabled: boolean;
+  /** HH:mm, inclusive */
+  startTime: string;
+  /** HH:mm, exclusive; earlier than startTime crosses midnight */
+  endTime: string;
+  /** Read-only: the server timezone the window follows */
+  serverTimezone?: string;
+}
+
 export interface IWorkspaceSharingSettings {
   disabled?: boolean;
 }

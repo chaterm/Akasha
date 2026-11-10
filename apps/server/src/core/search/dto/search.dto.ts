@@ -111,3 +111,11 @@ export class SearchSuggestionDTO {
   @IsNumber()
   limit?: number;
 }
+
+/** Pages referenced by a database's document columns, looked up for the current user. */
+export class ResolvePagesDTO {
+  @IsArray()
+  @ArrayMaxSize(200)
+  @IsUUID('all', { each: true })
+  pageIds: string[];
+}

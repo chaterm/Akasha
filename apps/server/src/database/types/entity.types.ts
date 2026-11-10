@@ -36,8 +36,6 @@ import {
   KnowledgeArtifactContributions,
   KnowledgeCompilationAttempts,
   KnowledgeChunkSources,
-  KnowledgeGraphEdges,
-  KnowledgeGraphEdgeSources,
   KnowledgeImageExtractions,
   KnowledgeLinks,
   KnowledgeLinkSources,
@@ -167,7 +165,6 @@ type KnowledgeChunkMigrationColumn =
   | 'embeddingDurationMs'
   | 'embeddingTotalTokens'
   | 'embeddingDimensions'
-  | 'embeddingLegacy'
   | 'embeddingModel'
   | 'embeddingProfile'
   | 'endOffset'
@@ -200,16 +197,6 @@ export type UpdatableKnowledgeLink = Updateable<Omit<KnowledgeLinks, 'id'>>;
 
 export type KnowledgeLinkSource = Selectable<KnowledgeLinkSources>;
 export type InsertableKnowledgeLinkSource = Insertable<KnowledgeLinkSources>;
-
-export type KnowledgeGraphEdge = Selectable<KnowledgeGraphEdges>;
-export type InsertableKnowledgeGraphEdge = Insertable<KnowledgeGraphEdges>;
-export type UpdatableKnowledgeGraphEdge = Updateable<
-  Omit<KnowledgeGraphEdges, 'id'>
->;
-
-export type KnowledgeGraphEdgeSource = Selectable<KnowledgeGraphEdgeSources>;
-export type InsertableKnowledgeGraphEdgeSource =
-  Insertable<KnowledgeGraphEdgeSources>;
 
 export type KnowledgeSourceAccessPolicy =
   Selectable<_KnowledgeSourceAccessPolicy>;

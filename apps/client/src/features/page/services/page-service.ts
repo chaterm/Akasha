@@ -15,7 +15,12 @@ import { InfiniteData } from "@tanstack/react-query";
 import { IFileTask } from "@/features/file-task/types/file-task.types.ts";
 import { IAttachment } from "@/features/attachments/types/attachment.types.ts";
 
-export async function createPage(data: Partial<IPage>): Promise<IPage> {
+export async function createPage(
+  data: Partial<Omit<IPage, "content">> & {
+    content?: unknown;
+    format?: "json" | "markdown" | "html";
+  },
+): Promise<IPage> {
   const req = await api.post<IPage>("/pages/create", data);
   return req.data;
 }
@@ -39,10 +44,20 @@ export interface PublishPageKnowledgeResult {
   disposition: "created" | "coalesced" | "rerun_requested";
   mode: "incremental";
   knowledgeGeneration: number;
-  indexMode: "compiled" | "original";
+  indexMode: KnowledgeIndexMode;
+  pageIndexMode: KnowledgeIndexMode | null;
 }
 
 export type KnowledgeIndexMode = "compiled" | "original";
+
+/**
+ * Space publish mode: `default` lets pages choose (falling back to
+ * `compiled`); `compiled` / `original` apply to every page.
+ */
+export type KnowledgeSpaceIndexMode = KnowledgeIndexMode | "default";
+
+/** Page-level choice; `inherit` follows the space default. */
+export type KnowledgePageIndexModeChoice = KnowledgeIndexMode | "inherit";
 
 export interface PagePublishCooldown {
   step: number;
@@ -65,7 +80,10 @@ export interface PageCompileStatusResult {
   errorMessage?: string;
   sourceVersion?: number;
   publishedSourceVersion?: number;
+  /** Effective mode after applying the space and page settings. */
   configuredIndexMode?: KnowledgeIndexMode;
+  pageIndexMode?: KnowledgeIndexMode | null;
+  spaceIndexMode?: KnowledgeSpaceIndexMode;
   publishedIndexMode?: KnowledgeIndexMode;
 }
 
@@ -87,9 +105,21 @@ export async function getPagePublishCooldown(
   return req.data;
 }
 
+/** Saves the page publish mode without publishing; returns the new status. */
+export async function setPageIndexMode(
+  pageId: string,
+  indexMode: KnowledgePageIndexModeChoice,
+): Promise<PageCompileStatusResult> {
+  const req = await api.post<PageCompileStatusResult>(
+    `/llm-wiki/pages/${pageId}/index-mode`,
+    { indexMode },
+  );
+  return req.data;
+}
+
 export async function publishPageKnowledge(
   pageId: string,
-  indexMode: KnowledgeIndexMode = "compiled",
+  indexMode: KnowledgePageIndexModeChoice = "inherit",
 ): Promise<PublishPageKnowledgeResult> {
   const req = await api.post<PublishPageKnowledgeResult>(
     `/llm-wiki/pages/${pageId}/publish`,

@@ -207,7 +207,7 @@ describePostgres('KnowledgeSpaceCompilationRepo PostgreSQL round trip', () => {
     expect(evidence).toEqual({
       sourceStale: true,
       artifactStale: true,
-      childStaleCount: 5,
+      childStaleCount: 4,
       contributionCount: 1,
       initializedAt: null,
       status: 'queued',
@@ -676,6 +676,201 @@ describePostgres('KnowledgeSpaceCompilationRepo PostgreSQL round trip', () => {
     expect(remaining.rows).toEqual([{ count: 0 }]);
   });
 
+  it('excludes gated workspaces in SQL so they cannot starve open ones', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name)
+      values ('space-gated', 'workspace-gated', 'Gated'),
+             ('space-open', 'workspace-open', 'Open');
+      insert into pages (id, workspace_id, space_id)
+      values ('page-gated-1', 'workspace-gated', 'space-gated'),
+             ('page-gated-2', 'workspace-gated', 'space-gated'),
+             ('page-open', 'workspace-open', 'space-open')
+    `.execute(db);
+    // Gated rows are due earlier, so without SQL filtering they would fill
+    // a batch of 2 ahead of the open workspace.
+    await repo.scheduleIncrementalCompileForPages({
+      workspaceId: 'workspace-gated',
+      sourcePageIds: ['page-gated-1', 'page-gated-2'],
+      trigger: 'page_updated',
+      quietPeriodMs: 0,
+      changedAt: new Date('2026-10-28T01:00:00.000Z'),
+    });
+    await repo.scheduleIncrementalCompileForPages({
+      workspaceId: 'workspace-open',
+      sourcePageIds: ['page-open'],
+      trigger: 'page_restored',
+      quietPeriodMs: 0,
+      changedAt: new Date('2026-10-28T02:00:00.000Z'),
+    });
+
+    await expect(
+      repo.promoteDuePageCompileSchedules({
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+        limit: 2,
+        now: new Date('2026-10-28T03:00:00.000Z'),
+        excludedWorkspaceIds: ['workspace-gated'],
+      }),
+    ).resolves.toEqual({
+      selectedPageCount: 1,
+      promotedPageCount: 1,
+      runRequestCount: 1,
+    });
+
+    const state = await sql<{
+      spaceId: string;
+      runs: number;
+      schedules: number;
+    }>`
+      select space.id as "spaceId",
+             (select count(*)::integer from knowledge_space_compile_runs run
+              where run.space_id = space.id) as runs,
+             (select count(*)::integer from knowledge_page_compile_schedules schedule
+              where schedule.space_id = space.id) as schedules
+      from spaces space
+      where space.id in ('space-gated', 'space-open')
+      order by space.id
+    `.execute(db);
+    expect(state.rows).toEqual([
+      { spaceId: 'space-gated', runs: 0, schedules: 2 },
+      { spaceId: 'space-open', runs: 1, schedules: 0 },
+    ]);
+  });
+
+  it('merges deferred Space intents and promotes them into one full-Space Run', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name)
+      values ('space-deferred', 'workspace-1', 'Deferred');
+      insert into pages (id, workspace_id, space_id)
+      values ('page-deferred', 'workspace-1', 'space-deferred')
+    `.execute(db);
+    await expect(
+      repo.deferSpaceCompiles({
+        requests: [
+          {
+            workspaceId: 'workspace-1',
+            spaceId: 'space-deferred',
+            confirmationSpaceName: 'Wrong',
+          },
+        ],
+      }),
+    ).resolves.toEqual([
+      {
+        disposition: 'rejected',
+        spaceId: 'space-deferred',
+        reason: 'space_name_mismatch',
+      },
+    ]);
+    await repo.deferSpaceCompiles({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-deferred',
+          confirmationSpaceName: 'Deferred',
+          requestedBy: 'user-1',
+        },
+      ],
+    });
+    await repo.deferSpaceCompiles({
+      requests: [
+        {
+          workspaceId: 'workspace-1',
+          spaceId: 'space-deferred',
+          scanRemovedSources: true,
+        },
+      ],
+    });
+    // A delayed page in the same Space is covered by the full-Space Run.
+    await repo.scheduleIncrementalCompileForPages({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-deferred'],
+      trigger: 'page_updated',
+      quietPeriodMs: 60 * 60 * 1_000,
+    });
+
+    const intents = await sql<{
+      requestCount: number;
+      scanRemovedSources: boolean;
+      requestedBy: string;
+    }>`
+      select request_count as "requestCount",
+             scan_removed_sources as "scanRemovedSources",
+             requested_by as "requestedBy"
+      from knowledge_space_deferred_compiles
+      where space_id = 'space-deferred'
+    `.execute(db);
+    expect(intents.rows).toEqual([
+      { requestCount: 2, scanRemovedSources: true, requestedBy: 'user-1' },
+    ]);
+
+    await expect(
+      repo.promoteDeferredSpaceCompiles({
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+        excludedWorkspaceIds: ['workspace-1'],
+      }),
+    ).resolves.toEqual({ selectedCount: 0, runRequestCount: 0 });
+
+    await expect(
+      repo.promoteDeferredSpaceCompiles({
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+      }),
+    ).resolves.toEqual({ selectedCount: 1, runRequestCount: 1 });
+
+    const after = await sql<{
+      trigger: string;
+      targetSourcePageIds: unknown;
+      intents: number;
+      schedules: number;
+    }>`
+      select run.trigger,
+             run.target_source_page_ids as "targetSourcePageIds",
+             (select count(*)::integer from knowledge_space_deferred_compiles
+              where space_id = 'space-deferred') as intents,
+             (select count(*)::integer from knowledge_page_compile_schedules
+              where space_id = 'space-deferred') as schedules
+      from knowledge_space_compile_runs run
+      where run.space_id = 'space-deferred'
+    `.execute(db);
+    expect(after.rows).toEqual([
+      {
+        trigger: 'manual_compile',
+        targetSourcePageIds: null,
+        intents: 0,
+        schedules: 0,
+      },
+    ]);
+  });
+
+  it('drops a deferred intent whose Space was deleted', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name, deleted_at)
+      values ('space-deferred-deleted', 'workspace-1', 'Gone', null)
+    `.execute(db);
+    await repo.deferSpaceCompiles({
+      requests: [
+        { workspaceId: 'workspace-1', spaceId: 'space-deferred-deleted' },
+      ],
+    });
+    await sql`
+      update spaces set deleted_at = now() where id = 'space-deferred-deleted'
+    `.execute(db);
+
+    await expect(
+      repo.promoteDeferredSpaceCompiles({
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+      }),
+    ).resolves.toEqual({ selectedCount: 1, runRequestCount: 0 });
+    const remaining = await sql<{ count: number }>`
+      select count(*)::integer as count
+      from knowledge_space_deferred_compiles
+      where space_id = 'space-deferred-deleted'
+    `.execute(db);
+    expect(remaining.rows).toEqual([{ count: 0 }]);
+  });
+
   it('lets two application instances promote disjoint due pages without duplicate active Runs', async () => {
     await sql`
       insert into spaces (id, workspace_id, name)
@@ -743,6 +938,20 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
     create sequence run_id_seq;
     create sequence run_page_id_seq;
     create sequence schedule_id_seq;
+    create sequence deferred_compile_id_seq;
+    create table knowledge_space_deferred_compiles (
+      id varchar primary key default ('deferred-' || nextval('deferred_compile_id_seq')),
+      workspace_id varchar not null,
+      space_id varchar not null,
+      scan_removed_sources boolean not null default false,
+      request_count integer not null default 1,
+      requested_by varchar,
+      first_requested_at timestamptz not null,
+      last_requested_at timestamptz not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (workspace_id, space_id)
+    );
     create table spaces (
       id varchar primary key,
       workspace_id varchar not null,
@@ -896,12 +1105,6 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       from_knowledge_page_id varchar not null,
       stale_at timestamptz
     );
-    create table knowledge_graph_edges (
-      id varchar primary key,
-      workspace_id varchar not null,
-      from_knowledge_page_id varchar not null,
-      stale_at timestamptz
-    );
     create unique index uq_active_run on knowledge_space_compile_runs (
       workspace_id, space_id
     ) where status in ('queued', 'compiling', 'aggregating');
@@ -971,9 +1174,6 @@ async function seedInitializedRemovedSourcePlan(
     );
     insert into knowledge_links values (
       'link-removed', 'workspace-1', 'artifact-removed', null
-    );
-    insert into knowledge_graph_edges values (
-      'edge-removed', 'workspace-1', 'artifact-removed', null
     )
   `.execute(db);
 }
@@ -1003,7 +1203,6 @@ async function readRemovedSourceReplanEvidence(
        + (select count(*) from knowledge_claims where stale_at is not null)
        + (select count(*) from knowledge_chunks where stale_at is not null)
        + (select count(*) from knowledge_links where stale_at is not null)
-       + (select count(*) from knowledge_graph_edges where stale_at is not null)
       )::integer as "childStaleCount",
       (select count(*)::integer from knowledge_artifact_contributions
        where id = 'contribution-removed') as "contributionCount",

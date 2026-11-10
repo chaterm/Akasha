@@ -15,7 +15,6 @@ from .db import (
     init_db,
     loads,
     transaction,
-    utc_now,
 )
 
 __all__ = [
@@ -33,5 +32,4 @@ __all__ = [
     "run_store",
     "task_store",
     "transaction",
-    "utc_now",
 ]

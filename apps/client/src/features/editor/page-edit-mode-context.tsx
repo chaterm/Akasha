@@ -21,8 +21,11 @@ const PageEditModeContext = createContext<PageEditModeContextValue | null>(
   null,
 );
 
-export function PageEditModeProvider({ children }: React.PropsWithChildren) {
-  const [pageEditMode, setPageEditMode] = useState(PageEditMode.Read);
+export function PageEditModeProvider({
+  children,
+  initialMode = PageEditMode.Read,
+}: React.PropsWithChildren<{ initialMode?: PageEditMode }>) {
+  const [pageEditMode, setPageEditMode] = useState(initialMode);
   const savePage = useCallback(() => {
     setPageEditMode(PageEditMode.Read);
   }, []);

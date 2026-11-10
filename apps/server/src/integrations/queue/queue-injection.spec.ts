@@ -8,8 +8,8 @@ import { PageService } from '../../core/page/services/page.service';
 import { WorkspaceService } from '../../core/workspace/services/workspace.service';
 import { SpaceListener } from '../../database/listeners/space.listener';
 import { WorkspaceListener } from '../../database/listeners/workspace.listener';
-import { KnowledgeSpaceCompilationService } from '../../ee/llm-wiki/services/knowledge-space-compilation.service';
-import { KnowledgeSpaceResetService } from '../../ee/llm-wiki/services/knowledge-space-reset.service';
+import { KnowledgeSpaceCompilationService } from '../../features/llm-wiki/services/knowledge-space-compilation.service';
+import { KnowledgeSpaceResetService } from '../../features/llm-wiki/services/knowledge-space-reset.service';
 import { QueueName } from './constants';
 
 describe('queue injection boundaries', () => {

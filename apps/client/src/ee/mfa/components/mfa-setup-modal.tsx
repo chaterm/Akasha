@@ -38,6 +38,7 @@ import { useTranslation } from "react-i18next";
 import { setupMfa, enableMfa } from "@/ee/mfa";
 import { zod4Resolver } from "mantine-form-zod-resolver";
 import { z } from "zod/v4";
+import { getErrorMessage } from "@/lib/errors";
 
 interface MfaSetupModalProps {
   opened: boolean;
@@ -85,7 +86,7 @@ export function MfaSetupModal({
     onError: (error: any) => {
       notifications.show({
         title: t("Error"),
-        message: error.response?.data?.message || t("Failed to setup MFA"),
+        message: getErrorMessage(error, "Failed to setup MFA"),
         color: "red",
       });
     },
@@ -112,7 +113,7 @@ export function MfaSetupModal({
       notifications.show({
         title: t("Error"),
         message:
-          error.response?.data?.message || t("Invalid verification code"),
+          getErrorMessage(error, "Invalid verification code"),
         color: "red",
       });
       form.setFieldValue("verificationCode", "");
@@ -171,7 +172,7 @@ export function MfaSetupModal({
                     <Paper p="md" withBorder>
                       <Image
                         src={setupData.qrCode}
-                        alt="MFA QR Code"
+                        alt={t("MFA QR Code")}
                         width={200}
                         height={200}
                       />

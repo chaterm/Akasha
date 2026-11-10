@@ -1,0 +1,403 @@
+import { useCallback, useRef, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import {
+  IconArrowUp,
+  IconPlayerStopFilled,
+  IconX,
+  IconFile,
+  IconPhoto,
+  IconFileText,
+} from "@tabler/icons-react";
+import { notifications } from "@mantine/notifications";
+import { EditorContent, ReactNodeViewRenderer, useEditor } from "@tiptap/react";
+import { Placeholder } from "@tiptap/extension-placeholder";
+import { CharacterCount } from "@tiptap/extensions";
+import { StarterKit } from "@tiptap/starter-kit";
+import { Mention, LinkExtension } from "@docmost/editor-ext";
+import EmojiCommand from "@/features/editor/extensions/emoji-command";
+import mentionRenderItems from "@/features/editor/components/mention/mention-suggestion";
+import MentionView from "@/features/editor/components/mention/mention-view";
+import { uploadChatFile } from "../services/ai-chat-service";
+import type { ChatAttachment, PageMention } from "../types/ai-chat.types";
+import classes from "../styles/chat-input.module.css";
+
+type PendingAttachment = ChatAttachment & { uploading: boolean };
+
+const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif"];
+const ACCEPTED_FILE_TYPES = ".pdf,.docx,.txt,.csv,.md,.png,.jpg,.jpeg,.webp";
+// Kept in sync with MAX_ATTACHMENTS_PER_MESSAGE in apps/server/src/ee/ai-chat/ai-chat-limits.ts
+const MAX_ATTACHMENTS_PER_MESSAGE = 5;
+const FILE_ATTACHMENTS_DISABLED = true;
+
+type Props = {
+  isStreaming: boolean;
+  disabled?: boolean;
+  onSend: (
+    content: string,
+    mentions: PageMention[],
+    attachments: ChatAttachment[],
+  ) => void;
+  onStop: () => void;
+  placeholder?: string;
+  autofocus?: boolean;
+  contextPages?: PageMention[];
+  onRemoveContextPage?: (pageId: string) => void;
+  variant?: "card" | "flat";
+  showDisclaimer?: boolean;
+  chatId?: string;
+};
+
+function extractMentions(json: any): PageMention[] {
+  const mentions: PageMention[] = [];
+  const seen = new Set<string>();
+
+  function walk(node: any) {
+    if (
+      node.type === "mention" &&
+      node.attrs?.entityType === "page" &&
+      node.attrs?.entityId
+    ) {
+      if (!seen.has(node.attrs.entityId)) {
+        seen.add(node.attrs.entityId);
+        mentions.push({
+          id: node.attrs.entityId,
+          title: node.attrs.label || "",
+          slugId: node.attrs.slugId || "",
+        });
+      }
+    }
+    if (node.content) {
+      for (const child of node.content) {
+        walk(child);
+      }
+    }
+  }
+
+  walk(json);
+  return mentions;
+}
+
+function editorJsonToText(json: any): string {
+  let text = "";
+
+  function walk(node: any) {
+    if (node.type === "text") {
+      text += node.text || "";
+    } else if (node.type === "mention") {
+      text += `@${node.attrs?.label || ""}`;
+    } else if (node.type === "paragraph") {
+      if (text.length > 0) text += "\n";
+      if (node.content) {
+        for (const child of node.content) {
+          walk(child);
+        }
+      }
+      return;
+    }
+    if (node.content) {
+      for (const child of node.content) {
+        walk(child);
+      }
+    }
+  }
+
+  walk(json);
+  return text;
+}
+
+export default function ChatInput({
+  isStreaming,
+  disabled = false,
+  onSend,
+  onStop,
+  placeholder,
+  autofocus = true,
+  contextPages,
+  onRemoveContextPage,
+  variant = "card",
+  showDisclaimer = true,
+  chatId,
+}: Props) {
+  const chatIdRef = useRef(chatId);
+  chatIdRef.current = chatId;
+  const { t } = useTranslation();
+  const [isEmpty, setIsEmpty] = useState(true);
+  const [pendingAttachments, setPendingAttachments] = useState<
+    PendingAttachment[]
+  >([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const onSendRef = useRef(onSend);
+  onSendRef.current = onSend;
+
+  const handleFileSelect = useCallback(
+    async (files: FileList | null) => {
+      if (disabled || !files?.length) return;
+
+      const room = MAX_ATTACHMENTS_PER_MESSAGE - pendingAttachments.length;
+      if (room <= 0) {
+        notifications.show({
+          color: "yellow",
+          message: t("You can attach up to {{max}} files per message.", {
+            max: MAX_ATTACHMENTS_PER_MESSAGE,
+          }),
+        });
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+
+      const incoming = Array.from(files);
+      const accepted = incoming.slice(0, room);
+
+      if (incoming.length > accepted.length) {
+        notifications.show({
+          color: "yellow",
+          message: t(
+            "Only the first {{n}} file(s) were added (max {{max}} per message).",
+            { n: accepted.length, max: MAX_ATTACHMENTS_PER_MESSAGE },
+          ),
+        });
+      }
+
+      for (const file of accepted) {
+        const tempId = `uploading-${Date.now()}-${Math.random()}`;
+        const ext = file.name.split(".").pop()?.toLowerCase() || "";
+
+        const placeholder: PendingAttachment = {
+          id: tempId,
+          fileName: file.name,
+          fileExt: ext,
+          fileSize: file.size,
+          mimeType: file.type,
+          uploading: true,
+        };
+
+        setPendingAttachments((prev) => [...prev, placeholder]);
+
+        try {
+          const uploaded = await uploadChatFile(file, chatIdRef.current);
+          setPendingAttachments((prev) =>
+            prev.map((a) =>
+              a.id === tempId ? { ...uploaded, uploading: false } : a,
+            ),
+          );
+        } catch {
+          setPendingAttachments((prev) => prev.filter((a) => a.id !== tempId));
+        }
+      }
+
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    },
+    [disabled, pendingAttachments.length, t],
+  );
+
+  const removeAttachment = useCallback((id: string) => {
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+
+  const handleSubmit = useCallback(() => {
+    if (!editor || isStreaming || disabled) return;
+    const json = editor.getJSON();
+    const text = editorJsonToText(json).trim();
+    const readyAttachments = pendingAttachments.filter((a) => !a.uploading);
+    if (!text && readyAttachments.length === 0) return;
+
+    const mentions = extractMentions(json);
+    onSendRef.current(text, mentions, readyAttachments);
+    editor.commands.clearContent();
+    editor.commands.focus();
+    setPendingAttachments([]);
+  }, [disabled, isStreaming, pendingAttachments]);
+
+  const handleSubmitRef = useRef(handleSubmit);
+  handleSubmitRef.current = handleSubmit;
+
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({
+        gapcursor: false,
+        dropcursor: false,
+        link: false,
+      }),
+      Placeholder.configure({
+        placeholder:
+          placeholder || t("Ask the knowledge base... Use @ to mention pages"),
+      }),
+      CharacterCount.configure({
+        limit: 50000,
+      }),
+      LinkExtension,
+      EmojiCommand,
+      Mention.configure({
+        suggestion: {
+          allowSpaces: true,
+          items: () => [],
+          // @ts-ignore
+          render: () => mentionRenderItems({ pageOnly: true }),
+        },
+        HTMLAttributes: {
+          class: "mention",
+        },
+      }).extend({
+        addNodeView() {
+          this.editor.isInitialized = true;
+          return ReactNodeViewRenderer(MentionView);
+        },
+      }),
+    ],
+    editorProps: {
+      attributes: {
+        role: "textbox",
+        "aria-label":
+          placeholder || t("Ask the knowledge base... Use @ to mention pages"),
+        "aria-multiline": "true",
+      },
+      handleDOMEvents: {
+        keydown: (_view, event) => {
+          if (
+            [
+              "ArrowUp",
+              "ArrowDown",
+              "ArrowLeft",
+              "ArrowRight",
+              "Enter",
+            ].includes(event.key)
+          ) {
+            const emojiCommand = document.querySelector("#emoji-command");
+            const mentionPopup = document.querySelector("#mention");
+            if (emojiCommand || mentionPopup) {
+              return true;
+            }
+          }
+
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            handleSubmitRef.current();
+            return true;
+          }
+        },
+      },
+    },
+    content: "",
+    editable: !disabled,
+    immediatelyRender: true,
+    shouldRerenderOnTransaction: false,
+    autofocus: autofocus ? "end" : false,
+    onUpdate: ({ editor: e }) => {
+      setIsEmpty(!e.getText().trim());
+    },
+  });
+
+  useEffect(() => {
+    editor?.setEditable?.(!disabled);
+    if (editor && autofocus && !disabled) {
+      editor.commands.focus();
+    }
+  }, [autofocus, disabled, editor]);
+
+  const hasContent =
+    !isEmpty ||
+    pendingAttachments.some((a) => !a.uploading) ||
+    (contextPages?.length ?? 0) > 0;
+
+  const wrapperClass =
+    variant === "flat" ? classes.inputWrapperFlat : classes.inputWrapper;
+
+  return (
+    <>
+      <div className={wrapperClass} data-chat-input>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ACCEPTED_FILE_TYPES}
+          multiple
+          aria-label={t("Add files")}
+          disabled={disabled || FILE_ATTACHMENTS_DISABLED}
+          tabIndex={-1}
+          style={{ display: "none" }}
+          onChange={(e) => handleFileSelect(e.target.files)}
+        />
+
+        {((contextPages?.length ?? 0) > 0 || pendingAttachments.length > 0) && (
+          <div className={classes.attachmentChips}>
+            {contextPages?.map((page) => (
+              <div key={page.id} className={classes.attachmentChip}>
+                <IconFileText size={14} />
+                <span className={classes.attachmentChipName}>
+                  {page.title || "Untitled"}
+                </span>
+                {onRemoveContextPage && (
+                  <button
+                    type="button"
+                    className={classes.attachmentChipRemove}
+                    disabled={disabled}
+                    onClick={() => onRemoveContextPage(page.id)}
+                    aria-label={`Remove ${page.title}`}
+                  >
+                    <IconX size={12} />
+                  </button>
+                )}
+              </div>
+            ))}
+            {pendingAttachments.map((attachment) => (
+              <div
+                key={attachment.id}
+                className={`${classes.attachmentChip} ${attachment.uploading ? classes.attachmentChipUploading : ""}`}
+              >
+                {IMAGE_EXTENSIONS.includes(attachment.fileExt) ? (
+                  <IconPhoto size={14} />
+                ) : (
+                  <IconFile size={14} />
+                )}
+                <span className={classes.attachmentChipName}>
+                  {attachment.fileName}
+                </span>
+                {!attachment.uploading && (
+                  <button
+                    type="button"
+                    className={classes.attachmentChipRemove}
+                    disabled={disabled}
+                    onClick={() => removeAttachment(attachment.id)}
+                    aria-label={`Remove ${attachment.fileName}`}
+                  >
+                    <IconX size={12} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <EditorContent editor={editor} className={classes.editorContent} />
+        <div className={classes.actions}>
+          {isStreaming ? (
+            <button
+              type="button"
+              className={classes.stopButton}
+              onClick={onStop}
+              aria-label={t("Stop generation")}
+            >
+              <IconPlayerStopFilled size={14} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={classes.sendButton}
+              onClick={handleSubmit}
+              disabled={disabled || !hasContent}
+              aria-label={t("Send message")}
+            >
+              <IconArrowUp size={16} stroke={2.5} />
+            </button>
+          )}
+        </div>
+      </div>
+      {showDisclaimer && (
+        <div className={classes.disclaimer}>
+          {t("AI-generated content may not be accurate.")}
+        </div>
+      )}
+    </>
+  );
+}

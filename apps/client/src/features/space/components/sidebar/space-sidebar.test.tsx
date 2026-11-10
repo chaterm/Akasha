@@ -86,8 +86,8 @@ vi.mock("@/components/common/export-modal", () => ({
   default: () => null,
 }));
 
-vi.mock("@/ee/template/components/template-picker-modal", () => ({
-  default: () => null,
+vi.mock("@/features/template/components/template-quick-picker", () => ({
+  TemplateQuickPicker: () => null,
 }));
 
 vi.mock("@/features/space/queries/space-watcher-query.ts", () => ({

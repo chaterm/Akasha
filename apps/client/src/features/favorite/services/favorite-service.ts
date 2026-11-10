@@ -6,7 +6,6 @@ export type ToggleFavoriteParams = {
   type: FavoriteType;
   pageId?: string;
   spaceId?: string;
-  templateId?: string;
 };
 
 export async function addFavorite(

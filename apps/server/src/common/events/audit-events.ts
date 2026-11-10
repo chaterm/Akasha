@@ -103,6 +103,11 @@ export const AuditEvent = {
   KNOWLEDGE_COMPILE_CANCELLED: 'knowledge.compile_cancelled',
   KNOWLEDGE_DELAYED_PAGE_REMOVED: 'knowledge.delayed_page_removed',
 
+  // Template
+  TEMPLATE_CREATED: 'template.created',
+  TEMPLATE_UPDATED: 'template.updated',
+  TEMPLATE_DELETED: 'template.deleted',
+
   // Attachment
   ATTACHMENT_UPLOADED: 'attachment.uploaded',
   // ATTACHMENT_DELETED: 'attachment.deleted',
@@ -137,6 +142,7 @@ export const AuditResource = {
   ATTACHMENT: 'attachment',
   LICENSE: 'license',
   KNOWLEDGE: 'knowledge',
+  TEMPLATE: 'template',
 } as const;
 
 export type AuditResourceType =

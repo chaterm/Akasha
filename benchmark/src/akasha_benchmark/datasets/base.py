@@ -4,7 +4,13 @@ from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 
 from .corpus import CorpusIndex
-from .models import CanonicalSample, DataDependency, SubsetStrategy
+from .models import (
+    CanonicalSample,
+    DataDependency,
+    SubsetStrategy,
+    corpus_id_rule,
+    sample_id_rule,
+)
 
 
 class DatasetAdapter(ABC):
@@ -14,18 +20,14 @@ class DatasetAdapter(ABC):
     provides: ClassVar[frozenset[DataDependency]]
     subset_strategy: ClassVar[SubsetStrategy]
     downloadable: ClassVar[bool] = True
-    version: ClassVar[str] = "1"
 
     def has(self, dependency: DataDependency) -> bool:
         return dependency in self.provides
 
     def identity_rules(self) -> dict[str, str]:
-
-        from .models import CORPUS_ID_RULES, SAMPLE_ID_RULES
-
         return {
-            "sample_id": SAMPLE_ID_RULES[self.name],
-            "corpus_doc_id": CORPUS_ID_RULES[self.name],
+            "sample_id": sample_id_rule(self.name),
+            "corpus_doc_id": corpus_id_rule(self.name),
         }
 
     @abstractmethod
@@ -35,5 +37,4 @@ class DatasetAdapter(ABC):
         pass
 
     def expected_qa_rows(self) -> int | None:
-
         return None

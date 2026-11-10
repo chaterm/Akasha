@@ -25,6 +25,7 @@ import {
   AUDIT_SERVICE,
   IAuditService,
 } from '../../../integrations/audit/audit.service';
+import { ErrorCode, errorBody } from '../../../common/errors/error-codes';
 
 @Injectable()
 export class GroupService {
@@ -63,7 +64,9 @@ export class GroupService {
       workspaceId,
     );
     if (groupExists) {
-      throw new BadRequestException('Group name already exists');
+      throw new BadRequestException(
+        errorBody(ErrorCode.GROUP_NAME_TAKEN, 'Group name already exists'),
+      );
     }
     const insertableGroup: InsertableGroup = {
       name: createGroupDto.name,
@@ -113,7 +116,12 @@ export class GroupService {
     }
 
     if (group.isDefault) {
-      throw new BadRequestException('You cannot update a default group');
+      throw new BadRequestException(
+        errorBody(
+          ErrorCode.GROUP_DEFAULT_PROTECTED,
+          'You cannot update a default group',
+        ),
+      );
     }
 
     const groupBefore = { name: group.name, description: group.description };
@@ -125,7 +133,9 @@ export class GroupService {
       );
 
       if (existingGroup && group.name !== existingGroup.name) {
-        throw new BadRequestException('Group name already exists');
+        throw new BadRequestException(
+          errorBody(ErrorCode.GROUP_NAME_TAKEN, 'Group name already exists'),
+        );
       }
 
       group.name = updateGroupDto.name;
@@ -281,7 +291,12 @@ export class GroupService {
   async deleteGroup(groupId: string, workspaceId: string): Promise<void> {
     const group = await this.findAndValidateGroup(groupId, workspaceId);
     if (group.isDefault) {
-      throw new BadRequestException('You cannot delete a default group');
+      throw new BadRequestException(
+        errorBody(
+          ErrorCode.GROUP_DEFAULT_PROTECTED,
+          'You cannot delete a default group',
+        ),
+      );
     }
 
     const [userIds, spaceIds] = await Promise.all([

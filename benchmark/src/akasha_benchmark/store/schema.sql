@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS model_provider (
         purpose IN (
             'judge',
             'attribution',
+            'generation',
             'compiler',
             'embedding',
             'answer',

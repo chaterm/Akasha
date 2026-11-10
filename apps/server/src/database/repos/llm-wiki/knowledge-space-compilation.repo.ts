@@ -41,21 +41,23 @@ export interface SpaceRunRequest {
   confirmationSpaceName?: string;
   removedSourcePageIds?: string[];
   scanRemovedSources?: boolean;
-  // When set, the Run compiles only these source pages instead of the whole
-  // Space (page-scoped retry). Undefined/empty means a full-Space Run.
   targetSourcePageIds?: string[];
   pageIndexSetting?: {
     sourcePageId: string;
-    indexMode: 'compiled' | 'original';
+    indexMode: 'compiled' | 'original' | null;
     updatedBy: string | null;
   };
 }
 
 export const KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER = 'manual_page_publish';
+/** Force rebuild; exempt from the night compile window like page publish. */
+export const KNOWLEDGE_MANUAL_RUN_TRIGGER = 'manual_run';
 
-// Pure scope helpers now live in a shared, dependency-free module so the
-// execution repo can reuse the same follow-up narrowing semantics. Re-exported
-// here to keep existing import paths (and their unit tests) stable.
+export type KnowledgePageCompileScheduleTrigger =
+  | 'page_created'
+  | 'page_updated'
+  | 'page_restored';
+
 export {
   reconcileRunTargetScope,
   reconcileFollowUpTargetScope,
@@ -326,17 +328,183 @@ export class KnowledgeSpaceCompilationRepo {
   }
 
   /**
+   * Records Space-level compilation requested outside the night compile
+   * window. One durable intent per Space absorbs repeated clicks; it never
+   * becomes a Run here, so the single-active-Run invariant is untouched.
+   * The Space row is read without a lock: promotion locks intent -> schedule
+   * -> Space, and taking the Space lock first here could deadlock with it.
+   */
+  async deferSpaceCompiles(input: {
+    requests: Array<{
+      workspaceId: string;
+      spaceId: string;
+      confirmationSpaceName?: string;
+      scanRemovedSources?: boolean;
+      requestedBy?: string | null;
+    }>;
+  }): Promise<
+    Array<
+      | { disposition: 'deferred'; spaceId: string }
+      | {
+          disposition: 'rejected';
+          spaceId: string;
+          reason: 'space_not_found' | 'space_name_mismatch';
+        }
+    >
+  > {
+    const results = [];
+    for (const request of input.requests) {
+      const space = await this.db
+        .selectFrom('spaces')
+        .select(['id', 'name'])
+        .where('id', '=', request.spaceId)
+        .where('workspaceId', '=', request.workspaceId)
+        .where('deletedAt', 'is', null)
+        .executeTakeFirst();
+      if (!space) {
+        results.push({
+          disposition: 'rejected' as const,
+          spaceId: request.spaceId,
+          reason: 'space_not_found' as const,
+        });
+        continue;
+      }
+      if (
+        request.confirmationSpaceName !== undefined &&
+        request.confirmationSpaceName !== space.name
+      ) {
+        results.push({
+          disposition: 'rejected' as const,
+          spaceId: request.spaceId,
+          reason: 'space_name_mismatch' as const,
+        });
+        continue;
+      }
+      const scanRemovedSources = request.scanRemovedSources === true;
+      await sql`
+        INSERT INTO knowledge_space_deferred_compiles (
+          workspace_id,
+          space_id,
+          scan_removed_sources,
+          request_count,
+          requested_by,
+          first_requested_at,
+          last_requested_at,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          ${request.workspaceId},
+          ${request.spaceId},
+          ${scanRemovedSources},
+          1,
+          ${request.requestedBy ?? null},
+          clock_timestamp(),
+          clock_timestamp(),
+          clock_timestamp(),
+          clock_timestamp()
+        )
+        ON CONFLICT (workspace_id, space_id) DO UPDATE
+        SET scan_removed_sources =
+              knowledge_space_deferred_compiles.scan_removed_sources
+              OR EXCLUDED.scan_removed_sources,
+            request_count = knowledge_space_deferred_compiles.request_count + 1,
+            requested_by = COALESCE(
+              EXCLUDED.requested_by,
+              knowledge_space_deferred_compiles.requested_by
+            ),
+            last_requested_at = greatest(
+              knowledge_space_deferred_compiles.last_requested_at,
+              EXCLUDED.last_requested_at
+            ),
+            updated_at = EXCLUDED.updated_at
+      `.execute(this.db);
+      results.push({
+        disposition: 'deferred' as const,
+        spaceId: request.spaceId,
+      });
+    }
+    return results;
+  }
+
+  /**
+   * Turns deferred Space intents of open workspaces into ordinary
+   * manual_compile Run requests. Each intent is promoted and deleted in its
+   * own transaction (a full-Space request may scan removed sources). The
+   * request covers the whole Space, so requestRunInTx also clears that
+   * Space's delayed page schedules: the Run compiles every page anyway.
+   */
+  async promoteDeferredSpaceCompiles(input: {
+    compilerVersion: string;
+    promptVersion: string;
+    limit?: number;
+    excludedWorkspaceIds?: string[];
+  }): Promise<{ selectedCount: number; runRequestCount: number }> {
+    const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
+    let candidates = this.db
+      .selectFrom('knowledgeSpaceDeferredCompiles')
+      .select('id');
+    if (input.excludedWorkspaceIds?.length) {
+      candidates = candidates.where(
+        'workspaceId',
+        'not in',
+        input.excludedWorkspaceIds,
+      );
+    }
+    const rows = await candidates
+      .orderBy('firstRequestedAt', 'asc')
+      .orderBy('id', 'asc')
+      .limit(limit)
+      .execute();
+
+    let runRequestCount = 0;
+    for (const row of rows) {
+      const promoted = await executeTx(this.db, async (trx) => {
+        const intent = await trx
+          .selectFrom('knowledgeSpaceDeferredCompiles')
+          .select(['id', 'workspaceId', 'spaceId', 'scanRemovedSources'])
+          .where('id', '=', row.id)
+          .forUpdate()
+          .skipLocked()
+          .executeTakeFirst();
+        if (!intent) return false;
+        const result = await this.requestRunInTx(
+          trx,
+          {
+            workspaceId: intent.workspaceId,
+            spaceId: intent.spaceId,
+            trigger: 'manual_compile',
+            scanRemovedSources: intent.scanRemovedSources,
+          },
+          input,
+        );
+        // A deleted Space rejects the request; its intent is dropped too.
+        await trx
+          .deleteFrom('knowledgeSpaceDeferredCompiles')
+          .where('id', '=', intent.id)
+          .execute();
+        return result.disposition !== 'rejected';
+      });
+      if (promoted) runRequestCount += 1;
+    }
+    return { selectedCount: rows.length, runRequestCount };
+  }
+
+  /**
    * Adds or postpones page-level automatic compilation. The unique page row
    * is the durable trailing-debounce state, so every later edit moves the
    * eligibility time forward without creating a Space Run or Redis job.
    */
-  async scheduleIncrementalCompileForPages(input: {
-    workspaceId: string;
-    sourcePageIds: string[];
-    trigger: 'page_created' | 'page_updated';
-    quietPeriodMs: number;
-    changedAt?: Date;
-  }): Promise<number> {
+  async scheduleIncrementalCompileForPages(
+    input: {
+      workspaceId: string;
+      sourcePageIds: string[];
+      trigger: KnowledgePageCompileScheduleTrigger;
+      quietPeriodMs: number;
+      changedAt?: Date;
+    },
+    trx?: KyselyTransaction,
+  ): Promise<number> {
     const sourcePageIds = [...new Set(input.sourcePageIds)];
     if (sourcePageIds.length === 0) return 0;
     const quietPeriodMs = Math.max(0, input.quietPeriodMs);
@@ -397,7 +565,7 @@ export class KnowledgeSpaceCompilationRepo {
             EXCLUDED.updated_at
           )
       RETURNING id
-    `.execute(this.db);
+    `.execute(trx ?? this.db);
     return scheduled.rows.length;
   }
 
@@ -501,6 +669,12 @@ export class KnowledgeSpaceCompilationRepo {
     promptVersion: string;
     limit?: number;
     now?: Date;
+    /**
+     * Workspaces outside their night compile window. Filtered in SQL: the
+     * batch is LIMITed with SKIP LOCKED, so skipping gated rows afterwards
+     * would let them fill every batch and starve open workspaces.
+     */
+    excludedWorkspaceIds?: string[];
   }): Promise<{
     selectedPageCount: number;
     promotedPageCount: number;
@@ -511,10 +685,14 @@ export class KnowledgeSpaceCompilationRepo {
       const dueAt = input.now
         ? sql<Date>`${input.now}`
         : sql<Date>`clock_timestamp()`;
-      const schedules = await trx
+      let due = trx
         .selectFrom('knowledgePageCompileSchedules')
         .select(['id', 'workspaceId', 'sourcePageId'])
-        .where('eligibleAt', '<=', dueAt)
+        .where('eligibleAt', '<=', dueAt);
+      if (input.excludedWorkspaceIds?.length) {
+        due = due.where('workspaceId', 'not in', input.excludedWorkspaceIds);
+      }
+      const schedules = await due
         .orderBy('eligibleAt', 'asc')
         .orderBy('id', 'asc')
         .limit(limit)
@@ -705,23 +883,32 @@ export class KnowledgeSpaceCompilationRepo {
         .where('deletedAt', 'is', null)
         .executeTakeFirst();
       if (!page) throw new Error('Knowledge source page is unavailable.');
-      await trx
-        .insertInto('knowledgePageIndexSettings')
-        .values({
-          workspaceId: request.workspaceId,
-          sourcePageId: setting.sourcePageId,
-          indexMode: setting.indexMode,
-          updatedBy: setting.updatedBy,
-          updatedAt: now,
-        })
-        .onConflict((oc) =>
-          oc.columns(['workspaceId', 'sourcePageId']).doUpdateSet({
-            indexMode: setting.indexMode,
+      if (setting.indexMode === null) {
+        await trx
+          .deleteFrom('knowledgePageIndexSettings')
+          .where('workspaceId', '=', request.workspaceId)
+          .where('sourcePageId', '=', setting.sourcePageId)
+          .execute();
+      } else {
+        const indexMode = setting.indexMode;
+        await trx
+          .insertInto('knowledgePageIndexSettings')
+          .values({
+            workspaceId: request.workspaceId,
+            sourcePageId: setting.sourcePageId,
+            indexMode,
             updatedBy: setting.updatedBy,
             updatedAt: now,
-          }),
-        )
-        .execute();
+          })
+          .onConflict((oc) =>
+            oc.columns(['workspaceId', 'sourcePageId']).doUpdateSet({
+              indexMode,
+              updatedBy: setting.updatedBy,
+              updatedAt: now,
+            }),
+          )
+          .execute();
+      }
     }
 
     let activeRun = await trx
@@ -964,7 +1151,6 @@ export class KnowledgeSpaceCompilationRepo {
         ['knowledgeParentSections', 'knowledgePageId'],
         ['knowledgeChunks', 'knowledgePageId'],
         ['knowledgeLinks', 'fromKnowledgePageId'],
-        ['knowledgeGraphEdges', 'fromKnowledgePageId'],
       ] as const) {
         await trx
           .updateTable(table)
@@ -1052,6 +1238,14 @@ export class KnowledgeSpaceCompilationRepo {
   }) {
     return executeTx(this.db, async (trx) => {
       const now = new Date();
+      // Match deferred promotion's lock order: intent -> schedules -> Space.
+      const deferredCompile = await trx
+        .selectFrom('knowledgeSpaceDeferredCompiles')
+        .select('id')
+        .where('workspaceId', '=', input.workspaceId)
+        .where('spaceId', '=', input.spaceId)
+        .forUpdate()
+        .executeTakeFirst();
       await trx
         .selectFrom('knowledgePageCompileSchedules')
         .select('id')
@@ -1077,6 +1271,15 @@ export class KnowledgeSpaceCompilationRepo {
           reset: false as const,
           reason: 'space_name_mismatch' as const,
         };
+      }
+
+      // The rebuild supersedes the intent locked above. Clear only that ID so
+      // requests inserted concurrently after the lookup remain queued.
+      if (deferredCompile) {
+        await trx
+          .deleteFrom('knowledgeSpaceDeferredCompiles')
+          .where('id', '=', deferredCompile.id)
+          .execute();
       }
 
       // The immediate rebuild covers the latest version of every page in the

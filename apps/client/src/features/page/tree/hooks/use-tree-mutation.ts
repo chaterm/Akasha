@@ -20,10 +20,17 @@ import {
 import { buildPageUrl } from "@/features/page/page.utils.ts";
 import { getSpaceUrl } from "@/lib/config.ts";
 import { useQueryEmit } from "@/features/websocket/use-query-emit.ts";
+import { createPageFromTemplate } from "@/features/template/api/template-api";
+import { OPEN_IN_EDIT_MODE_STATE } from "@/features/editor/use-open-in-edit-mode";
+import { notifyError } from "@/lib/errors";
 
 export type UseTreeMutation = {
   handleMove: (sourceId: string, op: DropOp) => Promise<void>;
-  handleCreate: (parentId: string | null) => Promise<void>;
+  /** 传 templateId 时用模板内容建页。 */
+  handleCreate: (
+    parentId: string | null,
+    opts?: { templateId?: string },
+  ) => Promise<void>;
   handleRename: (id: string, name: string) => Promise<void>;
   handleDelete: (id: string) => Promise<void>;
 };
@@ -131,21 +138,27 @@ export function useTreeMutation(spaceId: string): UseTreeMutation {
   );
 
   const handleCreate = useCallback(
-    async (parentId: string | null) => {
+    async (parentId: string | null, opts?: { templateId?: string }) => {
       const payload: { spaceId: string; parentPageId?: string } = { spaceId };
       if (parentId) payload.parentPageId = parentId;
 
       let createdPage: IPage;
       try {
-        createdPage = await createPageMutation.mutateAsync(payload);
-      } catch {
+        createdPage = opts?.templateId
+          ? await createPageFromTemplate({ ...payload, templateId: opts.templateId })
+          : await createPageMutation.mutateAsync(payload);
+      } catch (err: any) {
+        if (opts?.templateId) {
+          notifyError(err, "Failed to create page from template");
+        }
         throw new Error("Failed to create page");
       }
 
       const newNode: SpaceTreeNode = {
         id: createdPage.id,
         slugId: createdPage.slugId,
-        name: "",
+        name: createdPage.title ?? "",
+        icon: createdPage.icon ?? undefined,
         position: createdPage.position,
         spaceId: createdPage.spaceId,
         parentPageId: createdPage.parentPageId,
@@ -185,9 +198,10 @@ export function useTreeMutation(spaceId: string): UseTreeMutation {
         createdPage.slugId,
         createdPage.title,
       );
-      navigate(pageUrl);
+      // 用模板建的页面直接进入编辑模式，方便马上填写
+      navigate(pageUrl, opts?.templateId ? { state: OPEN_IN_EDIT_MODE_STATE } : undefined);
     },
-    [spaceId, createPageMutation, setData, store, emit, navigate, spaceSlug],
+    [spaceId, createPageMutation, setData, store, emit, navigate, spaceSlug, t],
   );
 
   const handleRename = useCallback(

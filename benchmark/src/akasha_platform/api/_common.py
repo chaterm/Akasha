@@ -3,7 +3,6 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
-from typing import Any
 
 from fastapi import HTTPException, Request
 
@@ -24,14 +23,12 @@ def runner_of(request: Request) -> TaskRunner:
 
 @contextmanager
 def db(request: Request) -> Iterator[sqlite3.Connection]:
-
     with closing(connect(settings_of(request).db_path, read_only=True)) as connection:
         yield connection
 
 
 @contextmanager
 def writable(request: Request) -> Iterator[sqlite3.Connection]:
-
     with closing(connect(settings_of(request).db_path)) as connection, connection:
         yield connection
 
@@ -41,13 +38,7 @@ def config_of(request: Request) -> AkashaConfig:
         return load_config(connection)
 
 
-def public_run(row: dict[str, Any]) -> dict[str, Any]:
-
-    return {k: v for k, v in row.items() if not k.endswith("_json")}
-
-
 def reject_if_busy(connection: sqlite3.Connection, kind: str, target_id: int) -> None:
-
     if not connection.in_transaction:
         connection.execute("BEGIN IMMEDIATE")
     affected = run_store.descendants(connection, kind, target_id)

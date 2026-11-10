@@ -1,32 +1,37 @@
 import { BubbleMenu as BaseBubbleMenu } from "@tiptap/react/menus";
-import { findParentNode, posToDOMRect, useEditorState } from "@tiptap/react";
-import React, { useCallback, useRef } from "react";
+import {
+  Editor,
+  findParentNode,
+  posToDOMRect,
+  useEditorState,
+} from "@tiptap/react";
+import { useCallback } from "react";
+import { NodeSelection } from "@tiptap/pm/state";
 import { Node as PMNode } from "@tiptap/pm/model";
 import { isEditorReady } from "@docmost/editor-ext";
 import {
   EditorMenuProps,
   ShouldShowProps,
 } from "@/features/editor/components/table/types/types.ts";
-import { ActionIcon, Tooltip } from "@mantine/core";
-import clsx from "clsx";
-import {
-  IconLayoutAlignCenter,
-  IconLayoutAlignLeft,
-  IconLayoutAlignRight,
-  IconDownload,
-  IconRefresh,
-  IconTrash,
-} from "@tabler/icons-react";
-import { useTranslation } from "react-i18next";
-import { getFileUrl } from "@/lib/config.ts";
-import { uploadImageAction } from "@/features/editor/components/image/upload-image-action.tsx";
-import { useAltTextControl } from "@/features/editor/components/common/use-alt-text-control.tsx";
-import classes from "../common/toolbar-menu.module.css";
+import { ImageToolbar } from "./image-toolbar.tsx";
+
+function findSelectionImagePos(editor: Editor): number | null {
+  const { selection } = editor.state;
+
+  if (
+    selection instanceof NodeSelection &&
+    selection.node.type.name === "image"
+  ) {
+    return selection.from;
+  }
+
+  const parent = findParentNode((node) => node.type.name === "image")(
+    selection,
+  );
+  return parent?.pos ?? null;
+}
 
 export function ImageMenu({ editor }: EditorMenuProps) {
-  const { t } = useTranslation();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   const editorState = useEditorState({
     editor,
     selector: (ctx) => {
@@ -34,16 +39,7 @@ export function ImageMenu({ editor }: EditorMenuProps) {
         return null;
       }
 
-      const imageAttrs = ctx.editor.getAttributes("image");
-
-      return {
-        isImage: ctx.editor.isActive("image"),
-        isAlignLeft: ctx.editor.isActive("image", { align: "left" }),
-        isAlignCenter: ctx.editor.isActive("image", { align: "center" }),
-        isAlignRight: ctx.editor.isActive("image", { align: "right" }),
-        src: imageAttrs?.src || null,
-        alt: imageAttrs?.alt || "",
-      };
+      return { pos: findSelectionImagePos(ctx.editor) };
     },
   });
 
@@ -53,7 +49,9 @@ export function ImageMenu({ editor }: EditorMenuProps) {
         return false;
       }
 
-      return editor.isActive("image") && editor.getAttributes("image").src;
+      return (
+        editor.isActive("image") && Boolean(editor.getAttributes("image").src)
+      );
     },
     [editor],
   );
@@ -80,74 +78,6 @@ export function ImageMenu({ editor }: EditorMenuProps) {
     };
   }, [editor]);
 
-  const alignImageLeft = useCallback(() => {
-    editor
-      .chain()
-      .focus(undefined, { scrollIntoView: false })
-      .setImageAlign("left")
-      .run();
-  }, [editor]);
-
-  const alignImageCenter = useCallback(() => {
-    editor
-      .chain()
-      .focus(undefined, { scrollIntoView: false })
-      .setImageAlign("center")
-      .run();
-  }, [editor]);
-
-  const alignImageRight = useCallback(() => {
-    editor
-      .chain()
-      .focus(undefined, { scrollIntoView: false })
-      .setImageAlign("right")
-      .run();
-  }, [editor]);
-
-  const handleDownload = useCallback(() => {
-    if (!editorState?.src) return;
-    const url = getFileUrl(editorState.src);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "";
-    a.click();
-  }, [editorState?.src]);
-
-  const handleReplace = useCallback(() => {
-    fileInputRef.current?.click();
-  }, []);
-
-  const handleFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-
-      // @ts-ignore
-      const pageId = editor.storage?.pageId;
-      if (pageId) {
-        const pos = editor.state.selection.from;
-        uploadImageAction(file, editor, pos, pageId);
-      }
-      // Reset so the same file can be selected again
-      e.target.value = "";
-    },
-    [editor],
-  );
-
-  const handleDelete = useCallback(() => {
-    editor.commands.deleteSelection();
-  }, [editor]);
-
-  const {
-    button: altTextButton,
-    panel: altTextPanel,
-    isEditing: isEditingAlt,
-  } = useAltTextControl({
-    editor,
-    nodeName: "image",
-    currentAlt: editorState?.alt || "",
-  });
-
   return (
     <BaseBubbleMenu
       editor={editor}
@@ -161,94 +91,13 @@ export function ImageMenu({ editor }: EditorMenuProps) {
       }}
       shouldShow={shouldShow}
     >
-      {isEditingAlt ? (
-        altTextPanel
-      ) : (
-        <div className={classes.toolbar}>
-        <Tooltip position="top" label={t("Align left")} withinPortal={false}>
-          <ActionIcon
-            onClick={alignImageLeft}
-            size="lg"
-            aria-label={t("Align left")}
-            variant="subtle"
-            className={clsx({ [classes.active]: editorState?.isAlignLeft })}
-          >
-            <IconLayoutAlignLeft size={18} />
-          </ActionIcon>
-        </Tooltip>
-
-        <Tooltip position="top" label={t("Align center")} withinPortal={false}>
-          <ActionIcon
-            onClick={alignImageCenter}
-            size="lg"
-            aria-label={t("Align center")}
-            variant="subtle"
-            className={clsx({ [classes.active]: editorState?.isAlignCenter })}
-          >
-            <IconLayoutAlignCenter size={18} />
-          </ActionIcon>
-        </Tooltip>
-
-        <Tooltip position="top" label={t("Align right")} withinPortal={false}>
-          <ActionIcon
-            onClick={alignImageRight}
-            size="lg"
-            aria-label={t("Align right")}
-            variant="subtle"
-            className={clsx({ [classes.active]: editorState?.isAlignRight })}
-          >
-            <IconLayoutAlignRight size={18} />
-          </ActionIcon>
-        </Tooltip>
-
-        <div className={classes.divider} />
-
-        {altTextButton}
-
-        <div className={classes.divider} />
-
-        <Tooltip position="top" label={t("Download")} withinPortal={false}>
-          <ActionIcon
-            onClick={handleDownload}
-            size="lg"
-            aria-label={t("Download")}
-            variant="subtle"
-          >
-            <IconDownload size={18} />
-          </ActionIcon>
-        </Tooltip>
-
-        <Tooltip position="top" label={t("Replace image")} withinPortal={false}>
-          <ActionIcon
-            onClick={handleReplace}
-            size="lg"
-            aria-label={t("Replace image")}
-            variant="subtle"
-          >
-            <IconRefresh size={18} />
-          </ActionIcon>
-        </Tooltip>
-
-        <Tooltip position="top" label={t("Delete")} withinPortal={false}>
-          <ActionIcon
-            onClick={handleDelete}
-            size="lg"
-            aria-label={t("Delete")}
-            variant="subtle"
-          >
-            <IconTrash size={18} />
-          </ActionIcon>
-        </Tooltip>
-        </div>
+      {editorState?.pos != null && (
+        <ImageToolbar
+          key={editorState.pos}
+          editor={editor}
+          pos={editorState.pos}
+        />
       )}
-
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        style={{ display: "none" }}
-        onChange={handleFileChange}
-      />
     </BaseBubbleMenu>
   );
 }

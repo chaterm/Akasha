@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -51,6 +52,16 @@ import { getPageTitle } from '../../common/helpers';
 import { AttachmentService } from '../attachment/services/attachment.service';
 import { AttachmentRepo } from '@akasha/db/repos/attachment/attachment.repo';
 import { Readable } from 'stream';
+import { SpaceRepo } from '@akasha/db/repos/space/space.repo';
+import { ApiKeyType } from '../../common/auth/api-key-type';
+import { TemplateService } from '../template/template.service';
+import { WeeklyReportService } from '../weekly-report/weekly-report.service';
+import {
+  listTemplatesSchema,
+  getTemplateSchema,
+  prepareWeeklyReportSchema,
+  saveWeeklyReportSchema,
+} from './weekly-report.schemas';
 import { AgentAccessService } from '../page/page-access/agent-access.service';
 
 type ToolContext = McpToolContext;
@@ -108,6 +119,9 @@ export class McpService {
     private readonly attachmentRepo: AttachmentRepo,
     private readonly agentAccessService: AgentAccessService,
     @InjectKysely() private readonly db: KyselyDB,
+    @Optional() private readonly templateService?: TemplateService,
+    @Optional() private readonly weeklyReportService?: WeeklyReportService,
+    @Optional() private readonly spaceRepo?: SpaceRepo,
   ) {}
 
   assertEnabled(workspace: Workspace) {
@@ -486,16 +500,16 @@ export class McpService {
         },
         (args) => this.runTool(() => this.listWorkspaceMembers(ctx, args)),
       );
-
-      server.registerTool(
-        'get_current_user',
-        {
-          title: 'Get current user',
-          description: 'Get the current API key user and workspace.',
-        },
-        () => this.runTool(() => this.getCurrentUser(ctx)),
-      );
     }
+
+    server.registerTool(
+      'get_current_user',
+      {
+        title: 'Get current user',
+        description: 'Get the current API key user and workspace.',
+      },
+      () => this.runTool(() => this.getCurrentUser(ctx)),
+    );
 
     server.registerTool(
       'get_citation_page',
@@ -614,9 +628,136 @@ export class McpService {
         (args) => this.runTool(() => this.uploadAttachment(ctx, args)),
       );
     }
+    server.registerTool(
+      'list_templates',
+      {
+        title: 'List templates',
+        description:
+          'List visible templates, optionally usable in a target space. Requires a personal API key; builtins appear on the first page only.',
+        inputSchema: listTemplatesSchema,
+      },
+      (args) => this.runTool(() => this.listTemplates(ctx, args)),
+    );
+    server.registerTool(
+      'get_template',
+      {
+        title: 'Get template',
+        description:
+          'Read template JSON and its fingerprint after checking visibility and target-space usability. Requires a personal API key.',
+        inputSchema: getTemplateSchema,
+      },
+      (args) => this.runTool(() => this.getTemplate(ctx, args)),
+    );
+    server.registerTool(
+      'prepare_weekly_report',
+      {
+        title: 'Prepare weekly report',
+        description:
+          'Read-only: resolve identity, period, template and target; return an existing report or a save token. Requires a personal API key.',
+        inputSchema: prepareWeeklyReportSchema,
+      },
+      (args) => this.runTool(() => this.prepareWeeklyReport(ctx, args)),
+    );
+    server.registerTool(
+      'save_weekly_report',
+      {
+        title: 'Save weekly report',
+        description:
+          'Create or reuse a weekly report when saving is requested. In the Skill two-step workflow, send only the saveToken, title and fixed short draft marker here, then write the full body with update_page using the returned pageId. Reuse saveToken on retries; existing reports are never overwritten. Requires a personal API key.',
+        inputSchema: saveWeeklyReportSchema,
+      },
+      (args) => this.runTool(() => this.saveWeeklyReport(ctx, args)),
+    );
     this.toolRegistry.registerAll(server, ctx, (fn) => this.runTool(fn));
 
     return server;
+  }
+
+  private assertPersonalCredential(ctx: ToolContext) {
+    if (getApiKeyAccess(ctx.user)?.keyType !== ApiKeyType.PERSONAL) {
+      throw new ForbiddenException({
+        code: 'IDENTITY_UNSUPPORTED',
+        message:
+          'Weekly report tools require a personal API key; SSO and Agent keys are unsupported',
+      });
+    }
+  }
+
+  private async listTemplates(
+    ctx: ToolContext,
+    args: {
+      query?: string;
+      spaceId?: string;
+      limit?: number;
+      cursor?: string;
+    },
+  ) {
+    this.assertPersonalCredential(ctx);
+    if (args.cursor) {
+      try {
+        if (!/^[A-Za-z0-9_-]+$/.test(args.cursor)) throw new Error();
+        const fields = [
+          ...new URLSearchParams(
+            Buffer.from(args.cursor, 'base64url').toString('utf8'),
+          ).entries(),
+        ];
+        if (
+          fields.length !== 2 ||
+          fields[0][0] !== 'title' ||
+          fields[1][0] !== 'id' ||
+          !z.string().uuid().safeParse(fields[1][1]).success
+        )
+          throw new Error();
+      } catch {
+        throw new BadRequestException('Invalid template cursor');
+      }
+    }
+    return this.templateService.listForMcp(ctx.user, ctx.workspace, {
+      ...this.pagination(args),
+      query: args.query,
+      scope: args.spaceId ? 'available' : 'all',
+      spaceId: args.spaceId,
+    });
+  }
+
+  private async getTemplate(
+    ctx: ToolContext,
+    args: { templateId: string; spaceId: string },
+  ) {
+    this.assertPersonalCredential(ctx);
+    return this.templateService.getForSpace(
+      args.templateId,
+      args.spaceId,
+      ctx.user,
+      ctx.workspace,
+    );
+  }
+
+  private async prepareWeeklyReport(
+    ctx: ToolContext,
+    args: {
+      period?: 'this_week' | 'last_week' | 'custom';
+      periodStart?: string;
+      periodEnd?: string;
+      timezone?: string;
+      templateId?: string | null;
+      parentPageId?: string | null;
+    },
+  ) {
+    this.assertPersonalCredential(ctx);
+    return this.weeklyReportService.prepare(ctx, args);
+  }
+
+  private async saveWeeklyReport(
+    ctx: ToolContext,
+    args: {
+      saveToken: string;
+      title?: string;
+      content: Record<string, unknown>;
+    },
+  ) {
+    this.assertPersonalCredential(ctx);
+    return this.weeklyReportService.save(ctx, args);
   }
 
   private async getCitationPage(ctx: ToolContext, args: { pageUrl: string }) {
@@ -956,8 +1097,10 @@ export class McpService {
       format?: ContentFormat;
     },
   ) {
-    const page = await this.pageRepo.findById(args.pageId);
-    if (!page || page.workspaceId !== ctx.workspace.id) {
+    const page = await this.pageRepo.findById(args.pageId, {
+      includeContent: true,
+    });
+    if (!page || page.deletedAt || page.workspaceId !== ctx.workspace.id) {
       throw new NotFoundException('Page not found');
     }
 
@@ -1400,7 +1543,24 @@ export class McpService {
   }
 
   private async getCurrentUser(ctx: ToolContext) {
+    const keyType = getApiKeyAccess(ctx.user)?.keyType;
+    const credentialType =
+      keyType === ApiKeyType.PERSONAL
+        ? 'personal_key'
+        : keyType === ApiKeyType.AGENT
+          ? 'agent_key'
+          : 'other';
+    const personalSpace =
+      keyType === ApiKeyType.PERSONAL
+        ? await this.spaceRepo?.findPersonalSpaceForUser({
+            userId: ctx.user.id,
+            workspaceId: ctx.workspace.id,
+          })
+        : undefined;
     return {
+      credentialType,
+      timezone: ctx.user.timezone ?? null,
+      personalSpaceId: personalSpace?.id ?? null,
       user: ctx.user,
       workspace: {
         id: ctx.workspace.id,
@@ -1485,6 +1645,7 @@ export class McpService {
         {
           code:
             err?.code ??
+            err?.response?.code ??
             (err?.status === 404
               ? 'NOT_FOUND'
               : err?.status === 403
@@ -1494,6 +1655,9 @@ export class McpService {
                   : 'TOOL_FAILED'),
           error: err?.response?.message ?? err?.message ?? 'Tool failed',
           statusCode: err?.status ?? err?.statusCode,
+          ...((err?.details ?? err?.response?.details) !== undefined
+            ? { details: err?.details ?? err?.response?.details }
+            : {}),
         },
         true,
       );

@@ -3,13 +3,9 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 from .base import DatasetAdapter
-from .common import (
-    gold_titles_from_supporting_facts,
-    require_native_id,
-    resolve_gold_doc_ids,
-)
+from .common import supporting_facts_sample
 from .corpus import CorpusIndex
-from .models import CanonicalSample, DataDependency, SubsetStrategy, make_sample_id
+from .models import CanonicalSample, DataDependency, SubsetStrategy
 
 
 class HotpotQAAdapter(DatasetAdapter):
@@ -27,26 +23,10 @@ class HotpotQAAdapter(DatasetAdapter):
     def parse_row(
         self, row: dict[str, Any], row_index: int, corpus: CorpusIndex
     ) -> CanonicalSample:
-        native_id = require_native_id(row, row_index, self.name, "_id")
-
-        answer = row.get("answer")
-        if not isinstance(answer, str) or not answer:
-            raise ValueError(f"{self.name}: row {row_index} answer is not a non-empty string")
-
-        titles = gold_titles_from_supporting_facts(row, row_index, self.name)
-        gold_doc_ids = resolve_gold_doc_ids(titles, corpus, row_index, self.name)
-
-        return CanonicalSample(
-            dataset=self.name,
-            sample_id=make_sample_id(self.name, native_id),
-            dataset_sample_id=native_id,
-            question=row["question"],
-            answers=(answer,),
-            gold_doc_ids=gold_doc_ids,
-            metadata={
-                "type": row.get("type"),
-                "level": row.get("level"),
-                "gold_count": len(gold_doc_ids),
-                "supporting_fact_count": len(row["supporting_facts"]),
-            },
+        return supporting_facts_sample(
+            self.name,
+            row,
+            row_index,
+            corpus,
+            {"type": row.get("type"), "level": row.get("level")},
         )

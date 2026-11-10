@@ -213,12 +213,21 @@ export class SpaceController {
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
   ) {
-    const ability = await this.spaceAbility.createForUser(
-      user,
-      updateSpaceDto.spaceId,
-    );
-    if (ability.cannot(SpaceCaslAction.Manage, SpaceCaslSubject.Settings)) {
+    // The knowledge publish mode is a workspace-admin setting (like the
+    // knowledge diagnostics page), independent of the user's space role.
+    const { spaceId, knowledgeIndexMode, ...otherFields } = updateSpaceDto;
+    const updatesKnowledge = knowledgeIndexMode !== undefined;
+    if (updatesKnowledge && !isWorkspaceAdmin(user.role)) {
       throw new ForbiddenException();
+    }
+    const updatesOtherFields = Object.values(otherFields).some(
+      (value) => value !== undefined,
+    );
+    if (updatesOtherFields || !updatesKnowledge) {
+      const ability = await this.spaceAbility.createForUser(user, spaceId);
+      if (ability.cannot(SpaceCaslAction.Manage, SpaceCaslSubject.Settings)) {
+        throw new ForbiddenException();
+      }
     }
     return this.spaceService.updateSpace(updateSpaceDto, workspace.id);
   }

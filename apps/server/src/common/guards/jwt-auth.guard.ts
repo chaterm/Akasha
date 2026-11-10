@@ -180,7 +180,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     try {
       // Keep the core auth module independent from the enterprise API-key module.
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { ApiKeyService } = require('../../ee/api-key/api-key.service');
+      const { ApiKeyService } = require('../../features/api-key/api-key.service');
       apiKeyService = this.moduleRef.get(ApiKeyService, { strict: false });
     } catch {
       throw new UnauthorizedException(

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 from .base import DatasetAdapter
-from .common import require_native_id
+from .common import require_answer, require_native_id
 from .corpus import CorpusIndex
 from .models import CanonicalSample, DataDependency, SubsetStrategy, make_sample_id
 
@@ -11,7 +11,6 @@ HOP_PREFIXES = ("2hop", "3hop1", "3hop2", "4hop1", "4hop2", "4hop3")
 
 
 def hop_prefix(dataset_sample_id: str) -> str:
-
     prefix = dataset_sample_id.split("__", 1)[0]
     if prefix not in HOP_PREFIXES:
         raise ValueError(f"musique: unrecognized hop prefix {prefix!r} in id {dataset_sample_id!r}")
@@ -19,7 +18,6 @@ def hop_prefix(dataset_sample_id: str) -> str:
 
 
 def hop_count(prefix: str) -> int:
-
     return int(prefix[0])
 
 
@@ -39,10 +37,7 @@ class MusiqueAdapter(DatasetAdapter):
         self, row: dict[str, Any], row_index: int, corpus: CorpusIndex
     ) -> CanonicalSample:
         native_id = require_native_id(row, row_index, self.name, "id")
-
-        answer = row.get("answer")
-        if not isinstance(answer, str) or not answer:
-            raise ValueError(f"{self.name}: row {row_index} answer is not a non-empty string")
+        answer = require_answer(row, row_index, self.name)
 
         paragraphs = row.get("paragraphs")
         if not isinstance(paragraphs, list) or not paragraphs:
@@ -74,8 +69,9 @@ class MusiqueAdapter(DatasetAdapter):
                 answers.setdefault(alias, None)
 
         prefix = hop_prefix(native_id)
+        steps = row.get("question_decomposition") or []
         decomposition = []
-        for step in row.get("question_decomposition") or []:
+        for step in steps:
             support_idx = step.get("paragraph_support_idx")
             support = (
                 paragraphs[support_idx]
@@ -104,7 +100,7 @@ class MusiqueAdapter(DatasetAdapter):
                 "gold_count": len(gold_ids),
                 "answerable": row.get("answerable"),
                 "alias_count": len(answers) - 1,
-                "decomposition_steps": len(row.get("question_decomposition") or []),
+                "decomposition_steps": len(steps),
                 "gold_with_ambiguous_title": ambiguous_titles,
                 "question_decomposition": decomposition,
             },

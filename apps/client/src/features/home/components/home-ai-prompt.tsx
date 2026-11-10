@@ -2,11 +2,11 @@ import { useAtomValue } from "jotai";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { workspaceAtom } from "@/features/user/atoms/current-user-atom.ts";
-import ChatInput from "@/ee/ai-chat/components/chat-input";
+import ChatInput from "@/features/ai-chat/components/chat-input";
 import type {
   ChatAttachment,
   PageMention,
-} from "@/ee/ai-chat/types/ai-chat.types";
+} from "@/features/ai-chat/types/ai-chat.types";
 import classes from "./home-ai-prompt.module.css";
 
 export type HomeAiPromptInitialState = {

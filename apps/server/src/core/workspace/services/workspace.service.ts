@@ -51,6 +51,7 @@ import {
   AUDIT_SERVICE,
   IAuditService,
 } from '../../../integrations/audit/audit.service';
+import { ErrorCode, errorBody } from '../../../common/errors/error-codes';
 
 @Injectable()
 export class WorkspaceService {
@@ -363,7 +364,10 @@ export class WorkspaceService {
 
       if (sso && sso?.length === 0) {
         throw new BadRequestException(
-          'There must be at least one active SSO provider to enforce SSO.',
+          errorBody(
+            ErrorCode.AUTH_SSO_REQUIRES_PROVIDER,
+            'There must be at least one active SSO provider to enforce SSO.',
+          ),
         );
       }
     }
@@ -410,7 +414,10 @@ export class WorkspaceService {
       if (typeof updateWorkspaceDto.isScimEnabled !== 'undefined') {
         if (!this.licenseCheckService.hasFeature(ws.licenseKey, Feature.SCIM, ws.plan)) {
           throw new ForbiddenException(
-            'This feature requires a valid license',
+            errorBody(
+              ErrorCode.LICENSE_REQUIRED,
+              'This feature requires a valid license',
+            ),
           );
         }
       }
@@ -418,12 +425,14 @@ export class WorkspaceService {
       if (
         typeof updateWorkspaceDto.disablePublicSharing !== 'undefined' ||
         typeof updateWorkspaceDto.trashRetentionDays !== 'undefined' ||
-        typeof updateWorkspaceDto.restrictApiToAdmins !== 'undefined' ||
-        typeof updateWorkspaceDto.allowMemberTemplates !== 'undefined'
+        typeof updateWorkspaceDto.restrictApiToAdmins !== 'undefined'
       ) {
         if (!this.licenseCheckService.hasFeature(ws.licenseKey, Feature.SECURITY_SETTINGS, ws.plan)) {
           throw new ForbiddenException(
-            'This feature requires a valid license',
+            errorBody(
+              ErrorCode.LICENSE_REQUIRED,
+              'This feature requires a valid license',
+            ),
           );
         }
       }
@@ -442,7 +451,10 @@ export class WorkspaceService {
       const vectorSearchReady = await isKnowledgeVectorSearchReady(this.db);
       if (!vectorSearchReady) {
         throw new BadRequestException(
-          'Failed to activate. Run knowledge database migrations and make sure pgvector is installed.',
+          errorBody(
+            ErrorCode.KNOWLEDGE_ACTIVATION_FAILED,
+            'Failed to activate. Run knowledge database migrations and make sure pgvector is installed.',
+          ),
         );
       }
     }
@@ -672,7 +684,10 @@ export class WorkspaceService {
 
     if (user.role === UserRole.OWNER && workspaceOwnerCount === 1) {
       throw new BadRequestException(
-        'There must be at least one workspace owner',
+        errorBody(
+          ErrorCode.MEMBER_LAST_OWNER,
+          'There must be at least one workspace owner',
+        ),
       );
     }
 
@@ -754,16 +769,29 @@ export class WorkspaceService {
     this.assertNormalUser(user);
 
     if (user.deactivatedAt) {
-      throw new BadRequestException('User is already deactivated');
+      throw new BadRequestException(
+        errorBody(
+          ErrorCode.MEMBER_ALREADY_DEACTIVATED,
+          'User is already deactivated',
+        ),
+      );
     }
 
     if (authUser.id === userId) {
-      throw new BadRequestException('You cannot deactivate yourself');
+      throw new BadRequestException(
+        errorBody(
+          ErrorCode.MEMBER_SELF_ACTION,
+          'You cannot deactivate yourself',
+        ),
+      );
     }
 
     if (isAdminActingOnOwner(authUser.role, user.role)) {
       throw new BadRequestException(
-        'You cannot deactivate a user with owner role',
+        errorBody(
+          ErrorCode.MEMBER_OWNER_PROTECTED,
+          'You cannot deactivate a user with owner role',
+        ),
       );
     }
 
@@ -775,7 +803,10 @@ export class WorkspaceService {
 
       if (workspaceOwnerCount === 1) {
         throw new BadRequestException(
-          'There must be at least one workspace owner',
+          errorBody(
+            ErrorCode.MEMBER_LAST_OWNER,
+            'There must be at least one workspace owner',
+          ),
         );
       }
     }
@@ -817,12 +848,17 @@ export class WorkspaceService {
     this.assertNormalUser(user);
 
     if (!user.deactivatedAt) {
-      throw new BadRequestException('User is not deactivated');
+      throw new BadRequestException(
+        errorBody(ErrorCode.MEMBER_NOT_DEACTIVATED, 'User is not deactivated'),
+      );
     }
 
     if (isAdminActingOnOwner(authUser.role, user.role)) {
       throw new BadRequestException(
-        'You cannot activate a user with owner role',
+        errorBody(
+          ErrorCode.MEMBER_OWNER_PROTECTED,
+          'You cannot activate a user with owner role',
+        ),
       );
     }
 
@@ -865,16 +901,26 @@ export class WorkspaceService {
 
     if (user.role === UserRole.OWNER && workspaceOwnerCount === 1) {
       throw new BadRequestException(
-        'There must be at least one workspace owner',
+        errorBody(
+          ErrorCode.MEMBER_LAST_OWNER,
+          'There must be at least one workspace owner',
+        ),
       );
     }
 
     if (authUser.id === userId) {
-      throw new BadRequestException('You cannot delete yourself');
+      throw new BadRequestException(
+        errorBody(ErrorCode.MEMBER_SELF_ACTION, 'You cannot delete yourself'),
+      );
     }
 
     if (isAdminActingOnOwner(authUser.role, user.role)) {
-      throw new BadRequestException('You cannot delete a user with owner role');
+      throw new BadRequestException(
+        errorBody(
+          ErrorCode.MEMBER_OWNER_PROTECTED,
+          'You cannot delete a user with owner role',
+        ),
+      );
     }
 
     await this.deleteUserInternal(user, userId, workspaceId);
@@ -886,7 +932,12 @@ export class WorkspaceService {
     if (!user || user.deletedAt) return;
     this.assertNormalUser(user);
     if (user.role === UserRole.OWNER) {
-      throw new ConflictException('SSO cannot delete a workspace owner');
+      throw new ConflictException(
+        errorBody(
+          ErrorCode.MEMBER_OWNER_PROTECTED,
+          'SSO cannot delete a workspace owner',
+        ),
+      );
     }
 
     await this.deleteUserInternal(user, userId, workspaceId);
@@ -900,7 +951,12 @@ export class WorkspaceService {
 
     if (!user || user.deletedAt || user.deactivatedAt) return;
     if (user.role === UserRole.OWNER) {
-      throw new ConflictException('SSO cannot deactivate a workspace owner');
+      throw new ConflictException(
+        errorBody(
+          ErrorCode.MEMBER_OWNER_PROTECTED,
+          'SSO cannot deactivate a workspace owner',
+        ),
+      );
     }
 
     await executeTx(this.db, async (trx) => {

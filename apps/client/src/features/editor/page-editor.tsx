@@ -46,6 +46,7 @@ import { ReadonlyBubbleMenu } from "@/features/editor/components/bubble-menu/rea
 import TableMenu from "@/features/editor/components/table/table-menu.tsx";
 import { TableHandlesLayer } from "@/features/editor/components/table/handle/table-handles-layer";
 import ImageMenu from "@/features/editor/components/image/image-menu.tsx";
+import { ImageHoverMenu } from "@/features/editor/components/image/image-hover-menu.tsx";
 import CalloutMenu from "@/features/editor/components/callout/callout-menu.tsx";
 import VideoMenu from "@/features/editor/components/video/video-menu.tsx";
 import PdfMenu from "@/features/editor/components/pdf/pdf-menu.tsx";
@@ -58,17 +59,27 @@ import ExcalidrawMenu from "./components/excalidraw/excalidraw-menu-lazy";
 import DrawioMenu from "./components/drawio/drawio-menu";
 import { useCollabToken } from "@/features/auth/queries/auth-query.tsx";
 import SearchAndReplaceDialog from "@/features/editor/components/search-and-replace/search-and-replace-dialog.tsx";
+import { EmptyPageHint } from "@/features/editor/components/empty-page-hint/empty-page-hint";
 import { useDebouncedCallback, useDocumentVisibility } from "@mantine/hooks";
 import { useIdle } from "@/hooks/use-idle.ts";
 import { queryClient } from "@/main.tsx";
 import { IPage } from "@/features/page/types/page.types.ts";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { extractPageSlugId, platformModifierKey } from "@/lib";
 import { FIVE_MINUTES } from "@/lib/constants.ts";
 import { jwtDecode } from "jwt-decode";
 import { searchSpotlight } from "@/features/search/constants.ts";
 import { useEditorScroll } from "./hooks/use-editor-scroll";
-import { EditorAiMenu } from "@/ee/ai/components/editor/ai-menu/ai-menu";
+import { useSelectionAutoScroll } from "./hooks/use-selection-auto-scroll";
+import {
+  CITATION_PARAM,
+  readCitationQuote,
+} from "@/features/editor/utils/citation-link";
+import {
+  findCitationRange,
+  scrollToCitation,
+} from "@/features/editor/utils/citation-locate";
+import { EditorAiMenu } from "@/features/ai/components/editor/ai-menu/ai-menu";
 import { EditorLinkMenu } from "@/features/editor/components/link/link-menu";
 import ColumnsMenu from "@/features/editor/components/columns/columns-menu.tsx";
 import { TransclusionLookupProvider } from "@/features/editor/components/transclusion/transclusion-lookup-context";
@@ -119,6 +130,8 @@ export default function PageEditor({
   const { isIdle, resetIdle } = useIdle(FIVE_MINUTES, { initialState: false });
   const documentState = useDocumentVisibility();
   const { pageSlug } = useParams();
+  const [searchParams] = useSearchParams();
+  const [citationParam] = useState(() => searchParams.get(CITATION_PARAM));
   const slugId = extractPageSlugId(pageSlug);
   const canScroll = useCallback(
     () => Boolean(isComponentMounted.current && editorRef.current),
@@ -326,12 +339,20 @@ export default function PageEditor({
     [pageId, editable, extensions],
   );
 
+  useSelectionAutoScroll(editor);
+
   const editorIsEditable = useEditorState({
     editor,
     selector: (ctx) => {
       return ctx.editor?.isEditable ?? false;
     },
   });
+  const editorIsEmpty = useEditorState({
+    editor,
+    selector: (ctx) => ctx.editor?.isEmpty ?? false,
+  });
+  const showEmptyPageHint =
+    editable && pageEditMode === PageEditMode.Read && editorIsEmpty;
 
   const debouncedUpdateContent = useDebouncedCallback((newContent: any) => {
     const pageData = queryClient.getQueryData<IPage>(["pages", slugId]);
@@ -408,6 +429,28 @@ export default function PageEditor({
     }
   }, [yjsConnectionStatus, isSynced]);
 
+  useEffect(() => {
+    const quote = readCitationQuote(citationParam);
+    if (!editor || showStatic || !quote) return;
+    let attempts = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    let stopFollowing = () => {};
+    const tryScroll = () => {
+      if (editor.isDestroyed) return;
+      const range = findCitationRange(editor.state.doc, quote);
+      if (range) {
+        stopFollowing = scrollToCitation(editor.view, range);
+      } else if (attempts++ < 10) {
+        timer = setTimeout(tryScroll, 300);
+      }
+    };
+    tryScroll();
+    return () => {
+      clearTimeout(timer);
+      stopFollowing();
+    };
+  }, [editor, showStatic, citationParam]);
+
   return (
     <TransclusionLookupProvider>
       {showStatic ? (
@@ -425,6 +468,7 @@ export default function PageEditor({
       ) : (
         <div className="editor-container" style={{ position: "relative" }}>
           <div ref={menuContainerRef}>
+            {showEmptyPageHint && <EmptyPageHint />}
             <EditorContent editor={editor} />
 
             {editor && (
@@ -442,6 +486,7 @@ export default function PageEditor({
                 <TableMenu editor={editor} />
                 <TableHandlesLayer editor={editor} />
                 <ImageMenu editor={editor} />
+                <ImageHoverMenu editor={editor} />
                 <VideoMenu editor={editor} />
                 <PdfMenu editor={editor} />
                 <CalloutMenu editor={editor} />

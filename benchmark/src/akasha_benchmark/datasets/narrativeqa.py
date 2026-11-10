@@ -45,7 +45,6 @@ class NarrativeQAAdapter(DatasetAdapter):
             answers=tuple(answers),
             gold_doc_ids=(),
             metadata={
-
                 "document_id": document_id,
                 "kind": document.get("kind"),
                 "reference_count": len(answers),

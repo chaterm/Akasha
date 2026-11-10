@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io_utils import load_json
-from .models import CORPUS_ID_RULES, CorpusDoc
+from .models import CorpusDoc, corpus_id_rule
 
 
 class CorpusIndex:
@@ -18,7 +18,7 @@ class CorpusIndex:
             if doc.doc_id in self.by_id:
                 raise ValueError(
                     f"{dataset}: duplicate doc_id {doc.doc_id!r}; "
-                    f"corpus identity rule {CORPUS_ID_RULES[dataset]!r} is not unique"
+                    f"corpus identity rule {corpus_id_rule(dataset)!r} is not unique"
                 )
             self.by_id[doc.doc_id] = doc
 
@@ -45,7 +45,6 @@ class CorpusIndex:
         return len(self.docs)
 
     def id_for_title(self, title: str) -> str:
-
         ids = self.title_to_ids.get(title)
         if not ids:
             raise KeyError(f"{self.dataset}: title not in corpus: {title!r}")
@@ -57,7 +56,6 @@ class CorpusIndex:
         return ids[0]
 
     def id_for_pair(self, title: str, text: str) -> str:
-
         try:
             return self.pair_to_id[(title, text)]
         except KeyError:
@@ -68,10 +66,8 @@ class CorpusIndex:
 
 
 def assign_doc_id(dataset: str, row: dict[str, Any], row_index: int) -> str:
-
-    field = CORPUS_ID_RULES[dataset]
+    field = corpus_id_rule(dataset)
     if field == "row_idx":
-
         present = sorted({"idx", "id"} & row.keys())
         if present:
             raise ValueError(

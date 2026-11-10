@@ -5,6 +5,7 @@ import {
   UseInfiniteQueryResult,
   useMutation,
   useQuery,
+  useQueryClient,
   UseQueryResult,
   keepPreviousData,
 } from "@tanstack/react-query";
@@ -22,9 +23,10 @@ import {
   getDeletedPages,
   restorePage,
   publishPageKnowledge,
+  setPageIndexMode,
   getPagePublishCooldown,
   getPageCompileStatus,
-  KnowledgeIndexMode,
+  KnowledgePageIndexModeChoice,
 } from "@/features/page/services/page-service";
 import {
   IMovePage,
@@ -44,6 +46,7 @@ import { treeDataAtom } from "@/features/page/tree/atoms/tree-data-atom";
 import { treeModel } from "@/features/page/tree/model/tree-model";
 import { SpaceTreeNode } from "@/features/page/tree/types";
 import { useQueryEmit } from "@/features/websocket/use-query-emit";
+import { notifyError } from "@/lib/errors";
 
 export function usePageQuery(
   pageInput: Partial<IPageInput>,
@@ -127,8 +130,23 @@ export function usePublishPageKnowledgeMutation() {
       indexMode,
     }: {
       pageId: string;
-      indexMode: KnowledgeIndexMode;
+      indexMode: KnowledgePageIndexModeChoice;
     }) => publishPageKnowledge(pageId, indexMode),
+  });
+}
+
+export function useSetPageIndexModeMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      pageId,
+      indexMode,
+    }: {
+      pageId: string;
+      indexMode: KnowledgePageIndexModeChoice;
+    }) => setPageIndexMode(pageId, indexMode),
+    onSuccess: (data, { pageId }) =>
+      queryClient.setQueryData(["page-compile-status", pageId], data),
   });
 }
 
@@ -146,6 +164,9 @@ export function usePageCompileStatusQuery(pageId?: string) {
     queryKey: ["page-compile-status", pageId],
     queryFn: () => getPageCompileStatus(pageId!),
     enabled: !!pageId,
+    // Overrides the global default so the status reloads after space
+    // settings invalidate it.
+    refetchOnMount: true,
     refetchInterval: (query) =>
       query.state.data?.status === "compiling" ? 5_000 : false,
   });
@@ -192,11 +213,7 @@ export function useDeletePageMutation() {
           ["trash-list"].includes(item.queryKey[0] as string),
       });
     },
-    onError: (error) => {
-      const message =
-        error["response"]?.data?.message || t("Failed to delete page");
-      notifications.show({ message, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to delete page"),
   });
 }
 

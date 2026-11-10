@@ -4,6 +4,7 @@ import sqlite3
 from dataclasses import dataclass, fields
 from typing import Any
 
+from .store import config_store
 
 API_PREFIX = "/api"
 
@@ -27,7 +28,6 @@ class AkashaConfig:
             raise ValueError(f"Akasha 连接缺少 {missing}，请在配置页填写。")
 
     def redacted(self) -> dict[str, Any]:
-
         return {
             "base_url": self.base_url,
             "email": self.email,
@@ -40,10 +40,7 @@ _FIELDS = frozenset(f.name for f in fields(AkashaConfig))
 
 
 def load_config(connection: sqlite3.Connection | None) -> AkashaConfig:
-
     if connection is None:
         return AkashaConfig()
-    from .store import config_store
-
     row = config_store.get_connection_row(connection)
     return AkashaConfig(**{name: row[name] for name in _FIELDS if name in row})

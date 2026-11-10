@@ -9,6 +9,7 @@ import {
   IconTemplate,
   IconDatabaseSearch,
   IconChartBar,
+  IconActivityHeartbeat,
 } from "@tabler/icons-react";
 import { Link, useLocation } from "react-router-dom";
 import classes from "./global-sidebar.module.css";
@@ -41,7 +42,14 @@ export default function GlobalSidebar() {
     { label: "Favorites", icon: IconStar, path: "/favorites" },
     { label: "Spaces", icon: IconLayoutGrid, path: "/spaces" },
     ...(isAdmin
-      ? [{ label: "User analytics", icon: IconChartBar, path: "/analytics" }]
+      ? [
+          {
+            label: "Knowledge base diagnostics",
+            icon: IconActivityHeartbeat,
+            path: "/knowledge/admin",
+          },
+          { label: "User analytics", icon: IconChartBar, path: "/analytics" },
+        ]
       : []),
     ...(hasTemplates
       ? [{ label: "Templates", icon: IconTemplate, path: "/templates" }]

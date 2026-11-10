@@ -513,7 +513,19 @@ export class KnowledgeCompilationRepo {
           .onRef('summaryChunk.knowledgePageId', '=', 'summary.id')
           .onRef('summaryChunk.workspaceId', '=', 'attempt.workspaceId')
           .on('summaryChunk.staleAt', 'is', null)
-          .on('summaryChunk.retrievalChannel', '=', 'evidence'),
+          // Summary prose is `memory`; summaries published before the channel
+          // fix stored it as `evidence`. Table rows and attachment evidence do
+          // not prove the summary itself was published.
+          .on((eb) =>
+            eb.or([
+              eb('summaryChunk.retrievalChannel', '=', 'memory'),
+              eb.and([
+                eb('summaryChunk.retrievalChannel', '=', 'evidence'),
+                eb('summaryChunk.stableKey', 'not like', 'table-row:%'),
+                eb('summaryChunk.stableKey', 'not like', 'source:%'),
+              ]),
+            ]),
+          ),
       )
       .select([
         'attempt.sourcePageId',

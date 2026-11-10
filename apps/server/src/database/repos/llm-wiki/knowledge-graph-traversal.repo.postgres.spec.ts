@@ -12,7 +12,7 @@ const SPACE_A = '00000000-0000-0000-0000-000000000a01';
 const SPACE_B = '00000000-0000-0000-0000-000000000b01';
 const SEED = '00000000-0000-0000-0000-000000001111';
 const VIA_LINK = '00000000-0000-0000-0000-000000002222';
-const VIA_EDGE = '00000000-0000-0000-0000-000000003333';
+const VIA_SECRET_LINK = '00000000-0000-0000-0000-000000003333';
 const SHARED = '00000000-0000-0000-0000-000000004444';
 const OTHER_SPACE = '00000000-0000-0000-0000-000000005555';
 const SRC_OPEN = '00000000-0000-0000-0000-0000000000aa';
@@ -56,17 +56,16 @@ describePostgres('graph traversal PostgreSQL behaviour', () => {
       limit,
     });
 
-  it('returns link, semantic and shared-source edges with aggregated provenance', async () => {
+  it('returns link and shared-source edges with aggregated provenance', async () => {
     const edges = await traverse([SRC_OPEN, SRC_SECRET]);
 
     expect(edges.map((edge) => edge.type).sort()).toEqual([
       'link',
-      'semantic',
+      'link',
       'shared-source',
       'shared-source',
     ]);
     const byType = new Map(edges.map((edge) => [edge.type, edge]));
-    expect(byType.get('semantic')!.weight).toBe(1);
     expect(byType.get('link')!.weight).toBe(0.7);
     expect(byType.get('shared-source')!.weight).toBe(0.2);
     for (const edge of edges) {
@@ -81,6 +80,9 @@ describePostgres('graph traversal PostgreSQL behaviour', () => {
       'link',
       'shared-source',
     ]);
+    expect(edges.map((edge) => edge.toKnowledgePageId)).not.toContain(
+      VIA_SECRET_LINK,
+    );
   });
 
   it('judges shared-source readability on the aggregated pair, not truncated rows', async () => {
@@ -112,17 +114,17 @@ describePostgres('graph traversal PostgreSQL behaviour', () => {
     expect(await traverse([])).toEqual([]);
   });
 
-  it('keeps a reserved slot for semantic edges when shared-source could fill the limit', async () => {
+  it('keeps a reserved slot for links when shared-source could fill the limit', async () => {
     const edges = await traverse([SRC_OPEN, SRC_SECRET], 2);
 
     expect(edges).toHaveLength(2);
-    expect(edges.some((edge) => edge.type === 'semantic')).toBe(true);
+    expect(edges.some((edge) => edge.type === 'link')).toBe(true);
   });
 });
 
 const LINK_ID = '00000000-0000-0000-0000-00000000000f';
-const EDGE_ID = '00000000-0000-0000-0000-00000000000e';
-const CROSS_EDGE_ID = '00000000-0000-0000-0000-00000000000c';
+const SECRET_LINK_ID = '00000000-0000-0000-0000-00000000000e';
+const CROSS_LINK_ID = '00000000-0000-0000-0000-00000000000c';
 
 async function createFixture(db: Kysely<unknown>): Promise<void> {
   const statements = [
@@ -143,19 +145,10 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
     sql`create table knowledge_link_sources (
       workspace_id uuid not null, link_id uuid not null, source_page_id uuid not null
     )`,
-    sql`create table knowledge_graph_edges (
-      id uuid primary key, workspace_id uuid not null, space_id uuid not null,
-      from_knowledge_page_id uuid not null, to_knowledge_page_id uuid not null,
-      relation varchar not null, is_dangling boolean not null default false,
-      stale_at timestamptz
-    )`,
-    sql`create table knowledge_graph_edge_sources (
-      workspace_id uuid not null, graph_edge_id uuid not null, source_page_id uuid not null
-    )`,
     sql`insert into knowledge_pages (id, workspace_id, space_id) values
       (${SEED}, ${WORKSPACE}, ${SPACE_A}),
       (${VIA_LINK}, ${WORKSPACE}, ${SPACE_A}),
-      (${VIA_EDGE}, ${WORKSPACE}, ${SPACE_A}),
+      (${VIA_SECRET_LINK}, ${WORKSPACE}, ${SPACE_A}),
       (${SHARED}, ${WORKSPACE}, ${SPACE_A}),
       (${OTHER_SPACE}, ${WORKSPACE}, ${SPACE_B})`,
     sql`insert into knowledge_page_sources (workspace_id, knowledge_page_id, source_page_id) values
@@ -168,16 +161,18 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       values (${LINK_ID}, ${WORKSPACE}, ${SPACE_A}, ${SEED}, ${VIA_LINK}, 'reference')`,
     sql`insert into knowledge_link_sources (workspace_id, link_id, source_page_id)
       values (${WORKSPACE}, ${LINK_ID}, ${SRC_OPEN})`,
-    sql`insert into knowledge_graph_edges
-      (id, workspace_id, space_id, from_knowledge_page_id, to_knowledge_page_id, relation)
-      values (${EDGE_ID}, ${WORKSPACE}, ${SPACE_A}, ${SEED}, ${VIA_EDGE}, 'relates_to')`,
-    sql`insert into knowledge_graph_edge_sources (workspace_id, graph_edge_id, source_page_id)
-      values (${WORKSPACE}, ${EDGE_ID}, ${SRC_OPEN}), (${WORKSPACE}, ${EDGE_ID}, ${SRC_SECRET})`,
-    sql`insert into knowledge_graph_edges
-      (id, workspace_id, space_id, from_knowledge_page_id, to_knowledge_page_id, relation)
-      values (${CROSS_EDGE_ID}, ${WORKSPACE}, ${SPACE_A}, ${SEED}, ${OTHER_SPACE}, 'relates_to')`,
-    sql`insert into knowledge_graph_edge_sources (workspace_id, graph_edge_id, source_page_id)
-      values (${WORKSPACE}, ${CROSS_EDGE_ID}, ${SRC_OPEN})`,
+    // Readable only when every provenance source is readable.
+    sql`insert into knowledge_links
+      (id, workspace_id, space_id, from_knowledge_page_id, to_knowledge_page_id, link_type)
+      values (${SECRET_LINK_ID}, ${WORKSPACE}, ${SPACE_A}, ${SEED}, ${VIA_SECRET_LINK}, 'reference')`,
+    sql`insert into knowledge_link_sources (workspace_id, link_id, source_page_id)
+      values (${WORKSPACE}, ${SECRET_LINK_ID}, ${SRC_OPEN}), (${WORKSPACE}, ${SECRET_LINK_ID}, ${SRC_SECRET})`,
+    // Claims Space A but targets a Space B page: must never be traversed.
+    sql`insert into knowledge_links
+      (id, workspace_id, space_id, from_knowledge_page_id, to_knowledge_page_id, link_type)
+      values (${CROSS_LINK_ID}, ${WORKSPACE}, ${SPACE_A}, ${SEED}, ${OTHER_SPACE}, 'reference')`,
+    sql`insert into knowledge_link_sources (workspace_id, link_id, source_page_id)
+      values (${WORKSPACE}, ${CROSS_LINK_ID}, ${SRC_OPEN})`,
   ];
 
   for (const statement of statements) {

@@ -29,7 +29,6 @@ import {
   prefetchApiKeys,
   prefetchBilling,
   prefetchGroups,
-  prefetchLicense,
   prefetchScimTokens,
   prefetchShares,
   prefetchSpaces,
@@ -127,16 +126,6 @@ const groupedData: DataGroup[] = [
       },
     ],
   },
-  {
-    heading: "System",
-    items: [
-      {
-        label: "License & Edition",
-        icon: IconKey,
-        path: "/settings/license",
-      },
-    ],
-  },
 ];
 
 export default function SettingsSidebar() {
@@ -170,10 +159,6 @@ export default function SettingsSidebar() {
   };
 
   const menuItems = groupedData.map((group) => {
-    if (group.heading === "System" && (!isAdmin || isCloud())) {
-      return null;
-    }
-
     return (
       <div key={group.heading}>
         <Text c="dimmed" className={classes.linkHeader}>
@@ -197,11 +182,6 @@ export default function SettingsSidebar() {
               break;
             case "Billing":
               prefetchHandler = prefetchBilling;
-              break;
-            case "License & Edition":
-              if (entitlements?.tier !== "free") {
-                prefetchHandler = prefetchLicense;
-              }
               break;
             case "Security & SSO":
               prefetchHandler = () => {

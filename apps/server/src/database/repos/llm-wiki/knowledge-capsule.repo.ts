@@ -12,11 +12,7 @@ import {
   InsertableKnowledgeChunkAttachment,
   InsertableKnowledgeLink,
   InsertableKnowledgeLinkSource,
-  InsertableKnowledgeGraphEdge,
-  InsertableKnowledgeGraphEdgeSource,
   KnowledgeChunk,
-  KnowledgeGraphEdge,
-  KnowledgeGraphEdgeSource,
   KnowledgeLink,
   KnowledgeLinkSource,
   KnowledgePage,
@@ -25,7 +21,7 @@ import {
   KnowledgeParentSectionSource,
 } from '@akasha/db/types/entity.types';
 import { sql } from 'kysely';
-import { toSql as vectorToSql } from 'pgvector';
+import { fromSql as vectorFromSql, toSql as vectorToSql } from 'pgvector';
 
 type SourcePageRow = { sourcePageId: string };
 type ChunkSourcePageRow = { chunkId: string; sourcePageId: string };
@@ -49,8 +45,6 @@ export type UpsertCompiledArtifactInput = {
   chunkAttachments?: InsertableKnowledgeChunkAttachment[];
   links?: InsertableKnowledgeLink[];
   linkSources?: InsertableKnowledgeLinkSource[];
-  graphEdges?: InsertableKnowledgeGraphEdge[];
-  graphEdgeSources?: InsertableKnowledgeGraphEdgeSource[];
 };
 export type KnowledgeGraphCandidates = {
   pages: KnowledgePage[];
@@ -59,8 +53,6 @@ export type KnowledgeGraphCandidates = {
   parentSectionSources: KnowledgeParentSectionSource[];
   links: KnowledgeLink[];
   linkSources: KnowledgeLinkSource[];
-  graphEdges: KnowledgeGraphEdge[];
-  graphEdgeSources: KnowledgeGraphEdgeSource[];
 };
 export type KnowledgeRetrievalSignal =
   | 'semantic'
@@ -98,13 +90,12 @@ export type KnowledgeChunkSourceRef = {
   quoteHash: string | null;
 };
 
-export type KnowledgeGraphEdgeType = 'semantic' | 'link' | 'shared-source';
+export type KnowledgeGraphEdgeType = 'link' | 'shared-source';
 
 export const KNOWLEDGE_GRAPH_EDGE_TYPE_WEIGHT: Record<
   KnowledgeGraphEdgeType,
   number
 > = {
-  semantic: 1.0,
   link: 0.7,
   'shared-source': 0.2,
 };
@@ -366,61 +357,11 @@ export class KnowledgeCapsuleRepo {
     return trx ? resolve(trx) : executeTx(this.db, resolve);
   }
 
-  async resolveCanonicalGraphEdges(
-    input: {
-      workspaceId: string;
-      spaceId: string;
-    },
-    trx?: KyselyTransaction,
-  ): Promise<{ resolvedEdgeCount: number }> {
-    const result = await sql<{ id: string }>`
-      WITH resolvable AS (
-        SELECT
-          edge.id AS edge_id,
-          min(target.id::text)::uuid AS target_id,
-          min(target.page_type) AS target_artifact_kind
-        FROM knowledge_graph_edges AS edge
-        INNER JOIN knowledge_pages AS target
-          ON target.workspace_id = edge.workspace_id
-          AND target.space_id = edge.space_id
-          AND target.canonical_key = edge.target_canonical_key
-          AND target.stale_at IS NULL
-          AND (
-            edge.target_artifact_kind IS NULL
-            OR target.page_type = edge.target_artifact_kind
-          )
-        WHERE edge.workspace_id = ${input.workspaceId}::uuid
-          AND edge.space_id = ${input.spaceId}::uuid
-          AND edge.stale_at IS NULL
-          AND edge.is_dangling = true
-          AND edge.target_canonical_key IS NOT NULL
-        GROUP BY edge.id
-        HAVING count(*) = 1
-      )
-      UPDATE knowledge_graph_edges AS edge
-      SET
-        to_knowledge_page_id = resolvable.target_id,
-        target_artifact_kind = resolvable.target_artifact_kind,
-        is_dangling = false
-      FROM resolvable
-      WHERE edge.id = resolvable.edge_id
-      RETURNING edge.id
-    `.execute(trx ?? this.db);
-    return { resolvedEdgeCount: result.rows.length };
-  }
-
   async resolveCanonicalReferences(input: {
     workspaceId: string;
     spaceId: string;
-  }): Promise<{ resolvedLinkCount: number; resolvedEdgeCount: number }> {
-    return executeTx(this.db, async (trx) => {
-      const links = await this.resolveCanonicalLinks(input, trx);
-      const graphEdges = await this.resolveCanonicalGraphEdges(input, trx);
-      return {
-        resolvedLinkCount: links.resolvedLinkCount,
-        resolvedEdgeCount: graphEdges.resolvedEdgeCount,
-      };
-    });
+  }): Promise<{ resolvedLinkCount: number }> {
+    return this.resolveCanonicalLinks(input);
   }
 
   async upsertCompiledArtifacts(
@@ -480,14 +421,6 @@ export class KnowledgeCapsuleRepo {
       inputs.flatMap((input) => input.linkSources ?? []),
       'knowledgeLinkSources',
     );
-    const graphEdgeRows = inputs.flatMap((input) => input.graphEdges ?? []);
-    await this.assertGraphEdgesWithinSpace(db, graphEdgeRows);
-    await this.insertArtifactChildren(db, graphEdgeRows, 'knowledgeGraphEdges');
-    await this.insertArtifactChildren(
-      db,
-      inputs.flatMap((input) => input.graphEdgeSources ?? []),
-      'knowledgeGraphEdgeSources',
-    );
 
     return pages;
   }
@@ -524,43 +457,6 @@ export class KnowledgeCapsuleRepo {
       .executeTakeFirstOrThrow();
   }
 
-  private async assertGraphEdgesWithinSpace(
-    db: KyselyDB | KyselyTransaction,
-    rows: Array<Record<string, unknown>>,
-  ): Promise<void> {
-    if (rows.length === 0) return;
-
-    const endpointIds = unique(
-      rows.flatMap((row) =>
-        [row.fromKnowledgePageId, row.toKnowledgePageId].filter(
-          (value): value is string => typeof value === 'string',
-        ),
-      ),
-    );
-    if (endpointIds.length === 0) return;
-
-    const pages = await db
-      .selectFrom('knowledgePages')
-      .select(['id', 'spaceId'])
-      .where('id', 'in', endpointIds)
-      .execute();
-    const spaceByPageId = new Map(pages.map((page) => [page.id, page.spaceId]));
-
-    for (const row of rows) {
-      const spaceId = row.spaceId;
-      const fromSpaceId = spaceByPageId.get(row.fromKnowledgePageId as string);
-      const toSpaceId = spaceByPageId.get(row.toKnowledgePageId as string);
-      if (
-        (fromSpaceId !== undefined && fromSpaceId !== spaceId) ||
-        (toSpaceId !== undefined && toSpaceId !== spaceId)
-      ) {
-        throw new Error(
-          'cross_space_graph_edge_disallowed: graph edge endpoints must be in the edge space',
-        );
-      }
-    }
-  }
-
   private async insertArtifactChildren<T extends Record<string, unknown>>(
     db: KyselyDB | KyselyTransaction,
     rows: T[],
@@ -572,9 +468,7 @@ export class KnowledgeCapsuleRepo {
       | 'knowledgeChunkSources'
       | 'knowledgeChunkAttachments'
       | 'knowledgeLinks'
-      | 'knowledgeLinkSources'
-      | 'knowledgeGraphEdges'
-      | 'knowledgeGraphEdgeSources',
+      | 'knowledgeLinkSources',
   ): Promise<void> {
     if (rows.length === 0) return;
 
@@ -626,7 +520,6 @@ export class KnowledgeCapsuleRepo {
         [
           ['knowledgeChunks', 'knowledgePageId'],
           ['knowledgeLinks', 'fromKnowledgePageId'],
-          ['knowledgeGraphEdges', 'fromKnowledgePageId'],
         ] as const
       ).map(([table, ownerColumn]) =>
         db
@@ -929,41 +822,21 @@ export class KnowledgeCapsuleRepo {
     const frontier = input.knowledgePageIds;
     const spaceIds = input.spaceIds;
     const rows = await db
-      .selectFrom('knowledgeGraphEdgeSources')
+      .selectFrom('knowledgeLinkSources')
       .select('sourcePageId')
       .where('workspaceId', '=', input.workspaceId)
-      .where('graphEdgeId', 'in', (eb) =>
-        eb
-          .selectFrom('knowledgeGraphEdges')
+      .where('linkId', 'in', (inner) =>
+        inner
+          .selectFrom('knowledgeLinks')
           .select('id')
           .where('workspaceId', '=', input.workspaceId)
           .where('spaceId', 'in', spaceIds)
           .where('staleAt', 'is', null)
-          .where((inner) =>
-            inner.or([
-              inner('fromKnowledgePageId', 'in', frontier),
-              inner('toKnowledgePageId', 'in', frontier),
+          .where((link) =>
+            link.or([
+              link('fromKnowledgePageId', 'in', frontier),
+              link('toKnowledgePageId', 'in', frontier),
             ]),
-          ),
-      )
-      .union((eb) =>
-        eb
-          .selectFrom('knowledgeLinkSources')
-          .select('sourcePageId')
-          .where('workspaceId', '=', input.workspaceId)
-          .where('linkId', 'in', (inner) =>
-            inner
-              .selectFrom('knowledgeLinks')
-              .select('id')
-              .where('workspaceId', '=', input.workspaceId)
-              .where('spaceId', 'in', spaceIds)
-              .where('staleAt', 'is', null)
-              .where((link) =>
-                link.or([
-                  link('fromKnowledgePageId', 'in', frontier),
-                  link('toKnowledgePageId', 'in', frontier),
-                ]),
-              ),
           ),
       )
       .union((eb) =>
@@ -1069,52 +942,6 @@ export class KnowledgeCapsuleRepo {
               )
           )
       ),
-      semantic_edge AS (
-        SELECT
-          e.id::text AS id,
-          e.from_knowledge_page_id,
-          e.to_knowledge_page_id,
-          'semantic' AS type,
-          ${weightOf.semantic}::double precision AS type_weight,
-          ARRAY(
-            SELECT DISTINCT es.source_page_id
-            FROM knowledge_graph_edge_sources AS es
-            WHERE es.workspace_id = e.workspace_id
-              AND es.graph_edge_id = e.id
-            ORDER BY es.source_page_id
-          ) AS source_page_ids
-        FROM knowledge_graph_edges AS e
-        INNER JOIN knowledge_pages AS from_page
-          ON from_page.id = e.from_knowledge_page_id
-        INNER JOIN knowledge_pages AS to_page
-          ON to_page.id = e.to_knowledge_page_id
-        WHERE e.workspace_id = ${input.workspaceId}
-          AND e.space_id IN (${sql.join(spaceIds)})
-          AND e.relation != 'catalog_entry'
-          AND e.is_dangling = false
-          AND e.to_knowledge_page_id IS NOT NULL
-          AND e.stale_at IS NULL
-          AND from_page.stale_at IS NULL
-          AND to_page.stale_at IS NULL
-          AND from_page.space_id = e.space_id
-          AND to_page.space_id = e.space_id
-          AND (
-            e.from_knowledge_page_id IN (SELECT knowledge_page_id FROM seed)
-            OR e.to_knowledge_page_id IN (SELECT knowledge_page_id FROM seed)
-          )
-          AND EXISTS (
-            SELECT 1 FROM knowledge_graph_edge_sources AS es
-            WHERE es.workspace_id = e.workspace_id AND es.graph_edge_id = e.id
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM knowledge_graph_edge_sources AS es
-            WHERE es.workspace_id = e.workspace_id
-              AND es.graph_edge_id = e.id
-              AND es.source_page_id NOT IN (
-                SELECT source_page_id FROM readable_source
-              )
-          )
-      ),
       shared_source_pair AS (
         SELECT
           least(seed_source.knowledge_page_id, neighbor_source.knowledge_page_id)
@@ -1163,8 +990,6 @@ export class KnowledgeCapsuleRepo {
       candidate AS (
         SELECT * FROM link_edge
         UNION ALL
-        SELECT * FROM semantic_edge
-        UNION ALL
         SELECT * FROM shared_source_edge
       ),
       weighted AS (
@@ -1195,7 +1020,7 @@ export class KnowledgeCapsuleRepo {
       FROM ranked
       WHERE type != 'shared-source' OR type_rank <= ${sharedSourceCap}
       ORDER BY
-        (type IN ('semantic', 'link') AND type_rank <= ${reservePerType}) DESC,
+        (type = 'link' AND type_rank <= ${reservePerType}) DESC,
         seed_weight DESC,
         type_weight DESC,
         id ASC
@@ -1308,12 +1133,10 @@ export class KnowledgeCapsuleRepo {
         parentSectionSources: [],
         links: [],
         linkSources: [],
-        graphEdges: [],
-        graphEdgeSources: [],
       };
     }
 
-    const [pageSources, parentSections, links, graphEdges] = await Promise.all([
+    const [pageSources, parentSections, links] = await Promise.all([
       db
         .selectFrom('knowledgePageSources')
         .selectAll()
@@ -1341,48 +1164,28 @@ export class KnowledgeCapsuleRepo {
         .where('isDangling', '=', false)
         .where('staleAt', 'is', null)
         .execute(),
-      db
-        .selectFrom('knowledgeGraphEdges')
-        .selectAll()
-        .where('workspaceId', '=', input.workspaceId)
-        .where('spaceId', '=', input.spaceId)
-        .where('fromKnowledgePageId', 'in', pageIds)
-        .where('toKnowledgePageId', 'is not', null)
-        .where('isDangling', '=', false)
-        .where('staleAt', 'is', null)
-        .execute(),
     ]);
 
     const parentSectionIds = parentSections.map((section) => section.id);
     const linkIds = links.map((link) => link.id);
-    const graphEdgeIds = graphEdges.map((edge) => edge.id);
-    const [parentSectionSources, linkSources, graphEdgeSources] =
-      await Promise.all([
-        parentSectionIds.length === 0
-          ? []
-          : db
-              .selectFrom('knowledgeParentSectionSources')
-              .selectAll()
-              .where('workspaceId', '=', input.workspaceId)
-              .where('parentSectionId', 'in', parentSectionIds)
-              .execute(),
-        linkIds.length === 0
-          ? []
-          : db
-              .selectFrom('knowledgeLinkSources')
-              .selectAll()
-              .where('workspaceId', '=', input.workspaceId)
-              .where('linkId', 'in', linkIds)
-              .execute(),
-        graphEdgeIds.length === 0
-          ? []
-          : db
-              .selectFrom('knowledgeGraphEdgeSources')
-              .selectAll()
-              .where('workspaceId', '=', input.workspaceId)
-              .where('graphEdgeId', 'in', graphEdgeIds)
-              .execute(),
-      ]);
+    const [parentSectionSources, linkSources] = await Promise.all([
+      parentSectionIds.length === 0
+        ? []
+        : db
+            .selectFrom('knowledgeParentSectionSources')
+            .selectAll()
+            .where('workspaceId', '=', input.workspaceId)
+            .where('parentSectionId', 'in', parentSectionIds)
+            .execute(),
+      linkIds.length === 0
+        ? []
+        : db
+            .selectFrom('knowledgeLinkSources')
+            .selectAll()
+            .where('workspaceId', '=', input.workspaceId)
+            .where('linkId', 'in', linkIds)
+            .execute(),
+    ]);
 
     return {
       pages,
@@ -1391,8 +1194,6 @@ export class KnowledgeCapsuleRepo {
       parentSectionSources,
       links,
       linkSources,
-      graphEdges,
-      graphEdgeSources,
     };
   }
 
@@ -1440,25 +1241,80 @@ export class KnowledgeCapsuleRepo {
           input.knowledgePageIds,
         )
         .execute(),
-      db
-        .selectFrom('knowledgeGraphEdgeSources')
-        .innerJoin(
-          'knowledgeGraphEdges',
-          'knowledgeGraphEdgeSources.graphEdgeId',
-          'knowledgeGraphEdges.id',
-        )
-        .select('knowledgeGraphEdgeSources.sourcePageId')
-        .where('knowledgeGraphEdges.workspaceId', '=', input.workspaceId)
-        .where(
-          'knowledgeGraphEdges.fromKnowledgePageId',
-          'in',
-          input.knowledgePageIds,
-        )
-        .execute(),
     ]);
 
     return unique(
       rows.flat().map((row) => (row as SourcePageRow).sourcePageId),
+    );
+  }
+
+  /**
+   * Stored vectors for chunk ids about to be republished. Chunk ids are derived
+   * from the exact embedding input, so a row with the same id carries a vector
+   * for the same input; callers still must match the embedding profile.
+   */
+  async findChunkEmbeddingsByIds(input: {
+    workspaceId: string;
+    chunkIds: string[];
+  }): Promise<
+    Array<{
+      id: string;
+      embedding: number[];
+      embeddingProfile: string;
+      embeddingModel: string | null;
+      embeddingDimensions: number;
+      embeddingTotalTokens: number | null;
+      embeddingDurationMs: number | null;
+    }>
+  > {
+    if (input.chunkIds.length === 0) return [];
+    const rows = await this.db
+      .selectFrom('knowledgeChunks')
+      .select([
+        'id',
+        'embedding',
+        'embeddingProfile',
+        'embeddingModel',
+        'embeddingDimensions',
+        'embeddingTotalTokens',
+        'embeddingDurationMs',
+      ])
+      .where('workspaceId', '=', input.workspaceId)
+      .where('id', 'in', input.chunkIds)
+      .where('embedding', 'is not', null)
+      .where('embeddingProfile', 'is not', null)
+      .where('embeddingDimensions', 'is not', null)
+      .execute();
+    return rows.map((row) => ({
+      id: row.id,
+      embedding: vectorFromSql(row.embedding as string),
+      embeddingProfile: row.embeddingProfile as string,
+      embeddingModel: row.embeddingModel,
+      embeddingDimensions: row.embeddingDimensions as number,
+      embeddingTotalTokens: row.embeddingTotalTokens,
+      embeddingDurationMs: row.embeddingDurationMs,
+    }));
+  }
+
+  async findPageSourcePageIdsByPageIds(input: {
+    workspaceId: string;
+    knowledgePageIds: string[];
+  }): Promise<Map<string, string[]>> {
+    if (input.knowledgePageIds.length === 0) return new Map();
+    const rows = await this.db
+      .selectFrom('knowledgePageSources')
+      .select(['knowledgePageId', 'sourcePageId'])
+      .where('workspaceId', '=', input.workspaceId)
+      .where('knowledgePageId', 'in', input.knowledgePageIds)
+      .execute();
+    const grouped = groupBy(rows, (row) => row.knowledgePageId);
+    return new Map(
+      input.knowledgePageIds.map((knowledgePageId) => [
+        knowledgePageId,
+        unique(
+          (grouped.get(knowledgePageId) ?? []).map((row) => row.sourcePageId),
+        ),
+      ]),
     );
   }
 
@@ -1584,7 +1440,7 @@ export class KnowledgeCapsuleRepo {
     if (input.sourcePageIds.length === 0) return;
 
     const db = dbOrTx(this.db, trx);
-    const [pageRows, chunkRows, linkRows, graphEdgeRows] = await Promise.all([
+    const [pageRows, chunkRows, linkRows] = await Promise.all([
       db
         .selectFrom('knowledgePageSources')
         .select('knowledgePageSources.knowledgePageId')
@@ -1602,16 +1458,6 @@ export class KnowledgeCapsuleRepo {
         .select('knowledgeLinkSources.linkId')
         .where('knowledgeLinkSources.workspaceId', '=', input.workspaceId)
         .where('knowledgeLinkSources.sourcePageId', 'in', input.sourcePageIds)
-        .execute(),
-      db
-        .selectFrom('knowledgeGraphEdgeSources')
-        .select('knowledgeGraphEdgeSources.graphEdgeId')
-        .where('knowledgeGraphEdgeSources.workspaceId', '=', input.workspaceId)
-        .where(
-          'knowledgeGraphEdgeSources.sourcePageId',
-          'in',
-          input.sourcePageIds,
-        )
         .execute(),
     ]);
 
@@ -1635,16 +1481,6 @@ export class KnowledgeCapsuleRepo {
       this.markStale(
         'knowledgeLinks',
         unique(linkRows.map((row) => (row as OwnerRow<'linkId'>).linkId)),
-        input.workspaceId,
-        trx,
-      ),
-      this.markStale(
-        'knowledgeGraphEdges',
-        unique(
-          graphEdgeRows.map(
-            (row) => (row as OwnerRow<'graphEdgeId'>).graphEdgeId,
-          ),
-        ),
         input.workspaceId,
         trx,
       ),
@@ -1714,11 +1550,7 @@ export class KnowledgeCapsuleRepo {
   }
 
   private async markStale(
-    table:
-      | 'knowledgePages'
-      | 'knowledgeChunks'
-      | 'knowledgeLinks'
-      | 'knowledgeGraphEdges',
+    table: 'knowledgePages' | 'knowledgeChunks' | 'knowledgeLinks',
     ids: string[],
     workspaceId: string,
     trx?: KyselyTransaction,
@@ -1881,8 +1713,18 @@ export class KnowledgeCapsuleRepo {
     const sourcesByChunkId = new Map(
       sourceRows.map((row) => [row.chunkId, row.sourcePageIds]),
     );
+    const expandableParentIds = await this.findExpandableParentIds(
+      {
+        workspaceId: input.workspaceId,
+        chunks,
+        parentSections,
+      },
+      trx,
+    );
     const parentById = new Map(
-      parentSections.map((parent) => [parent.id, parent]),
+      parentSections
+        .filter((parent) => expandableParentIds.has(parent.id))
+        .map((parent) => [parent.id, parent]),
     );
 
     return rows.flatMap((row) => {
@@ -1894,9 +1736,11 @@ export class KnowledgeCapsuleRepo {
         return [];
       }
 
-      const parentSection = chunk.parentSectionId
-        ? parentById.get(chunk.parentSectionId)
-        : undefined;
+      const parentSection =
+        chunk.parentSectionId &&
+        expandableParentIds.has(`${chunk.id}:${chunk.parentSectionId}`)
+          ? parentById.get(chunk.parentSectionId)
+          : undefined;
       return [
         {
           chunk,
@@ -1911,16 +1755,96 @@ export class KnowledgeCapsuleRepo {
     });
   }
 
+  /**
+   * Parent expansion replaces a child's text with its parent's text, so the
+   * parent must not carry any lineage the child does not. A parent is
+   * expandable for a child only when it belongs to the same knowledge page and
+   * every (source, version, content hash) of the parent also backs the child.
+   * Since the child's sources are authorized before it is returned, this also
+   * means every parent source is authorized. Missing lineage on either side is
+   * treated as not expandable, and the authorized child is returned as is.
+   *
+   * Returns parent ids that are expandable for at least one child, plus
+   * `${chunkId}:${parentId}` pairs for the exact child/parent decision.
+   */
+  private async findExpandableParentIds(
+    input: {
+      workspaceId: string;
+      chunks: KnowledgeChunk[];
+      parentSections: KnowledgeParentSection[];
+    },
+    trx?: KyselyTransaction,
+  ): Promise<Set<string>> {
+    const expandable = new Set<string>();
+    if (input.parentSections.length === 0) return expandable;
+    const linked = input.chunks.filter((chunk) => chunk.parentSectionId);
+    if (linked.length === 0) return expandable;
+
+    const db = dbOrTx(this.db, trx);
+    const [chunkSources, parentSources] = await Promise.all([
+      db
+        .selectFrom('knowledgeChunkSources')
+        .select(['chunkId', 'sourcePageId', 'sourceVersion', 'contentHash'])
+        .where('workspaceId', '=', input.workspaceId)
+        .where(
+          'chunkId',
+          'in',
+          linked.map((chunk) => chunk.id),
+        )
+        .execute(),
+      db
+        .selectFrom('knowledgeParentSectionSources')
+        .select([
+          'parentSectionId',
+          'sourcePageId',
+          'sourceVersion',
+          'contentHash',
+        ])
+        .where('workspaceId', '=', input.workspaceId)
+        .where(
+          'parentSectionId',
+          'in',
+          input.parentSections.map((parent) => parent.id),
+        )
+        .execute(),
+    ]);
+    const lineageKey = (row: {
+      sourcePageId: string;
+      sourceVersion: string;
+      contentHash: string;
+    }) => `${row.sourcePageId}@${row.sourceVersion}#${row.contentHash}`;
+    const chunkLineage = groupBy(chunkSources, (row) => row.chunkId);
+    const parentLineage = groupBy(parentSources, (row) => row.parentSectionId);
+    const parentById = new Map(
+      input.parentSections.map((parent) => [parent.id, parent]),
+    );
+
+    for (const chunk of linked) {
+      const parent = parentById.get(chunk.parentSectionId as string);
+      if (!parent || parent.knowledgePageId !== chunk.knowledgePageId) continue;
+      const childKeys = new Set(
+        (chunkLineage.get(chunk.id) ?? []).map(lineageKey),
+      );
+      const parentKeys = (parentLineage.get(parent.id) ?? []).map(lineageKey);
+      if (
+        childKeys.size === 0 ||
+        parentKeys.length === 0 ||
+        !parentKeys.every((key) => childKeys.has(key))
+      ) {
+        continue;
+      }
+      expandable.add(parent.id);
+      expandable.add(`${chunk.id}:${parent.id}`);
+    }
+    return expandable;
+  }
+
   private async deleteChildArtifacts(
     knowledgePageId: string,
     trx?: KyselyTransaction,
   ): Promise<void> {
     const db = dbOrTx(this.db, trx);
 
-    await db
-      .deleteFrom('knowledgeGraphEdges')
-      .where('fromKnowledgePageId', '=', knowledgePageId)
-      .execute();
     await db
       .deleteFrom('knowledgeLinks')
       .where('fromKnowledgePageId', '=', knowledgePageId)

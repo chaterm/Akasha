@@ -1,7 +1,15 @@
 import type { ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
-import type { AttributionDetail, CompileRun, EvalDetail, EvalRun, QueryRun, QueryStats } from '../types'
+import type {
+  AttributionDetail,
+  CompileEmbedding,
+  CompileRun,
+  EvalDetail,
+  EvalRun,
+  QueryRun,
+  QueryStats,
+} from '../types'
 import { Failed, Loading, downloadText, duration, formatDateTime, useAsync } from '../ui'
 
 type EvalOption = {
@@ -19,6 +27,7 @@ type LoadedItem = {
   option: EvalOption
   detail: EvalDetail
   attribution: AttributionDetail | null
+  embedding: CompileEmbedding | null
 }
 
 const STORAGE_KEY = 'benchmark-comparison-items'
@@ -56,7 +65,6 @@ const DATASET_LABELS: Record<string, string> = {
   musique: 'MuSiQue',
   '2wikimultihopqa': '2WikiMultiHopQA',
   narrativeqa: 'NarrativeQA',
-  itfaq: 'ITFAQ',
 }
 
 const METRIC_SECTIONS = [
@@ -120,6 +128,15 @@ const METRIC_SECTIONS = [
 
 const TIMELINE_WIDTH = 48
 
+const EMBEDDING_METRICS = [
+  ['mrr', 'MRR'],
+  ['ndcg@5', 'NDCG@5'],
+  ['recall@5', 'Recall@5'],
+  ['precision@5', 'Precision@5'],
+  ['retrieval_f1', 'Retrieval F1 (set)'],
+  ['full_coverage@5', 'Full Coverage@5'],
+] as const
+
 const KNOWLEDGE_METRICS = [
   ['mrr', 'MRR'],
   ['ndcg@5', 'NDCG@5'],
@@ -136,12 +153,45 @@ function datasetLabel(name: string): string {
   return DATASET_LABELS[name.toLowerCase()] ?? name
 }
 
+function embeddingGeneration(item: LoadedItem) {
+  const model = item.option.query.embedding_model
+  const matching = (item.embedding?.generations ?? []).filter((entry) => entry.model === model)
+  if (matching.length === 0) return null
+  const merged = matching.reduce((total, entry) => ({
+    ...total,
+    chunks: total.chunks + entry.chunks,
+    total_tokens: sumOrNull(total.total_tokens, entry.total_tokens),
+    duration_ms_sum: sumOrNull(total.duration_ms_sum, entry.duration_ms_sum),
+  }))
+
+  const rebuild = (item.embedding?.rebuilds ?? []).find((entry) => entry.model === model)
+  const usage = rebuild
+    ? { total_tokens: rebuild.total_tokens, duration_ms_sum: rebuild.duration_ms_sum }
+    : { total_tokens: merged.total_tokens, duration_ms_sum: merged.duration_ms_sum }
+  const chunks = rebuild ? rebuild.chunks : merged.chunks
+  return {
+    ...merged,
+    ...usage,
+    source: rebuild ? '重建' : '编译',
+    duration_ms_mean:
+      usage.duration_ms_sum === null || chunks === 0 ? null : usage.duration_ms_sum / chunks,
+  }
+}
+
+function sumOrNull(left: number | null, right: number | null): number | null {
+  return left === null && right === null ? null : (left ?? 0) + (right ?? 0)
+}
+
+function embeddingLabel(option: EvalOption): string {
+  return option.query.embedding_label ?? option.compile.embedding_label ?? '嵌入模型未知'
+}
+
 function modelLabel(option: EvalOption): string {
   const compileModels = Array.from(new Set(
     (option.compile.model_label ?? '').split(' + ').map((value) => value.trim()).filter(Boolean),
   )).join('+')
   const queryModel = option.query.model_label ?? option.eval.model_label ?? `评测 #${option.eval.id}`
-  return `${compileModels || '编译模型未知'}->${queryModel}`
+  return `${compileModels || '编译模型未知'}->${embeddingLabel(option)}->${queryModel}`
 }
 
 function modelNote(item: LoadedItem, index: number): string {
@@ -154,10 +204,20 @@ function elapsedMs(start: string | null, finish: string | null): number | null {
   return Number.isFinite(value) && value >= 0 ? value : null
 }
 
-function timingCell(perValue: number | null | undefined, total: number | null, unit: string): string {
-  if (total === null) return '—'
-  const per = perValue === null || perValue === undefined ? '—' : `${duration(perValue)}${unit}`
-  return `${per} · 共 ${duration(total)}`
+function timingCell(
+  perValue: number | null | undefined,
+  total: number | null,
+  unit: string,
+  concurrency?: number | string | null,
+): string {
+  const parts: string[] = []
+  if (total === null) parts.push('—')
+  else {
+    parts.push(perValue === null || perValue === undefined ? '—' : `${duration(perValue)}${unit}`)
+    parts.push(`共 ${duration(total)}`)
+  }
+  if (concurrency !== null && concurrency !== undefined) parts.push(`并发 ${concurrency}`)
+  return parts.join(' · ')
 }
 
 function datasetSummary(item: LoadedItem, dataset: string) {
@@ -170,7 +230,6 @@ function queryStats(item: LoadedItem, dataset: string) {
 
 type Segment = { label: string; startMs: number; durationMs: number; fill: string }
 
-/** 按管线顺序把均值摊成首尾相接的区段；生成段对齐到合计末尾。 */
 function timelineSegments(stats: QueryStats): { segments: Segment[]; totalMs: number } | null {
   const total = stats.server_total_ms_mean
   if (total === null || total === undefined || total <= 0) return null
@@ -213,7 +272,6 @@ function timelineBlock(item: LoadedItem, dataset: string, index: number): string
     cells.fill(segment.fill, from, to)
   }
 
-  // ttft_ms 自生成请求起算，标记锚在生成段内；各阶段均值取自不同子集，夹住防止越界。
   const generation = segments.find((segment) => segment.label === '生成')
   const ttft = generation === undefined ? null : stats.ttft_ms_mean ?? null
   const marks = Array.from({ length: TIMELINE_WIDTH }, () => ' ')
@@ -248,6 +306,26 @@ function metricCell(value: number | null, baseline: number | null, rawDelta = fa
   return rawDelta
     ? `${formatted} (${delta >= 0 ? '+' : ''}${delta.toFixed(2)})`
     : `${formatted} (${delta >= 0 ? '+' : ''}${(delta * 100).toFixed(2)}pp)`
+}
+
+type Column = { dataset: string; item: LoadedItem }
+
+const COUNT_METRICS = new Set(['uncited_count', 'uncited_gold_count', 'graph_neighbor_gold_snippets'])
+
+function hasMetric(columns: Column[], scope: string, name: string): boolean {
+  return columns.some(({ dataset, item }) => metricValue(item, dataset, scope, name) !== null)
+}
+
+function deltaCells(columns: Column[], scope: string, name: string): string[] {
+  const baselines = new Map<string, number | null>()
+  return columns.map(({ dataset, item }) => {
+    const value = metricValue(item, dataset, scope, name)
+    if (!baselines.has(dataset)) {
+      baselines.set(dataset, value)
+      return metricCell(value, null)
+    }
+    return metricCell(value, baselines.get(dataset) ?? null, COUNT_METRICS.has(name))
+  })
 }
 
 function tableHeader(headers: string[], numeric = true): string[] {
@@ -338,7 +416,7 @@ function MarkdownPreview({ source }: { source: string }) {
 
 function buildMarkdown(items: LoadedItem[]): string {
   const datasets = Array.from(new Set(items.flatMap((item) => item.detail.datasets.map((entry) => entry.dataset))))
-  const columns = datasets.flatMap((dataset) => items
+  const columns: Column[] = datasets.flatMap((dataset) => items
     .filter((item) => datasetSummary(item, dataset))
     .map((item) => ({ dataset, item })))
   const lines: string[] = ['## 一、测试概况', '']
@@ -348,7 +426,7 @@ function buildMarkdown(items: LoadedItem[]): string {
     const queryMs = elapsedMs(item.option.query.created_at, item.option.query.finished_at)
     for (const dataset of item.detail.datasets.map((entry) => entry.dataset)) {
       const stats = item.option.compile.stats[dataset]
-      lines.push(`| ${circledNumber(itemIndex + 1)} | ${escapeCell(modelLabel(item.option))} | ${escapeCell(datasetLabel(dataset))} | ${stats?.imported ?? stats?.docs ?? '—'} | ${timingCell(item.option.compile.pace?.per_page_ms, compileMs, '/篇')} | ${datasetSummary(item, dataset)?.responses_evaluated ?? '—'} | ${timingCell(item.option.query.stats[dataset]?.latency_mean, queryMs, '/条')} |`)
+      lines.push(`| ${circledNumber(itemIndex + 1)} | ${escapeCell(modelLabel(item.option))} | ${escapeCell(datasetLabel(dataset))} | ${stats?.imported ?? stats?.docs ?? '—'} | ${timingCell(item.option.compile.pace?.per_page_ms, compileMs, '/篇')} | ${datasetSummary(item, dataset)?.responses_evaluated ?? '—'} | ${timingCell(item.option.query.stats[dataset]?.latency_mean, queryMs, '/条', item.option.query.concurrency)} |`)
     }
   }
 
@@ -366,19 +444,32 @@ function buildMarkdown(items: LoadedItem[]): string {
     lines.push('```')
   }
 
+  const costRows = items.flatMap((item, itemIndex) => {
+    const generation = embeddingGeneration(item)
+    if (!generation) return []
+    const tokens = generation.total_tokens
+    return [
+      `| ${escapeCell(`${circledNumber(itemIndex + 1)} ${embeddingLabel(item.option)}`)} | ${generation.chunks} | ${generation.dimensions ?? '—'} | ${generation.source} | ${tokens === null ? '—' : tokens} | ${timingCell(generation.duration_ms_mean, generation.duration_ms_sum, '/块', item.option.query.embedding_concurrency ?? '远端默认')} |`,
+    ]
+  })
+  if (costRows.length > 0) {
+    lines.push('', '### 1.2 嵌入成本', '')
+    lines.push(...tableHeader(['嵌入模型', '向量数', '维度', '用量来源', 'token 合计', '嵌入耗时']))
+    lines.push(...costRows)
+    lines.push('', '用量来源为「编译」时，嵌入耗时是单次调用墙钟相加，不反映并发；「重建」是整批并发的真墙钟。')
+  }
+
   lines.push('', '## 二、路由率对比', '')
   const routeHeaders = ['模型配置', ...datasets.map(datasetLabel)]
   lines.push(...tableHeader(routeHeaders))
   const routeValues = (item: LoadedItem, dataset: string) => {
     const summary = datasetSummary(item, dataset)
-    const modes = summary?.answer_modes ?? {}
-    const knowledgeShare = modes.knowledge ?? null
-    const generalShare = modes.general ?? null
+    const knowledgeShare = summary?.answer_modes.knowledge
+    if (knowledgeShare === undefined) return '—'
     const sampleCount = summary?.responses_evaluated ?? 0
-    const knowledge = knowledgeShare === null ? null : Math.round(knowledgeShare * sampleCount)
-    const general = generalShare === null ? null : Math.round(generalShare * sampleCount)
-    if (knowledgeShare === null) return '—'
-    return `${(knowledgeShare * 100).toFixed(1)}%（${knowledge ?? 0}/${general ?? 0}）`
+    const knowledge = Math.round(knowledgeShare * sampleCount)
+    const general = Math.round((summary?.answer_modes.general ?? 0) * sampleCount)
+    return `${(knowledgeShare * 100).toFixed(1)}%（${knowledge}/${general}）`
   }
   for (const [itemIndex, item] of items.entries()) {
     lines.push(`| ${escapeCell(`${circledNumber(itemIndex + 1)} ${modelLabel(item.option)}`)} | ${datasets.map((dataset) => routeValues(item, dataset)).join(' | ')} |`)
@@ -386,36 +477,40 @@ function buildMarkdown(items: LoadedItem[]): string {
 
   lines.push('', '', '## 三、指标对比')
   for (const section of METRIC_SECTIONS) {
-    const availableMetrics = section.metrics.filter(([name]) => columns.some(({ dataset, item }) => metricValue(item, dataset, 'overall', name) !== null))
+    const availableMetrics = section.metrics.filter(([name]) => hasMetric(columns, 'overall', name))
     if (availableMetrics.length === 0) continue
     lines.push(section.title)
     lines.push(...tableHeader(['指标', ...columns.map(({ dataset, item }) => `${datasetLabel(dataset)} ${modelNote(item, items.indexOf(item))}`)]))
     for (const [name, label] of availableMetrics) {
-      const baselineByDataset = new Map<string, number | null>()
-      const cells = columns.map(({ dataset, item }) => {
-        const value = metricValue(item, dataset, 'overall', name)
-        const baseline = baselineByDataset.get(dataset)
-        if (!baselineByDataset.has(dataset)) baselineByDataset.set(dataset, value)
-        return metricCell(value, baseline ?? null, name === 'uncited_count' || name === 'uncited_gold_count' || name === 'graph_neighbor_gold_snippets')
-      })
-      lines.push(`| ${label} | ${cells.join(' | ')} |`)
+      lines.push(`| ${label} | ${deltaCells(columns, 'overall', name).join(' | ')} |`)
     }
     lines.push('')
   }
 
-  lines.push('### 3.7 Knowledge-Only 指标对比', '')
-  const knowledgeColumns = columns
-  lines.push(...tableHeader(['指标', ...knowledgeColumns.map(({ dataset, item }) => `${datasetLabel(dataset)} ${modelNote(item, items.indexOf(item))}`)]))
+  const embeddingColumns = columns.filter(
+    ({ item }) => item.option.query.embedding_model || item.option.query.embedding_label,
+  )
+  const embeddingModels = new Set(embeddingColumns.map(({ item }) => embeddingLabel(item.option)))
+  if (embeddingModels.size > 1) {
+    lines.push('### 3.7 嵌入模型检索对比', '')
+    lines.push('语料与编译模型相同，只换嵌入模型重算向量后的检索差异。', '')
+    lines.push(...tableHeader([
+      '指标',
+      ...embeddingColumns.map(({ dataset, item }) =>
+        `${datasetLabel(dataset)}（${circledNumber(items.indexOf(item) + 1)} ${embeddingLabel(item.option)}）`),
+    ]))
+    for (const [name, label] of EMBEDDING_METRICS) {
+      if (!hasMetric(embeddingColumns, 'overall', name)) continue
+      lines.push(`| ${label} | ${deltaCells(embeddingColumns, 'overall', name).join(' | ')} |`)
+    }
+    lines.push('')
+  }
+
+  lines.push(`### 3.${embeddingModels.size > 1 ? 8 : 7} Knowledge-Only 指标对比`, '')
+  lines.push(...tableHeader(['指标', ...columns.map(({ dataset, item }) => `${datasetLabel(dataset)} ${modelNote(item, items.indexOf(item))}`)]))
   for (const [name, label] of KNOWLEDGE_METRICS) {
-    if (!knowledgeColumns.some(({ dataset, item }) => metricValue(item, dataset, 'knowledge_only', name) !== null)) continue
-    const baselineByDataset = new Map<string, number | null>()
-    const cells = knowledgeColumns.map(({ dataset, item }) => {
-      const value = metricValue(item, dataset, 'knowledge_only', name)
-      const baseline = baselineByDataset.get(dataset)
-      if (!baselineByDataset.has(dataset)) baselineByDataset.set(dataset, value)
-      return metricCell(value, baseline ?? null)
-    })
-    lines.push(`| ${label} | ${cells.join(' | ')} |`)
+    if (!hasMetric(columns, 'knowledge_only', name)) continue
+    lines.push(`| ${label} | ${deltaCells(columns, 'knowledge_only', name).join(' | ')} |`)
   }
 
   const causes = Array.from(new Set(items.flatMap(({ attribution }) => attribution?.results.map((result) => result.root_cause) ?? []))).sort()
@@ -442,28 +537,28 @@ export function Comparison() {
     [compiles.data],
   )
   const optionMap = useMemo(() => new Map(options.map((option) => [option.eval.id, option])), [options])
+  const updateItems = (next: ComparisonItem[]) => {
+    setItems(next)
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+  }
   useEffect(() => {
     if (!compiles.data) return
     const valid = items.filter((item) => optionMap.has(item.evalId))
-    if (valid.length !== items.length) {
-      setItems(valid)
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(valid))
-    }
+    if (valid.length !== items.length) updateItems(valid)
   }, [compiles.data, items, optionMap])
   const selectedKey = items.map((item) => `${item.evalId}:${item.attributionId ?? ''}`).join(',')
   const loaded = useAsync<LoadedItem[]>(
     async () => Promise.all(items.flatMap((item) => {
       const option = optionMap.get(item.evalId)
       if (!option) return []
-      return [Promise.all([api.evalRun(item.evalId), item.attributionId === null ? Promise.resolve(null) : api.attribution(item.attributionId)]).then(([detail, attribution]) => ({ option, detail, attribution }))]
+      return [Promise.all([
+        api.evalRun(item.evalId),
+        item.attributionId === null ? Promise.resolve(null) : api.attribution(item.attributionId),
+        api.compileEmbedding(option.compile.id).catch(() => null),
+      ]).then(([detail, attribution, embedding]) => ({ option, detail, attribution, embedding }))]
     })),
     [selectedKey, options.length],
   )
-
-  const updateItems = (next: ComparisonItem[]) => {
-    setItems(next)
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-  }
 
   if (compiles.loading) return <Loading what="对比数据" />
   if (compiles.error) return <Failed error={compiles.error} />

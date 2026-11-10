@@ -6,6 +6,9 @@ import { InjectKysely } from 'nestjs-kysely';
 import { KyselyDB } from '@akasha/db/types/kysely.types';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
 import { MIGRATION_STATEMENT_TIMEOUT_MS } from '../database-postgres-options';
+import { clearPreBaselineMigrationHistory } from '../prune-migration-history';
+
+type MigrationResultSet = Awaited<ReturnType<Migrator['migrateToLatest']>>;
 
 @Injectable()
 export class MigrationService {
@@ -16,16 +19,29 @@ export class MigrationService {
     private readonly environmentService: EnvironmentService,
   ) {}
 
+  async clearPreBaselineHistory(db: KyselyDB = this.db): Promise<void> {
+    const { cleared, deleted } = await clearPreBaselineMigrationHistory(db, {
+      migrationFolder: this.migrationFolder(),
+    });
+    if (!cleared) return;
+    this.logger.log(
+      `Cleared ${deleted} pre-baseline migration row(s); the v1.0 baseline will replay over the existing schema`,
+    );
+  }
+
   async migrateToLatest(): Promise<void> {
     const { error, results } = await this.db
       .connection()
-      .execute(async (db) => {
-        await this.setStatementTimeout(db, MIGRATION_STATEMENT_TIMEOUT_MS);
+      .execute(async (connection) => {
+        await this.setStatementTimeout(
+          connection,
+          MIGRATION_STATEMENT_TIMEOUT_MS,
+        );
         try {
-          return await this.createMigrator(db).migrateToLatest();
+          return await this.runMigrationTransaction(connection);
         } finally {
           await this.setStatementTimeout(
-            db,
+            connection,
             this.environmentService.getDatabaseStatementTimeoutMs(),
           );
         }
@@ -34,15 +50,55 @@ export class MigrationService {
     this.reportMigrationResult({ error, results });
   }
 
+  private async runMigrationTransaction(
+    connection: KyselyDB,
+  ): Promise<MigrationResultSet> {
+    await this.execRaw(connection, 'begin');
+
+    let resultSet: MigrationResultSet;
+    try {
+      await this.clearPreBaselineHistory(connection);
+      resultSet = await this.createMigrator(connection).migrateToLatest();
+    } catch (error) {
+      await this.rollbackQuietly(connection);
+      throw error;
+    }
+
+    if (resultSet.error) {
+      await this.rollbackQuietly(connection);
+      return resultSet;
+    }
+
+    await this.execRaw(connection, 'commit');
+    return resultSet;
+  }
+
+  private async rollbackQuietly(connection: KyselyDB): Promise<void> {
+    try {
+      await this.execRaw(connection, 'rollback');
+    } catch (rollbackError) {
+      this.logger.error('Failed to roll back the migration transaction');
+      this.logger.error(rollbackError);
+    }
+  }
+
+  protected async execRaw(db: KyselyDB, statement: string): Promise<void> {
+    await sql.raw(statement).execute(db);
+  }
+
+  protected migrationFolder(): string {
+    return path.join(__dirname, '..', 'migrations');
+  }
+
   protected createMigrator(db: KyselyDB): Migrator {
     return new Migrator({
       db,
-      // Keep startup compatible with migrations backfilled by the CLI.
       allowUnorderedMigrations: true,
+      disableTransactions: true,
       provider: new FileMigrationProvider({
         fs,
         path,
-        migrationFolder: path.join(__dirname, '..', 'migrations'),
+        migrationFolder: this.migrationFolder(),
       }),
     });
   }

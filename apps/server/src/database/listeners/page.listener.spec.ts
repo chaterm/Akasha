@@ -170,7 +170,70 @@ describe('PageListener knowledge jobs', () => {
   });
 });
 
-function createListener() {
+describe('PageListener page restore with the night compile window', () => {
+  it('requests the restore Run immediately when the window switch is off', async () => {
+    const { listener, runRepo } = createListener({ windowEnabled: false });
+
+    await listener.handlePageRestored({
+      workspaceId: 'workspace-1',
+      pageIds: ['page-1'],
+    });
+
+    expect(runRepo.requestIncrementalCompileForPages).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'workspace-1',
+        sourcePageIds: ['page-1'],
+        trigger: 'page_update',
+        removed: false,
+      }),
+    );
+    expect(runRepo.scheduleIncrementalCompileForPages).not.toHaveBeenCalled();
+  });
+
+  it('drops the one-hour quiet period for edits while the window switch is on', async () => {
+    const { listener, runRepo } = createListener({ windowEnabled: true });
+
+    await listener.handlePageCreated({
+      workspaceId: 'workspace-1',
+      pageIds: ['page-1'],
+    });
+    await listener.handlePageUpdated({
+      workspaceId: 'workspace-1',
+      pageIds: ['page-2'],
+    });
+
+    expect(runRepo.scheduleIncrementalCompileForPages).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ trigger: 'page_created', quietPeriodMs: 0 }),
+    );
+    expect(runRepo.scheduleIncrementalCompileForPages).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ trigger: 'page_updated', quietPeriodMs: 0 }),
+    );
+  });
+
+  it('queues the restore as a due schedule when the window switch is on', async () => {
+    const { listener, runRepo, compileWindowRepo } = createListener({
+      windowEnabled: true,
+    });
+
+    await listener.handlePageRestored({
+      workspaceId: 'workspace-1',
+      pageIds: ['page-1'],
+    });
+
+    expect(compileWindowRepo.isEnabled).toHaveBeenCalledWith('workspace-1');
+    expect(runRepo.scheduleIncrementalCompileForPages).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      sourcePageIds: ['page-1'],
+      trigger: 'page_restored',
+      quietPeriodMs: 0,
+    });
+    expect(runRepo.requestIncrementalCompileForPages).not.toHaveBeenCalled();
+  });
+});
+
+function createListener(options: { windowEnabled?: boolean } = {}) {
   const environmentService = {
     getSearchDriver: jest.fn().mockReturnValue('database'),
   };
@@ -184,6 +247,9 @@ function createListener() {
     requestIncrementalCompileForPages: jest.fn().mockResolvedValue([]),
     scheduleIncrementalCompileForPages: jest.fn().mockResolvedValue(1),
   };
+  const compileWindowRepo = {
+    isEnabled: jest.fn().mockResolvedValue(options.windowEnabled ?? false),
+  };
 
   return {
     listener: new PageListener(
@@ -191,9 +257,11 @@ function createListener() {
       searchQueue as never,
       knowledgeQueue as never,
       runRepo as never,
+      compileWindowRepo as never,
     ),
     searchQueue,
     knowledgeQueue,
     runRepo,
+    compileWindowRepo,
   };
 }

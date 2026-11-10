@@ -15,6 +15,7 @@ import { HistoryGroup } from "./groups/history-group";
 import { AskAiGroup } from "./groups/ask-ai-group";
 import { workspaceAtom } from "@/features/user/atoms/current-user-atom";
 import classes from "./fixed-toolbar.module.css";
+import { useTranslation } from "react-i18next";
 
 type FixedToolbarProps = {
   editor?: Editor | null;
@@ -25,6 +26,7 @@ export const FixedToolbar: FC<FixedToolbarProps> = ({
   editor: editorProp,
   templateMode = false,
 }) => {
+  const { t } = useTranslation();
   const editorFromAtom = useAtomValue(pageEditorAtom);
   const editor = editorProp ?? editorFromAtom;
   const state = useToolbarState(editor);
@@ -39,7 +41,7 @@ export const FixedToolbar: FC<FixedToolbarProps> = ({
         className={classes.fixedToolbar}
         data-fixed-toolbar="true"
         role="toolbar"
-        aria-label="Editor toolbar"
+        aria-label={t("Editor toolbar")}
         onMouseDown={(e) => e.preventDefault()}
       >
         <div className={classes.inner}>

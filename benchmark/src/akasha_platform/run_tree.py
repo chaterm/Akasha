@@ -21,7 +21,7 @@ _MISSING = object()
 @dataclass(frozen=True, slots=True)
 class _Lookups:
     compile_stats: dict[int, list[dict[str, Any]]]
-    compile_samples: dict[tuple[int, str], int]
+    compile_samples: dict[int, dict[str, int]]
     queries_by_compile: dict[int, list[dict[str, Any]]]
     evals_by_query: dict[int, list[dict[str, Any]]]
     attributions_by_eval: dict[int, list[dict[str, Any]]]
@@ -32,10 +32,10 @@ class _Lookups:
     attribution_counts: dict[int, dict[str, Any]]
     provider_labels: dict[int, str]
     config_labels: dict[tuple[str, str, str], str]
+    embed_runs: dict[int, list[tuple[str, int | None]]]
 
 
 def build_compile_tree(connection: sqlite3.Connection) -> list[dict[str, Any]]:
-
     compile_rows = compile_store.list_compile_runs(connection)
     compile_stats = _grouped(
         [
@@ -51,16 +51,15 @@ def build_compile_tree(connection: sqlite3.Connection) -> list[dict[str, Any]]:
         ],
         "compile_id",
     )
-    compile_samples = {
-        (int(row["compile_id"]), row["dataset"]): int(row["samples"])
-        for row in connection.execute(
-            """
-            SELECT cs.compile_id, s.dataset, COUNT(*) AS samples
-            FROM compile_sample cs JOIN sample s ON s.sample_id = cs.sample_id
-            GROUP BY cs.compile_id, s.dataset
-            """
-        )
-    }
+    compile_samples: dict[int, dict[str, int]] = {}
+    for row in connection.execute(
+        """
+        SELECT cs.compile_id, s.dataset, COUNT(*) AS samples
+        FROM compile_sample cs JOIN sample s ON s.sample_id = cs.sample_id
+        GROUP BY cs.compile_id, s.dataset
+        """
+    ):
+        compile_samples.setdefault(int(row["compile_id"]), {})[row["dataset"]] = int(row["samples"])
     query_stats = _grouped(query_store.all_query_stats(connection), "query_id")
     query_sample_counts = {
         int(row["query_id"]): int(row["samples"])
@@ -102,6 +101,24 @@ def build_compile_tree(connection: sqlite3.Connection) -> list[dict[str, Any]]:
         for row in connection.execute("SELECT id, label FROM model_provider")
     }
     config_labels = config_store.remote_label_map(connection)
+    embed_runs: dict[int, list[tuple[str, int | None]]] = {}
+    for row in connection.execute(
+        """
+        SELECT json_extract (params_json, '$.compile_id') AS compile_id,
+               json_extract (params_json, '$.embedding_concurrency') AS concurrency,
+               finished_at
+        FROM task
+        WHERE stage = 'embed' AND status = 'succeeded' AND finished_at IS NOT NULL
+          AND json_extract (params_json, '$.compile_id') IS NOT NULL
+        ORDER BY finished_at
+        """
+    ):
+        embed_runs.setdefault(int(row["compile_id"]), []).append(
+            (
+                str(row["finished_at"]),
+                None if row["concurrency"] is None else int(row["concurrency"]),
+            )
+        )
 
     lookups = _Lookups(
         compile_stats=compile_stats,
@@ -118,6 +135,7 @@ def build_compile_tree(connection: sqlite3.Connection) -> list[dict[str, Any]]:
         attribution_counts=attribution_counts,
         provider_labels=provider_labels,
         config_labels=config_labels,
+        embed_runs=embed_runs,
     )
     return [_compile_view(row, lookups) for row in compile_rows]
 
@@ -128,26 +146,22 @@ def _compile_view(row: dict[str, Any], lookups: _Lookups) -> dict[str, Any]:
         item["dataset"]: {key: value for key, value in item.items() if key != "compile_id"}
         for item in lookups.compile_stats.get(compile_id, [])
     }
-    for (sample_compile_id, dataset), count in lookups.compile_samples.items():
-        if sample_compile_id == compile_id:
-            stats.setdefault(dataset, {"dataset": dataset})["samples"] = count
+    for dataset, count in lookups.compile_samples.get(compile_id, {}).items():
+        stats.setdefault(dataset, {"dataset": dataset})["samples"] = count
     missing = sum(
         int(item.get("docs") or 0) - int(item.get("imported") or 0) for item in stats.values()
     )
+    configs = loads(row["model_configs_json"], {})
     return {
-        **_public_run(row),
-        "model_label": _remote_model_labels(
-            loads(row.get("model_configs_json"), {}),
-            ("compiler",),
-            lookups.config_labels,
-        ),
+        **public_run(row),
+        "model_label": _remote_model_label(configs, "compiler", lookups.config_labels),
+        "embedding_label": _remote_model_label(configs, "embedding", lookups.config_labels),
         "datasets": loads(row["datasets_json"], []),
         "stats": stats,
         "quality": loads(row["quality_json"]),
         "pace": loads(row["pace_json"]),
         "readiness": compile_store.compile_readiness(row, missing=missing),
         "compiled_pages": _compiled_pages(row, stats),
-        "compiled_pages_error": None,
         "queries": [
             _query_view(query, lookups)
             for query in lookups.queries_by_compile.get(compile_id, [])
@@ -162,10 +176,15 @@ def _query_view(row: dict[str, Any], lookups: _Lookups) -> dict[str, Any]:
         for item in lookups.query_stats.get(query_id, [])
     }
     response_count = sum(int(item["responses"] or 0) for item in stats.values())
+    configs = loads(row["model_configs_json"], {})
+    embedding = feature_of(configs, "embedding") or {}
     return {
-        **_public_run(row),
-        "model_label": _remote_model_labels(
-            loads(row.get("model_configs_json"), {}), ("answer",), lookups.config_labels
+        **public_run(row),
+        "model_label": _remote_model_label(configs, "answer", lookups.config_labels),
+        "embedding_label": _remote_model_label(configs, "embedding", lookups.config_labels),
+        "embedding_model": str(embedding["model"]) if embedding.get("model") else None,
+        "embedding_concurrency": _embed_concurrency_at(
+            lookups.embed_runs.get(int(row["compile_id"]), []), str(row["created_at"])
         ),
         "sample_count": lookups.query_sample_counts.get(query_id, 0) or response_count,
         "success_count": sum(
@@ -199,7 +218,7 @@ def _eval_view(row: dict[str, Any], lookups: _Lookups) -> dict[str, Any]:
         )
     )
     return {
-        **_public_run(row),
+        **public_run(row),
         "model_label": (
             lookups.provider_labels.get(int(row["judge_provider_id"]))
             if row.get("judge_provider_id") is not None
@@ -211,7 +230,7 @@ def _eval_view(row: dict[str, Any], lookups: _Lookups) -> dict[str, Any]:
         "metrics": metrics,
         "attributions": [
             {
-                **_public_run(attribution),
+                **public_run(attribution),
                 "model_label": (
                     lookups.provider_labels.get(int(attribution["report_provider_id"]))
                     if attribution.get("report_provider_id") is not None
@@ -224,6 +243,13 @@ def _eval_view(row: dict[str, Any], lookups: _Lookups) -> dict[str, Any]:
             for counts in [lookups.attribution_counts.get(int(attribution["id"]), {})]
         ],
     }
+
+
+def _embed_concurrency_at(
+    runs: list[tuple[str, int | None]], started_at: str
+) -> int | None:
+    picked = [value for finished_at, value in runs if finished_at <= started_at]
+    return picked[-1] if picked else None
 
 
 def _grouped(rows: list[dict[str, Any]], key: str) -> dict[int, list[dict[str, Any]]]:
@@ -243,21 +269,15 @@ def _compiled_pages(run: dict[str, Any], stats: dict[str, Any]) -> int | None:
     return None
 
 
-def _public_run(row: dict[str, Any]) -> dict[str, Any]:
+def public_run(row: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in row.items() if not key.endswith("_json")}
 
 
-def _remote_model_labels(
-    configs: dict[str, Any],
-    features: tuple[str, ...],
-    config_labels: dict[tuple[str, str, str], str],
+def _remote_model_label(
+    configs: dict[str, Any], feature: str, config_labels: dict[tuple[str, str, str], str]
 ) -> str | None:
-    labels = [
-        config_labels.get(
-            (feature, str(config["model"]), str(config.get("baseUrl") or "")),
-            str(config["model"]),
-        )
-        for feature in features
-        if (config := feature_of(configs, feature)) and config.get("model")
-    ]
-    return " + ".join(labels) if labels else None
+    config = feature_of(configs, feature) or {}
+    if not config.get("model"):
+        return None
+    model = str(config["model"])
+    return config_labels.get((feature, model, str(config.get("baseUrl") or "")), model)

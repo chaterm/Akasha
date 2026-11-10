@@ -7,6 +7,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      '@docmost/editor-ext': path.resolve(
+        __dirname,
+        '../../packages/editor-ext/src/index.ts',
+      ),
     },
   },
   test: {

@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 STOPWORDS = frozenset(
     """a an the of and or but in on at to for with by from as is are was were be been
     being have has had do does did will would could should may might must can this that
@@ -16,12 +15,10 @@ _WORD = re.compile(r"[A-Za-z][A-Za-z0-9'\-]*")
 
 
 def content_words(text: str) -> list[str]:
-
     return [w.lower() for w in _WORD.findall(text or "") if w.lower() not in STOPWORDS]
 
 
 def diff_vocabulary(source_text: str, compiled_text: str) -> dict[str, Any]:
-
     source_words = content_words(source_text)
     compiled_words = content_words(compiled_text)
     source_set, compiled_set = set(source_words), set(compiled_words)
@@ -42,7 +39,6 @@ def diff_vocabulary(source_text: str, compiled_text: str) -> dict[str, Any]:
 
 
 def question_terms_lost(question: str, diff: dict[str, Any]) -> list[str]:
-
     dropped = set(diff.get("dropped") or [])
     return sorted({w for w in content_words(question) if w in dropped})
 

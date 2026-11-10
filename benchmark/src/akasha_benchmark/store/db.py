@@ -31,7 +31,6 @@ def loads(value: str | None, default: Any = None) -> Any:
 
 
 def connect(path: Path | None = None, *, read_only: bool = False) -> sqlite3.Connection:
-
     target = path or DEFAULT_DB_PATH
     if read_only:
         if not target.is_file():
@@ -51,7 +50,6 @@ def connect(path: Path | None = None, *, read_only: bool = False) -> sqlite3.Con
 
 
 def init_db(path: Path | None = None) -> None:
-
     connection = connect(path)
     try:
         connection.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -62,7 +60,6 @@ def init_db(path: Path | None = None) -> None:
 
 @contextmanager
 def transaction(connection: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
-
     try:
         yield connection
     except BaseException:

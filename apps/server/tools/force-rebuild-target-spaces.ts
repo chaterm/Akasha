@@ -11,9 +11,9 @@ import { normalizePostgresUrl, parseRedisUrl } from '../src/common/helpers';
 import {
   DEFAULT_KNOWLEDGE_COMPILER_VERSION,
   DEFAULT_KNOWLEDGE_PROMPT_VERSION,
-} from '../src/ee/llm-wiki/llm-wiki.constants';
-import { KnowledgeSpaceCompilationService } from '../src/ee/llm-wiki/services/knowledge-space-compilation.service';
-import { KnowledgeSpaceResetService } from '../src/ee/llm-wiki/services/knowledge-space-reset.service';
+} from '../src/features/llm-wiki/llm-wiki.constants';
+import { KnowledgeSpaceCompilationService } from '../src/features/llm-wiki/services/knowledge-space-compilation.service';
+import { KnowledgeSpaceResetService } from '../src/features/llm-wiki/services/knowledge-space-reset.service';
 import { QueueName } from '../src/integrations/queue/constants';
 
 const targets = [

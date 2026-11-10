@@ -48,3 +48,4 @@ docs
 # CodeGraph (local index, per-machine)
 .codegraph/
 .vscode/
+.workbuddy

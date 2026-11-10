@@ -58,7 +58,7 @@ export interface IMovePage {
   position?: string;
   after?: string;
   before?: string;
-  parentPageId?: string;
+  parentPageId?: string | null;
 }
 
 export interface IMovePageToSpace {

@@ -17,7 +17,7 @@ import { IconInfoCircle } from "@tabler/icons-react";
 import { useAtom } from "jotai";
 import { userAtom } from "@/features/user/atoms/current-user-atom.ts";
 import { CustomAvatar } from "@/components/ui/custom-avatar.tsx";
-import { PageVerificationBadge } from "@/ee/page-verification";
+import { PageVerificationBadge } from "@/features/page-verification";
 import { useTranslation } from "react-i18next";
 import { IContributor } from "@/features/page/types/page.types.ts";
 import { FixedToolbar } from "@/features/editor/components/fixed-toolbar/fixed-toolbar";

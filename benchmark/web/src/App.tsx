@@ -28,6 +28,13 @@ const CROSS = [
 
 type ViewKey = (typeof LAYERS)[number]['key'] | (typeof CROSS)[number]['key']
 
+function paramId(params: Record<string, unknown>, key: string): number | null {
+  const value = params[key]
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value)
+  return null
+}
+
 export function App() {
   const [view, setView] = useState<ViewKey>('datasets')
   const [compileId, setCompileId] = useState<number | null>(null)
@@ -43,12 +50,6 @@ export function App() {
   const selectQuery = (id: number) => {
     setQueryId(id)
     setEvalId(null)
-  }
-  const paramId = (params: Record<string, unknown>, key: string): number | null => {
-    const value = params[key]
-    if (typeof value === 'number' && Number.isFinite(value)) return value
-    if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value)
-    return null
   }
 
   return (
@@ -149,7 +150,7 @@ export function App() {
         {view === 'tasks' && (
           <Tasks
             onNavigate={(stage, targetKind, targetId, params) => {
-              if (stage === 'download') {
+              if (stage === 'download' || stage === 'generate') {
                 setView('datasets')
                 return
               }

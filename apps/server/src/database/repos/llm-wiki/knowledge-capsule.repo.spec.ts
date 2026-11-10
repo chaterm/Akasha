@@ -224,10 +224,9 @@ describe('KnowledgeCapsuleRepo', () => {
         'knowledgeParentSections',
         'knowledgeChunks',
         'knowledgeLinks',
-        'knowledgeGraphEdges',
       ]),
     );
-    expect(query.calls.filter((call) => call.method === 'set')).toHaveLength(5);
+    expect(query.calls.filter((call) => call.method === 'set')).toHaveLength(4);
     expect(
       query.calls
         .filter((call) => call.method === 'set')
@@ -624,14 +623,13 @@ describe('KnowledgeCapsuleRepo', () => {
       .replace(/--[^\n]*/g, ' ')
       .replace(/\s+/g, ' ');
     expect(sql).toContain('knowledge_links');
-    expect(sql).toContain('knowledge_graph_edges');
+    expect(sql).not.toContain('knowledge_graph_edges');
     expect(sql).toContain('knowledge_page_sources');
     expect(sql.match(/limit/g) ?? []).toHaveLength(1);
     expect(sql.indexOf('readable_source')).toBeLessThan(
       sql.lastIndexOf('limit'),
     );
     expect(sql).toContain('from_page.space_id = l.space_id');
-    expect(sql).toContain('to_page.space_id = e.space_id');
     expect(sql).toContain('bool_and');
     expect(sql.indexOf('group by')).toBeLessThan(
       sql.lastIndexOf('all_sources_readable'),
@@ -717,76 +715,6 @@ describe('KnowledgeCapsuleRepo', () => {
 
     expect(pageInsertIndexes).toHaveLength(2);
     expect(linkInsertIndex).toBeGreaterThan(Math.max(...pageInsertIndexes));
-  });
-
-  it('rejects a graph edge whose endpoint lives in another space', async () => {
-    const query = new FakeKyselyQuery({
-      knowledgePages: [
-        { id: 'knowledge-page-1', spaceId: 'space-1' },
-        { id: 'knowledge-page-cross', spaceId: 'space-2' },
-      ],
-    });
-    const repo = createRepo(query);
-
-    await expect(
-      repo.upsertCompiledArtifacts([
-        {
-          page: basePage('knowledge-page-1'),
-          graphEdges: [
-            {
-              id: 'edge-cross',
-              workspaceId: 'workspace-1',
-              spaceId: 'space-1',
-              fromKnowledgePageId: 'knowledge-page-1',
-              toKnowledgePageId: 'knowledge-page-cross',
-              relation: 'relates_to',
-            },
-          ],
-        },
-      ] as never),
-    ).rejects.toThrow('cross_space_graph_edge_disallowed');
-
-    expect(
-      query.calls.some(
-        (call) =>
-          call.method === 'insertInto' &&
-          call.args[0] === 'knowledgeGraphEdges',
-      ),
-    ).toBe(false);
-  });
-
-  it('accepts a graph edge whose endpoints share the edge space', async () => {
-    const query = new FakeKyselyQuery({
-      knowledgePages: [
-        { id: 'knowledge-page-1', spaceId: 'space-1' },
-        { id: 'knowledge-page-2', spaceId: 'space-1' },
-      ],
-    });
-    const repo = createRepo(query);
-
-    await repo.upsertCompiledArtifacts([
-      {
-        page: basePage('knowledge-page-1'),
-        graphEdges: [
-          {
-            id: 'edge-same',
-            workspaceId: 'workspace-1',
-            spaceId: 'space-1',
-            fromKnowledgePageId: 'knowledge-page-1',
-            toKnowledgePageId: 'knowledge-page-2',
-            relation: 'relates_to',
-          },
-        ],
-      },
-    ] as never);
-
-    expect(
-      query.calls.some(
-        (call) =>
-          call.method === 'insertInto' &&
-          call.args[0] === 'knowledgeGraphEdges',
-      ),
-    ).toBe(true);
   });
 
   it('splits large child collections into bounded inserts', async () => {
@@ -906,35 +834,12 @@ describe('KnowledgeCapsuleRepo', () => {
               provenanceKind: 'synthesis_lineage',
             },
           ],
-          graphEdges: [
-            {
-              id: 'edge-1',
-              workspaceId: 'workspace-1',
-              spaceId: 'space-1',
-              fromKnowledgePageId: 'knowledge-page-1',
-              toKnowledgePageId: 'knowledge-page-2',
-              relation: 'depends_on',
-              compilerRunId: 'run-1',
-              compileTaskId: 'task-1',
-            },
-          ],
-          graphEdgeSources: [
-            {
-              workspaceId: 'workspace-1',
-              graphEdgeId: 'edge-1',
-              sourcePageId: 'source-1',
-              sourceVersion: 'v1',
-              contentHash: 'hash-1',
-              provenanceKind: 'synthesis_lineage',
-            },
-          ],
         },
       ]),
     ).resolves.toEqual([row]);
 
     expect(query.calls).toEqual(
       expect.arrayContaining([
-        { method: 'deleteFrom', args: ['knowledgeGraphEdges'] },
         { method: 'deleteFrom', args: ['knowledgeLinks'] },
         { method: 'deleteFrom', args: ['knowledgeChunks'] },
         { method: 'deleteFrom', args: ['knowledgePageSources'] },
@@ -945,10 +850,16 @@ describe('KnowledgeCapsuleRepo', () => {
         { method: 'insertInto', args: ['knowledgeChunkSources'] },
         { method: 'insertInto', args: ['knowledgeLinks'] },
         { method: 'insertInto', args: ['knowledgeLinkSources'] },
-        { method: 'insertInto', args: ['knowledgeGraphEdges'] },
-        { method: 'insertInto', args: ['knowledgeGraphEdgeSources'] },
       ]),
     );
+    expect(
+      query.calls.some(
+        (call) =>
+          ['deleteFrom', 'insertInto', 'selectFrom', 'updateTable'].includes(
+            call.method,
+          ) && String(call.args[0]).startsWith('knowledgeGraphEdge'),
+      ),
+    ).toBe(false);
   });
 
   it('updates compilation scope and generation mode when a stable artifact is republished', async () => {
@@ -1028,7 +939,6 @@ describe('KnowledgeCapsuleRepo', () => {
       ],
       knowledgeChunkSources: [{ sourcePageId: 'source-4' }],
       knowledgeLinkSources: [{ sourcePageId: 'source-5' }],
-      knowledgeGraphEdgeSources: [{ sourcePageId: 'source-6' }],
     });
     const repo = createRepo(query);
 
@@ -1037,13 +947,7 @@ describe('KnowledgeCapsuleRepo', () => {
         workspaceId: 'workspace-1',
         knowledgePageIds: ['kp-1', 'kp-2'],
       }),
-    ).resolves.toEqual([
-      'source-1',
-      'source-2',
-      'source-4',
-      'source-5',
-      'source-6',
-    ]);
+    ).resolves.toEqual(['source-1', 'source-2', 'source-4', 'source-5']);
 
     expect(query.calls).toEqual(
       expect.arrayContaining([
@@ -1076,15 +980,6 @@ describe('KnowledgeCapsuleRepo', () => {
             'knowledgeLinks',
             'knowledgeLinkSources.linkId',
             'knowledgeLinks.id',
-          ],
-        },
-        { method: 'selectFrom', args: ['knowledgeGraphEdgeSources'] },
-        {
-          method: 'innerJoin',
-          args: [
-            'knowledgeGraphEdges',
-            'knowledgeGraphEdgeSources.graphEdgeId',
-            'knowledgeGraphEdges.id',
           ],
         },
       ]),
@@ -1136,6 +1031,72 @@ describe('KnowledgeCapsuleRepo', () => {
         ],
       },
       { method: 'execute', args: [] },
+    ]);
+  });
+
+  it('expands a parent only when its lineage is covered by the child lineage', async () => {
+    const chunk = (id: string, parentSectionId: string | null) => ({
+      id,
+      workspaceId: 'workspace-1',
+      knowledgePageId: 'concept-1',
+      parentSectionId,
+      staleAt: null,
+    });
+    const lineage = (sourcePageId: string) => ({
+      sourcePageId,
+      sourceVersion: 'v1',
+      contentHash: `${sourcePageId}-hash`,
+    });
+    const query = new FakeKyselyQuery({
+      knowledgeChunks: [
+        chunk('child-b-own-parent', 'parent-b'),
+        chunk('child-b-foreign-parent', 'parent-a'),
+        chunk('child-no-parent-lineage', 'parent-empty'),
+      ],
+      knowledgePages: [basePage('concept-1')],
+      knowledgeParentSections: [
+        { id: 'parent-a', knowledgePageId: 'concept-1', text: 'A text' },
+        { id: 'parent-b', knowledgePageId: 'concept-1', text: 'B text' },
+        { id: 'parent-empty', knowledgePageId: 'concept-1', text: 'x' },
+      ],
+      knowledgeChunkSources: [
+        { chunkId: 'child-b-own-parent', ...lineage('source-b') },
+        { chunkId: 'child-b-foreign-parent', ...lineage('source-b') },
+        { chunkId: 'child-no-parent-lineage', ...lineage('source-b') },
+      ],
+      knowledgeParentSectionSources: [
+        { parentSectionId: 'parent-a', ...lineage('source-a') },
+        { parentSectionId: 'parent-b', ...lineage('source-b') },
+      ],
+    });
+    const repo = createRepo(query) as unknown as {
+      hydrateRankedChunkCandidates: (
+        rows: Array<{ chunkId: string; score: number }>,
+        signal: string,
+        input: { workspaceId: string; spaceIds: string[]; principals: [] },
+      ) => Promise<
+        Array<{ chunk: { id: string }; parentSection?: { id: string } }>
+      >;
+    };
+
+    const result = await repo.hydrateRankedChunkCandidates(
+      [
+        { chunkId: 'child-b-own-parent', score: 0.1 },
+        { chunkId: 'child-b-foreign-parent', score: 0.2 },
+        { chunkId: 'child-no-parent-lineage', score: 0.3 },
+      ],
+      'semantic',
+      { workspaceId: 'workspace-1', spaceIds: ['space-1'], principals: [] },
+    );
+
+    expect(
+      result.map((entry) => [entry.chunk.id, entry.parentSection?.id ?? null]),
+    ).toEqual([
+      ['child-b-own-parent', 'parent-b'],
+      // Same knowledge page, but parent A carries lineage child B does not:
+      // the authorized child is returned without A's parent text.
+      ['child-b-foreign-parent', null],
+      ['child-no-parent-lineage', null],
     ]);
   });
 
@@ -1234,7 +1195,6 @@ describe('KnowledgeCapsuleRepo', () => {
       knowledgePageSources: [{ knowledgePageId: 'kp-1' }],
       knowledgeChunkSources: [{ chunkId: 'chunk-1' }],
       knowledgeLinkSources: [{ linkId: 'link-1' }],
-      knowledgeGraphEdgeSources: [{ graphEdgeId: 'edge-1' }],
     });
     const repo = createRepo(query);
 
@@ -1252,8 +1212,6 @@ describe('KnowledgeCapsuleRepo', () => {
         { method: 'where', args: ['id', 'in', ['chunk-1']] },
         { method: 'updateTable', args: ['knowledgeLinks'] },
         { method: 'where', args: ['id', 'in', ['link-1']] },
-        { method: 'updateTable', args: ['knowledgeGraphEdges'] },
-        { method: 'where', args: ['id', 'in', ['edge-1']] },
       ]),
     );
   });

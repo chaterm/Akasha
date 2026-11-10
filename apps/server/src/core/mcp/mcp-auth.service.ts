@@ -184,7 +184,7 @@ export class McpAuthService {
     try {
       // Keep the core MCP module independent from the enterprise module.
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { ApiKeyService } = require('../../ee/api-key/api-key.service');
+      const { ApiKeyService } = require('../../features/api-key/api-key.service');
       const service = this.moduleRef?.get(ApiKeyService, { strict: false });
       if (service) return service;
     } catch {

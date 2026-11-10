@@ -41,12 +41,14 @@ import { KnowledgeQuarantineRepo } from '@akasha/db/repos/llm-wiki/knowledge-qua
 import { KnowledgeCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-compilation.repo';
 import { KnowledgeArtifactContributionRepo } from '@akasha/db/repos/llm-wiki/knowledge-artifact-contribution.repo';
 import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
+import { KnowledgeCompileWindowRepo } from '@akasha/db/repos/llm-wiki/knowledge-compile-window.repo';
 import { KnowledgeSpaceExecutionRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-execution.repo';
 import { KnowledgeImageExtractionRepo } from '@akasha/db/repos/llm-wiki/knowledge-image-extraction.repo';
 import { AiChatRepo } from '@akasha/db/repos/ai-chat/ai-chat.repo';
 import { AiModelConfigRepo } from '@akasha/db/repos/llm-wiki/ai-model-config.repo';
 import { PageVisitRepo } from '@akasha/db/repos/page/page-visit.repo';
 import { AnalyticsEventRepo } from '@akasha/db/repos/analytics/analytics-event.repo';
+import { AnalyticsUsageRepo } from './repos/analytics/analytics-usage.repo';
 import { buildDatabasePostgresOptions } from './database-postgres-options';
 
 export {
@@ -95,6 +97,7 @@ export {
     PageHistoryRepo,
     PageVisitRepo,
     AnalyticsEventRepo,
+    AnalyticsUsageRepo,
     CommentRepo,
     FavoriteRepo,
     AttachmentRepo,
@@ -115,6 +118,7 @@ export {
     KnowledgeCompilationRepo,
     KnowledgeArtifactContributionRepo,
     KnowledgeSpaceCompilationRepo,
+    KnowledgeCompileWindowRepo,
     KnowledgeSpaceExecutionRepo,
     KnowledgeImageExtractionRepo,
     AiChatRepo,
@@ -135,6 +139,7 @@ export {
     PageHistoryRepo,
     PageVisitRepo,
     AnalyticsEventRepo,
+    AnalyticsUsageRepo,
     CommentRepo,
     FavoriteRepo,
     AttachmentRepo,
@@ -155,6 +160,7 @@ export {
     KnowledgeCompilationRepo,
     KnowledgeArtifactContributionRepo,
     KnowledgeSpaceCompilationRepo,
+    KnowledgeCompileWindowRepo,
     KnowledgeSpaceExecutionRepo,
     KnowledgeImageExtractionRepo,
     AiChatRepo,

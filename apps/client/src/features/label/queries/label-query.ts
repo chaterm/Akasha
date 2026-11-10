@@ -21,6 +21,7 @@ import {
 import { IPagination } from "@/lib/types.ts";
 import { notifications } from "@mantine/notifications";
 import { useTranslation } from "react-i18next";
+import { notifyError } from "@/lib/errors";
 
 const PAGE_LABELS_KEY = (pageId: string) => ["page-labels", pageId];
 const WORKSPACE_LABELS_KEY = (query?: string) => ["workspace-labels", query ?? ""];
@@ -79,12 +80,7 @@ export function useAddLabelsMutation(pageId: string | undefined) {
       queryClient.invalidateQueries({ queryKey: ["label-pages"] });
       queryClient.invalidateQueries({ queryKey: ["label-info"] });
     },
-    onError: (error: any) => {
-      notifications.show({
-        message: error?.response?.data?.message ?? t("Failed to add label"),
-        color: "red",
-      });
-    },
+    onError: (error: any) => notifyError(error, "Failed to add label"),
   });
 }
 

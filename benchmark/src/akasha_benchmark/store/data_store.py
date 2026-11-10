@@ -42,7 +42,6 @@ def list_datasets(connection: sqlite3.Connection) -> list[dict[str, Any]]:
 
 
 def delete_dataset(connection: sqlite3.Connection, name: str) -> int:
-
     used = connection.execute(
         "SELECT COUNT(*) AS n FROM compile_sample cs "
         "JOIN sample s ON s.sample_id = cs.sample_id WHERE s.dataset = ?",
@@ -125,63 +124,20 @@ def sample_page(
     limit: int = 20,
     offset: int = 0,
 ) -> tuple[int, list[dict[str, Any]]]:
-    if search:
-
-        needle = search.lower()
-        matched_doc_rows = connection.execute(
-            """
-            SELECT doc_id
-            FROM corpus_doc
-            WHERE dataset = ?
-              AND (INSTR(LOWER(title), ?) > 0 OR INSTR(LOWER(text), ?) > 0)
-            """,
-            (dataset, needle, needle),
-        ).fetchall()
-        matched_doc_ids = {str(row["doc_id"]) for row in matched_doc_rows}
-        candidates = connection.execute(
-            "SELECT * FROM sample WHERE dataset = ? ORDER BY sample_id", (dataset,)
-        ).fetchall()
-        matched = []
-        for row in candidates:
-            gold_doc_ids = loads(row["gold_doc_ids_json"], [])
-            if (
-                needle in str(row["sample_id"]).lower()
-                or needle in str(row["question"]).lower()
-                or needle in str(row["answers_json"]).lower()
-                or any(str(doc_id) in matched_doc_ids for doc_id in gold_doc_ids)
-            ):
-                matched.append(row)
-
-        page = matched[offset : offset + limit]
-        titles_by_id: dict[str, str] = {}
-        page_doc_ids = {
-            str(doc_id)
-            for row in page
-            for doc_id in loads(row["gold_doc_ids_json"], [])
-        }
-        if page_doc_ids:
-            placeholders = ", ".join("?" for _ in page_doc_ids)
-            title_rows = connection.execute(
-                f"SELECT doc_id, title FROM corpus_doc WHERE dataset = ? "
-                f"AND doc_id IN ({placeholders})",
-                (dataset, *page_doc_ids),
-            ).fetchall()
-            titles_by_id = {str(row["doc_id"]): str(row["title"]) for row in title_rows}
-        return len(matched), [
-            {
-                **sample_from_row(row),
-                "gold_titles": [
-                    titles_by_id[str(doc_id)]
-                    for doc_id in loads(row["gold_doc_ids_json"], [])
-                    if str(doc_id) in titles_by_id
-                ],
-            }
-            for row in page
-        ]
-
-    where = ["s.dataset = ?"]
+    scope = "s.dataset = ?"
     params: list[Any] = [dataset]
-    scope = " AND ".join(where)
+    if search:
+        scope += """ AND (
+            INSTR(LOWER(s.sample_id), ?) > 0
+            OR INSTR(LOWER(s.question), ?) > 0
+            OR INSTR(LOWER(s.answers_json), ?) > 0
+            OR EXISTS (
+                SELECT 1 FROM json_each(s.gold_doc_ids_json) gold
+                JOIN corpus_doc cd ON cd.dataset = s.dataset AND cd.doc_id = gold.value
+                WHERE INSTR(LOWER(cd.title), ?) > 0 OR INSTR(LOWER(cd.text), ?) > 0
+            )
+        )"""
+        params.extend([search.lower()] * 5)
     total = int(
         connection.execute(f"SELECT COUNT(*) FROM sample s WHERE {scope}", params).fetchone()[0]
     )

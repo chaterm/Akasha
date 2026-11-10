@@ -1,7 +1,7 @@
 import "@mantine/core/styles.css";
 import "@mantine/spotlight/styles.css";
 import "@mantine/notifications/styles.css";
-import '@mantine/dates/styles.css';
+import "@mantine/dates/styles.css";
 import "@mantine/charts/styles.css";
 import "@/styles/a11y-overrides.css";
 
@@ -9,7 +9,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App.tsx";
 import { mantineCssResolver, theme } from "@/theme";
 import { MantineProvider } from "@mantine/core";
-import { BrowserRouter } from "react-router-dom";
+import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { ModalsProvider } from "@mantine/modals";
 import { Notifications } from "@mantine/notifications";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -45,21 +45,23 @@ if (isCloud() && isPostHogEnabled) {
 }
 
 const container = document.getElementById("root") as HTMLElement;
-const root = (container as any).__reactRoot ??= ReactDOM.createRoot(container);
+const root = ((container as any).__reactRoot ??=
+  ReactDOM.createRoot(container));
+
+// 数据路由支持 useBlocker；具体页面路由仍由 App 管理。
+const router = createBrowserRouter([{ path: "*", element: <App /> }]);
 
 root.render(
-  <BrowserRouter>
-    <MantineProvider theme={theme} cssVariablesResolver={mantineCssResolver}>
-      <ModalsProvider>
-        <QueryClientProvider client={queryClient}>
-          <Notifications position="bottom-center" limit={3} zIndex={10000} />
-          <HelmetProvider>
-            <PostHogProvider client={posthog}>
-              <App />
-            </PostHogProvider>
-          </HelmetProvider>
-        </QueryClientProvider>
-      </ModalsProvider>
-    </MantineProvider>
-  </BrowserRouter>,
+  <MantineProvider theme={theme} cssVariablesResolver={mantineCssResolver}>
+    <ModalsProvider>
+      <QueryClientProvider client={queryClient}>
+        <Notifications position="bottom-center" limit={3} zIndex={10000} />
+        <HelmetProvider>
+          <PostHogProvider client={posthog}>
+            <RouterProvider router={router} />
+          </PostHogProvider>
+        </HelmetProvider>
+      </QueryClientProvider>
+    </ModalsProvider>
+  </MantineProvider>,
 );

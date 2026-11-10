@@ -1,8 +1,8 @@
 import { NestFactory } from '@nestjs/core';
 import { KYSELY_MODULE_CONNECTION_TOKEN } from 'nestjs-kysely';
 import { KyselyDB } from '../src/database/types/kysely.types';
-import { AiKnowledgeChatService } from '../src/ee/llm-wiki/services/ai-knowledge-chat.service';
-import { chunkKnowledgeSource } from '../src/ee/llm-wiki/chunking/knowledge-structural-chunker';
+import { AiKnowledgeChatService } from '../src/features/llm-wiki/services/ai-knowledge-chat.service';
+import { chunkKnowledgeSource } from '../src/features/llm-wiki/chunking/knowledge-structural-chunker';
 import { loadRuntimeConfiguration } from '../src/integrations/environment/consul-config.loader';
 import type { Workspace } from '../src/database/types/entity.types';
 

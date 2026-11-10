@@ -23,10 +23,9 @@ import CreateWorkspace from "@/ee/pages/create-workspace.tsx";
 import { isCloud } from "@/lib/config.ts";
 import { useTranslation } from "react-i18next";
 import Security from "@/ee/security/pages/security.tsx";
-import License from "@/ee/licence/pages/license.tsx";
 import { useRedirectToCloudSelect } from "@/ee/hooks/use-redirect-to-cloud-select.tsx";
 import SharedPage from "@/pages/share/shared-page.tsx";
-import PdfRenderPage from "@/ee/pdf-export/pdf-render-page.tsx";
+import PdfRenderPage from "@/features/pdf-export/pdf-render-page.tsx";
 import Shares from "@/pages/settings/shares/shares.tsx";
 import ShareLayout from "@/features/share/components/share-layout.tsx";
 import ShareRedirect from "@/pages/share/share-redirect.tsx";
@@ -35,17 +34,17 @@ import SpacesPage from "@/pages/spaces/spaces.tsx";
 import { MfaChallengePage } from "@/ee/mfa/pages/mfa-challenge-page";
 import { MfaSetupRequiredPage } from "@/ee/mfa/pages/mfa-setup-required-page";
 import SpaceTrash from "@/pages/space/space-trash.tsx";
-import UserApiKeys from "@/ee/api-key/pages/user-api-keys";
-import WorkspaceApiKeys from "@/ee/api-key/pages/workspace-api-keys";
-import AiSettings from "@/ee/ai/pages/ai-settings.tsx";
+import UserApiKeys from "@/features/api-key/pages/user-api-keys";
+import WorkspaceApiKeys from "@/features/api-key/pages/workspace-api-keys";
+import AiSettings from "@/features/ai/pages/ai-settings.tsx";
 import AuditLogs from "@/ee/audit/pages/audit-logs.tsx";
-import VerifiedPages from "@/ee/page-verification/pages/verified-pages.tsx";
-import TemplateList from "@/ee/template/pages/template-list";
-import TemplateEditor from "@/ee/template/pages/template-editor";
+import VerifiedPages from "@/features/page-verification/pages/verified-pages.tsx";
+import TemplateLibrary from "@/features/template/pages/template-library";
+import TemplateWorkbench from "@/features/template/pages/template-workbench";
 import FavoritesPage from "@/pages/favorites/favorites-page";
-import AiChat from "@/ee/ai-chat/pages/ai-chat.tsx";
-import KnowledgeAdminPage from "@/ee/llm-wiki/pages/knowledge-admin";
-import KnowledgeGraphPage from "@/ee/llm-wiki/pages/knowledge-graph";
+import AiChat from "@/features/ai-chat/pages/ai-chat.tsx";
+import KnowledgeAdminPage from "@/features/llm-wiki/pages/knowledge-admin";
+import KnowledgeGraphPage from "@/features/llm-wiki/pages/knowledge-graph";
 import VerifyEmail from "@/ee/pages/verify-email.tsx";
 import LabelPage from "@/pages/label/label-page";
 import AnalyticsPage from "@/pages/analytics/analytics-page";
@@ -105,8 +104,8 @@ export default function App() {
           <Route path={"/favorites"} element={<FavoritesPage />} />
           <Route path={"/analytics"} element={<AnalyticsPage />} />
           <Route path={"/labels/:labelName"} element={<LabelPage />} />
-          <Route path={"/templates"} element={<TemplateList />} />
-          <Route path={"/templates/:templateId"} element={<TemplateEditor />} />
+          <Route path={"/templates"} element={<TemplateLibrary />} />
+          <Route path={"/templates/:templateId"} element={<TemplateWorkbench />} />
           <Route path={"/s/:spaceSlug"} element={<SpaceHome />} />
           <Route
             path={"/s/:spaceSlug/graph"}
@@ -136,7 +135,6 @@ export default function App() {
             <Route path={"ai/models"} element={<AiSettings />} />
             <Route path={"audit"} element={<AuditLogs />} />
             <Route path={"verifications"} element={<VerifiedPages />} />
-            {!isCloud() && <Route path={"license"} element={<License />} />}
             {isCloud() && <Route path={"billing"} element={<Billing />} />}
           </Route>
         </Route>

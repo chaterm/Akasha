@@ -8,6 +8,7 @@ import { zod4Resolver } from "mantine-form-zod-resolver";
 import { changePassword } from "@/features/auth/services/auth-service.ts";
 import { notifications } from "@mantine/notifications";
 import { useTranslation } from "react-i18next";
+import { notifyError } from "@/lib/errors";
 
 export default function ChangePassword() {
   const { t } = useTranslation();
@@ -78,10 +79,7 @@ function ChangePasswordForm({ onClose }: ChangePasswordFormProps) {
 
       onClose();
     } catch (err) {
-      notifications.show({
-        message: `Error: ${err.response.data.message}`,
-        color: "red",
-      });
+      notifyError(err, "Failed to change password");
     }
     setIsLoading(false);
   }

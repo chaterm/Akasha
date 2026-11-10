@@ -315,7 +315,6 @@ export interface KnowledgeChunks {
   createdAt: Generated<Timestamp>;
   embedding: string | null;
   embeddingDimensions: number | null;
-  embeddingLegacy: Json | null;
   embeddingModel: string | null;
   embeddingProfile: string | null;
   endOffset: number | null;
@@ -389,34 +388,6 @@ export interface KnowledgeCompilationAttempts {
   startedAt: Timestamp | null;
   status: Generated<string>;
   updatedAt: Generated<Timestamp>;
-  workspaceId: string;
-}
-
-export interface KnowledgeGraphEdges {
-  compilerRunId: string | null;
-  compileTaskId: string | null;
-  createdAt: Generated<Timestamp>;
-  fromKnowledgePageId: string;
-  id: Generated<string>;
-  relation: string;
-  spaceId: string;
-  staleAt: Timestamp | null;
-  toKnowledgePageId: string | null;
-  targetArtifactKind: Generated<string | null>;
-  targetCanonicalKey: Generated<string | null>;
-  isDangling: Generated<boolean>;
-  workspaceId: string;
-}
-
-export interface KnowledgeGraphEdgeSources {
-  attachmentId: string | null;
-  contentHash: string;
-  graphEdgeId: string;
-  provenanceKind: string;
-  quoteHash: string | null;
-  sourcePageId: string;
-  sourceRange: Json | null;
-  sourceVersion: string;
   workspaceId: string;
 }
 
@@ -784,6 +755,19 @@ export interface KnowledgeSpaceCompileRuns {
   workspaceId: string;
 }
 
+export interface KnowledgeSpaceDeferredCompiles {
+  createdAt: Generated<Timestamp>;
+  firstRequestedAt: Timestamp;
+  id: Generated<string>;
+  lastRequestedAt: Timestamp;
+  requestCount: Generated<number>;
+  requestedBy: string | null;
+  scanRemovedSources: Generated<boolean>;
+  spaceId: string;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
 export interface LegacyLinkMappings {
   createdAt: Generated<Timestamp>;
   id: Generated<string>;
@@ -1031,7 +1015,14 @@ export interface Spaces {
   workspaceId: string;
 }
 
+export interface TemplateSpaces {
+  createdAt: Generated<Timestamp>;
+  spaceId: string;
+  templateId: string;
+}
+
 export interface Templates {
+  allSpaces: Generated<boolean>;
   collaboratorIds: string[] | null;
   content: Json | null;
   createdAt: Generated<Timestamp>;
@@ -1124,6 +1115,42 @@ export interface Watchers {
   workspaceId: string;
 }
 
+export interface WeeklyReportOutbox {
+  attempts: Generated<number>;
+  availableAt: Generated<Timestamp>;
+  createdAt: Generated<Timestamp>;
+  deliveredAt: Timestamp | null;
+  effect: string;
+  id: string;
+  pageId: string;
+  userId: string;
+  workspaceId: string;
+}
+
+export interface WeeklyReportRecords {
+  createdAt: Generated<Timestamp>;
+  id: string;
+  pageId: string;
+  parentPageId: string;
+  periodEnd: Timestamp;
+  periodStart: Timestamp;
+  spaceId: string;
+  templateFingerprint: string;
+  templateId: string;
+  timezone: string;
+  userId: string;
+  workspaceId: string;
+}
+
+export interface WeeklyReportSaveReceipts {
+  createdAt: Generated<Timestamp>;
+  parentCreated: Generated<boolean>;
+  reportRecordId: string;
+  saveId: string;
+  userId: string;
+  workspaceId: string;
+}
+
 export interface WorkspaceInvitations {
   createdAt: Generated<Timestamp>;
   email: string | null;
@@ -1186,8 +1213,6 @@ export interface DB {
   knowledgeChunks: KnowledgeChunks;
   knowledgeChunkSources: KnowledgeChunkSources;
   knowledgeCompilationAttempts: KnowledgeCompilationAttempts;
-  knowledgeGraphEdges: KnowledgeGraphEdges;
-  knowledgeGraphEdgeSources: KnowledgeGraphEdgeSources;
   knowledgeImageExtractions: KnowledgeImageExtractions;
   knowledgeLinks: KnowledgeLinks;
   knowledgeLinkSources: KnowledgeLinkSources;
@@ -1209,6 +1234,7 @@ export interface DB {
   knowledgeSpaceCompileRunImages: KnowledgeSpaceCompileRunImages;
   knowledgeSpaceCompileRunPages: KnowledgeSpaceCompileRunPages;
   knowledgeSpaceCompileRuns: KnowledgeSpaceCompileRuns;
+  knowledgeSpaceDeferredCompiles: KnowledgeSpaceDeferredCompiles;
   legacyLinkMappings: LegacyLinkMappings;
   labels: Labels;
   notifications: Notifications;
@@ -1226,12 +1252,16 @@ export interface DB {
   shares: Shares;
   spaceMembers: SpaceMembers;
   spaces: Spaces;
+  templateSpaces: TemplateSpaces;
   templates: Templates;
   userMfa: UserMfa;
   users: Users;
   userSessions: UserSessions;
   userTokens: UserTokens;
   watchers: Watchers;
+  weeklyReportOutbox: WeeklyReportOutbox;
+  weeklyReportRecords: WeeklyReportRecords;
+  weeklyReportSaveReceipts: WeeklyReportSaveReceipts;
   workspaceInvitations: WorkspaceInvitations;
   workspaces: Workspaces;
 }

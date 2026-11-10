@@ -25,12 +25,14 @@ type UseAltTextControlArgs = {
   editor: Editor;
   nodeName: string;
   currentAlt: string;
+  pos?: number;
 };
 
 export function useAltTextControl({
   editor,
   nodeName,
   currentAlt,
+  pos,
 }: UseAltTextControlArgs) {
   const { t } = useTranslation();
   const [showInput, setShowInput] = useState(false);
@@ -42,6 +44,8 @@ export function useAltTextControl({
   }, [currentAlt]);
 
   useEffect(() => {
+    if (pos !== undefined) return;
+
     const handler = () => {
       if (!editor.isActive(nodeName)) {
         setShowInput(false);
@@ -51,20 +55,33 @@ export function useAltTextControl({
     return () => {
       editor.off("selectionUpdate", handler);
     };
-  }, [editor, nodeName]);
+  }, [editor, nodeName, pos]);
 
   const cancel = useCallback(() => {
     setShowInput(false);
   }, []);
 
   const save = useCallback(() => {
-    editor
-      .chain()
-      .focus(undefined, { scrollIntoView: false })
-      .updateAttributes(nodeName, { alt: sanitizeAlt(draft) || undefined })
-      .run();
+    const alt = sanitizeAlt(draft) || undefined;
+
+    if (pos !== undefined) {
+      const { state, view } = editor;
+      const node = state.doc.nodeAt(pos);
+      if (node) {
+        view.dispatch(
+          state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, alt }),
+        );
+      }
+    } else {
+      editor
+        .chain()
+        .focus(undefined, { scrollIntoView: false })
+        .updateAttributes(nodeName, { alt })
+        .run();
+    }
+
     setShowInput(false);
-  }, [editor, nodeName, draft]);
+  }, [editor, nodeName, draft, pos]);
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {

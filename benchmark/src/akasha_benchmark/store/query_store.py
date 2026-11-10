@@ -6,7 +6,6 @@ from typing import Any
 from .db import dumps, loads, utc_now
 from .run_store import STATUS_RUNNING, get_run
 
-
 ANSWER_GENERATION_UNAVAILABLE = (
     "Relevant knowledge was retrieved, but the answer model did not produce a response. "
     "Try again later or ask an administrator to check the AI model configuration."
@@ -109,7 +108,6 @@ def query_samples(connection: sqlite3.Connection, query_id: int) -> list[dict[st
 
 
 def pending_query_samples(connection: sqlite3.Connection, query_id: int) -> list[dict[str, Any]]:
-
     return [
         dict(r)
         for r in connection.execute(
@@ -139,7 +137,6 @@ TIMING_PHASES = tuple(_AUDIT_TIMING_KEYS)
 
 
 def timings_from_audit(metadata: Any) -> dict[str, Any] | None:
-    """把审计表 metadata.timings 转成本地列名。"""
     timings = metadata.get("timings") if isinstance(metadata, dict) else None
     if not isinstance(timings, dict):
         return None
@@ -195,7 +192,6 @@ def record_timings(
     query_id: int,
     timings_by_sample: dict[str, dict[str, Any]],
 ) -> int:
-    """写入远端阶段耗时，仅覆盖已有响应的样本。"""
     if not timings_by_sample:
         return 0
     return connection.executemany(

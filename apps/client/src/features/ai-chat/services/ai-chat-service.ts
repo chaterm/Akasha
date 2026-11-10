@@ -1,0 +1,174 @@
+import api from "@/lib/api-client.ts";
+import type {
+  AiChat,
+  AiChatMessage,
+  AiChatStreamEvent,
+  ChatAttachment,
+} from "../types/ai-chat.types";
+import { IPagination } from "@/lib/types.ts";
+import { apiErrorFromResponse } from "@/lib/errors";
+
+export async function createChat(): Promise<AiChat> {
+  const req = await api.post<AiChat>("/ai/chats/create");
+  return req.data;
+}
+
+export async function listChats(params?: {
+  limit?: number;
+  cursor?: string;
+}): Promise<IPagination<AiChat>> {
+  const req = await api.post("/ai/chats", params);
+  return req.data;
+}
+
+export async function getChatInfo(
+  chatId: string,
+): Promise<{ chat: AiChat; messages: AiChatMessage[] }> {
+  const req = await api.post("/ai/chats/info", { chatId });
+  return req.data;
+}
+
+export async function deleteChat(chatId: string): Promise<void> {
+  await api.post("/ai/chats/delete", { chatId });
+}
+
+export async function updateChatTitle(
+  chatId: string,
+  title: string,
+): Promise<void> {
+  await api.post("/ai/chats/update", { chatId, title });
+}
+
+export async function searchChats(query: string): Promise<AiChat[]> {
+  const req = await api.post("/ai/chats/search", { query });
+  return req.data;
+}
+
+export async function uploadChatFile(
+  file: File,
+  chatId?: string,
+): Promise<ChatAttachment> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (chatId) {
+    formData.append("chatId", chatId);
+  }
+  return await api.post("/ai/chats/upload", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+}
+
+export function sendChatMessage(
+  params: {
+    chatId?: string;
+    content: string;
+    mentionedPageIds?: string[];
+    contextPageId?: string;
+    attachmentIds?: string[];
+    spaceIds?: string[];
+    responseMode?: "knowledge" | "general";
+  },
+  onEvent: (event: AiChatStreamEvent) => void,
+  onError?: (error: unknown) => void,
+  onComplete?: () => void,
+): AbortController {
+  return streamChatRequest(
+    "/api/ai/chats/send",
+    params,
+    onEvent,
+    onError,
+    onComplete,
+  );
+}
+
+export function editChatMessage(
+  params: {
+    chatId: string;
+    messageId: string;
+    content: string;
+  },
+  onEvent: (event: AiChatStreamEvent) => void,
+  onError?: (error: unknown) => void,
+  onComplete?: () => void,
+): AbortController {
+  return streamChatRequest(
+    "/api/ai/chats/edit-message",
+    params,
+    onEvent,
+    onError,
+    onComplete,
+  );
+}
+
+function streamChatRequest(
+  url: string,
+  params: Record<string, unknown>,
+  onEvent: (event: AiChatStreamEvent) => void,
+  onError?: (error: unknown) => void,
+  onComplete?: () => void,
+): AbortController {
+  const abortController = new AbortController();
+
+  (async () => {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(params),
+        signal: abortController.signal,
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        onError?.(await apiErrorFromResponse(response));
+        return;
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        onError?.(new Error("Response body is not readable"));
+        return;
+      }
+
+      let buffer = "";
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const data = line.slice(6);
+              if (data === "[DONE]") {
+                onComplete?.();
+                return;
+              }
+              try {
+                const parsed = JSON.parse(data) as AiChatStreamEvent;
+                onEvent(parsed);
+              } catch {
+                // Skip invalid JSON
+              }
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+
+      onComplete?.();
+    } catch (error: any) {
+      if (error.name !== "AbortError") {
+        onError?.(error);
+      }
+    }
+  })();
+
+  return abortController;
+}

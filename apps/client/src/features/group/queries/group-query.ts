@@ -24,6 +24,7 @@ import { useEffect } from "react";
 import { validate as isValidUuid } from "uuid";
 import { queryClient } from "@/main.tsx";
 import { useTranslation } from 'react-i18next';
+import { notifyError } from "@/lib/errors";
 
 export function useGetGroupsQuery(
   params?: QueryParams,
@@ -65,6 +66,7 @@ export function useGroupQuery(groupId: string): UseQueryResult<IGroup, Error> {
 
 export function useCreateGroupMutation() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   return useMutation<IGroup, Error, Partial<IGroup>>({
     mutationFn: (data) => createGroup(data),
@@ -73,11 +75,9 @@ export function useCreateGroupMutation() {
         queryKey: ["groups"],
       });
 
-      notifications.show({ message: "Group created successfully" });
+      notifications.show({ message: t("Group created successfully") });
     },
-    onError: () => {
-      notifications.show({ message: "Failed to create group", color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to create group"),
   });
 }
 
@@ -93,10 +93,7 @@ export function useUpdateGroupMutation() {
         queryKey: ["group", variables.groupId],
       });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to update group"),
   });
 }
 
@@ -110,10 +107,7 @@ export function useDeleteGroupMutation() {
       notifications.show({ message: t("Group deleted successfully") });
       queryClient.refetchQueries({ queryKey: ["groups"] });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to delete group"),
   });
 }
 
@@ -141,12 +135,7 @@ export function useAddGroupMemberMutation() {
         queryKey: ["groupMembers", variables.groupId],
       });
     },
-    onError: () => {
-      notifications.show({
-        message: "Failed to add group members",
-        color: "red",
-      });
-    },
+    onError: (error) => notifyError(error, "Failed to add group members"),
   });
 }
 
@@ -169,9 +158,6 @@ export function useRemoveGroupMemberMutation() {
         queryKey: ["groupMembers", variables.groupId],
       });
     },
-    onError: (error) => {
-      const errorMessage = error["response"]?.data?.message;
-      notifications.show({ message: errorMessage, color: "red" });
-    },
+    onError: (error) => notifyError(error, "Failed to remove group member"),
   });
 }

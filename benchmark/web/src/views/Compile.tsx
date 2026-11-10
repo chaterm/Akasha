@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api } from '../api'
-import type { CompileRun, DatasetEntry } from '../types'
+import type { CompileDoc, CompileRun, DatasetEntry, QueryPreview, Task } from '../types'
 import {
   CleanupButton,
   ConfigPanel,
@@ -19,6 +19,7 @@ import {
   useAsync,
   usePagedRecordNavigation,
   usePoll,
+  useTaskWatch,
 } from '../ui'
 
 function todaySeed(): number {
@@ -40,6 +41,7 @@ export function Compile({
   const compiles = useAsync(() => api.compiles(), [])
   const datasets = useAsync(() => api.datasets(), [])
   const cleanup = useAction<unknown>()
+  const tasks = useTaskWatch(compiles.reload)
 
   usePoll(
     (compiles.data?.compiles ?? []).some((c) => c.status === 'running'),
@@ -60,7 +62,7 @@ export function Compile({
 
       {cleanup.error && <Failed error={cleanup.error} />}
 
-      <NewCompile datasets={normalized} onStarted={compiles.reload} />
+      <NewCompile datasets={normalized} onStarted={tasks.watch} />
 
       <h3>编译记录</h3>
       {compiles.data.compiles.length === 0 && <p className="muted">还没有编译记录。</p>}
@@ -98,7 +100,7 @@ export function Compile({
                   <td>{run.quality ? <Pass ok={run.quality.passed} /> : <span className="tag">未执行</span>}</td>
                   <td className="num">{docs}</td>
                   <td className="num">{imported}</td>
-                  <td className="num" title={run.compiled_pages_error ?? '由 PostgreSQL 编译产物统计'}>
+                  <td className="num" title="由远端编译 Run 的逐页进度统计">
                     {num(run.compiled_pages)}
                   </td>
                   <td>
@@ -152,7 +154,7 @@ function NewCompile({
   onStarted,
 }: {
   datasets: DatasetEntry[]
-  onStarted: () => void
+  onStarted: (task: Task) => void
 }) {
   const [selected, setSelected] = useState<string[]>([])
   const [runId, setRunId] = useState('')
@@ -209,7 +211,7 @@ function NewCompile({
             />
           </Field>
         )}
-        <Field label="随机种子" hint="">
+        <Field label="随机种子">
           <input type="number" value={seed} onChange={(e) => setSeed(Number(e.target.value))} />
         </Field>
         <Field label="语料范围">
@@ -272,7 +274,7 @@ function NewCompile({
                 ...(runId.trim() ? { run_id: runId.trim() } : {}),
                 ...(scheduleAt ? { schedule_at: scheduleAt } : {}),
               })
-              onStarted()
+              onStarted(task)
               return task
             })
           }
@@ -291,6 +293,7 @@ function CompileDetail({ run }: { run: CompileRun }) {
   const [openDoc, setOpenDoc] = useState<{ key: string; pageId: string | null; title: string } | null>(null)
   const [term, setTerm] = useState('')
   const [q, setQ] = useState('')
+  const [previewOpen, setPreviewOpen] = useState(false)
   const limit = 5
 
   const docs = useAsync(
@@ -304,7 +307,7 @@ function CompileDetail({ run }: { run: CompileRun }) {
       }),
     [run.id, dataset, goldOnly, q, limit, offset],
   )
-  const selectDoc = (doc: NonNullable<typeof docs.data>['docs'][number]) =>
+  const selectDoc = (doc: CompileDoc) =>
     setOpenDoc({
       key: `${doc.dataset}/${doc.doc_id}`,
       pageId: doc.page_id,
@@ -350,6 +353,25 @@ function CompileDetail({ run }: { run: CompileRun }) {
 
   return (
     <div className="panel" style={{ marginTop: 14 }}>
+      <div className="panel-head">
+        <div>
+          <h3 style={{ margin: 0 }}>编译详情</h3>
+          <div className="small muted">
+            {run.run_id} · {run.space_name || run.space_id || '尚未创建空间'}
+          </div>
+        </div>
+        <button
+          className="action primary"
+          disabled={!run.readiness.ready}
+          title={run.readiness.ready ? '输入问题并观察这次编译的单条查询结果' : run.readiness.reasons.join('；')}
+          onClick={() => setPreviewOpen(!previewOpen)}
+        >
+          {previewOpen ? '收起单条试查' : '单条试查'}
+        </button>
+      </div>
+
+      {previewOpen && <SingleQueryPanel compile={run} />}
+
       {run.readiness.warnings.length > 0 && (
         <div className="note warn">
           <strong>这次编译可用于查询，但结果不完整。</strong>
@@ -426,7 +448,7 @@ function CompileDetail({ run }: { run: CompileRun }) {
               </tr>
             </thead>
             <tbody>
-              {docs.data.docs.slice(0, limit).map((doc) => (
+              {docs.data.docs.map((doc) => (
                 <tr key={`${doc.dataset}/${doc.doc_id}`}>
                   <td className="mono small">{doc.doc_id}</td>
                   <td className="small muted">{doc.dataset}</td>
@@ -460,6 +482,112 @@ function CompileDetail({ run }: { run: CompileRun }) {
 
     </div>
   )
+}
+
+function SingleQueryPanel({ compile }: { compile: CompileRun }) {
+  const [question, setQuestion] = useState('')
+  const preview = useAction<QueryPreview>()
+  const submit = () => {
+    const value = question.trim()
+    if (!value || preview.busy) return
+    preview.run(() => api.queryPreview(compile.id, value))
+  }
+
+  return (
+    <div style={{ margin: '12px 0', padding: '12px 0', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }}>
+      <div className="small muted" style={{ marginBottom: 6 }}>
+        仅观察这次编译的单条查询，不会生成批量查询记录。
+      </div>
+      <label className="field" style={{ display: 'block' }}>
+        <span>问题</span>
+        <textarea
+          rows={3}
+          style={{ width: '100%', resize: 'vertical' }}
+          value={question}
+          onChange={(event) => setQuestion(event.target.value)}
+          onKeyDown={(event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') submit()
+          }}
+          placeholder="输入一个问题"
+        />
+      </label>
+      <div className="panel-actions">
+        <button
+          className="action primary"
+          disabled={preview.busy || !question.trim()}
+          onClick={submit}
+        >
+          {preview.busy ? '查询中…' : '运行单条试查'}
+        </button>
+      </div>
+      {preview.error && <Failed error={preview.error} />}
+      {preview.result && <QueryPreviewResult result={preview.result} />}
+    </div>
+  )
+}
+
+function QueryPreviewResult({ result }: { result: QueryPreview }) {
+  const ok = result.http_status >= 200 && result.http_status < 300 && !result.error
+  const evidence = result.snippets.length > 0 ? result.snippets : result.retrieved_sources
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="row tight">
+        <span className={`tag ${ok ? 'ok' : 'bad'}`}>HTTP {result.http_status}</span>
+        {result.answer_mode && <span className="tag accent">{result.answer_mode}</span>}
+        <span className="small muted mono">{result.latency_ms}ms</span>
+      </div>
+      {result.error && <div className="note bad">{result.error}</div>}
+      {result.answer !== null && result.answer !== undefined && (
+        <>
+          <h4>答案</h4>
+          <pre className="block">{previewValue(result.answer)}</pre>
+        </>
+      )}
+      <div className="side-by-side" style={{ marginTop: 10 }}>
+        <div>
+          <h4>召回片段（{evidence.length}）</h4>
+          {evidence.length > 0 ? (
+            <div className="stack">
+              {evidence.map((entry, index) => (
+                <pre className="block" key={index}>{previewEntry(entry)}</pre>
+              ))}
+            </div>
+          ) : <p className="small muted">没有返回召回片段。</p>}
+        </div>
+        <div>
+          <h4>引用（{result.citations.length}）</h4>
+          {result.citations.length > 0 ? (
+            <div className="stack">
+              {result.citations.map((entry, index) => (
+                <pre className="block" key={index}>{previewEntry(entry)}</pre>
+              ))}
+            </div>
+          ) : <p className="small muted">没有返回引用。</p>}
+        </div>
+      </div>
+      <details style={{ marginTop: 10 }}>
+        <summary className="small muted">查看原始响应</summary>
+        <pre className="block" style={{ marginTop: 6 }}>{previewValue(result.response)}</pre>
+      </details>
+    </div>
+  )
+}
+
+function previewEntry(entry: Record<string, unknown>): string {
+  const title = [entry.title, entry.sourcePageId, entry.knowledgePageId]
+    .find((value): value is string => typeof value === 'string' && value.length > 0)
+  const text = entry.text
+  if (title && typeof text === 'string' && text) return `${title}\n${text}`
+  return previewValue(entry)
+}
+
+function previewValue(value: unknown): string {
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2) ?? String(value)
+  } catch {
+    return String(value)
+  }
 }
 
 export function LineageView({

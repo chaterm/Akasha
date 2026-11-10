@@ -152,12 +152,12 @@ const CommandList = ({
                   [classes.selectedItem]: itemIndex === selectedIndex,
                 })}
               >
-                <Group>
+                <Group wrap="nowrap">
                   <ActionIcon variant="default" component="div" aria-hidden="true">
                     <item.icon size={18} />
                   </ActionIcon>
 
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
                     <Text size="sm" fw={500}>
                       {t(item.title)}
                     </Text>
@@ -166,6 +166,16 @@ const CommandList = ({
                       {t(item.description)}
                     </Text>
                   </div>
+
+                  <Text
+                    c="dimmed"
+                    size="xs"
+                    ff="monospace"
+                    className={classes.shortcut}
+                    aria-hidden="true"
+                  >
+                    /{item.shortcut}
+                  </Text>
                 </Group>
               </UnstyledButton>
               );

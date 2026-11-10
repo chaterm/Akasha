@@ -38,6 +38,56 @@ describe('SpaceController', () => {
   });
 });
 
+describe('SpaceController knowledge publish mode', () => {
+  function createController() {
+    const spaceService = { updateSpace: jest.fn().mockResolvedValue({}) };
+    const ability = { cannot: jest.fn().mockReturnValue(true) };
+    const spaceAbility = {
+      createForUser: jest.fn().mockResolvedValue(ability),
+    };
+    const controller = Object.create(SpaceController.prototype) as any;
+    controller.spaceService = spaceService;
+    controller.spaceAbility = spaceAbility;
+    return { controller, spaceService, spaceAbility };
+  }
+  const workspace = { id: 'workspace-1' } as any;
+
+  it('lets a workspace admin change it without space settings permission', async () => {
+    const { controller, spaceService } = createController();
+    const dto = { spaceId: 'space-1', knowledgeIndexMode: 'original' };
+
+    await controller.updateSpace(dto, { role: UserRole.ADMIN }, workspace);
+
+    expect(spaceService.updateSpace).toHaveBeenCalledWith(dto, 'workspace-1');
+  });
+
+  it('rejects members, even space admins', async () => {
+    const { controller, spaceService } = createController();
+
+    await expect(
+      controller.updateSpace(
+        { spaceId: 'space-1', knowledgeIndexMode: 'original' },
+        { role: UserRole.MEMBER },
+        workspace,
+      ),
+    ).rejects.toThrow('Forbidden');
+    expect(spaceService.updateSpace).not.toHaveBeenCalled();
+  });
+
+  it('still requires space settings permission for other fields', async () => {
+    const { controller, spaceService } = createController();
+
+    await expect(
+      controller.updateSpace(
+        { spaceId: 'space-1', knowledgeIndexMode: 'original', name: 'New' },
+        { role: UserRole.ADMIN },
+        workspace,
+      ),
+    ).rejects.toThrow('Forbidden');
+    expect(spaceService.updateSpace).not.toHaveBeenCalled();
+  });
+});
+
 describe('SpaceController effective space access', () => {
   const createSubject = () => {
     const spaces = [{ id: 'space-1' }, { id: 'space-2' }];

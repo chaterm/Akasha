@@ -15,7 +15,7 @@ import { useTranslation } from "react-i18next";
 import { TableOfContents } from "@/features/editor/components/table-of-contents/table-of-contents.tsx";
 import { useAtomValue } from "jotai";
 import { pageEditorAtom } from "@/features/editor/atoms/editor-atoms.ts";
-import AsideChatPanel from "@/ee/ai-chat/components/aside-chat-panel";
+import AsideChatPanel from "@/features/ai-chat/components/aside-chat-panel";
 import { PageDetailsAside } from "@/features/page-details/components/page-details-aside.tsx";
 import { ASIDE_PANEL_ID } from "@/hooks/use-toggle-aside.tsx";
 

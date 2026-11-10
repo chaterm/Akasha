@@ -3,12 +3,17 @@ import { WorkspaceService } from './services/workspace.service';
 import { WorkspaceController } from './controllers/workspace.controller';
 import { SpaceModule } from '../space/space.module';
 import { WorkspaceInvitationService } from './services/workspace-invitation.service';
+import { CompileWindowSettingsService } from './services/compile-window-settings.service';
 import { TokenModule } from '../auth/token.module';
 
 @Module({
   imports: [SpaceModule, TokenModule],
   controllers: [WorkspaceController],
-  providers: [WorkspaceService, WorkspaceInvitationService],
+  providers: [
+    WorkspaceService,
+    WorkspaceInvitationService,
+    CompileWindowSettingsService,
+  ],
   exports: [WorkspaceService],
 })
 export class WorkspaceModule {}

@@ -5,13 +5,11 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-
 CORPUS_ID_RULES: dict[str, str] = {
     "hotpotqa": "idx",
     "2wikimultihopqa": "row_idx",
     "musique": "row_idx",
     "narrativeqa": "idx",
-    "itfaq": "id",
 }
 
 
@@ -20,8 +18,18 @@ SAMPLE_ID_RULES: dict[str, str] = {
     "2wikimultihopqa": "native_id",
     "musique": "native_id",
     "narrativeqa": "row_idx",
-    "itfaq": "native_id",
 }
+
+LOCAL_CORPUS_ID_RULE = "id"
+LOCAL_SAMPLE_ID_RULE = "native_id"
+
+
+def corpus_id_rule(dataset: str) -> str:
+    return CORPUS_ID_RULES.get(dataset, LOCAL_CORPUS_ID_RULE)
+
+
+def sample_id_rule(dataset: str) -> str:
+    return SAMPLE_ID_RULES.get(dataset, LOCAL_SAMPLE_ID_RULE)
 
 
 class DependencyError(RuntimeError):
@@ -34,8 +42,6 @@ class SubsetStrategy(StrEnum):
     STRATIFIED_HOP = "stratified_by_hop"
 
     WHOLE_DOCS = "whole_documents"
-
-    FULL_CORPUS = "full_corpus"
 
 
 class DataDependency(StrEnum):
@@ -78,7 +84,6 @@ class CorpusDoc(BaseModel):
     text: str
 
     def to_markdown(self) -> str:
-
         first = self.text.lstrip().splitlines()[0] if self.text.strip() else ""
         if first == f"# {self.title}":
             return f"{self.text.strip()}\n"

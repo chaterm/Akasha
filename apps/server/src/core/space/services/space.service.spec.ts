@@ -126,5 +126,40 @@ describe('SpaceService personal spaces', () => {
       },
     );
   });
-});
 
+  it('stores the Space-wide knowledge publish mode and audits the change', async () => {
+    const service = createService();
+    service.spaceRepo.findById.mockResolvedValue({
+      id: 'team-1',
+      settings: { knowledge: { indexMode: 'compiled' } },
+    });
+    service.spaceRepo.updateKnowledgeSettings = jest
+      .fn()
+      .mockResolvedValue(undefined);
+    service.spaceRepo.updateSpace = jest
+      .fn()
+      .mockResolvedValue({ id: 'team-1' });
+    service.auditService = { log: jest.fn() };
+
+    await service.updateSpace(
+      { spaceId: 'team-1', knowledgeIndexMode: 'original' },
+      workspaceId,
+    );
+
+    expect(service.spaceRepo.updateKnowledgeSettings).toHaveBeenCalledWith(
+      'team-1',
+      workspaceId,
+      'indexMode',
+      'original',
+      expect.anything(),
+    );
+    expect(service.auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changes: {
+          before: { knowledgeIndexMode: 'compiled' },
+          after: { knowledgeIndexMode: 'original' },
+        },
+      }),
+    );
+  });
+});

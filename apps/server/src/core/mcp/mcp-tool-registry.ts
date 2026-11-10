@@ -7,6 +7,8 @@ export type McpToolContext = {
   user: User;
   workspace: Workspace;
   agentAccess?: AgentAccessContext;
+  /** Per-connection preferences, never an authorization grant. */
+  weeklyReportDefaults?: { templateId?: string; parentPageId?: string };
 };
 
 export type McpToolResult = {

@@ -139,18 +139,172 @@ describePostgres('force-reset PostgreSQL scope', () => {
     ).resolves.toEqual({ reset: false, reason: 'space_name_mismatch' });
     expect(await evidence(db)).toEqual(before);
   });
+
+  it('keeps page-level index overrides when rebuilding the whole Space', async () => {
+    await sql`
+      insert into pages (id, workspace_id, space_id, deleted_at) values
+        ('page-extra','workspace-1','space-control',null);
+      insert into knowledge_page_index_settings
+        (workspace_id, source_page_id, index_mode, updated_by) values
+        ('workspace-1','page-control','original','user-old'),
+        ('workspace-1','page-extra','compiled','user-old'),
+        ('workspace-1','page-target','original','user-old');
+    `.execute(db);
+
+    const result = await repo.forceResetAndCreateRun({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-control',
+      confirmationSpaceName: 'Control Space',
+      trigger: 'manual_compile',
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+      sources: [],
+      deferInitialization: true,
+    });
+    expect(result).toEqual(expect.objectContaining({ reset: true }));
+
+    const settings = await sql<{ sourcePageId: string; indexMode: string }>`
+      select source_page_id as "sourcePageId", index_mode as "indexMode"
+      from knowledge_page_index_settings
+      where workspace_id = 'workspace-1'
+      order by source_page_id
+    `.execute(db);
+
+    // Page-level publish modes survive the whole-Space rebuild.
+    expect(settings.rows).toEqual([
+      { sourcePageId: 'page-control', indexMode: 'original' },
+      { sourcePageId: 'page-extra', indexMode: 'compiled' },
+      { sourcePageId: 'page-target', indexMode: 'original' },
+    ]);
+  });
+
+  it('clears only the rebuilt Space deferred intent and prevents later promotion', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name)
+      values ('space-deferred-reset', 'workspace-1', 'Deferred Reset')
+    `.execute(db);
+    await repo.deferSpaceCompiles({
+      requests: [
+        { workspaceId: 'workspace-1', spaceId: 'space-deferred-reset' },
+        { workspaceId: 'workspace-2', spaceId: 'space-cross' },
+      ],
+    });
+
+    const result = await repo.forceResetAndRequestRun({
+      workspaceId: 'workspace-1',
+      spaceId: 'space-deferred-reset',
+      confirmationSpaceName: 'Deferred Reset',
+      trigger: 'manual_run',
+      compilerVersion: 'compiler-v1',
+      promptVersion: 'prompt-v1',
+    });
+
+    expect(result.reset).toBe(true);
+    const remaining = await sql<{ workspaceId: string; spaceId: string }>`
+      select workspace_id as "workspaceId", space_id as "spaceId"
+      from knowledge_space_deferred_compiles
+      order by workspace_id, space_id
+    `.execute(db);
+    expect(remaining.rows).toEqual([
+      { workspaceId: 'workspace-2', spaceId: 'space-cross' },
+    ]);
+    await expect(
+      repo.promoteDeferredSpaceCompiles({
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+        excludedWorkspaceIds: ['workspace-2'],
+      }),
+    ).resolves.toEqual({ selectedCount: 0, runRequestCount: 0 });
+  });
+
+  it('keeps deferred intents when the Space name confirmation fails', async () => {
+    await repo.deferSpaceCompiles({
+      requests: [{ workspaceId: 'workspace-2', spaceId: 'space-cross' }],
+    });
+    await expect(
+      repo.forceResetAndRequestRun({
+        workspaceId: 'workspace-2',
+        spaceId: 'space-cross',
+        confirmationSpaceName: 'Wrong name',
+        trigger: 'manual_run',
+        compilerVersion: 'compiler-v1',
+        promptVersion: 'prompt-v1',
+      }),
+    ).resolves.toEqual({ reset: false, reason: 'space_name_mismatch' });
+
+    const remaining = await sql<{ count: number }>`
+      select count(*)::integer as count
+      from knowledge_space_deferred_compiles
+      where workspace_id = 'workspace-2' and space_id = 'space-cross'
+    `.execute(db);
+    expect(remaining.rows[0].count).toBe(1);
+  });
+
+  it('rolls back deferred intent cleanup if creating the rebuild Run fails', async () => {
+    await sql`
+      insert into spaces (id, workspace_id, name)
+      values ('space-deferred-rollback', 'workspace-1', 'Deferred Rollback')
+    `.execute(db);
+    await repo.deferSpaceCompiles({
+      requests: [
+        { workspaceId: 'workspace-1', spaceId: 'space-deferred-rollback' },
+      ],
+    });
+
+    await expect(
+      repo.forceResetAndRequestRun({
+        workspaceId: 'workspace-1',
+        spaceId: 'space-deferred-rollback',
+        confirmationSpaceName: 'Deferred Rollback',
+        trigger: 'manual_run',
+        compilerVersion: 'compiler-v1',
+        promptVersion: null as never,
+      }),
+    ).rejects.toMatchObject({ code: '23502', column_name: 'prompt_version' });
+
+    const remaining = await sql<{ generation: number; intentCount: number }>`
+      select knowledge_generation as generation,
+             (select count(*)::integer from knowledge_space_deferred_compiles
+              where workspace_id = 'workspace-1'
+                and space_id = 'space-deferred-rollback') as "intentCount"
+      from spaces where id = 'space-deferred-rollback'
+    `.execute(db);
+    expect(remaining.rows[0]).toEqual({ generation: 0, intentCount: 1 });
+  });
 });
 
 async function createFixture(db: Kysely<unknown>): Promise<void> {
   await sql`
     create sequence run_seq;
     create sequence run_page_seq;
+    create sequence deferred_compile_seq;
+    create table knowledge_space_deferred_compiles (
+      id varchar primary key default ('deferred-' || nextval('deferred_compile_seq')),
+      workspace_id varchar not null, space_id varchar not null,
+      scan_removed_sources boolean not null default false,
+      request_count integer not null default 1, requested_by varchar,
+      first_requested_at timestamptz not null, last_requested_at timestamptz not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (workspace_id, space_id)
+    );
     create table spaces (
       id varchar primary key, workspace_id varchar not null, name varchar,
       knowledge_generation integer not null default 0,
       deleted_at timestamptz, updated_at timestamptz not null default now()
     );
-    create table pages (id varchar primary key, workspace_id varchar not null, space_id varchar not null);
+    create table pages (
+      id varchar primary key, workspace_id varchar not null,
+      space_id varchar not null, deleted_at timestamptz
+    );
+    create table knowledge_page_index_settings (
+      workspace_id varchar not null, source_page_id varchar not null,
+      index_mode varchar(32) not null default 'compiled',
+      updated_by varchar,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      primary key (workspace_id, source_page_id)
+    );
     create table knowledge_page_compile_schedules (
       id varchar primary key, workspace_id varchar not null,
       space_id varchar not null, source_page_id varchar not null,
@@ -209,7 +363,6 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
     create table knowledge_claims (id varchar primary key, knowledge_page_id varchar references knowledge_pages(id) on delete cascade);
     create table knowledge_chunks (id varchar primary key, knowledge_page_id varchar references knowledge_pages(id) on delete cascade);
     create table knowledge_links (id varchar primary key, from_knowledge_page_id varchar references knowledge_pages(id) on delete cascade);
-    create table knowledge_graph_edges (id varchar primary key, from_knowledge_page_id varchar references knowledge_pages(id) on delete cascade);
     create table knowledge_parent_sections (id varchar primary key, knowledge_page_id varchar references knowledge_pages(id) on delete cascade);
     create table knowledge_artifact_contributions (id varchar primary key, workspace_id varchar not null, space_id varchar not null);
     create table knowledge_sources (id varchar primary key, workspace_id varchar not null, source_space_id varchar not null);
@@ -233,7 +386,9 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       ('space-target','workspace-1','Target Space',3,null,now()),
       ('space-control','workspace-1','Control Space',7,null,now()),
       ('space-cross','workspace-2','Target Space',11,null,now());
-    insert into pages values ('page-target','workspace-1','space-target'),('page-control','workspace-1','space-control');
+    insert into pages (id, workspace_id, space_id) values
+      ('page-target','workspace-1','space-target'),
+      ('page-control','workspace-1','space-control');
     insert into knowledge_page_compile_schedules (
       id, workspace_id, space_id, source_page_id, trigger,
       first_changed_at, last_changed_at, eligible_at
@@ -253,7 +408,6 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
     insert into knowledge_claims values ('claim-target','kp-target'),('claim-control','kp-control');
     insert into knowledge_chunks values ('chunk-target','kp-target'),('chunk-control','kp-control');
     insert into knowledge_links values ('link-target','kp-target'),('link-control','kp-control');
-    insert into knowledge_graph_edges values ('edge-target','kp-target'),('edge-control','kp-control');
     insert into knowledge_parent_sections values ('section-target','kp-target'),('section-control','kp-control');
     insert into knowledge_artifact_contributions values ('contrib-target','workspace-1','space-target'),('contrib-control','workspace-1','space-control');
     insert into knowledge_sources values ('source-target','workspace-1','space-target'),('source-control','workspace-1','space-control');

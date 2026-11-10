@@ -3,7 +3,6 @@ import { KyselyDB } from '@akasha/db/types/kysely.types';
 import { Injectable } from '@nestjs/common';
 import { InjectKysely } from 'nestjs-kysely';
 
-
 export type KnowledgeQueryAuditTimings = {
   rewriteMs?: number;
   retrievalMs?: number;
@@ -14,22 +13,22 @@ export type KnowledgeQueryAuditTimings = {
 
 export type KnowledgeQueryAuditMetadata = {
   origin?:
-  | 'knowledge_query'
-  | 'ai_qa'
-  | 'mcp_query_knowledge'
-  | 'iself_knowledge_query';
+    | 'knowledge_query'
+    | 'ai_qa'
+    | 'mcp_query_knowledge'
+    | 'iself_knowledge_query';
   type?: 'user' | 'robot';
   personalApiKeyId?: string;
   publicApiKeyId?: string;
   answerMode?: 'knowledge' | 'no_match' | 'general';
   decisionReason?:
-  | 'explicit_general'
-  | 'raw_results_only'
-  | 'no_knowledge_evidence'
-  | 'model_general'
-  | 'model_no_match'
-  | 'knowledge'
-  | 'generation_empty';
+    | 'explicit_general'
+    | 'raw_results_only'
+    | 'no_knowledge_evidence'
+    | 'model_general'
+    | 'model_no_match'
+    | 'knowledge'
+    | 'generation_empty';
   generalAnswerReason?: string;
   citationCount?: number;
   retrievedSourceCount?: number;
@@ -54,7 +53,6 @@ export type KnowledgeQueryAuditMetadata = {
     selectedCount: number;
     expandedSeedCount: number;
     edgeCounts: {
-      semantic: number;
       link: number;
       'shared-source': number;
     };
@@ -124,7 +122,7 @@ export type KnowledgeRetrievalAuditSummary = {
 
 @Injectable()
 export class KnowledgeQueryAuditRepo {
-  constructor(@InjectKysely() private readonly db: KyselyDB) { }
+  constructor(@InjectKysely() private readonly db: KyselyDB) {}
 
   async recordQuery(input: {
     workspaceId: string;

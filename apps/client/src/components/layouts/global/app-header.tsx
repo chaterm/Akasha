@@ -22,7 +22,7 @@ import { useToggleSidebar } from "@/components/layouts/global/hooks/hooks/use-to
 import SidebarToggle from "@/components/ui/sidebar-toggle-button.tsx";
 import { useTranslation } from "react-i18next";
 import useTrial from "@/ee/hooks/use-trial.tsx";
-import { isCloud } from "@/lib/config.ts";
+import { getSpaceUrl, isCloud } from "@/lib/config.ts";
 import {
   SearchControl,
   SearchMobileControl,
@@ -35,7 +35,10 @@ import { NotificationPopover } from "@/features/notification/components/notifica
 import { workspaceAtom } from "@/features/user/atoms/current-user-atom.ts";
 import { BrandLogo, BrandWordmark } from "@/components/common/brand-logo.tsx";
 
-const links = [{ link: APP_ROUTE.HOME, label: "Home" }];
+const links = [
+  { link: APP_ROUTE.HOME, label: "Home" },
+  { link: getSpaceUrl("Akashadoc"), label: "User guide" },
+];
 
 export function AppHeader() {
   const { t } = useTranslation();

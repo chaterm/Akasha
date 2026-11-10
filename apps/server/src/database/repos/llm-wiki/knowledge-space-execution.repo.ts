@@ -1353,7 +1353,15 @@ export class KnowledgeSpaceExecutionRepo {
           NULL,
           NULL,
           NULL,
-          COALESCE(settings.index_mode, 'compiled'),
+          -- A locked Space mode wins, then the page setting, then 'compiled'.
+          COALESCE(
+            CASE
+              WHEN space.settings->'knowledge'->>'indexMode' IN ('compiled', 'original')
+                THEN space.settings->'knowledge'->>'indexMode'
+            END,
+            settings.index_mode,
+            'compiled'
+          ),
           NULL,
           'pending',
           'not_required',
@@ -1361,6 +1369,8 @@ export class KnowledgeSpaceExecutionRepo {
           ${now},
           ${now}
         FROM pages AS page
+        JOIN spaces AS space
+          ON space.id = page.space_id
         LEFT JOIN knowledge_page_index_settings AS settings
           ON settings.workspace_id = page.workspace_id
          AND settings.source_page_id = page.id

@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import Any
 
 from ..datasets import (
-    DATASET_NAMES,
     CanonicalSample,
+    dataset_names,
     load_corpus,
     resolve,
 )
@@ -75,7 +75,6 @@ def normalize_dataset(
 
 
 def validate_dataset(connection: sqlite3.Connection, name: str) -> list[str]:
-
     problems: list[str] = []
     record = data_store.get_dataset(connection, name)
     if record is None:
@@ -107,8 +106,8 @@ def validate_dataset(connection: sqlite3.Connection, name: str) -> list[str]:
 
 
 def run(ctx: TaskContext) -> None:
-    selected = list(ctx.params.get("datasets") or DATASET_NAMES)
-    unknown = sorted(set(selected) - set(DATASET_NAMES))
+    selected = list(ctx.params.get("datasets") or dataset_names())
+    unknown = sorted(set(selected) - set(dataset_names()))
     if unknown:
         raise ValueError(f"未知数据集：{unknown}")
 

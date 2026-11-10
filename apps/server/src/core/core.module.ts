@@ -28,6 +28,7 @@ import { McpModule } from './mcp/mcp.module';
 import { LegacyLinkModule } from './legacy-link/legacy-link.module';
 import { PageVisitModule } from './page-visit/page-visit.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { TemplateModule } from './template/template.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
     LegacyLinkModule,
     PageVisitModule,
     AnalyticsModule,
+    TemplateModule,
   ],
 })
 export class CoreModule implements NestModule {

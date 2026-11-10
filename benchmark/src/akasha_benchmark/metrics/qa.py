@@ -9,7 +9,6 @@ _ARTICLES = re.compile(r"\b(a|an|the)\b", re.UNICODE)
 _WHITESPACE = re.compile(r"\s+")
 _PUNCT_TABLE = str.maketrans("", "", string.punctuation)
 
-# 服务端给 general 模式回答注入的固定免责前缀，非模型输出，计分前剥掉。
 GENERAL_DISCLAIMERS = (
     "> 以下回答基于通用模型知识，未引用企业知识库。",
     (
@@ -28,7 +27,6 @@ def strip_general_disclaimer(text: str) -> str:
 
 
 def normalize_answer(text: str) -> str:
-
     lowered = text.lower()
     without_punct = lowered.translate(_PUNCT_TABLE)
     without_articles = _ARTICLES.sub(" ", without_punct)
@@ -40,12 +38,10 @@ def tokenize(text: str) -> list[str]:
 
 
 def exact_match(prediction: str, reference: str) -> float:
-
     return float(normalize_answer(prediction) == normalize_answer(reference))
 
 
 def token_f1(prediction: str, reference: str) -> float:
-
     pred_tokens = tokenize(prediction)
     ref_tokens = tokenize(reference)
 
@@ -62,7 +58,6 @@ def token_f1(prediction: str, reference: str) -> float:
 
 
 def score_answer(prediction: str, references: Sequence[str]) -> dict[str, float]:
-
     if not references:
         raise ValueError("score_answer requires at least one reference")
     prediction = strip_general_disclaimer(prediction or "")
@@ -73,7 +68,6 @@ def score_answer(prediction: str, references: Sequence[str]) -> dict[str, float]
 
 
 def answer_mode_distribution(modes: Sequence[str | None]) -> dict[str, float]:
-
     total = len(modes)
     if not total:
         return {}

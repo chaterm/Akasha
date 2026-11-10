@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { STORAGE_DRIVER_TOKEN } from './constants/storage.constants';
 import { StorageDriver } from './interfaces';
 import { Readable } from 'stream';
-import { createBoundedAbortSignal } from '../../ee/llm-wiki/services/knowledge-operation-budget';
+import { createBoundedAbortSignal } from '../../features/llm-wiki/services/knowledge-operation-budget';
 
 @Injectable()
 export class StorageService {

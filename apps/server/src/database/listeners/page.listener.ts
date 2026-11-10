@@ -1,16 +1,20 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { EventName } from '../../common/events/event.contants';
 import { InjectQueue } from '@nestjs/bullmq';
 import { QueueJob, QueueName } from '../../integrations/queue/constants';
 import { Queue } from 'bullmq';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
-import { KnowledgeSpaceCompilationRepo } from '../repos/llm-wiki/knowledge-space-compilation.repo';
+import {
+  KnowledgePageCompileScheduleTrigger,
+  KnowledgeSpaceCompilationRepo,
+} from '../repos/llm-wiki/knowledge-space-compilation.repo';
+import { KnowledgeCompileWindowRepo } from '../repos/llm-wiki/knowledge-compile-window.repo';
 import {
   DEFAULT_KNOWLEDGE_COMPILER_VERSION,
   KNOWLEDGE_PAGE_COMPILE_QUIET_PERIOD_MS,
   DEFAULT_KNOWLEDGE_PROMPT_VERSION,
-} from '../../ee/llm-wiki/llm-wiki.constants';
+} from '../../features/llm-wiki/llm-wiki.constants';
 
 export class PageEvent {
   pageIds: string[];
@@ -28,6 +32,8 @@ export class PageListener {
     @InjectQueue(QueueName.KNOWLEDGE_TEXT_QUEUE)
     private knowledgeQueue: Queue,
     private readonly runRepo: KnowledgeSpaceCompilationRepo,
+    @Optional()
+    private readonly compileWindowRepo?: KnowledgeCompileWindowRepo,
   ) {}
 
   @OnEvent(EventName.PAGE_CREATED)
@@ -101,6 +107,12 @@ export class PageListener {
       'source_artifacts',
     );
     await this.enqueueKnowledgeAccessReindex(workspaceId, pageIds);
+    if (await this.compileWindowRepo?.isEnabled(workspaceId)) {
+      // With the night window on, a restore queues like an edit and the
+      // promotion gate decides when it runs.
+      await this.scheduleKnowledgeRuns(workspaceId, pageIds, 'page_restored');
+      return;
+    }
     await this.requestKnowledgeRuns(workspaceId, pageIds, false);
   }
 
@@ -176,20 +188,27 @@ export class PageListener {
   private async scheduleKnowledgeRuns(
     workspaceId: string,
     pageIds: string[],
-    trigger: 'page_created' | 'page_updated',
+    trigger: KnowledgePageCompileScheduleTrigger,
   ): Promise<void> {
     if (!workspaceId || pageIds.length === 0) return;
+
+    // The one-hour quiet period only applies without a night window; with
+    // one, the window alone decides when queued pages compile.
+    const quietPeriodMs = (await this.compileWindowRepo?.isEnabled(workspaceId))
+      ? 0
+      : KNOWLEDGE_PAGE_COMPILE_QUIET_PERIOD_MS;
 
     const scheduledPageCount =
       await this.runRepo.scheduleIncrementalCompileForPages({
         workspaceId,
         sourcePageIds: pageIds,
         trigger,
-        quietPeriodMs: KNOWLEDGE_PAGE_COMPILE_QUIET_PERIOD_MS,
+        quietPeriodMs,
       });
     this.logger.log({
       event: 'knowledge_pages_debounce_scheduled',
       trigger,
+      quietPeriodMs,
       requestedPageCount: pageIds.length,
       scheduledPageCount,
     });

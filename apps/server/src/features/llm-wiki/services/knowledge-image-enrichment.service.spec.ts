@@ -1,0 +1,583 @@
+import { AttachmentRepo } from '@akasha/db/repos/attachment/attachment.repo';
+import { KnowledgeImageExtractionRepo } from '@akasha/db/repos/llm-wiki/knowledge-image-extraction.repo';
+import { EnvironmentService } from '../../../integrations/environment/environment.service';
+import { StorageService } from '../../../integrations/storage/storage.service';
+import {
+  KnowledgeSourceImage,
+  KnowledgeSourceSnapshot,
+} from '../types/source-snapshot.types';
+import {
+  KnowledgeImageUnderstandingError,
+  KnowledgeImageUnderstandingProvider,
+} from './knowledge-image-understanding-provider.service';
+import { MAX_KNOWLEDGE_IMAGES_PER_PAGE } from '../llm-wiki.constants';
+import { KnowledgeImageEnrichmentService } from './knowledge-image-enrichment.service';
+
+const pngBytes = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+const gifBytes = Buffer.from(
+  'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==',
+  'base64',
+);
+
+describe('KnowledgeImageEnrichmentService', () => {
+  it('reads current ready image knowledge without calling the vision provider', async () => {
+    const fixture = createFixture();
+    fixture.extractionRepo.findCurrentReadyForSnapshotImages.mockResolvedValue([
+      {
+        ...extraction({
+          status: 'ready',
+          ocrText: 'cached OCR',
+          caption: 'cached caption',
+        }),
+        workspaceId: 'workspace-1',
+        attachmentId: 'image-1',
+        attachmentVersion: new Date('2026-07-27T00:01:00.000Z'),
+        currentAttachmentVersion: new Date('2026-07-27T00:01:00.000Z'),
+        attachmentWorkspaceId: 'workspace-1',
+        attachmentSpaceId: 'space-1',
+        attachmentPageId: 'page-1',
+        cacheFingerprint: 'sha256:cache',
+        contentHash: 'sha256:image',
+        model: 'sha256:provider-identity',
+        promptVersion: 'akasha-page-image-understanding-v1',
+      },
+    ]);
+
+    const result = await fixture.service.readReadySource(source('正文'));
+
+    expect(result.source.text).toContain('cached OCR');
+    expect(result.readyExtractionIds).toEqual(['extraction-1']);
+    expect(fixture.provider.describe).not.toHaveBeenCalled();
+    expect(fixture.storageService.read).not.toHaveBeenCalled();
+  });
+
+  it('rebuilds the merge input from frozen extraction ids without drift', async () => {
+    const fixture = createFixture();
+    fixture.extractionRepo.findReadyByIds.mockResolvedValue([
+      {
+        ...extraction({
+          id: 'extraction-1',
+          status: 'ready',
+          ocrText: 'frozen OCR',
+          caption: 'frozen caption',
+        }),
+        workspaceId: 'workspace-1',
+        attachmentId: 'image-1',
+        attachmentVersion: new Date('2026-07-27T00:01:00.000Z'),
+        currentAttachmentVersion: new Date('2026-07-27T00:01:00.000Z'),
+        attachmentWorkspaceId: 'workspace-1',
+        attachmentSpaceId: 'space-1',
+        attachmentPageId: 'page-1',
+        cacheFingerprint: 'sha256:cache',
+        contentHash: 'sha256:image',
+        model: 'sha256:provider-identity',
+        promptVersion: 'akasha-page-image-understanding-v1',
+      },
+    ]);
+
+    const result = await fixture.service.readFrozenSource(source('正文'), [
+      'extraction-1',
+    ]);
+
+    expect(result.source.text).toContain('frozen OCR');
+    expect(result.readyExtractionIds).toEqual(['extraction-1']);
+    expect(result.missingExtractionIds).toEqual([]);
+    // Reads by frozen id, never the live "currently ready" lookup.
+    expect(
+      fixture.extractionRepo.findCurrentReadyForSnapshotImages,
+    ).not.toHaveBeenCalled();
+    expect(fixture.extractionRepo.findReadyByIds).toHaveBeenCalledWith(
+      expect.objectContaining({ extractionIds: ['extraction-1'] }),
+    );
+  });
+
+  it('reports a missing id when a frozen extraction can no longer be reproduced', async () => {
+    const fixture = createFixture();
+    // The frozen extraction id resolves to nothing (deleted, identity changed,
+    // or re-extracted): findReadyByIds returns no matching row.
+    fixture.extractionRepo.findReadyByIds.mockResolvedValue([]);
+
+    const result = await fixture.service.readFrozenSource(source('正文'), [
+      'extraction-frozen',
+    ]);
+
+    expect(result.readyImages).toEqual([]);
+    expect(result.readyExtractionIds).toEqual([]);
+    expect(result.missingExtractionIds).toEqual(['extraction-frozen']);
+  });
+
+  it('returns explicit terminal counters for a ready cache hit', async () => {
+    const fixture = createFixture();
+    fixture.extractionRepo.claim.mockResolvedValue({
+      state: 'ready',
+      extraction: extraction({
+        status: 'ready',
+        ocrText: 'ready text',
+        caption: '',
+      }),
+    });
+
+    const result = await fixture.service.enrichSource(source());
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        expected: 1,
+        succeeded: 1,
+        failed: 0,
+        skipped: 0,
+        retryableFailureCount: 0,
+        readyExtractionIds: ['extraction-1'],
+      }),
+    );
+    expect(fixture.provider.describe).not.toHaveBeenCalled();
+  });
+
+  it('uses a ready leased cache entry and appends searchable image text', async () => {
+    const fixture = createFixture();
+    fixture.extractionRepo.claim.mockResolvedValue({
+      state: 'ready',
+      extraction: extraction({
+        status: 'ready',
+        ocrText: '数据库连接超时',
+        caption: '监控面板显示连接池耗尽',
+      }),
+    });
+
+    const result = await fixture.service.enrichSource(source());
+
+    expect(result.succeededCount).toBe(1);
+    expect(result.cacheHitCount).toBe(1);
+    expect(result.source.text).toContain('页面图片识别内容');
+    expect(result.source.text).toContain('数据库连接超时');
+    expect(result.source.text).toContain('监控面板显示连接池耗尽');
+    expect(fixture.provider.describe).not.toHaveBeenCalled();
+  });
+
+  it('normalizes an owned image, invokes the model, and publishes under its lease', async () => {
+    const fixture = createFixture();
+    fixture.provider.describe.mockResolvedValue({
+      ocrText: 'Error rate 8%',
+      caption: 'A service reliability dashboard.',
+    });
+
+    const result = await fixture.service.enrichSource(source('正文'));
+
+    expect(fixture.storageService.read).toHaveBeenCalledWith(
+      'workspace-1/image-1/dashboard.png',
+    );
+    expect(fixture.provider.describe).toHaveBeenCalledWith({
+      bytes: expect.any(Buffer),
+      mimeType: 'image/png',
+      fileName: 'dashboard.png',
+      altText: 'Dashboard',
+    });
+    const providerBytes = fixture.provider.describe.mock.calls[0][0].bytes;
+    expect(providerBytes.subarray(0, 8)).toEqual(pngBytes.subarray(0, 8));
+    expect(fixture.extractionRepo.claim).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'workspace-1',
+        attachmentId: 'image-1',
+        attachmentVersion: new Date('2026-07-27T00:01:00.000Z'),
+        cacheFingerprint: expect.stringMatching(/^sha256:/),
+        model: 'sha256:provider-identity',
+        promptVersion: 'akasha-page-image-understanding-v1',
+      }),
+      150_000,
+    );
+    expect(fixture.extractionRepo.completeSuccess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        extractionId: 'extraction-1',
+        leaseToken: 'lease-1',
+        mimeType: 'image/png',
+        ocrText: 'Error rate 8%',
+      }),
+    );
+    expect(result.source.text).toContain('正文');
+    expect(result.source.text).toContain('Error rate 8%');
+  });
+
+  it('forwards cancellation to storage and VLM and never publishes after abort', async () => {
+    const fixture = createFixture();
+    const parent = new AbortController();
+    fixture.provider.describe.mockImplementation(async () => {
+      parent.abort(new Error('page deadline'));
+      throw parent.signal.reason;
+    });
+
+    await expect(
+      fixture.service.enrichSource(source(), {
+        abortSignal: parent.signal,
+      }),
+    ).rejects.toThrow('page deadline');
+
+    expect(fixture.storageService.read).toHaveBeenCalledWith(
+      'workspace-1/image-1/dashboard.png',
+      { abortSignal: parent.signal },
+    );
+    expect(fixture.provider.describe).toHaveBeenCalledWith(
+      expect.objectContaining({ mimeType: 'image/png' }),
+      parent.signal,
+    );
+    expect(fixture.extractionRepo.completeSuccess).not.toHaveBeenCalled();
+    expect(fixture.extractionRepo.completeFailure).not.toHaveBeenCalled();
+  });
+
+  it('converts a GIF first frame to PNG before calling the vision model', async () => {
+    const fixture = createFixture({ bytes: gifBytes });
+    fixture.provider.describe.mockResolvedValue({
+      ocrText: '',
+      caption: 'A small graphic.',
+    });
+
+    await fixture.service.enrichSource(
+      source('', { mimeType: 'image/gif', fileName: 'pixel.gif' }),
+    );
+
+    expect(fixture.provider.describe).toHaveBeenCalledWith(
+      expect.objectContaining({ mimeType: 'image/png' }),
+    );
+  });
+
+  it('keeps normal page text compilable and applies backoff when one image fails', async () => {
+    const fixture = createFixture();
+    fixture.provider.describe.mockRejectedValue(
+      new KnowledgeImageUnderstandingError(
+        'timeout',
+        'Knowledge image understanding provider timed out.',
+        true,
+      ),
+    );
+
+    const result = await fixture.service.enrichSource(source('正文仍然可用'));
+
+    expect(result.source.text).toBe('正文仍然可用');
+    expect(result.failedCount).toBe(1);
+    expect(result.retryableFailureCount).toBe(1);
+    expect(result.warnings).toEqual([
+      expect.objectContaining({ attachmentId: 'image-1', code: 'timeout' }),
+    ]);
+    expect(fixture.extractionRepo.completeFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        extractionId: 'extraction-1',
+        leaseToken: 'lease-1',
+        errorCode: 'timeout',
+        retryable: true,
+        retryAfter: expect.any(Date),
+      }),
+    );
+  });
+
+  it('continues in source order after a permanent failure', async () => {
+    const fixture = createFixture();
+    const twoImages = source('正文');
+    twoImages.images = [
+      twoImages.images![0],
+      {
+        ...twoImages.images![0],
+        attachmentId: 'image-2',
+        fileName: 'second.png',
+        attachmentVersion: '2026-07-27T00:02:00.000Z',
+      },
+    ];
+    fixture.attachmentRepo.findByIds.mockResolvedValue([
+      attachment({
+        id: 'image-2',
+        fileName: 'second.png',
+        filePath: 'workspace-1/image-2/second.png',
+        updatedAt: new Date('2026-07-27T00:02:00.000Z'),
+      }),
+      attachment(),
+    ]);
+    fixture.extractionRepo.claim
+      .mockResolvedValueOnce({
+        state: 'failed',
+        extraction: extraction({
+          id: 'failed-1',
+          status: 'failed',
+          retryable: false,
+          errorCode: 'unsupported_image',
+        }),
+      })
+      .mockResolvedValueOnce({
+        state: 'ready',
+        extraction: extraction({
+          id: 'ready-2',
+          status: 'ready',
+          ocrText: 'second image text',
+        }),
+      });
+
+    const result = await fixture.service.enrichSource(twoImages);
+
+    expect(
+      fixture.extractionRepo.claim.mock.calls.map(
+        (call) => call[0].attachmentId,
+      ),
+    ).toEqual(['image-1', 'image-2']);
+    expect(result).toEqual(
+      expect.objectContaining({
+        expected: 2,
+        succeeded: 1,
+        failed: 1,
+        skipped: 0,
+        retryableFailureCount: 0,
+        readyExtractionIds: ['ready-2'],
+      }),
+    );
+  });
+
+  it('marks images beyond the safety limit terminal skipped without retrying', async () => {
+    const fixture = createFixture();
+    const many = source('正文');
+    many.images = Array.from(
+      { length: MAX_KNOWLEDGE_IMAGES_PER_PAGE + 1 },
+      (_, index) => ({
+        ...many.images![0],
+        attachmentId: `image-${index + 1}`,
+      }),
+    );
+    fixture.attachmentRepo.findByIds.mockResolvedValue(
+      many.images.slice(0, MAX_KNOWLEDGE_IMAGES_PER_PAGE).map((image) =>
+        attachment({
+          id: image.attachmentId,
+          filePath: `workspace-1/${image.attachmentId}/dashboard.png`,
+        }),
+      ),
+    );
+    fixture.extractionRepo.claim.mockImplementation(async (input) => ({
+      state: 'ready',
+      extraction: extraction({
+        id: `extraction-${input.attachmentId}`,
+        status: 'ready',
+        ocrText: input.attachmentId,
+      }),
+    }));
+
+    const result = await fixture.service.enrichSource(many);
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        expected: MAX_KNOWLEDGE_IMAGES_PER_PAGE + 1,
+        succeeded: MAX_KNOWLEDGE_IMAGES_PER_PAGE,
+        failed: 0,
+        skipped: 1,
+        retryableFailureCount: 0,
+      }),
+    );
+    expect(fixture.extractionRepo.claim).toHaveBeenCalledTimes(
+      MAX_KNOWLEDGE_IMAGES_PER_PAGE,
+    );
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({ code: 'skipped_limit' }),
+    );
+  });
+
+  it('treats images at the safety limit as complete rather than incomplete', async () => {
+    const fixture = createFixture();
+    const fifty = source('正文');
+    fifty.images = Array.from(
+      { length: MAX_KNOWLEDGE_IMAGES_PER_PAGE },
+      (_, index) => ({
+        ...fifty.images![0],
+        attachmentId: `image-${index + 1}`,
+      }),
+    );
+    fixture.attachmentRepo.findByIds.mockResolvedValue(
+      fifty.images.map((image) =>
+        attachment({
+          id: image.attachmentId,
+          filePath: `workspace-1/${image.attachmentId}/dashboard.png`,
+        }),
+      ),
+    );
+    fixture.extractionRepo.claim.mockImplementation(async (input) => ({
+      state: 'ready',
+      extraction: extraction({
+        id: `extraction-${input.attachmentId}`,
+        status: 'ready',
+        ocrText: input.attachmentId,
+      }),
+    }));
+
+    const result = await fixture.service.enrichSource(fifty);
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        expected: MAX_KNOWLEDGE_IMAGES_PER_PAGE,
+        succeeded: MAX_KNOWLEDGE_IMAGES_PER_PAGE,
+        failed: 0,
+        skipped: 0,
+        retryableFailureCount: 0,
+      }),
+    );
+  });
+
+  it('does not retry a failure still in database backoff', async () => {
+    const fixture = createFixture();
+    fixture.extractionRepo.claim.mockResolvedValue({
+      state: 'failed',
+      extraction: extraction({
+        status: 'failed',
+        retryable: true,
+        retryAfter: new Date(Date.now() + 30_000),
+        errorCode: 'timeout',
+      }),
+    });
+
+    const result = await fixture.service.enrichSource(source('正文'));
+
+    expect(fixture.provider.describe).not.toHaveBeenCalled();
+    expect(result.warnings).toEqual([
+      expect.objectContaining({ code: 'image_retry_backoff' }),
+    ]);
+  });
+
+  it('rejects spoofed non-image bytes before claiming or calling the model', async () => {
+    const fixture = createFixture({ bytes: Buffer.from('<svg></svg>') });
+
+    const result = await fixture.service.enrichSource(source('正文'));
+
+    expect(fixture.extractionRepo.claim).not.toHaveBeenCalled();
+    expect(fixture.provider.describe).not.toHaveBeenCalled();
+    expect(result.warnings).toEqual([
+      expect.objectContaining({ code: 'unsupported_image' }),
+    ]);
+  });
+
+  it('does not read an attachment whose ownership or version no longer matches', async () => {
+    const fixture = createFixture({ pageId: 'other-page' });
+
+    const result = await fixture.service.enrichSource(source());
+
+    expect(fixture.storageService.read).not.toHaveBeenCalled();
+    expect(fixture.provider.describe).not.toHaveBeenCalled();
+    expect(result.warnings).toEqual([
+      expect.objectContaining({ code: 'image_changed' }),
+    ]);
+  });
+
+  it('degrades safely when the vision provider is not configured', async () => {
+    const fixture = createFixture();
+    fixture.provider.isConfigured.mockReturnValue(false);
+
+    const result = await fixture.service.enrichSource(source('正文'));
+
+    expect(result.source.text).toBe('正文');
+    expect(result.failedCount).toBe(1);
+    expect(result.warnings[0]?.code).toBe('vision_model_not_configured');
+    expect(fixture.attachmentRepo.findByIds).not.toHaveBeenCalled();
+  });
+});
+
+function source(
+  text = '',
+  overrides: Partial<KnowledgeSourceImage> = {},
+): KnowledgeSourceSnapshot {
+  return {
+    workspaceId: 'workspace-1',
+    spaceId: 'space-1',
+    sourcePageId: 'page-1',
+    sourceVersion: '2026-07-27T00:00:00.000Z',
+    contentHash: 'sha256:page',
+    title: 'Dashboard',
+    text,
+    images: [
+      {
+        attachmentId: 'image-1',
+        fileName: 'dashboard.png',
+        mimeType: 'image/png',
+        fileSize: 1024,
+        attachmentVersion: '2026-07-27T00:01:00.000Z',
+        altText: 'Dashboard',
+        ...overrides,
+      },
+    ],
+    references: [],
+  };
+}
+
+function extraction(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'extraction-1',
+    status: 'processing',
+    attemptCount: 1,
+    ocrText: null,
+    caption: null,
+    retryable: null,
+    retryAfter: null,
+    errorCode: null,
+    ...overrides,
+  };
+}
+
+function attachment(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'image-1',
+    workspaceId: 'workspace-1',
+    spaceId: 'space-1',
+    pageId: 'page-1',
+    type: 'file',
+    fileName: 'dashboard.png',
+    filePath: 'workspace-1/image-1/dashboard.png',
+    fileExt: '.png',
+    fileSize: 1024,
+    mimeType: 'image/png',
+    updatedAt: new Date('2026-07-27T00:01:00.000Z'),
+    deletedAt: null,
+    ...overrides,
+  };
+}
+
+function createFixture(overrides?: { pageId?: string; bytes?: Buffer }) {
+  const attachmentRepo = {
+    findByIds: jest
+      .fn()
+      .mockResolvedValue([
+        attachment({ pageId: overrides?.pageId ?? 'page-1' }),
+      ]),
+  };
+  const extractionRepo = {
+    findCurrentReadyForSnapshotImages: jest.fn().mockResolvedValue([]),
+    findReadyByIds: jest.fn().mockResolvedValue([]),
+    claim: jest.fn().mockResolvedValue({
+      state: 'claimed',
+      extraction: extraction(),
+      leaseToken: 'lease-1',
+    }),
+    completeSuccess: jest
+      .fn()
+      .mockResolvedValue(extraction({ status: 'ready' })),
+    completeFailure: jest
+      .fn()
+      .mockResolvedValue(extraction({ status: 'failed' })),
+  };
+  const storageService = {
+    read: jest.fn().mockResolvedValue(overrides?.bytes ?? pngBytes),
+  };
+  const environmentService = {
+    getKnowledgeImageTimeoutMs: jest.fn().mockReturnValue(120_000),
+  };
+  const provider = {
+    isConfigured: jest.fn().mockReturnValue(true),
+    getCacheIdentity: jest.fn().mockReturnValue('sha256:provider-identity'),
+    describe: jest.fn(),
+  };
+  const service = new KnowledgeImageEnrichmentService(
+    attachmentRepo as unknown as AttachmentRepo,
+    extractionRepo as unknown as KnowledgeImageExtractionRepo,
+    storageService as unknown as StorageService,
+    environmentService as unknown as EnvironmentService,
+    provider as unknown as KnowledgeImageUnderstandingProvider,
+  );
+  return {
+    service,
+    attachmentRepo,
+    extractionRepo,
+    storageService,
+    environmentService,
+    provider,
+  };
+}

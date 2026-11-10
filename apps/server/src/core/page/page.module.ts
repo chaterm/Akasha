@@ -10,6 +10,7 @@ import { WatcherModule } from '../watcher/watcher.module';
 import { TransclusionModule } from './transclusion/transclusion.module';
 import { LabelModule } from '../label/label.module';
 import { PageAuthorMigrationService } from './services/page-author-migration.service';
+import { PageAttachmentRehomeService } from '../attachment/services/page-attachment-rehome.service';
 
 @Module({
   controllers: [PageController],
@@ -19,6 +20,7 @@ import { PageAuthorMigrationService } from './services/page-author-migration.ser
     TrashCleanupService,
     BacklinkService,
     PageAuthorMigrationService,
+    PageAttachmentRehomeService,
   ],
   exports: [PageService, PageHistoryService],
   imports: [

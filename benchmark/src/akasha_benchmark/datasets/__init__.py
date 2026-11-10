@@ -1,34 +1,37 @@
-from .base import DatasetAdapter
-from .corpus import CorpusIndex, load_corpus
+from .corpus import load_corpus
+from .local import LocalAdapter
 from .models import (
-    CORPUS_ID_RULES,
-    SAMPLE_ID_RULES,
     CanonicalSample,
     CorpusDoc,
     DataDependency,
     DependencyError,
     SubsetStrategy,
-    make_sample_id,
 )
-from .registry import ADAPTER_CLASSES, DATASET_NAMES, all_adapters, get_adapter
-from .resolver import ResolvedDataset, resolve
+from .registry import (
+    DATASET_NAMES,
+    all_adapters,
+    dataset_dir,
+    dataset_names,
+    get_adapter,
+    is_local_name,
+    local_names,
+)
+from .resolver import resolve
 
 __all__ = [
-    "ADAPTER_CLASSES",
-    "CORPUS_ID_RULES",
     "DATASET_NAMES",
-    "SAMPLE_ID_RULES",
     "CanonicalSample",
     "CorpusDoc",
-    "CorpusIndex",
     "DataDependency",
-    "DatasetAdapter",
     "DependencyError",
-    "ResolvedDataset",
+    "LocalAdapter",
     "SubsetStrategy",
     "all_adapters",
+    "dataset_dir",
+    "dataset_names",
     "get_adapter",
+    "is_local_name",
     "load_corpus",
-    "make_sample_id",
+    "local_names",
     "resolve",
 ]

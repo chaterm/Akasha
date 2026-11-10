@@ -12,6 +12,7 @@ import { useClipboard } from "@/hooks/use-clipboard";
 import { getInviteLink } from "@/features/workspace/services/workspace-service.ts";
 import useUserRole from "@/hooks/use-user-role.tsx";
 import { isCloud } from "@/lib/config.ts";
+import { notifyError } from "@/lib/errors";
 
 interface Props {
   invitationId: string;
@@ -31,10 +32,7 @@ export default function InviteActionMenu({ invitationId }: Props) {
       clipboard.copy(inviteLink);
       notifications.show({ message: t("Link copied") });
     } catch (err) {
-      notifications.show({
-        message: err["response"]?.data?.message,
-        color: "red",
-      });
+      notifyError(err, "Failed to copy invite link");
     }
   };
 

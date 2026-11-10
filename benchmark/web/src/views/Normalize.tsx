@@ -79,7 +79,7 @@ export function Normalize({ onOpenTasks }: { onOpenTasks: () => void }) {
           </div>
           {ready.length < data.datasets.length && (
             <div className="note warn">
-              有 {data.datasets.length - ready.length} 组的原始文件还没就绪，请先在「数据集」页下载。
+              有 {data.datasets.length - ready.length} 组的原始文件还没就绪，请先在「数据集」页下载或生成样本。
             </div>
           )}
         </div>

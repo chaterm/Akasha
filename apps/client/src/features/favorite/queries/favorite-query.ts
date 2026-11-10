@@ -40,7 +40,6 @@ export function useFavoriteIds(type: FavoriteType, spaceId?: string): Set<string
 function getEntityId(variables: ToggleFavoriteParams): string | undefined {
   if (variables.type === "page") return variables.pageId;
   if (variables.type === "space") return variables.spaceId;
-  if (variables.type === "template") return variables.templateId;
   return undefined;
 }
 

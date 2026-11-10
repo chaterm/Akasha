@@ -54,7 +54,7 @@ import {
 import { mobileSidebarAtom } from "@/components/layouts/global/hooks/atoms/sidebar-atom.ts";
 import { useToggleSidebar } from "@/components/layouts/global/hooks/hooks/use-toggle-sidebar.ts";
 import { searchSpotlight } from "@/features/search/constants";
-import TemplatePickerModal from "@/ee/template/components/template-picker-modal";
+import { TemplateQuickPicker } from "@/features/template/components/template-quick-picker";
 import { useHasFeature } from "@/ee/hooks/use-feature";
 import { Feature } from "@/ee/features";
 import { ErrorBoundary } from "react-error-boundary";
@@ -73,6 +73,11 @@ export function SpaceSidebar() {
   const spaceRules = space?.membership?.permissions;
   const spaceAbility = useSpaceAbility(spaceRules);
   const { handleCreate } = useTreeMutation(space?.id ?? "");
+  const hasTemplates = useHasFeature(Feature.TEMPLATES);
+  const [
+    templatePickerOpened,
+    { open: openTemplatePicker, close: closeTemplatePicker },
+  ] = useDisclosure(false);
 
   if (!space) {
     return <></>;
@@ -177,6 +182,28 @@ export function SpaceSidebar() {
                 </div>
               </UnstyledButton>
             )}
+
+            {hasTemplates &&
+              spaceAbility.can(SpaceCaslAction.Manage, SpaceCaslSubject.Page) && (
+                <UnstyledButton
+                  className={classes.menu}
+                  onClick={() => {
+                    openTemplatePicker();
+                    if (mobileSidebarOpened) {
+                      toggleMobileSidebar();
+                    }
+                  }}
+                >
+                  <div className={classes.menuItemInner}>
+                    <IconTemplate
+                      size={18}
+                      className={classes.menuItemIcon}
+                      stroke={2}
+                    />
+                    <span>{t("New from template")}</span>
+                  </div>
+                </UnstyledButton>
+              )}
           </div>
         </div>
 
@@ -231,6 +258,27 @@ export function SpaceSidebar() {
         onClose={closeSettings}
         spaceId={space?.slug}
       />
+
+      {hasTemplates && templatePickerOpened && (
+        <ErrorBoundary fallbackRender={() => null}>
+          <TemplateQuickPicker
+            opened={templatePickerOpened}
+            onClose={closeTemplatePicker}
+            title={t("New page from template")}
+            confirmLabel={t("Create page")}
+            preferredSpaceId={space.id}
+            restrictToSpaceId={space.id}
+            onConfirm={async (template) => {
+              try {
+                await handleCreate(null, { templateId: template.id });
+                closeTemplatePicker();
+              } catch {
+                // 错误提示已在 handleCreate 内处理，保持选择器打开以便重试
+              }
+            }}
+          />
+        </ErrorBoundary>
+      )}
     </>
   );
 }
@@ -251,12 +299,6 @@ function SpaceMenu({
     useDisclosure(false);
   const [exportOpened, { open: openExportModal, close: closeExportModal }] =
     useDisclosure(false);
-  const [
-    templatePickerOpened,
-    { open: openTemplatePicker, close: closeTemplatePicker },
-  ] = useDisclosure(false);
-  const hasTemplates = useHasFeature(Feature.TEMPLATES);
-
   const { data: watchStatus } = useSpaceWatchStatusQuery(spaceId);
   const watchMutation = useWatchSpaceMutation();
   const unwatchMutation = useUnwatchSpaceMutation();
@@ -325,18 +367,6 @@ function SpaceMenu({
             {isWatching ? t("Stop watching space") : t("Watch space")}
           </Menu.Item>
 
-          {canManagePages && hasTemplates && (
-            <>
-              <Menu.Divider />
-              <Menu.Item
-                onClick={openTemplatePicker}
-                leftSection={<IconTemplate size={16} />}
-              >
-                {t("Templates")}
-              </Menu.Item>
-            </>
-          )}
-
           {canManagePages && (
             <>
               <Menu.Divider />
@@ -393,15 +423,6 @@ function SpaceMenu({
         </>
       )}
 
-      {hasTemplates && templatePickerOpened && (
-        <ErrorBoundary fallbackRender={() => null}>
-          <TemplatePickerModal
-            opened={templatePickerOpened}
-            onClose={closeTemplatePicker}
-            initialSpaceId={spaceId}
-          />
-        </ErrorBoundary>
-      )}
     </>
   );
 }

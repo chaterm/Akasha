@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import queue
 import random
 import re
 import sqlite3
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -13,21 +12,23 @@ from typing import Any
 
 import httpx
 
+from .. import naming
 from ..akasha_client import (
     ACTIVE_RUN_STATUSES,
     AkashaClient,
     AkashaError,
+    client_pool,
+    latest_run_pages,
     validate_cancel_result,
 )
 from ..config import AkashaConfig, load_config
 from ..datasets import (
-    DATASET_NAMES,
     CorpusDoc,
     DataDependency,
     SubsetStrategy,
+    dataset_names,
     get_adapter,
 )
-from .. import naming
 from ..model_configs import matches
 from ..store import compile_store, data_store, dumps, loads, transaction
 from ..task import Paused, TaskContext
@@ -52,17 +53,56 @@ class CompileOptions:
 
 
 POLL_INTERVAL_SECONDS = 30.0
+COMPILE_FEATURES = ("compiler", "embedding", "image")
 _MARKDOWN_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 _MARKDOWN_HEADING = re.compile(r"^\s*#+\s*.*$", re.MULTILINE)
 
 
 def default_seed() -> int:
-
     return int(datetime.now(UTC).strftime("%Y%m%d"))
 
 
-def _largest_remainder(weights: dict[str, int], total: int) -> dict[str, int]:
+def _run_id(run: dict[str, Any]) -> str:
+    return str(run.get("runId") or run.get("id") or "")
 
+
+def _text_count(run: dict[str, Any], key: str) -> int:
+    return int((run.get("progress") or {}).get("text", {}).get(key) or 0)
+
+
+def _progress_of(runs: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        key: sum(_text_count(run, key) for run in runs)
+        for key in ("expected", "succeeded", "failed", "skipped")
+    }
+
+
+def _status_counts(runs: list[dict[str, Any]]) -> dict[str, int]:
+    return dict(Counter(str(run.get("status") or "unknown") for run in runs))
+
+
+def _drifted(left: Any, right: Any) -> list[str]:
+    return [feature for feature in COMPILE_FEATURES if not matches(left, right, feature)]
+
+
+def _sorted_samples(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(samples, key=lambda s: s["sample_id"])
+
+
+def _sample(samples: list[dict[str, Any]], limit: int, rng: random.Random) -> list[dict[str, Any]]:
+    return _sorted_samples(rng.sample(_sorted_samples(samples), min(limit, len(samples))))
+
+
+def _with_negatives(
+    picked: list[dict[str, Any]], usable_doc_ids: set[str], ratio: float, rng: random.Random
+) -> tuple[list[str], list[str], list[str]]:
+    gold_ids = sorted({doc_id for sample in picked for doc_id in sample["gold_doc_ids"]})
+    pool = sorted(usable_doc_ids - set(gold_ids))
+    negatives = sorted(rng.sample(pool, min(round(len(gold_ids) * ratio), len(pool))))
+    return gold_ids, negatives, sorted(set(gold_ids) | set(negatives))
+
+
+def _largest_remainder(weights: dict[str, int], total: int) -> dict[str, int]:
     pool = sum(weights.values())
     if pool == 0:
         return dict.fromkeys(weights, 0)
@@ -97,14 +137,12 @@ def _stratified(
 
 
 def _safe_doc_id(doc_id: str) -> str:
-
     if not doc_id or doc_id in {".", ".."} or set(doc_id) & set('/\\:*?"<>|'):
         raise ValueError(f"doc_id {doc_id!r} 不能作为文件名")
     return doc_id
 
 
 def _has_indexable_text(text: str) -> bool:
-
     body = _MARKDOWN_IMAGE.sub("", text or "")
     body = _MARKDOWN_HEADING.sub("", body)
     return bool(body.strip())
@@ -153,38 +191,17 @@ def build_subset(
 
     if sample_ids and strategy in gold_strategies:
         picked = samples
-        gold_ids = sorted({doc_id for sample in picked for doc_id in sample["gold_doc_ids"]})
-        pool = sorted(usable_doc_ids - set(gold_ids))
-        wanted = round(len(gold_ids) * negatives_ratio)
-        negatives = sorted(rng.sample(pool, min(wanted, len(pool))))
-        doc_ids = sorted(set(gold_ids) | set(negatives))
+        gold_ids, negatives, doc_ids = _with_negatives(picked, usable_doc_ids, negatives_ratio, rng)
     elif full_corpus:
-
         doc_ids = sorted(usable_doc_ids)
-        picked = sorted(
-            rng.sample(
-                sorted(samples, key=lambda s: s["sample_id"]), min(qa_limit, len(samples))
-            ),
-            key=lambda s: s["sample_id"],
-        )
+        picked = _sample(samples, qa_limit, rng)
         gold_ids = sorted({d for s in picked for d in s["gold_doc_ids"]})
         negatives = (
             sorted(set(doc_ids) - set(gold_ids))
             if adapter.has(DataDependency.GOLD_DOCS)
             else []
         )
-    elif strategy is SubsetStrategy.FULL_CORPUS:
-
-        doc_ids = sorted(usable_doc_ids)
-        picked = sorted(
-            rng.sample(
-                sorted(samples, key=lambda s: s["sample_id"]), min(qa_limit, len(samples))
-            ),
-            key=lambda s: s["sample_id"],
-        )
-        gold_ids, negatives = [], []
     elif strategy is SubsetStrategy.WHOLE_DOCS:
-
         chunks: dict[str, list[str]] = defaultdict(list)
         for doc in corpus:
             chunks[doc["doc_id"].rsplit("_", 1)[0]].append(doc["doc_id"])
@@ -194,26 +211,17 @@ def build_subset(
             (c for d in chosen for c in chunks[d]),
             key=lambda c: (c.rsplit("_", 1)[0], int(c.rsplit("_", 1)[1])),
         )
-        picked = sorted(
-            (s for s in samples if s["metadata"]["document_id"] in set(chosen)),
-            key=lambda s: s["sample_id"],
-        )
+        chosen_set = set(chosen)
+        picked = _sorted_samples([s for s in samples if s["metadata"]["document_id"] in chosen_set])
         if qa_limit and len(picked) > qa_limit:
-            picked = sorted(rng.sample(picked, qa_limit), key=lambda s: s["sample_id"])
+            picked = _sorted_samples(rng.sample(picked, qa_limit))
         gold_ids, negatives = [], []
     else:
         if strategy is SubsetStrategy.STRATIFIED_HOP:
             picked = _stratified(samples, min(qa_limit, len(samples)), "hop_prefix", rng)
         else:
-            ordered = sorted(samples, key=lambda s: s["sample_id"])
-            picked = sorted(
-                rng.sample(ordered, min(qa_limit, len(ordered))), key=lambda s: s["sample_id"]
-            )
-        gold_ids = sorted({d for s in picked for d in s["gold_doc_ids"]})
-        pool = sorted(usable_doc_ids - set(gold_ids))
-        wanted = round(len(gold_ids) * negatives_ratio)
-        negatives = sorted(rng.sample(pool, min(wanted, len(pool))))
-        doc_ids = sorted(set(gold_ids) | set(negatives))
+            picked = _sample(samples, qa_limit, rng)
+        gold_ids, negatives, doc_ids = _with_negatives(picked, usable_doc_ids, negatives_ratio, rng)
 
     subset_ids = set(doc_ids)
     uncovered = {
@@ -246,7 +254,6 @@ def build_subset(
 
 
 def markdown_of(connection: sqlite3.Connection, dataset: str, doc_id: str) -> str:
-
     doc = data_store.corpus_doc(connection, dataset, doc_id)
     if doc is None:
         raise ValueError(f"{dataset}/{doc_id} 不在语料里")
@@ -266,100 +273,58 @@ def _wait_for_compile(
     progress_page_ids: set[str] | None = None,
     progress_run_ids: list[str] | None = None,
     progress_note: str = "编译语料",
-    progress_offset: int = 0,
-    progress_total: int | None = None,
 ) -> dict[str, Any]:
     baseline_run_ids = baseline_run_ids or set()
     expected_run_ids = expected_run_ids or set()
+
+    def is_current(run: dict[str, Any]) -> bool:
+        run_id = _run_id(run)
+        if run_id in expected_run_ids:
+            return True
+        if run_id:
+            return run_id not in baseline_run_ids
+        return int(run.get("spaceJobSequence") or 0) > baseline_sequence
+
     while True:
         ctx.checkpoint()
-        runs: list[dict[str, Any]] = []
         try:
             runs = list(client.run_diagnostics([space_id], limit=50).get("items") or [])
-            diagnostics_ok = True
         except AkashaError:
             runs = []
-            diagnostics_ok = False
-        current = [
-            run
-            for run in runs
-            if str(run.get("runId") or run.get("id") or "") in expected_run_ids
-            or (
-                (str(run.get("runId") or run.get("id")) not in baseline_run_ids)
-                if run.get("runId") or run.get("id")
-                else int(run.get("spaceJobSequence") or 0) > baseline_sequence
-            )
-        ]
-
+        current = [run for run in runs if is_current(run)]
         if (
             not current
             and coalesced_runs
-            and runs
-            and any(run.get("runId") or run.get("id") or run.get("spaceJobSequence") for run in runs)
+            and any(_run_id(run) or run.get("spaceJobSequence") for run in runs)
         ):
             current = [max(runs, key=lambda r: int(r.get("spaceJobSequence") or 0))]
 
-        if current:
-            counts: dict[str, int] = {}
-            for run in current:
-                status = str(run.get("status") or "unknown")
-                counts[status] = counts.get(status, 0) + 1
-            progress = {
-                key: sum(int((run.get("progress") or {}).get("text", {}).get(key) or 0) for run in current)
-                for key in ("expected", "succeeded", "failed", "skipped")
-            }
-            active = sum(n for name, n in counts.items() if name in ACTIVE_RUN_STATUSES)
-        elif expect_runs and diagnostics_ok and any(
-            run.get("runId") or run.get("id") or run.get("spaceJobSequence") for run in runs
-        ):
-            counts = {}
-            progress = {}
-            active = 1
-        else:
-            counts = {}
-            progress = {}
-            active = 0
-
-        progress_runs = current
-        if progress_run_ids:
-            runs_by_id = {
-                str(run.get("runId") or run.get("id")): run
-                for run in runs
-                if run.get("runId") or run.get("id")
-            }
-            progress_runs = [
-                runs_by_id.get(run_id, {"runId": run_id}) for run_id in progress_run_ids
-            ]
-        target_progress = (
-            _target_run_progress(
-                ctx,
-                client,
-                progress_runs,
-                None if progress_run_ids else progress_page_ids,
-            )
-            if progress_runs else None
-        )
-        shown_progress = target_progress or progress
-        if current and shown_progress.get("expected"):
-            ctx.progress(
-                progress_offset + shown_progress["succeeded"],
-                progress_total or shown_progress["expected"],
-                progress_note,
-            )
-        elif counts:
+        if not current:
+            if not expect_runs:
+                return {"status_counts": {}, "no_runs": True}
             ctx.progress(0, None, "等待远端编译")
-        if counts and active == 0:
+            time.sleep(POLL_INTERVAL_SECONDS)
+            continue
+
+        counts = _status_counts(current)
+        if progress_run_ids:
+            runs_by_id = {_run_id(run): run for run in runs if _run_id(run)}
+            progress_runs = [runs_by_id.get(run_id, {"runId": run_id}) for run_id in progress_run_ids]
+            target_progress = _target_run_progress(ctx, client, progress_runs)
+        else:
+            target_progress = _target_run_progress(ctx, client, current, progress_page_ids)
+        shown_progress = target_progress or _progress_of(current)
+        if shown_progress.get("expected"):
+            ctx.progress(shown_progress["succeeded"], shown_progress["expected"], progress_note)
+        else:
+            ctx.progress(0, None, "等待远端编译")
+        if not any(status in ACTIVE_RUN_STATUSES for status in counts):
             return {
                 "status_counts": counts,
                 "no_runs": False,
-                "timed_out": False,
                 "runs": current,
                 "progress": shown_progress,
             }
-        if not counts and expect_runs == 0:
-            return {"status_counts": counts, "no_runs": True, "timed_out": False}
-        if not counts:
-            ctx.progress(0, None, "等待远端编译")
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
@@ -372,65 +337,34 @@ def _target_run_progress(
     compile_id = ctx.target("compile")
     if compile_id is None:
         return None
-    all_target_ids = {
+    target_ids = progress_page_ids or {
         str(row["page_id"])
         for row in compile_store.compile_docs(ctx.db, compile_id)
         if row.get("page_id")
     }
-    target_ids = progress_page_ids or all_target_ids
     if not target_ids:
         return None
 
-    statuses: dict[str, tuple[str, str]] = {}
     try:
-        for run in runs:
-            run_id = str(run.get("runId") or run.get("id") or "")
-            if not run_id:
-                continue
-            page = 1
-            while True:
-                result = client.run_pages(run_id, page=page, limit=100)
-                items = result.get("items") or []
-                for item in items:
-                    page_id = str(item.get("sourcePageId") or "")
-                    if page_id in target_ids:
-                        updated_at = str(item.get("updatedAt") or "")
-                        previous = statuses.get(page_id)
-                        if previous is not None and updated_at < previous[1]:
-                            continue
-                        statuses[page_id] = (
-                            "failed"
-                            if item.get("mergeStatus") == "failed"
-                            else str(item.get("status") or "pending"),
-                            updated_at,
-                        )
-                total = int(result.get("total") or 0)
-                page_limit = int(result.get("limit") or 100)
-                if not items or page * page_limit >= total:
-                    break
-                page += 1
+        latest = latest_run_pages(client, [run_id for run in runs if (run_id := _run_id(run))])
     except (AkashaError, OSError):
         return None
-
+    statuses = [
+        "failed" if item.get("mergeStatus") == "failed" else str(item.get("status") or "pending")
+        for page_id, item in latest.items()
+        if page_id in target_ids
+    ]
     if not statuses:
         return None
-    remote_expected = [
-        int((run.get("progress") or {}).get("text", {}).get("expected") or 0)
-        for run in runs
-    ]
-    expected = max(remote_expected, default=0) or len(target_ids)
     return {
-        "expected": expected,
-        "succeeded": sum(status == "succeeded" for status, _ in statuses.values()),
-        "failed": sum(status == "failed" for status, _ in statuses.values()),
-        "skipped": sum(
-            status in {"skipped", "cancelled"} for status, _ in statuses.values()
-        ),
+        "expected": max((_text_count(run, "expected") for run in runs), default=0) or len(target_ids),
+        "succeeded": statuses.count("succeeded"),
+        "failed": statuses.count("failed"),
+        "skipped": sum(status in {"skipped", "cancelled"} for status in statuses),
     }
 
 
 def _page_failures(client: AkashaClient, space_id: str) -> list[str]:
-
     try:
         log = client.page_log([space_id])
     except AkashaError as exc:
@@ -438,9 +372,6 @@ def _page_failures(client: AkashaClient, space_id: str) -> list[str]:
 
     entries = log.get("items") or []
     failed = [e for e in entries if e.get("status") in {"failed", "skipped"}]
-    if not failed:
-        return []
-
     grouped: dict[tuple[str, str], list[str]] = defaultdict(list)
     for entry in failed:
         key = (
@@ -468,7 +399,7 @@ def _compile_pace(
     if not runs:
         return None
     total_ms = sum(int(r.get("runDurationMs") or 0) for r in runs)
-    pages = sum(int((r.get("progress") or {}).get("text", {}).get("expected") or 0) for r in runs)
+    pages = sum(_text_count(r, "expected") for r in runs)
     if not pages or not total_ms:
         return None
     return {
@@ -480,7 +411,6 @@ def _compile_pace(
 
 
 def _quality_gate(client: AkashaClient, space_id: str) -> dict[str, Any]:
-
     report = client.quality_diagnostics([space_id])
     summary = report.get("summary") or {}
     gates = {
@@ -496,20 +426,11 @@ def _quality_gate(client: AkashaClient, space_id: str) -> dict[str, Any]:
     return {"passed": passed, "gates": gates}
 
 
-def _progress_of(runs: list[dict[str, Any]]) -> dict[str, int]:
-    return {
-        key: sum(int((run.get("progress") or {}).get("text", {}).get(key) or 0) for run in runs)
-        for key in ("expected", "succeeded", "failed", "skipped")
-    }
-
-
 def _retry_batches(
     ctx: TaskContext,
     client: AkashaClient,
     space_id: str,
     failed_page_ids: list[str] | None = None,
-    initial_total: int | None = None,
-    initial_completed: int = 0,
 ) -> tuple[dict[str, Any], int]:
     if failed_page_ids is not None:
         pending = list(dict.fromkeys(failed_page_ids))
@@ -518,34 +439,35 @@ def _retry_batches(
         all_run_ids = [
             str(value) for value in ctx.params.get("remote_compile_run_ids") or []
         ]
-        total = max(int(initial_total or 0), len(pending))
-        completed = max(0, min(int(initial_completed or 0), total))
+        total = len(pending)
+        completed = 0
         aggregate = {"expected": total, "succeeded": 0, "failed": 0, "skipped": 0}
     else:
-        pending = [str(value) for value in ctx.params.get("retry_pending_page_ids") or []]
-        current = [str(value) for value in ctx.params.get("retry_current_page_ids") or []]
-        current_run_ids = [
-            str(value) for value in ctx.params.get("retry_current_run_ids") or []
-        ]
-        all_run_ids = [
-            str(value)
-            for value in (
-                ctx.params.get("retry_run_ids")
-                or ctx.params.get("remote_compile_run_ids")
-                or []
-            )
-        ]
-        completed = int(ctx.params.get("retry_completed") or 0)
-        total = int(ctx.params.get("retry_total") or len(pending) + len(current))
-        aggregate = dict(
-            ctx.params.get("retry_progress")
-            or {"expected": total, "succeeded": 0, "failed": 0, "skipped": 0}
+        pending = [str(value) for value in ctx.params["retry_pending_page_ids"]]
+        current = [str(value) for value in ctx.params["retry_current_page_ids"]]
+        current_run_ids = [str(value) for value in ctx.params["retry_current_run_ids"]]
+        all_run_ids = [str(value) for value in ctx.params["remote_compile_run_ids"]]
+        completed = int(ctx.params["retry_completed"])
+        total = int(ctx.params["retry_total"])
+        aggregate = dict(ctx.params["retry_progress"])
+
+    def save_state(**overrides: Any) -> None:
+        ctx.freeze(
+            **{
+                "remote_compile_run_ids": all_run_ids,
+                "retry_pending_page_ids": pending,
+                "retry_current_page_ids": current,
+                "retry_current_run_ids": current_run_ids,
+                "retry_completed": completed,
+                "retry_total": total,
+                "retry_progress": aggregate,
+                **overrides,
+            }
         )
 
     wait: dict[str, Any] = {
         "status_counts": {},
         "no_runs": False,
-        "timed_out": False,
         "runs": [],
         "progress": aggregate,
     }
@@ -573,16 +495,7 @@ def _retry_batches(
                 f"批量重试 {completed + 1}-{completed + len(current)} / {total}，"
                 f"远端 Run {', '.join(current_run_ids)}"
             )
-            ctx.freeze(
-                remote_compile_run_ids=all_run_ids,
-                retry_pending_page_ids=pending,
-                retry_current_page_ids=current,
-                retry_current_run_ids=current_run_ids,
-                retry_run_ids=all_run_ids,
-                retry_completed=completed,
-                retry_total=total,
-                retry_progress=aggregate,
-            )
+            save_state()
 
         wait = _wait_for_compile(
             ctx,
@@ -594,7 +507,7 @@ def _retry_batches(
             progress_run_ids=all_run_ids,
             progress_note="重试失败语料",
         )
-        if wait["no_runs"] or wait["timed_out"]:
+        if wait["no_runs"]:
             return wait, len(all_run_ids)
 
         batch_progress = _target_run_progress(
@@ -610,33 +523,14 @@ def _retry_batches(
         current_run_ids = []
         aggregate["expected"] = total
         wait["progress"] = dict(aggregate)
-        ctx.freeze(
-            remote_compile_run_ids=all_run_ids,
-            retry_pending_page_ids=pending,
-            retry_current_page_ids=[],
-            retry_current_run_ids=[],
-            retry_run_ids=all_run_ids,
-            retry_completed=completed,
-            retry_total=total,
-            retry_progress=aggregate,
-        )
+        save_state()
 
     wait["runs"] = [{"runId": run_id} for run_id in all_run_ids]
-    ctx.freeze(
-        remote_compile_run_ids=all_run_ids,
-        retry_pending_page_ids=[],
-        retry_current_page_ids=[],
-        retry_current_run_ids=[],
-        retry_run_ids=[],
-        retry_completed=0,
-        retry_total=0,
-        retry_progress={},
-    )
+    save_state(retry_completed=0, retry_total=0, retry_progress={})
     return wait, len(all_run_ids)
 
 
 def _compiler_slug(ctx: TaskContext, config: AkashaConfig) -> str:
-    """取名要用编译模型，得先问一次远端当前配置。"""
     with AkashaClient(config) as client:
         client.login()
         return naming.model_slug(ctx.db, client.get_model_configs(), "compiler")
@@ -647,7 +541,7 @@ def run(ctx: TaskContext) -> None:
     datasets = list(params.get("datasets") or [])
     if not datasets:
         raise ValueError("请至少选择一个数据集")
-    unknown = sorted(set(datasets) - set(DATASET_NAMES))
+    unknown = sorted(set(datasets) - set(dataset_names()))
     if unknown:
         raise ValueError(f"未知数据集：{unknown}")
 
@@ -729,11 +623,7 @@ def _execute(
         ctx.freeze(model_configs=current_configs)
         saved_configs = loads(record.get("model_configs_json"))
         if resuming and saved_configs:
-            changed = [
-                feature
-                for feature in ("compiler", "embedding", "image")
-                if not matches(current_configs, saved_configs, feature)
-            ]
+            changed = _drifted(current_configs, saved_configs)
             if changed:
                 raise RuntimeError(
                     "远端模型配置已变化，不能继续原编译：" + ", ".join(changed)
@@ -773,28 +663,27 @@ def _execute(
 
 
 def _prepare_subset(ctx: TaskContext, compile_id: int, options: CompileOptions) -> None:
-
-    if not compile_store.compile_docs(ctx.db, compile_id):
-        for dataset in options.datasets:
-            ctx.checkpoint()
-            ctx.progress(0, None, f"抽子集 {dataset}")
-            stats = build_subset(
-                ctx.db,
-                compile_id,
-                dataset,
-                seed=options.seed,
-                qa_limit=options.qa_limit,
-                sample_ids=options.sample_ids,
-                negatives_ratio=options.negatives_ratio,
-                full_corpus=options.full_corpus,
-            )
-            ctx.log(
-                f"{dataset}: QA {stats['samples']}，语料 {stats['docs']} "
-                f"(gold {stats['gold']} / 负样本 {stats['negatives']})，策略 {stats['strategy']}"
-                + (f"，跳过无正文 {stats['empty_docs']} 篇" if stats["empty_docs"] else "")
-            )
-    else:
+    if compile_store.compile_docs(ctx.db, compile_id):
         ctx.log("子集已存在，跳过抽样")
+        return
+    for dataset in options.datasets:
+        ctx.checkpoint()
+        ctx.progress(0, None, f"抽子集 {dataset}")
+        stats = build_subset(
+            ctx.db,
+            compile_id,
+            dataset,
+            seed=options.seed,
+            qa_limit=options.qa_limit,
+            sample_ids=options.sample_ids,
+            negatives_ratio=options.negatives_ratio,
+            full_corpus=options.full_corpus,
+        )
+        ctx.log(
+            f"{dataset}: QA {stats['samples']}，语料 {stats['docs']} "
+            f"(gold {stats['gold']} / 负样本 {stats['negatives']})，策略 {stats['strategy']}"
+            + (f"，跳过无正文 {stats['empty_docs']} 篇" if stats["empty_docs"] else "")
+        )
 
 
 def _run_remote_compile(
@@ -813,20 +702,12 @@ def _run_remote_compile(
         before = client.run_diagnostics([space_id], limit=50).get("items") or []
     except AkashaError:
         before = []
-    baseline_run_ids = {
-        str(run.get("runId") or run.get("id")) for run in before if run.get("runId") or run.get("id")
-    }
+    baseline_run_ids = {_run_id(run) for run in before if _run_id(run)}
     baseline_sequence = max((int(run.get("spaceJobSequence") or 0) for run in before), default=0)
     previous_run_ids = [str(value) for value in ctx.params.get("remote_compile_run_ids") or []]
-    previous_runs = [
-        run
-        for run in before
-        if str(run.get("runId") or run.get("id") or "") in set(previous_run_ids)
-    ]
+    previous_runs = [run for run in before if _run_id(run) in set(previous_run_ids)]
     active_previous = [
-        run
-        for run in previous_runs
-        if str(run.get("status") or "") in ACTIVE_RUN_STATUSES
+        run for run in previous_runs if str(run.get("status") or "") in ACTIVE_RUN_STATUSES
     ]
     retry_in_progress = bool(
         ctx.params.get("retry_current_page_ids")
@@ -834,14 +715,12 @@ def _run_remote_compile(
     )
 
     ctx.checkpoint()
+    accepted = coalesced = 0
     if retry_in_progress:
         wait, accepted = _retry_batches(ctx, client, space_id)
-        coalesced = 0
     elif active_previous:
-        remote_run_ids = {
-            str(run.get("runId") or run.get("id")) for run in active_previous
-        }
-        accepted, coalesced = len(remote_run_ids), 0
+        remote_run_ids = {_run_id(run) for run in active_previous}
+        accepted = len(remote_run_ids)
         ctx.log(f"接管仍在运行的远端编译：{', '.join(sorted(remote_run_ids))}")
         wait = _wait_for_compile(
             ctx,
@@ -853,17 +732,9 @@ def _run_remote_compile(
     elif previous_run_ids:
         failed_page_ids = client.retryable_run_page_ids(previous_run_ids)
         if failed_page_ids:
-            wait, accepted = _retry_batches(
-                ctx,
-                client,
-                space_id,
-                failed_page_ids,
-                initial_total=len(failed_page_ids),
-            )
-            coalesced = 0
+            wait, accepted = _retry_batches(ctx, client, space_id, failed_page_ids)
         elif previous_runs and all(
-            str(run.get("status") or "") == "cancelled"
-            and not int((run.get("progress") or {}).get("text", {}).get("expected") or 0)
+            str(run.get("status") or "") == "cancelled" and not _text_count(run, "expected")
             for run in previous_runs
         ):
             target_page_ids = list(
@@ -877,26 +748,14 @@ def _run_remote_compile(
                 raise RuntimeError("上次远端 Run 在逐页初始化前取消，且没有可重试页面")
             ctx.progress(0, len(target_page_ids), "重试未初始化语料")
             wait, accepted = _retry_batches(ctx, client, space_id, target_page_ids)
-            coalesced = 0
         else:
-
             ctx.log("已保存的远端编译没有失败页面，只刷新质量闸门")
             wait = {
-                "status_counts": {
-                    str(run.get("status") or "unknown"): sum(
-                        1
-                        for item in previous_runs
-                        if str(item.get("status") or "unknown")
-                        == str(run.get("status") or "unknown")
-                    )
-                    for run in previous_runs
-                },
+                "status_counts": _status_counts(previous_runs),
                 "no_runs": False,
-                "timed_out": False,
                 "runs": previous_runs,
                 "progress": _progress_of(previous_runs),
             }
-            accepted = coalesced = 0
     else:
         result = client.compile_spaces([space_id])
         accepted = int(result.get("acceptedRunCount") or 0)
@@ -927,10 +786,9 @@ def _run_remote_compile(
             baseline_sequence=baseline_sequence,
         )
     if wait["no_runs"]:
-
         raise RuntimeError(
             f"编译没有启动：Akasha 一个编译 Run 都没有（accepted={accepted} "
-            f"coalesced={coalesced}）。{len(compile_store.compile_docs(ctx.db, compile_id))} "
+            f"coalesced={coalesced}）。{total_docs} "
             "篇语料已上传但没被编译，请检查 Akasha 的编译 worker 是否在跑。"
         )
     ctx.log(f"编译终态：{wait['status_counts']}")
@@ -948,11 +806,7 @@ def _run_remote_compile(
     ordered_run_ids = list(
         dict.fromkeys(
             [str(value) for value in ctx.params.get("remote_compile_run_ids") or []]
-            + [
-                str(run.get("runId") or run.get("id"))
-                for run in wait.get("runs") or []
-                if run.get("runId") or run.get("id")
-            ]
+            + [_run_id(run) for run in wait.get("runs") or [] if _run_id(run)]
         )
     )
     quality["progress"] = (
@@ -966,7 +820,6 @@ def _run_remote_compile(
     ctx.db.commit()
     ctx.log(f"质量闸门 {quality['gates']} -> {'通过' if quality['passed'] else '未通过'}")
     if not quality["passed"]:
-
         reasons = _page_failures(client, space_id)
         for line in reasons:
             ctx.log(f"编译失败原因：{line}", "error")
@@ -974,19 +827,13 @@ def _run_remote_compile(
         raise RuntimeError(
             f"编译质量闸门未通过：整批结果不完整；成功页面仍可供查询层使用{detail}"
         )
-    final_configs = client.get_model_configs()
-    changed_during_run = [
-        feature
-        for feature in ("compiler", "embedding", "image")
-        if not matches(final_configs, current_configs, feature)
-    ]
+    changed_during_run = _drifted(client.get_model_configs(), current_configs)
     if changed_during_run:
         raise RuntimeError(
             "编译期间远端模型配置发生变化，结果可能混合："
             + ", ".join(changed_during_run)
         )
 
-    total_docs = len(compile_store.compile_docs(ctx.db, compile_id))
     ctx.progress(total_docs, total_docs, "编译完成")
     ctx.log("编译完成，可以进入查询层")
 
@@ -1020,21 +867,11 @@ def _import_docs(
     worker_count = min(concurrency, len(pending))
     ctx.log(f"导入语料：待导入 {len(pending)} / 共 {total}，并发 {worker_count}")
 
-    extras = [AkashaClient(client.config) for _ in range(worker_count - 1)]
-    try:
-        for spare in extras:
-            spare.login()
-        clients: queue.Queue[AkashaClient] = queue.Queue()
-        for worker in (client, *extras):
-            clients.put(worker)
+    with client_pool(client, worker_count, AkashaClient) as call:
 
         def task(item: tuple[dict[str, Any], str]) -> dict[str, Any]:
             doc, markdown = item
-            borrowed = clients.get()
-            try:
-                return _import_one(borrowed, doc, markdown, space_id)
-            finally:
-                clients.put(borrowed)
+            return call(_import_one, doc, markdown, space_id)
 
         def run_pass(
             executor: ThreadPoolExecutor, docs: list[dict[str, Any]], *, retry: bool
@@ -1077,9 +914,6 @@ def _import_docs(
                 ctx.checkpoint()
                 ctx.log(f"首轮有 {len(failures)} 篇失败，移到末尾重试一次", "warn")
                 failures = run_pass(executor, failures, retry=True)
-    finally:
-        for spare in extras:
-            spare.close()
 
     if failures:
         raise Paused(
