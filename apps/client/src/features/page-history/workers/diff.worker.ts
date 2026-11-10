@@ -1,5 +1,8 @@
 import { Schema } from "@tiptap/pm/model";
-import { createHistoryDiff, HistoryDiffChange } from "@docmost/editor-ext";
+import {
+  createHistoryDiff,
+  HistoryDiffChange,
+} from "@docmost/editor-ext/src/lib/history-diff/history-diff";
 
 export type DiffChange = HistoryDiffChange;
 
