@@ -286,4 +286,69 @@ describe('PageService', () => {
       'page-1',
     );
   });
+
+  describe('movePage', () => {
+    const movedPage = {
+      id: 'moved',
+      spaceId: 'space-1',
+      parentPageId: null,
+    } as any;
+
+    const setup = (isSelfOrAncestor: boolean) => {
+      const pageRepo = {
+        updatePage: jest.fn(),
+        findById: jest.fn().mockImplementation(async (id: string) => ({
+          id,
+          spaceId: 'space-1',
+          deletedAt: null,
+        })),
+        isSelfOrAncestor: jest.fn().mockResolvedValue(isSelfOrAncestor),
+      };
+      const service = new PageService(
+        pageRepo as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+      return { pageRepo, service };
+    };
+
+    it.each([
+      ['itself', 'moved'],
+      ['its descendant', 'grandchild'],
+    ])('rejects moving a page under %s', async (_, parentPageId) => {
+      const { pageRepo, service } = setup(true);
+      await expect(
+        service.movePage(
+          { pageId: 'moved', parentPageId, position: 'a0000' },
+          movedPage,
+        ),
+      ).rejects.toThrow('Cannot move a page into itself or its descendants');
+      expect(pageRepo.isSelfOrAncestor).toHaveBeenCalledWith(
+        parentPageId,
+        'moved',
+      );
+      expect(pageRepo.updatePage).not.toHaveBeenCalled();
+    });
+
+    it('moves a page under an unrelated parent', async () => {
+      const { pageRepo, service } = setup(false);
+      await service.movePage(
+        { pageId: 'moved', parentPageId: 'other', position: 'a0000' },
+        movedPage,
+      );
+      expect(pageRepo.updatePage).toHaveBeenCalledWith(
+        { position: 'a0000', parentPageId: 'other' },
+        'moved',
+      );
+    });
+  });
 });

@@ -1,8 +1,5 @@
 import type { Extensions, JSONContent } from "@tiptap/core";
-import { findChildren, getSchema } from "@tiptap/core";
-import { Node } from "@tiptap/pm/model";
-import { EditorState } from "@tiptap/pm/state";
-import type { UniqueID } from "./unique-id";
+import { resolveUniqueIdTypes, type UniqueID } from "./unique-id";
 
 /**
  * Creates a new document with unique IDs added to the nodes. Does the same
@@ -50,29 +47,23 @@ export function addUniqueIdsToDoc(
   if (!uniqueIDExtension) {
     throw new Error("UniqueID extension not found in the extensions array");
   }
-  const { types, attributeName, generateID } = uniqueIDExtension.options;
+  const { attributeName } = uniqueIDExtension.options;
+  const types = resolveUniqueIdTypes(
+    uniqueIDExtension.options.types,
+    extensions,
+  );
+  const generateID = uniqueIDExtension.options.generateID as () => string;
 
-  // Convert the JSON content to a ProseMirror node
-  const schema = getSchema([
-    ...extensions.filter((ext) => ext.name !== "uniqueID"),
-    uniqueIDExtension,
-  ]);
-  const contentNode = Node.fromJSON(schema, doc);
+  const addIds = (node: JSONContent): JSONContent => {
+    const result = { ...node };
+    if (types.includes(node.type) && !node.attrs?.[attributeName]) {
+      result.attrs = { ...node.attrs, [attributeName]: generateID() };
+    }
+    if (node.content) {
+      result.content = node.content.map(addIds);
+    }
+    return result;
+  };
 
-  // Find nodes that don't have a unique ID
-  const nodesWithoutId = findChildren(contentNode, (node) => {
-    return !node.attrs[attributeName] && types.includes(node.type.name);
-  });
-
-  // Edit the document to add unique IDs to the nodes that don't have a unique ID
-  let tr = EditorState.create({
-    doc: contentNode,
-  }).tr;
-  // eslint-disable-next-line no-restricted-syntax
-  for (const { node, pos } of nodesWithoutId) {
-    tr = tr.setNodeAttribute(pos, attributeName, generateID({ node, pos }));
-  }
-
-  // Return the updated document
-  return tr.doc.toJSON();
+  return addIds(doc);
 }

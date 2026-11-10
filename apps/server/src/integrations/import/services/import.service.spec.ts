@@ -123,3 +123,82 @@ describe('ImportService Confluence task metadata', () => {
     ).toThrow(/Confluence space Key/i);
   });
 });
+
+describe('ImportService extractTitleAndRemoveHeading', () => {
+  const service = new ImportService(
+    undefined as never,
+    undefined as never,
+    undefined as never,
+    undefined as never,
+    undefined as never,
+  );
+  const heading = (level: number, ...content: any[]) => ({
+    type: 'heading',
+    attrs: { level },
+    content,
+  });
+  const text = (value: string, marks?: any[]) => ({
+    type: 'text',
+    text: value,
+    ...(marks ? { marks } : {}),
+  });
+  const paragraph = (value: string) => ({
+    type: 'paragraph',
+    content: [text(value)],
+  });
+  const doc = (...content: any[]) => ({ type: 'doc', content });
+
+  it('lifts a leading H1 and joins all of its text nodes', () => {
+    const result = service.extractTitleAndRemoveHeading(
+      doc(
+        heading(
+          1,
+          text('Hello '),
+          text('World', [{ type: 'bold' }]),
+          { type: 'hardBreak' },
+          text('again'),
+        ),
+        paragraph('body'),
+      ),
+      { requireSingleH1: true },
+    );
+    expect(result.title).toBe('Hello World again');
+    expect(result.prosemirrorJson.content).toEqual([paragraph('body')]);
+  });
+
+  it('keeps the body when another H1 exists and single H1 is required', () => {
+    const state = doc(
+      heading(1, text('Background')),
+      paragraph('a'),
+      heading(1, text('Plan')),
+    );
+    const result = service.extractTitleAndRemoveHeading(state, {
+      requireSingleH1: true,
+    });
+    expect(result.title).toBeNull();
+    expect(result.prosemirrorJson.content).toHaveLength(3);
+  });
+
+  it('still lifts the first of several H1s without the option', () => {
+    const result = service.extractTitleAndRemoveHeading(
+      doc(heading(1, text('Title')), heading(1, text('Section'))),
+    );
+    expect(result.title).toBe('Title');
+    expect(result.prosemirrorJson.content).toEqual([
+      heading(1, text('Section')),
+    ]);
+  });
+
+  it.each([
+    ['a paragraph', paragraph('intro')],
+    ['an H2', heading(2, text('Section'))],
+    ['an empty H1', heading(1)],
+  ])('keeps the body when the first block is %s', (_, first) => {
+    const result = service.extractTitleAndRemoveHeading(
+      doc(first, paragraph('body')),
+      { requireSingleH1: true },
+    );
+    expect(result.title).toBeNull();
+    expect(result.prosemirrorJson.content).toEqual([first, paragraph('body')]);
+  });
+});
