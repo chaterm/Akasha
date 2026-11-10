@@ -48,6 +48,7 @@ export class PageHistoryService {
       HISTORY_DIFF_ALGORITHM_VERSION,
       HISTORY_DIFF_SCHEMA_VERSION,
     );
+    let fromTitle: string | null = null;
 
     if (!diff) {
       const previousHistory =
@@ -65,6 +66,7 @@ export class PageHistoryService {
         };
       }
 
+      fromTitle = previousHistory.title ?? null;
       await this.pageHistoryRepo.createPendingDiff({
         fromHistoryId: previousHistory.id,
         toHistoryId: history.id,
@@ -82,6 +84,13 @@ export class PageHistoryService {
       throw new Error('Failed to create page history diff record');
     }
 
+    if (fromTitle === null && diff.fromHistoryId) {
+      const fromHistory = await this.pageHistoryRepo.findById(
+        diff.fromHistoryId,
+      );
+      fromTitle = fromHistory?.title ?? null;
+    }
+
     if (diff?.status === 'pending') {
       await this.enqueueDiff(
         diff.fromHistoryId,
@@ -97,6 +106,7 @@ export class PageHistoryService {
     return {
       status: diff.status,
       fromHistoryId: diff.fromHistoryId,
+      fromTitle,
       toHistoryId: diff.toHistoryId,
       algorithmVersion: diff.algorithmVersion,
       schemaVersion: diff.schemaVersion,

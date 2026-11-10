@@ -2388,5 +2388,11 @@
   "Time / endpoint": "时间 / 接口",
   "Caller / key": "调用者 / Key",
   "Delegated user": "代调用用户",
-  "Call trend and endpoint breakdown": "调用趋势与接口分布"
+  "Call trend and endpoint breakdown": "调用趋势与接口分布",
+  "Compare": "对比",
+  "Compare versions": "对比版本",
+  "Select version from {{date}}": "选择 {{date}} 的版本",
+  "Version actions for {{date}}": "{{date}} 版本的操作",
+  "Comparing {{newer}} and {{older}}": "正在对比 {{newer}} 与 {{older}}",
+  "Exit compare": "退出对比"
 }

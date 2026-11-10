@@ -1,5 +1,5 @@
 import "@/features/editor/styles/index.css";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { mainExtensions } from "@/features/editor/extensions/extensions";
 import { Title } from "@mantine/core";
@@ -15,9 +15,11 @@ import {
 } from "@/features/page-history/atoms/history-atoms";
 import type { DiffChange } from "@/features/page-history/workers/diff.worker";
 import { IPageHistoryDiff } from "@/features/page-history/types/page.types";
+import { computeTitleDiff } from "@/features/page-history/utils/title-diff";
 
 export interface HistoryEditorProps {
   title: string;
+  previousTitle?: string | null;
   content: any;
   previousContent?: any;
   prevHistoryId?: string;
@@ -62,10 +64,11 @@ function buildDecorations(
   schema: Schema,
   content: any,
   changes: DiffChange[],
+  indexOffset = 0,
 ): DecorationSet {
   const newContent = Node.fromJSON(schema, content);
   const decorations: Decoration[] = [];
-  let changeIndex = 0;
+  let changeIndex = indexOffset;
 
   for (const change of changes) {
     if (change.fromB < change.toB) {
@@ -128,6 +131,7 @@ function buildDecorations(
 
 export function HistoryEditor({
   title,
+  previousTitle,
   content,
   previousContent,
   prevHistoryId,
@@ -138,19 +142,32 @@ export function HistoryEditor({
 }: HistoryEditorProps) {
   const highlightChanges = useAtomValue(highlightChangesAtom);
   const [, setDiffCounts] = useAtom(diffCountsAtom);
-  const diffState = useAtomValue(diffStateAtom);
   const setDiffState = useSetAtom(diffStateAtom);
 
   const updateDiffCounts = (v: DiffCounts | null) => {
-    // @ts-ignore - Jotai atom type inference limitation
     setDiffCounts(v);
   };
   const decorationSetRef = useRef<DecorationSet>(DecorationSet.empty);
+  const [decorationVersion, setDecorationVersion] = useState(0);
+  const setDecorations = (decorations: DecorationSet) => {
+    decorationSetRef.current = decorations;
+    setDecorationVersion((v) => v + 1);
+  };
 
   const editor = useEditor({
     extensions: mainExtensions,
     editable: false,
   });
+
+  const titleDiff = useMemo(
+    () =>
+      prevHistoryId && previousTitle !== undefined
+        ? computeTitleDiff(previousTitle, title)
+        : null,
+    [prevHistoryId, previousTitle, title],
+  );
+  const titleAdded = titleDiff?.addedCount ?? 0;
+  const titleDeleted = titleDiff?.deletedCount ?? 0;
 
   // Effect 1: immediate content render
   useEffect(() => {
@@ -164,7 +181,7 @@ export function HistoryEditor({
     if (!editor || !content || !prevHistoryId) {
       setDiffState("idle");
       updateDiffCounts(null);
-      decorationSetRef.current = DecorationSet.empty;
+      setDecorations(DecorationSet.empty);
       return;
     }
 
@@ -174,17 +191,21 @@ export function HistoryEditor({
       deletedCount: number,
     ) => {
       try {
-        const total = addedCount + deletedCount;
-        decorationSetRef.current = buildDecorations(
-          editor.schema,
-          content,
-          changes,
+        const added = addedCount + titleAdded;
+        const deleted = deletedCount + titleDeleted;
+        setDecorations(
+          buildDecorations(
+            editor.schema,
+            content,
+            changes,
+            titleAdded + titleDeleted,
+          ),
         );
-        updateDiffCounts({ added: addedCount, deleted: deletedCount, total });
+        updateDiffCounts({ added, deleted, total: added + deleted });
         setDiffState("ready");
       } catch (error) {
         console.error("History diff decorations failed:", error);
-        decorationSetRef.current = DecorationSet.empty;
+        setDecorations(DecorationSet.empty);
         updateDiffCounts(null);
         setDiffState("error");
       }
@@ -203,8 +224,16 @@ export function HistoryEditor({
     }
 
     if (persistedDiff?.status === "too_large") {
-      decorationSetRef.current = DecorationSet.empty;
-      updateDiffCounts(null);
+      setDecorations(DecorationSet.empty);
+      updateDiffCounts(
+        titleAdded + titleDeleted > 0
+          ? {
+              added: titleAdded,
+              deleted: titleDeleted,
+              total: titleAdded + titleDeleted,
+            }
+          : null,
+      );
       setDiffState("tooLarge");
       return;
     }
@@ -214,14 +243,14 @@ export function HistoryEditor({
       persistedDiff?.status === "pending" ||
       persistedDiff?.status === "running"
     ) {
-      decorationSetRef.current = DecorationSet.empty;
+      setDecorations(DecorationSet.empty);
       updateDiffCounts(null);
       setDiffState("computing");
       return;
     }
 
     if (isPreviousLoading || !previousContent) {
-      decorationSetRef.current = DecorationSet.empty;
+      setDecorations(DecorationSet.empty);
       updateDiffCounts(null);
       setDiffState(isPreviousError ? "error" : "loadingPrevious");
       return;
@@ -237,7 +266,7 @@ export function HistoryEditor({
       );
     } catch (error) {
       console.error("History diff worker creation failed:", error);
-      decorationSetRef.current = DecorationSet.empty;
+      setDecorations(DecorationSet.empty);
       updateDiffCounts(null);
       setDiffState("error");
       return;
@@ -249,7 +278,7 @@ export function HistoryEditor({
         applyResult(changes, addedCount, deletedCount);
       } else {
         console.error("History diff worker failed:", e.data.message);
-        decorationSetRef.current = DecorationSet.empty;
+        setDecorations(DecorationSet.empty);
         updateDiffCounts(null);
         setDiffState("error");
       }
@@ -258,7 +287,7 @@ export function HistoryEditor({
 
     worker.onerror = (err) => {
       console.error("History diff worker error:", err);
-      decorationSetRef.current = DecorationSet.empty;
+      setDecorations(DecorationSet.empty);
       updateDiffCounts(null);
       setDiffState("error");
       worker.terminate();
@@ -266,7 +295,7 @@ export function HistoryEditor({
 
     worker.onmessageerror = (err) => {
       console.error("History diff worker message error:", err);
-      decorationSetRef.current = DecorationSet.empty;
+      setDecorations(DecorationSet.empty);
       updateDiffCounts(null);
       setDiffState("error");
       worker.terminate();
@@ -277,7 +306,7 @@ export function HistoryEditor({
       worker.postMessage({ schemaSpec, previousContent, content });
     } catch (error) {
       console.error("History diff worker start failed:", error);
-      decorationSetRef.current = DecorationSet.empty;
+      setDecorations(DecorationSet.empty);
       updateDiffCounts(null);
       setDiffState("error");
       worker.terminate();
@@ -295,6 +324,8 @@ export function HistoryEditor({
     isDiffLoading,
     isPreviousLoading,
     isPreviousError,
+    titleAdded,
+    titleDeleted,
     setDiffCounts,
     setDiffState,
   ]);
@@ -309,17 +340,32 @@ export function HistoryEditor({
           highlightChanges ? decorationSetRef.current : DecorationSet.empty,
       },
     });
-  }, [editor, highlightChanges, diffState]);
+  }, [editor, highlightChanges, decorationVersion]);
 
   return (
-    <div>
-      <Title order={1}>{title}</Title>
-      {editor && (
-        <EditorContent
-          editor={editor}
-          className={historyClasses.historyEditor}
-        />
-      )}
+    <div className={historyClasses.historyEditor}>
+      <Title order={1}>
+        {titleDiff && highlightChanges
+          ? titleDiff.segments.map((segment, i) =>
+              segment.type === "unchanged" ? (
+                <span key={i}>{segment.value}</span>
+              ) : (
+                <span
+                  key={i}
+                  className={
+                    segment.type === "added"
+                      ? "history-diff-added"
+                      : "history-diff-deleted"
+                  }
+                  data-diff-index={segment.diffIndex}
+                >
+                  {segment.value}
+                </span>
+              ),
+            )
+          : title}
+      </Title>
+      {editor && <EditorContent editor={editor} />}
     </div>
   );
 }
