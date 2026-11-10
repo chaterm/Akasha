@@ -3,7 +3,11 @@ import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { DOMParser, DOMSerializer, Fragment, Slice } from "@tiptap/pm/model";
 import { find } from "linkifyjs";
-import { markdownToHtml, htmlToMarkdown } from "@docmost/editor-ext";
+import {
+  markdownToHtml,
+  htmlToMarkdown,
+  fillSliceIds,
+} from "@docmost/editor-ext";
 
 export const MarkdownClipboard = Extension.create({
   name: "markdownClipboard",
@@ -83,11 +87,18 @@ export const MarkdownClipboard = Extension.create({
             const body = elementFromString(parsed);
             normalizeTableColumnWidths(body);
 
-            const contentNodes = DOMParser.fromSchema(
+            const parsedSlice = DOMParser.fromSchema(
               this.editor.schema,
             ).parseSlice(body, {
               preserveWhitespace: true,
             });
+            const uniqueID = this.editor.extensionManager.extensions.find(
+              (extension) => extension.name === "uniqueID",
+            );
+            const contentNodes =
+              uniqueID && Array.isArray(uniqueID.options.types)
+                ? fillSliceIds(parsedSlice, uniqueID.options)
+                : parsedSlice;
 
             tr.replaceRange(from, to, contentNodes);
             const insertEnd = tr.mapping.map(from, 1);
