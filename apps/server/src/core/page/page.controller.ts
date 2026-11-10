@@ -1022,6 +1022,22 @@ export class PageController {
   }
 
   @HttpCode(HttpStatus.OK)
+  @Post('/history/snapshot')
+  async createPageHistorySnapshot(
+    @Body() dto: PageIdDto,
+    @AuthUser() user: User,
+  ) {
+    const page = await this.pageRepo.findById(dto.pageId);
+    if (!page || page.deletedAt) {
+      throw new NotFoundException('Page not found');
+    }
+
+    await this.pageAccessService.validateCanEdit(page, user);
+
+    return this.pageHistoryService.createSnapshot(page.id, user);
+  }
+
+  @HttpCode(HttpStatus.OK)
   @Post('/history/info')
   async getPageHistoryInfo(
     @Body() dto: PageHistoryIdDto,

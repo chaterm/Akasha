@@ -21,6 +21,7 @@ import { useOpenInEditModeOnce } from "@/features/editor/use-open-in-edit-mode";
 import { recordPageVisit } from "@/features/page-visit/services/page-visit-service";
 import { queryClient } from "@/main";
 import { RECENT_PAGE_VISITS_QUERY_KEY } from "@/features/page-visit/queries/page-visit-query";
+import { useHistorySnapshot } from "@/features/page-history/hooks";
 const MemoizedFullEditor = React.memo(FullEditor);
 const MemoizedPageHeader = React.memo(PageHeader);
 const MemoizedHistoryModal = React.memo(HistoryModal);
@@ -79,6 +80,7 @@ function PageContent({ pageSlug }: { pageSlug: string | undefined }) {
 
   const canEdit = !page?.deletedAt && (page?.permissions?.canEdit ?? false);
   const openInEditMode = useOpenInEditModeOnce(page?.id);
+  const saveHistorySnapshot = useHistorySnapshot(page?.id);
   const canComment =
     canEdit || space?.settings?.comments?.allowViewerComments === true;
 
@@ -130,6 +132,7 @@ function PageContent({ pageSlug }: { pageSlug: string | undefined }) {
           initialMode={
             canEdit && openInEditMode ? PageEditMode.Edit : PageEditMode.Read
           }
+          onSave={saveHistorySnapshot}
         >
           <MemoizedPageHeader readOnly={!canEdit} />
 

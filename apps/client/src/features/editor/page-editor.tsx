@@ -27,10 +27,11 @@ import {
   collabExtensions,
   mainExtensions,
 } from "@/features/editor/extensions/extensions";
-import { useAtom } from "jotai";
+import { useAtom, useSetAtom } from "jotai";
 import useCollaborationUrl from "@/features/editor/hooks/use-collaboration-url";
 import { currentUserAtom } from "@/features/user/atoms/current-user-atom";
 import {
+  pageCollabProviderAtom,
   pageEditorAtom,
   yjsConnectionStatusAtom,
 } from "@/features/editor/atoms/editor-atoms";
@@ -116,6 +117,7 @@ export default function PageEditor({
 
   const [currentUser] = useAtom(currentUserAtom);
   const [, setEditor] = useAtom(pageEditorAtom);
+  const setCollabProvider = useSetAtom(pageCollabProviderAtom);
   const [, setAsideState] = useAtom(asideStateAtom);
   const [, setActiveCommentId] = useAtom(activeCommentIdAtom);
   const [showCommentPopup, setShowCommentPopup] = useAtom(showCommentPopupAtom);
@@ -210,6 +212,7 @@ export default function PageEditor({
 
       local.on("synced", onLocalSyncedHandler);
       providersRef.current = { socket, local, remote };
+      setCollabProvider(remote);
       setProvidersReady(true);
     } else {
       setProvidersReady(true);
@@ -218,12 +221,13 @@ export default function PageEditor({
     return () => {
       // @ts-ignore
       setEditor(null);
+      setCollabProvider(null);
       providersRef.current?.socket.destroy();
       providersRef.current?.remote.destroy();
       providersRef.current?.local.destroy();
       providersRef.current = null;
     };
-  }, [pageId, collaborationURL, setEditor]);
+  }, [pageId, collaborationURL, setEditor, setCollabProvider]);
 
   // Only connect/disconnect on tab/idle, not destroy
   useEffect(() => {

@@ -25,6 +25,7 @@ import {
   CollaborationHandler,
   CollabEventHandlers,
 } from './collaboration.handler';
+import { User } from '@akasha/db/types/entity.types';
 
 @Injectable()
 export class CollaborationGateway {
@@ -144,6 +145,17 @@ export class CollaborationGateway {
     payload: Parameters<CollabEventHandlers[TName]>[1],
   ) {
     return this.redisSync?.handleEvent(eventName, documentName, payload);
+  }
+
+  async getDocumentJson(documentName: string, user: User): Promise<any> {
+    if (this.redisSync) {
+      return this.redisSync.handleEvent('getDocumentJson', documentName, {
+        user,
+      });
+    }
+    return this.collabEventsService
+      .getHandlers(this.hocuspocus)
+      .getDocumentJson(documentName, { user });
   }
 
   openDirectConnection(documentName: string, context?: any) {

@@ -1,26 +1,19 @@
 import { Logger, OnModuleDestroy } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
-import { InjectQueue } from '@nestjs/bullmq';
-import { Job, Queue } from 'bullmq';
+import { Job } from 'bullmq';
 import { QueueJob, QueueName } from '../../integrations/queue/constants';
 import {
-  IPageBacklinkJob,
   IPageHistoryDiffJob,
   IPageHistoryJob,
-  IPageUpdateNotificationJob,
 } from '../../integrations/queue/constants/queue.interface';
-import {
-  extractMentions,
-  extractPageMentions,
-  extractInternalLinkSlugIds,
-} from '../../common/helpers/prosemirror/utils';
 import { PageHistoryRepo } from '@akasha/db/repos/page/page-history.repo';
 import { JsonValue } from '@akasha/db/types/db';
 import { PageRepo } from '@akasha/db/repos/page/page.repo';
 import { isDeepStrictEqual } from 'node:util';
 import { CollabHistoryService } from '../services/collab-history.service';
 import { WatcherService } from '../../core/watcher/watcher.service';
+import { HistorySnapshotService } from '../services/history-snapshot.service';
 import { isEmptyParagraphDoc } from '../collaboration.util';
 import {
   HISTORY_DIFF_ALGORITHM_VERSION,
@@ -39,9 +32,7 @@ export class HistoryProcessor extends WorkerHost implements OnModuleDestroy {
     private readonly pageRepo: PageRepo,
     private readonly collabHistory: CollabHistoryService,
     private readonly watcherService: WatcherService,
-    @InjectQueue(QueueName.NOTIFICATION_QUEUE) private notificationQueue: Queue,
-    @InjectQueue(QueueName.GENERAL_QUEUE) private generalQueue: Queue,
-    @InjectQueue(QueueName.HISTORY_DIFF_QUEUE) private historyDiffQueue: Queue,
+    private readonly historySnapshot: HistorySnapshotService,
   ) {
     super();
   }
@@ -95,77 +86,28 @@ export class HistoryProcessor extends WorkerHost implements OnModuleDestroy {
           this.logger.debug(`History created for page: ${pageId}`);
 
           if (lastHistory) {
-            await this.enqueueHistoryDiff(lastHistory.id, newHistory.id).catch(
-              (err) => {
+            await this.historySnapshot
+              .enqueueHistoryDiff(lastHistory.id, newHistory.id)
+              .catch((err) => {
                 this.logger.error(
                   `Failed to queue history diff for ${newHistory.id}: ${err.message}`,
                 );
-              },
-            );
+              });
           }
         } catch (err) {
           await this.collabHistory.addContributors(pageId, contributorIds);
           throw err;
         }
 
-        const mentions = extractMentions(page.content);
-        const pageMentions = extractPageMentions(mentions);
-        const internalLinkSlugIds = extractInternalLinkSlugIds(page.content);
-
-        await this.generalQueue
-          .add(QueueJob.PAGE_BACKLINKS, {
-            pageId,
-            workspaceId: page.workspaceId,
-            mentions: pageMentions,
-            internalLinkSlugIds,
-          } as IPageBacklinkJob)
-          .catch((err) => {
-            this.logger.error(
-              `Failed to queue backlinks for ${pageId}: ${err.message}`,
-            );
-          });
-
-        if (contributorIds.length > 0 && lastHistory?.content) {
-          await this.notificationQueue
-            .add(QueueJob.PAGE_UPDATED, {
-              pageId,
-              spaceId: page.spaceId,
-              workspaceId: page.workspaceId,
-              actorIds: contributorIds,
-            } as IPageUpdateNotificationJob)
-            .catch((err) => {
-              this.logger.error(
-                `Failed to queue page update notification for ${pageId}: ${err.message}`,
-              );
-            });
-        }
+        await this.historySnapshot.enqueuePostHistoryJobs(
+          page,
+          contributorIds,
+          !!lastHistory?.content,
+        );
       }
     } catch (err) {
       throw err;
     }
-  }
-
-  private async enqueueHistoryDiff(
-    fromHistoryId: string,
-    toHistoryId: string,
-  ): Promise<void> {
-    await this.pageHistoryRepo.createPendingDiff({
-      fromHistoryId,
-      toHistoryId,
-      algorithmVersion: HISTORY_DIFF_ALGORITHM_VERSION,
-      schemaVersion: HISTORY_DIFF_SCHEMA_VERSION,
-    });
-    await this.historyDiffQueue.add(
-      QueueJob.PAGE_HISTORY_DIFF,
-      {
-        fromHistoryId,
-        toHistoryId,
-        algorithmVersion: HISTORY_DIFF_ALGORITHM_VERSION,
-      } as IPageHistoryDiffJob,
-      {
-        jobId: `history-diff-${toHistoryId}-${HISTORY_DIFF_ALGORITHM_VERSION}`,
-      },
-    );
   }
 
   @OnWorkerEvent('active')

@@ -54,7 +54,7 @@ export function TitleEditor({
   const emit = useQueryEmit();
   const navigate = useNavigate();
   const [activePageId, setActivePageId] = useState(pageId);
-  const { pageEditMode } = usePageEditMode();
+  const { pageEditMode, registerBeforeSave } = usePageEditMode();
 
   const titleEditor = useEditor({
     extensions: [
@@ -111,7 +111,7 @@ export function TitleEditor({
     navigate(pageSlug, { replace: true });
   }, [title]);
 
-  const saveTitle = useCallback(() => {
+  const saveTitle = useCallback((): Promise<unknown> | undefined => {
     if (!titleEditor || activePageId !== pageId) return;
 
     if (
@@ -121,7 +121,7 @@ export function TitleEditor({
       return;
     }
 
-    updateTitlePageMutationAsync({
+    return updateTitlePageMutationAsync({
       pageId: pageId,
       title: titleEditor.getText(),
     }).then((page) => {
@@ -148,6 +148,15 @@ export function TitleEditor({
   }, [pageId, title, titleEditor]);
 
   const debounceUpdate = useDebouncedCallback(saveTitle, 500);
+
+  useEffect(
+    () =>
+      registerBeforeSave(async () => {
+        debounceUpdate.cancel();
+        await saveTitle();
+      }),
+    [registerBeforeSave, debounceUpdate, saveTitle],
+  );
 
   useEffect(() => {
     if (titleEditor && title !== titleEditor.getText()) {
