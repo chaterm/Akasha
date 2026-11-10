@@ -98,7 +98,7 @@
   "Not compiled": "尚未编译",
   "Needs recompilation": "需要重新编译",
   "Publish available in {{time}}": "{{time}}后可再次发布",
-  "Read": "读取",
+  "Read": "阅读",
   "Edit group": "编辑群组",
   "Email": "电子邮箱",
   "Enter a strong password": "输入一个强密码",
@@ -2388,5 +2388,14 @@
   "Time / endpoint": "时间 / 接口",
   "Caller / key": "调用者 / Key",
   "Delegated user": "代调用用户",
-  "Call trend and endpoint breakdown": "调用趋势与接口分布"
+  "Call trend and endpoint breakdown": "调用趋势与接口分布",
+  "Compare": "对比",
+  "Compare versions": "对比版本",
+  "Select version from {{date}}": "选择 {{date}} 的版本",
+  "Version actions for {{date}}": "{{date}} 版本的操作",
+  "Comparing {{newer}} and {{older}}": "正在对比 {{newer}} 与 {{older}}",
+  "Exit compare": "退出对比",
+  "Failed to save version": "保存版本失败",
+  "Changes are still syncing. Please try again.": "修改仍在同步中，请稍后重试。",
+  "No changes since the last version": "与上一个版本相比没有修改"
 }

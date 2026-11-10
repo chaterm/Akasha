@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  CloseButton,
   Group,
   Loader,
   Paper,
@@ -13,18 +14,21 @@ import { useAtom, useAtomValue } from "jotai";
 import {
   activeHistoryIdAtom,
   activeHistoryPrevIdAtom,
+  comparePairAtom,
   diffCountsAtom,
   diffStateAtom,
   highlightChangesAtom,
 } from "@/features/page-history/atoms/history-atoms";
 import HistoryView from "@/features/page-history/components/history-view";
-import { useRef } from "react";
+import { useMemo, useRef } from "react";
 import { IconChevronUp, IconChevronDown } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import {
   useDiffNavigation,
   useHistoryReset,
 } from "@/features/page-history/hooks";
+import { usePageHistoryListQuery } from "@/features/page-history/queries/page-history-query";
+import { formattedDate } from "@/lib/time";
 
 interface Props {
   pageId: string;
@@ -39,6 +43,30 @@ export default function HistoryModalBody({ pageId }: Props) {
   const [highlightChanges, setHighlightChanges] = useAtom(highlightChangesAtom);
   const diffCounts = useAtomValue(diffCountsAtom);
   const diffState = useAtomValue(diffStateAtom);
+  const [comparePair, setComparePair] = useAtom(comparePairAtom);
+
+  const { data: pageHistoryData } = usePageHistoryListQuery(pageId);
+  const historyItems = useMemo(
+    () => pageHistoryData?.pages.flatMap((page) => page.items) ?? [],
+    [pageHistoryData],
+  );
+
+  const compareLabel = useMemo(() => {
+    if (!comparePair) return null;
+    const newerItem = historyItems.find(
+      (item) => item.id === comparePair.newerId,
+    );
+    const olderItem = historyItems.find(
+      (item) => item.id === comparePair.olderId,
+    );
+    if (!newerItem || !olderItem) return null;
+    return t("Comparing {{newer}} and {{older}}", {
+      newer: formattedDate(new Date(newerItem.createdAt)),
+      older: formattedDate(new Date(olderItem.createdAt)),
+    });
+  }, [comparePair, historyItems, t]);
+
+  const hasView = !!comparePair || !!activeHistoryId;
 
   useHistoryReset(pageId);
   const { currentChangeIndex, handlePrevChange, handleNextChange } =
@@ -53,6 +81,25 @@ export default function HistoryModalBody({ pageId }: Props) {
       </nav>
 
       <div style={{ position: "relative", flex: 1 }}>
+        {comparePair && (
+          <Group
+            justify="space-between"
+            wrap="nowrap"
+            px="md"
+            py={4}
+            className={classes.compareBanner}
+          >
+            <Text size="sm" fw={500} lineClamp={1}>
+              {compareLabel ?? t("Compare versions")}
+            </Text>
+            <CloseButton
+              size="sm"
+              aria-label={t("Exit compare")}
+              onClick={() => setComparePair(null)}
+            />
+          </Group>
+        )}
+
         <ScrollArea
           h="min(650px, calc(100dvh - 120px))"
           w="100%"
@@ -60,7 +107,7 @@ export default function HistoryModalBody({ pageId }: Props) {
           viewportRef={scrollViewportRef}
         >
           <div className={classes.sidebarRightSection}>
-            {activeHistoryId &&
+            {hasView &&
               (diffState === "computing" ||
                 diffState === "loadingPrevious") && (
                 <div className={classes.diffProgressBar}>
@@ -72,7 +119,7 @@ export default function HistoryModalBody({ pageId }: Props) {
                   </Text>
                 </div>
               )}
-            {activeHistoryId && diffState === "error" && (
+            {hasView && diffState === "error" && (
               <div className={classes.diffProgressBar}>
                 <Text size="sm" c="red">
                   {t(
@@ -81,7 +128,7 @@ export default function HistoryModalBody({ pageId }: Props) {
                 </Text>
               </div>
             )}
-            {activeHistoryId && diffState === "tooLarge" && (
+            {hasView && diffState === "tooLarge" && (
               <div className={classes.diffProgressBar}>
                 <Text size="sm" c="dimmed">
                   {t(
@@ -90,11 +137,18 @@ export default function HistoryModalBody({ pageId }: Props) {
                 </Text>
               </div>
             )}
-            {activeHistoryId && <HistoryView />}
+            {comparePair ? (
+              <HistoryView
+                historyId={comparePair.newerId}
+                prevHistoryId={comparePair.olderId}
+              />
+            ) : (
+              activeHistoryId && <HistoryView />
+            )}
           </div>
         </ScrollArea>
 
-        {activeHistoryId && activeHistoryPrevId && (
+        {(comparePair || (activeHistoryId && activeHistoryPrevId)) && (
           <Paper
             shadow="md"
             radius="xl"

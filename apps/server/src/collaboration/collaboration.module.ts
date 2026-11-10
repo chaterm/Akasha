@@ -14,6 +14,7 @@ import {
 import { LoggerExtension } from './extensions/logger.extension';
 import { CollaborationHandler } from './collaboration.handler';
 import { CollabHistoryService } from './services/collab-history.service';
+import { HistorySnapshotService } from './services/history-snapshot.service';
 import { WatcherModule } from '../core/watcher/watcher.module';
 import { TransclusionService } from '../core/page/transclusion/transclusion.service';
 import { TransclusionModule } from '../core/page/transclusion/transclusion.module';
@@ -30,11 +31,12 @@ import { PageAttachmentRehomeService } from '../core/attachment/services/page-at
     HistoryProcessor,
     HistoryDiffProcessor,
     CollabHistoryService,
+    HistorySnapshotService,
     CollaborationHandler,
     TransclusionService,
     PageAttachmentRehomeService,
   ],
-  exports: [CollaborationGateway],
+  exports: [CollaborationGateway, HistorySnapshotService],
   imports: [
     TokenModule,
     WatcherModule,

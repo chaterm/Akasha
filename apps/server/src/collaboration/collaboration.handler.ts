@@ -112,6 +112,19 @@ export class CollaborationHandler {
           },
         );
       },
+      getDocumentJson: async (
+        documentName: string,
+        payload: { user: User },
+      ): Promise<any> => {
+        const connection = await hocuspocus.openDirectConnection(documentName, {
+          user: payload.user,
+        });
+        try {
+          return TiptapTransformer.fromYdoc(connection.document, 'default');
+        } finally {
+          await connection.disconnect();
+        }
+      },
     };
   }
 
