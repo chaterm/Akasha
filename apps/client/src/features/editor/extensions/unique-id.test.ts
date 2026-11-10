@@ -205,7 +205,7 @@ describe("UniqueID with markdown paste", () => {
     editor.view.dom.dispatchEvent(event);
 
     const ids = blockIds(editor);
-    expect(ids.length).toBeGreaterThan(300);
+    expect(ids).toHaveLength(300);
     expectUniqueIds(ids);
     expect(appendedSteps.length).toBeLessThanOrEqual(2);
     expect(appendedSteps).not.toContain("replace");
