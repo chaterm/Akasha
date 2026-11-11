@@ -3,10 +3,11 @@ import { posToDOMRect, findParentNode } from "@tiptap/react";
 import { Node as PMNode } from "@tiptap/pm/model";
 import React, { useCallback } from "react";
 import { ActionIcon, Tooltip } from "@mantine/core";
-import { IconTrash } from "@tabler/icons-react";
+import { IconRefresh, IconTrash } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import { Editor } from "@tiptap/core";
 import { isEditorReady } from "@docmost/editor-ext";
+import { useQueryClient } from "@tanstack/react-query";
 
 interface SubpagesMenuProps {
   editor: Editor;
@@ -21,6 +22,7 @@ interface ShouldShowProps {
 export const SubpagesMenu = React.memo(
   ({ editor }: SubpagesMenuProps): JSX.Element => {
     const { t } = useTranslation();
+    const queryClient = useQueryClient();
 
     const shouldShow = useCallback(
       ({ state }: ShouldShowProps) => {
@@ -47,6 +49,10 @@ export const SubpagesMenu = React.memo(
       return posToDOMRect(editor.view, selection.from, selection.to);
     }, [editor]);
 
+    const refresh = useCallback(() => {
+      queryClient.invalidateQueries({ queryKey: ["sidebar-pages"] });
+    }, [queryClient]);
+
     const deleteNode = useCallback(() => {
       const { selection } = editor.state;
       editor
@@ -64,17 +70,30 @@ export const SubpagesMenu = React.memo(
         updateDelay={0}
         shouldShow={shouldShow}
       >
-        <Tooltip position="top" label={t("Delete")} withinPortal={false}>
-          <ActionIcon
-            onClick={deleteNode}
-            variant="default"
-            size="lg"
-            color="red"
-            aria-label={t("Delete")}
-          >
-            <IconTrash size={18} />
-          </ActionIcon>
-        </Tooltip>
+        <ActionIcon.Group>
+          <Tooltip position="top" label={t("Refresh")} withinPortal={false}>
+            <ActionIcon
+              onClick={refresh}
+              variant="default"
+              size="lg"
+              aria-label={t("Refresh")}
+            >
+              <IconRefresh size={18} />
+            </ActionIcon>
+          </Tooltip>
+
+          <Tooltip position="top" label={t("Delete")} withinPortal={false}>
+            <ActionIcon
+              onClick={deleteNode}
+              variant="default"
+              size="lg"
+              color="red"
+              aria-label={t("Delete")}
+            >
+              <IconTrash size={18} />
+            </ActionIcon>
+          </Tooltip>
+        </ActionIcon.Group>
       </BaseBubbleMenu>
     );
   }
