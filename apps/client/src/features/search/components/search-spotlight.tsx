@@ -1,6 +1,13 @@
 import { Spotlight, useSpotlight } from "@mantine/spotlight";
-import { IconSearch } from "@tabler/icons-react";
-import { Center, Group, Loader, Text, VisuallyHidden } from "@mantine/core";
+import { IconFilter, IconSearch } from "@tabler/icons-react";
+import {
+  Button,
+  Center,
+  Group,
+  Loader,
+  Text,
+  VisuallyHidden,
+} from "@mantine/core";
 import React, { useState, useMemo, useEffect } from "react";
 import { useDebouncedValue } from "@mantine/hooks";
 import { useTranslation } from "react-i18next";
@@ -23,8 +30,10 @@ interface SearchSpotlightProps {
 export function SearchSpotlight({ spaceId }: SearchSpotlightProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
+  const [recentSpaceOnly, setRecentSpaceOnly] = useState(false);
   const { opened } = useSpotlight(searchSpotlightStore);
   const isRecentMode = query.trim().length === 0;
+  const recentSpaceId = recentSpaceOnly ? spaceId : undefined;
   const [debouncedSearchQuery] = useDebouncedValue(query, 300);
   const [filters, setFilters] = useState<SearchSpotlightFilterValues>({
     contentType: "page",
@@ -86,11 +95,12 @@ export function SearchSpotlight({ spaceId }: SearchSpotlightProps) {
     data: recentVisits = [],
     isLoading: isRecentLoading,
     isError: isRecentError,
-  } = useRecentPageVisitsQuery(spaceId, opened && isRecentMode);
+  } = useRecentPageVisitsQuery(recentSpaceId, opened && isRecentMode);
 
   useEffect(() => {
+    setRecentSpaceOnly(false);
     if (!opened) setQuery("");
-  }, [opened]);
+  }, [opened, spaceId]);
 
   const resultItems = (searchResults || []).map((result) => (
     <SearchResultItem
@@ -127,6 +137,21 @@ export function SearchSpotlight({ spaceId }: SearchSpotlightProps) {
           />
         </Group>
 
+        {isRecentMode && spaceId && (
+          <Group px="md" pb="xs">
+            <Button
+              size="xs"
+              variant={recentSpaceOnly ? "light" : "subtle"}
+              color={recentSpaceOnly ? undefined : "gray"}
+              leftSection={<IconFilter size={14} />}
+              aria-pressed={recentSpaceOnly}
+              onClick={() => setRecentSpaceOnly((value) => !value)}
+            >
+              {t("Only current space")}
+            </Button>
+          </Group>
+        )}
+
         {!isRecentMode && (
           <div style={{ padding: "4px 16px" }}>
             <SearchSpotlightFilters
@@ -162,7 +187,7 @@ export function SearchSpotlight({ spaceId }: SearchSpotlightProps) {
               items={recentVisits}
               isLoading={isRecentLoading}
               isError={isRecentError}
-              showSpace={!spaceId}
+              showSpace={!recentSpaceId}
             />
           ) : (
             <>
