@@ -1,7 +1,11 @@
 import { MantineProvider } from "@mantine/core";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { PageEditModeProvider } from "../page-edit-mode-context";
+import { useEffect } from "react";
+import {
+  PageEditModeProvider,
+  usePageEditMode,
+} from "../page-edit-mode-context";
 import { PageEditModeControls } from "./page-edit-mode-toggle";
 
 vi.mock("react-i18next", () => ({
@@ -49,6 +53,75 @@ describe("PageEditModeControls", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  });
+
+  it("shows saving state and stays in edit mode when the save fails", async () => {
+    let finishSave: (saved: boolean) => void = () => {};
+    const onSave = vi.fn(
+      (_beforeSave: () => Promise<void>) =>
+        new Promise<boolean>((resolve) => (finishSave = resolve)),
+    );
+    render(
+      <MantineProvider>
+        <PageEditModeProvider onSave={onSave}>
+          <PageEditModeControls size="xs" />
+        </PageEditModeProvider>
+      </MantineProvider>,
+    );
+
+    fireEvent.click(screen.getByText("Edit"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const savingButton = await screen.findByRole("button", {
+      name: "Saving...",
+    });
+    expect(savingButton.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(savingButton);
+    expect(onSave).toHaveBeenCalledTimes(1);
+
+    await act(async () => finishSave(false));
+    expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await act(async () => finishSave(true));
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(onSave).toHaveBeenCalledTimes(2);
+  });
+
+  it("runs registered before-save work ahead of the snapshot", async () => {
+    const order: string[] = [];
+    function TitleFlush() {
+      const { registerBeforeSave } = usePageEditMode();
+      useEffect(
+        () =>
+          registerBeforeSave(async () => {
+            order.push("title");
+          }),
+        [registerBeforeSave],
+      );
+      return null;
+    }
+    const onSave = vi.fn(async (beforeSave: () => Promise<void>) => {
+      await beforeSave();
+      order.push("snapshot");
+      return true;
+    });
+    render(
+      <MantineProvider>
+        <PageEditModeProvider onSave={onSave}>
+          <TitleFlush />
+          <PageEditModeControls size="xs" />
+        </PageEditModeProvider>
+      </MantineProvider>,
+    );
+
+    fireEvent.click(screen.getByText("Edit"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+
+    expect(order).toEqual(["title", "snapshot"]);
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   });
 

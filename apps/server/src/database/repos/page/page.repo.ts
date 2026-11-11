@@ -693,6 +693,28 @@ export class PageRepo {
       .as('hasChildren');
   }
 
+  async isSelfOrAncestor(pageId: string, ancestorId: string) {
+    const row = await this.db
+      .withRecursive('page_ancestors', (db) =>
+        db
+          .selectFrom('pages')
+          .select(['id', 'parentPageId'])
+          .where('id', '=', pageId)
+          .union((exp) =>
+            exp
+              .selectFrom('pages as p')
+              .select(['p.id', 'p.parentPageId'])
+              .innerJoin('page_ancestors as pa', 'pa.parentPageId', 'p.id'),
+          ),
+      )
+      .selectFrom('page_ancestors')
+      .select('id')
+      .where('id', '=', ancestorId)
+      .limit(1)
+      .executeTakeFirst();
+    return !!row;
+  }
+
   async getPageAndDescendants(
     parentPageId: string,
     opts: { includeContent: boolean },

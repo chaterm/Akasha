@@ -16,6 +16,18 @@ export async function getPageHistoryList(
   return req.data;
 }
 
+export async function createPageHistorySnapshot(
+  pageId: string,
+): Promise<IPageHistory & { created: boolean }> {
+  const req = await api.post<IPageHistory & { created: boolean }>(
+    "/pages/history/snapshot",
+    {
+      pageId,
+    },
+  );
+  return req.data;
+}
+
 export async function getPageHistoryById(
   historyId: string,
 ): Promise<IPageHistory> {

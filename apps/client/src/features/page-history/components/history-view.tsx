@@ -10,30 +10,50 @@ import {
   activeHistoryPrevIdAtom,
 } from "@/features/page-history/atoms/history-atoms";
 
-function HistoryView() {
+interface Props {
+  historyId?: string;
+  prevHistoryId?: string;
+}
+
+function HistoryView({ historyId, prevHistoryId }: Props) {
   const { t } = useTranslation();
-  const historyId = useAtomValue(activeHistoryIdAtom);
-  const prevHistoryId = useAtomValue(activeHistoryPrevIdAtom);
+  const activeId = useAtomValue(activeHistoryIdAtom);
+  const activePrevId = useAtomValue(activeHistoryPrevIdAtom);
+
+  const isExplicitPair = historyId !== undefined;
+  const resolvedId = historyId ?? activeId;
+  const resolvedPrevId = prevHistoryId ?? activePrevId;
 
   const {
     data,
     isLoading: isLoadingCurrent,
     isError: isErrorCurrent,
-  } = usePageHistoryQuery(historyId);
+  } = usePageHistoryQuery(resolvedId);
   const {
     data: diffData,
     isLoading: isLoadingDiff,
     isError: isErrorDiff,
-  } = usePageHistoryDiffQuery(historyId, !!prevHistoryId);
+  } = usePageHistoryDiffQuery(resolvedId, !isExplicitPair && !!resolvedPrevId);
   const shouldLoadPrevious =
+    isExplicitPair ||
     isErrorDiff ||
     diffData?.status === "failed" ||
-    (diffData?.status === "ready" && diffData.fromHistoryId !== prevHistoryId);
+    (diffData?.status === "ready" && diffData.fromHistoryId !== resolvedPrevId);
   const {
     data: prevData,
     isLoading: isLoadingPrev,
     isError: isErrorPrev,
-  } = usePageHistoryQuery(prevHistoryId, shouldLoadPrevious);
+  } = usePageHistoryQuery(resolvedPrevId, shouldLoadPrevious);
+
+  const previousTitle =
+    prevData && !isErrorPrev
+      ? prevData.title
+      : !isExplicitPair &&
+          diffData?.fromHistoryId &&
+          diffData.fromHistoryId === resolvedPrevId &&
+          diffData.fromTitle !== undefined
+        ? diffData.fromTitle
+        : undefined;
 
   if (isLoadingCurrent) {
     return <></>;
@@ -48,10 +68,11 @@ function HistoryView() {
       <HistoryEditor
         content={data.content}
         title={data.title}
+        previousTitle={previousTitle}
         previousContent={!isErrorPrev ? prevData?.content : undefined}
-        prevHistoryId={prevHistoryId}
-        persistedDiff={diffData}
-        isDiffLoading={isLoadingDiff}
+        prevHistoryId={resolvedPrevId}
+        persistedDiff={isExplicitPair ? undefined : diffData}
+        isDiffLoading={isExplicitPair ? false : isLoadingDiff}
         isPreviousLoading={isLoadingPrev}
         isPreviousError={isErrorPrev}
       />

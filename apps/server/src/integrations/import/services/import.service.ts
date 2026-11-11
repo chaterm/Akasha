@@ -104,8 +104,12 @@ export class ImportService {
       throw new BadRequestException(message);
     }
 
-    const { title, prosemirrorJson } =
-      this.extractTitleAndRemoveHeading(prosemirrorState);
+    const { title, prosemirrorJson } = this.extractTitleAndRemoveHeading(
+      prosemirrorState,
+      {
+        requireSingleH1: true,
+      },
+    );
 
     const pageTitle = title || fileName;
 
@@ -254,18 +258,25 @@ export class ImportService {
     return null;
   }
 
-  extractTitleAndRemoveHeading(prosemirrorState: any) {
+  extractTitleAndRemoveHeading(
+    prosemirrorState: any,
+    opts?: { requireSingleH1?: boolean },
+  ) {
     let title: string | null = null;
 
     const content = prosemirrorState.content ?? [];
+    const isH1 = (node: any) =>
+      node?.type === 'heading' && node.attrs?.level === 1;
 
     if (
-      content.length > 0 &&
-      content[0].type === 'heading' &&
-      content[0].attrs?.level === 1
+      isH1(content[0]) &&
+      !(opts?.requireSingleH1 && content.slice(1).some(isH1))
     ) {
-      title = content[0].content?.[0]?.text ?? null;
-      content.shift();
+      title =
+        jsonToText({ type: 'doc', content: [content[0]] })
+          .replace(/\s+/g, ' ')
+          .trim() || null;
+      if (title) content.shift();
     }
 
     // ensure at least one paragraph

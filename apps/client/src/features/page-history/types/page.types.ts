@@ -41,6 +41,7 @@ export interface IPageHistoryDiffChange {
 export interface IPageHistoryDiff {
   status: PageHistoryDiffStatus;
   fromHistoryId: string | null;
+  fromTitle?: string | null;
   toHistoryId: string;
   algorithmVersion: string;
   schemaVersion: string;

@@ -221,7 +221,7 @@ export const ColorSelector: FC<ColorSelectorProps> = ({
       withArrow
     >
       <Popover.Target>
-        <Tooltip label={t("Text color")} withArrow>
+        <Tooltip label={t("Text color")} withArrow withinPortal={false}>
           <Button
             variant="default"
             radius="0"

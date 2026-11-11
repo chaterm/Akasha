@@ -6,8 +6,11 @@ import { Helmet } from "react-helmet-async";
 import PageHeader from "@/features/page/components/header/page-header.tsx";
 import { extractPageSlugId } from "@/lib";
 import { useGetSpaceBySlugQuery } from "@/features/space/queries/space-query.ts";
+import { useCommentDeepLink } from "@/features/comment/hooks/use-comment-deep-link";
 import { useTranslation } from "react-i18next";
 import React, { useEffect } from "react";
+import { useSetAtom } from "jotai";
+import { asideStateAtom } from "@/components/layouts/global/hooks/atoms/sidebar-atom";
 import { EmptyState } from "@/components/ui/empty-state.tsx";
 import { IconAlertTriangle, IconFileOff } from "@tabler/icons-react";
 import { Button } from "@mantine/core";
@@ -21,6 +24,7 @@ import { useOpenInEditModeOnce } from "@/features/editor/use-open-in-edit-mode";
 import { recordPageVisit } from "@/features/page-visit/services/page-visit-service";
 import { queryClient } from "@/main";
 import { RECENT_PAGE_VISITS_QUERY_KEY } from "@/features/page-visit/queries/page-visit-query";
+import { useHistorySnapshot } from "@/features/page-history/hooks";
 const MemoizedFullEditor = React.memo(FullEditor);
 const MemoizedPageHeader = React.memo(PageHeader);
 const MemoizedHistoryModal = React.memo(HistoryModal);
@@ -64,6 +68,13 @@ function PageContent({ pageSlug }: { pageSlug: string | undefined }) {
     error,
   } = usePageQuery({ pageId: extractPageSlugId(pageSlug) });
   const { data: space } = useGetSpaceBySlugQuery(page?.space?.slug);
+  const setAsideState = useSetAtom(asideStateAtom);
+
+  useEffect(() => {
+    setAsideState({ tab: "", isAsideOpen: false });
+  }, [page?.id, setAsideState]);
+
+  useCommentDeepLink(page?.id);
 
   useEffect(() => {
     if (!page?.id || isLoading || isError) return;
@@ -79,6 +90,7 @@ function PageContent({ pageSlug }: { pageSlug: string | undefined }) {
 
   const canEdit = !page?.deletedAt && (page?.permissions?.canEdit ?? false);
   const openInEditMode = useOpenInEditModeOnce(page?.id);
+  const saveHistorySnapshot = useHistorySnapshot(page?.id);
   const canComment =
     canEdit || space?.settings?.comments?.allowViewerComments === true;
 
@@ -130,6 +142,7 @@ function PageContent({ pageSlug }: { pageSlug: string | undefined }) {
           initialMode={
             canEdit && openInEditMode ? PageEditMode.Edit : PageEditMode.Read
           }
+          onSave={saveHistorySnapshot}
         >
           <MemoizedPageHeader readOnly={!canEdit} />
 

@@ -859,6 +859,11 @@ export class PageService {
         ) {
           throw new NotFoundException('Parent page not found');
         }
+        if (await this.pageRepo.isSelfOrAncestor(parentPage.id, movedPage.id)) {
+          throw new BadRequestException(
+            'Cannot move a page into itself or its descendants',
+          );
+        }
         parentPageId = parentPage.id;
       }
     }

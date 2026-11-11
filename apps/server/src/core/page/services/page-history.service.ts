@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PageHistoryRepo } from '@akasha/db/repos/page/page-history.repo';
-import { PageHistory } from '@akasha/db/types/entity.types';
+import { PageHistory, User } from '@akasha/db/types/entity.types';
 import { PaginationOptions } from '@akasha/db/pagination/pagination-options';
 import { CursorPaginationResult } from '@akasha/db/pagination/cursor-pagination';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -11,6 +11,10 @@ import {
   HISTORY_DIFF_ALGORITHM_VERSION,
   HISTORY_DIFF_SCHEMA_VERSION,
 } from '@docmost/editor-ext';
+import {
+  HistorySnapshotResult,
+  HistorySnapshotService,
+} from '../../../collaboration/services/history-snapshot.service';
 
 @Injectable()
 export class PageHistoryService {
@@ -20,7 +24,15 @@ export class PageHistoryService {
     private readonly pageHistoryRepo: PageHistoryRepo,
     @InjectQueue(QueueName.HISTORY_DIFF_QUEUE)
     private readonly historyDiffQueue: Queue,
+    private readonly historySnapshot: HistorySnapshotService,
   ) {}
+
+  async createSnapshot(
+    pageId: string,
+    user: User,
+  ): Promise<HistorySnapshotResult> {
+    return this.historySnapshot.createSnapshot(pageId, user);
+  }
 
   async findById(historyId: string): Promise<PageHistory> {
     return await this.pageHistoryRepo.findById(historyId, {
@@ -48,6 +60,7 @@ export class PageHistoryService {
       HISTORY_DIFF_ALGORITHM_VERSION,
       HISTORY_DIFF_SCHEMA_VERSION,
     );
+    let fromTitle: string | null = null;
 
     if (!diff) {
       const previousHistory =
@@ -65,6 +78,7 @@ export class PageHistoryService {
         };
       }
 
+      fromTitle = previousHistory.title ?? null;
       await this.pageHistoryRepo.createPendingDiff({
         fromHistoryId: previousHistory.id,
         toHistoryId: history.id,
@@ -82,6 +96,13 @@ export class PageHistoryService {
       throw new Error('Failed to create page history diff record');
     }
 
+    if (fromTitle === null && diff.fromHistoryId) {
+      const fromHistory = await this.pageHistoryRepo.findById(
+        diff.fromHistoryId,
+      );
+      fromTitle = fromHistory?.title ?? null;
+    }
+
     if (diff?.status === 'pending') {
       await this.enqueueDiff(
         diff.fromHistoryId,
@@ -97,6 +118,7 @@ export class PageHistoryService {
     return {
       status: diff.status,
       fromHistoryId: diff.fromHistoryId,
+      fromTitle,
       toHistoryId: diff.toHistoryId,
       algorithmVersion: diff.algorithmVersion,
       schemaVersion: diff.schemaVersion,
