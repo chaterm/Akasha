@@ -17,3 +17,11 @@ export const yjsConnectionStatusAtom = atom<string>("");
 export const showAiMenuAtom = atom(false);
 
 export const showLinkMenuAtom = atom(false);
+
+export type LightboxRequest = {
+  src: string;
+  type: "image" | "video";
+} | null;
+
+const initialLightboxRequest: LightboxRequest = null;
+export const lightboxRequestAtom = atom(initialLightboxRequest);

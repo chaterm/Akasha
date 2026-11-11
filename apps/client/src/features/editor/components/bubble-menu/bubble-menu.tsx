@@ -217,7 +217,12 @@ export const EditorBubbleMenu: FC<EditorBubbleMenuProps> = (props) => {
 
             <ActionIcon.Group>
               {items.map((item, index) => (
-                <Tooltip key={index} label={t(item.name)} withArrow>
+                <Tooltip
+                  key={index}
+                  label={t(item.name)}
+                  withArrow
+                  withinPortal={false}
+                >
                   <ActionIcon
                     key={index}
                     variant="default"

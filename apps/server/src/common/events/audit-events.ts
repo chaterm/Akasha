@@ -110,7 +110,7 @@ export const AuditEvent = {
 
   // Attachment
   ATTACHMENT_UPLOADED: 'attachment.uploaded',
-  // ATTACHMENT_DELETED: 'attachment.deleted',
+  ATTACHMENT_DELETED: 'attachment.deleted',
 } as const;
 
 export type AuditEventType = (typeof AuditEvent)[keyof typeof AuditEvent];

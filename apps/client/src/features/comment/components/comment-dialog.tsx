@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 import { Dialog, Group, Stack, Text } from "@mantine/core";
 import { useClickOutside } from "@mantine/hooks";
-import { useAtom } from "jotai";
+import { useAtom, useSetAtom } from "jotai";
 import {
   activeCommentIdAtom,
+  commentPanelTabAtom,
   draftCommentIdAtom,
   showCommentPopupAtom,
   showReadOnlyCommentPopupAtom,
@@ -31,6 +32,7 @@ function CommentDialog({ editor, pageId, readOnly }: CommentDialogProps) {
   const [, setShowReadOnlyCommentPopup] = useAtom(showReadOnlyCommentPopupAtom);
   const [readOnlyCommentData, setReadOnlyCommentData] = useAtom(readOnlyCommentDataAtom);
   const [, setActiveCommentId] = useAtom(activeCommentIdAtom);
+  const setCommentPanelTab = useSetAtom(commentPanelTabAtom);
   const [draftCommentId, setDraftCommentId] = useAtom(draftCommentIdAtom);
   const [currentUser] = useAtom(currentUserAtom);
   const [, setAsideState] = useAtom(asideStateAtom);
@@ -80,6 +82,7 @@ function CommentDialog({ editor, pageId, readOnly }: CommentDialogProps) {
         .unsetCommentDecoration()
         .run();
       setActiveCommentId(createdComment.id);
+      setCommentPanelTab("open");
 
       editor.commands.setTextSelection({ from: editor.view.state.selection.from, to: editor.view.state.selection.from });
 
@@ -113,6 +116,7 @@ function CommentDialog({ editor, pageId, readOnly }: CommentDialogProps) {
       });
 
       setActiveCommentId(createdComment.id);
+      setCommentPanelTab("open");
       setAsideState({ tab: "comments", isAsideOpen: true });
 
       setTimeout(() => {

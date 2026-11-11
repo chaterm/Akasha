@@ -31,6 +31,7 @@ import { useAtom, useSetAtom } from "jotai";
 import useCollaborationUrl from "@/features/editor/hooks/use-collaboration-url";
 import { currentUserAtom } from "@/features/user/atoms/current-user-atom";
 import {
+  lightboxRequestAtom,
   pageCollabProviderAtom,
   pageEditorAtom,
   yjsConnectionStatusAtom,
@@ -38,6 +39,7 @@ import {
 import { asideStateAtom } from "@/components/layouts/global/hooks/atoms/sidebar-atom";
 import {
   activeCommentIdAtom,
+  commentPanelTabAtom,
   showCommentPopupAtom,
   showReadOnlyCommentPopupAtom,
 } from "@/features/comment/atoms/comment-atom";
@@ -52,6 +54,9 @@ import CalloutMenu from "@/features/editor/components/callout/callout-menu.tsx";
 import VideoMenu from "@/features/editor/components/video/video-menu.tsx";
 import PdfMenu from "@/features/editor/components/pdf/pdf-menu.tsx";
 import SubpagesMenu from "@/features/editor/components/subpages/subpages-menu.tsx";
+import LightboxView, {
+  getLightboxClickRequest,
+} from "@/features/editor/components/common/lightbox-view";
 import {
   handleFileDrop,
   handlePaste,
@@ -120,8 +125,10 @@ export default function PageEditor({
   const setCollabProvider = useSetAtom(pageCollabProviderAtom);
   const [, setAsideState] = useAtom(asideStateAtom);
   const [, setActiveCommentId] = useAtom(activeCommentIdAtom);
+  const setCommentPanelTab = useSetAtom(commentPanelTabAtom);
   const [showCommentPopup, setShowCommentPopup] = useAtom(showCommentPopupAtom);
   const [showReadOnlyCommentPopup] = useAtom(showReadOnlyCommentPopupAtom);
+  const [lightboxRequest, setLightboxRequest] = useAtom(lightboxRequestAtom);
   const [isLocalSynced, setIsLocalSynced] = useState(false);
   const [isRemoteSynced, setIsRemoteSynced] = useState(false);
   const [yjsConnectionStatus, setYjsConnectionStatus] = useAtom(
@@ -322,6 +329,22 @@ export default function PageEditor({
 
           return handleFileDrop(editorRef.current, event, moved, pageId);
         },
+        handleClickOn: (view, _pos, node) => {
+          if (view.editable) return false;
+
+          const request = getLightboxClickRequest(node);
+          if (!request) return false;
+
+          setLightboxRequest(request);
+          return true;
+        },
+        handleDoubleClickOn: (_view, _pos, node) => {
+          const request = getLightboxClickRequest(node);
+          if (!request) return false;
+
+          setLightboxRequest(request);
+          return true;
+        },
       },
       onCreate({ editor }) {
         if (editor) {
@@ -377,6 +400,7 @@ export default function PageEditor({
     }
 
     setActiveCommentId(commentId);
+    setCommentPanelTab("open");
     setAsideState({ tab: "comments", isAsideOpen: true });
 
     //wait if aside is closed
@@ -400,7 +424,7 @@ export default function PageEditor({
   useEffect(() => {
     setActiveCommentId(null);
     setShowCommentPopup(false);
-    setAsideState({ tab: "", isAsideOpen: false });
+    setLightboxRequest(null);
   }, [pageId]);
 
   const isSynced = isLocalSynced && isRemoteSynced;
@@ -506,6 +530,15 @@ export default function PageEditor({
               providersRef.current && (
                 <ReadonlyBubbleMenu editor={editor} canAskAi={editable} />
               )}
+            {editor && (
+              <LightboxView
+                editor={editor}
+                open={!!lightboxRequest}
+                src={lightboxRequest?.src ?? ""}
+                type={lightboxRequest?.type ?? "image"}
+                onClose={() => setLightboxRequest(null)}
+              />
+            )}
             {showCommentPopup && (
               <CommentDialog editor={editor} pageId={pageId} />
             )}
