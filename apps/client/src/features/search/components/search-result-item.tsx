@@ -111,7 +111,7 @@ export function SearchResultItem({
           <Center>{getPageIcon(pageResult?.icon)}</Center>
 
           <div style={{ flex: 1 }}>
-            <Text>{pageResult.title}</Text>
+            <Text>{pageResult.title?.trim() || t("untitled")}</Text>
 
             {showSpace && pageResult.space && (
               <Badge variant="light" size="xs" color="gray">
