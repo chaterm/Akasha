@@ -1,4 +1,5 @@
 import { KnowledgeCapsuleRepo } from './knowledge-capsule.repo';
+import { Logger } from '@nestjs/common';
 import {
   CamelCasePlugin,
   CompiledQuery,
@@ -114,6 +115,11 @@ class FakeKyselyQuery {
 
   returning(...args: unknown[]) {
     this.calls.push({ method: 'returning', args });
+    return this;
+  }
+
+  forKeyShare() {
+    this.calls.push({ method: 'forKeyShare', args: [] });
     return this;
   }
 
@@ -731,6 +737,58 @@ describe('KnowledgeCapsuleRepo', () => {
 
     expect(pageInsertIndexes).toHaveLength(2);
     expect(linkInsertIndex).toBeGreaterThan(Math.max(...pageInsertIndexes));
+    const lockIndex = query.calls.findIndex(
+      (call) => call.method === 'forKeyShare',
+    );
+    expect(lockIndex).toBeGreaterThan(Math.max(...pageInsertIndexes));
+    expect(lockIndex).toBeLessThan(linkInsertIndex);
+  });
+
+  it('publishes missing historical targets as dangling without mutating the contribution', async () => {
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    try {
+      const query = new FakeKyselyQuery({
+        knowledgePages: [{ id: 'owner' }, { id: 'existing-target' }],
+      });
+      const links = ['purged-target', 'existing-target', null].map(
+        (target, index) => ({
+          id: `link-${index}`,
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          fromKnowledgePageId: 'owner',
+          toKnowledgePageId: target,
+          targetArtifactKind: 'concept',
+          targetCanonicalKey: `concept-${index}`,
+          linkText: 'Concept',
+          linkType: 'mentions',
+          isDangling: target === null,
+        }),
+      );
+      await createRepo(query).upsertCompiledArtifacts([
+        { page: basePage('owner'), links },
+      ]);
+      const insertIndex = query.calls.findIndex(
+        (call) =>
+          call.method === 'insertInto' && call.args[0] === 'knowledgeLinks',
+      );
+      const values = query.calls
+        .slice(insertIndex + 1)
+        .find((call) => call.method === 'values')!.args[0];
+      expect(values).toEqual([
+        { ...links[0], toKnowledgePageId: null, isDangling: true },
+        links[1],
+        links[2],
+      ]);
+      expect(links[0].toKnowledgePageId).toBe('purged-target');
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: 'knowledge_links_missing_targets',
+          affectedLinkCount: 1,
+        }),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('splits large child collections into bounded inserts', async () => {

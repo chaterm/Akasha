@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectKysely } from 'nestjs-kysely';
 import { KyselyDB, KyselyTransaction } from '@akasha/db/types/kysely.types';
 import { dbOrTx, executeTx } from '@akasha/db/utils';
@@ -130,6 +130,8 @@ export type CompilerCatalogCandidateRow = {
 
 @Injectable()
 export class KnowledgeCapsuleRepo {
+  private readonly logger = new Logger(KnowledgeCapsuleRepo.name);
+
   constructor(@InjectKysely() private readonly db: KyselyDB) {}
 
   /**
@@ -421,11 +423,15 @@ export class KnowledgeCapsuleRepo {
       inputs.flatMap((input) => input.chunkAttachments ?? []),
       'knowledgeChunkAttachments',
     );
-    await this.insertArtifactChildren(
-      db,
-      inputs.flatMap((input) => input.links ?? []),
-      'knowledgeLinks',
+    const links = await runKnowledgeCompilationOperation(
+      'import.check_link_targets',
+      () =>
+        this.preparePublishedLinks(
+          db,
+          inputs.flatMap((input) => input.links ?? []),
+        ),
     );
+    await this.insertArtifactChildren(db, links, 'knowledgeLinks');
     await this.insertArtifactChildren(
       db,
       inputs.flatMap((input) => input.linkSources ?? []),
@@ -433,6 +439,68 @@ export class KnowledgeCapsuleRepo {
     );
 
     return pages;
+  }
+
+  private async preparePublishedLinks(
+    db: KyselyDB | KyselyTransaction,
+    links: InsertableKnowledgeLink[],
+  ): Promise<InsertableKnowledgeLink[]> {
+    const targetIds = [
+      ...new Set(
+        links.flatMap((link) =>
+          link.toKnowledgePageId ? [link.toKnowledgePageId] : [],
+        ),
+      ),
+    ].sort();
+    if (targetIds.length === 0) return links;
+
+    const existingIds = new Set<string>();
+    for (
+      let offset = 0;
+      offset < targetIds.length;
+      offset += CHILD_INSERT_BATCH_SIZE
+    ) {
+      // All pages in this publication have already been upserted. Lock existing
+      // targets until commit so they cannot disappear between this check and
+      // the FK check on link insertion.
+      const targets = await db
+        .selectFrom('knowledgePages')
+        .select('id')
+        .where(
+          'id',
+          'in',
+          targetIds.slice(offset, offset + CHILD_INSERT_BATCH_SIZE),
+        )
+        .orderBy('id', 'asc')
+        .forKeyShare()
+        .execute();
+      for (const target of targets) existingIds.add(target.id);
+    }
+
+    // Historical contribution JSON is not protected by the link table's FK.
+    // A merged contribution can replay an ID that has since been purged. Keep
+    // its canonical identity for the finalizer's link resolver, but publish it
+    // as dangling rather than rolling back every artifact from this page.
+    const missingLinks = links.filter(
+      (link) =>
+        link.toKnowledgePageId && !existingIds.has(link.toKnowledgePageId),
+    );
+    if (missingLinks.length === 0) return links;
+    this.logger.warn({
+      message: 'Knowledge publication contains missing link targets',
+      event: 'knowledge_links_missing_targets',
+      affectedLinkCount: missingLinks.length,
+      sampleLinks: missingLinks.slice(0, 10).map((link) => ({
+        fromKnowledgePageId: link.fromKnowledgePageId,
+        missingTargetId: link.toKnowledgePageId,
+        compileTaskId: link.compileTaskId,
+      })),
+    });
+    return links.map((link) =>
+      link.toKnowledgePageId && !existingIds.has(link.toKnowledgePageId)
+        ? { ...link, toKnowledgePageId: null, isDangling: true }
+        : link,
+    );
   }
 
   private async upsertCompiledPage(
