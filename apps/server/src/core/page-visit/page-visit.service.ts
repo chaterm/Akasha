@@ -74,16 +74,24 @@ export class PageVisitService {
       const spaceIds = [...readableSpaceIds];
       const spaceChecks = await Promise.all(
         spaceIds.map(async (spaceId) => {
-          const ability = await this.spaceAbility.createForUser(
-            input.user,
-            spaceId,
-          );
-          return ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page)
-            ? null
-            : spaceId;
+          try {
+            const ability = await this.spaceAbility.createForUser(
+              input.user,
+              spaceId,
+            );
+            return ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page)
+              ? null
+              : spaceId;
+          } catch (error) {
+            // Visit history can outlive the user's space membership.
+            if (error instanceof NotFoundException) return null;
+            throw error;
+          }
         }),
       );
       readableSpaceIds = new Set(spaceChecks.filter(Boolean) as string[]);
+
+      if (readableSpaceIds.size === 0) return { items: [] };
 
       const accessibleIds =
         await this.pagePermissionRepo.filterAccessiblePageIds({

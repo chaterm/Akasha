@@ -167,4 +167,77 @@ describe('PageVisitService', () => {
       jest.useRealTimers();
     }
   });
+
+  it('skips spaces whose membership was revoked and keeps other readable visits', async () => {
+    const { service, pageVisitRepo, spaceAbility, pagePermissionRepo } =
+      createSubject();
+    pageVisitRepo.findRecent.mockResolvedValue([
+      visitRow('page-revoked-1', 'space-revoked'),
+      visitRow('page-1', 'space-1'),
+      visitRow('page-revoked-2', 'space-revoked'),
+    ]);
+    spaceAbility.createForUser.mockImplementation(async (_user, spaceId) => {
+      if (spaceId === 'space-revoked') {
+        throw new NotFoundException('Space permissions not found');
+      }
+      return { cannot: jest.fn().mockReturnValue(false) };
+    });
+
+    const result = await service.findRecent({ user, workspace, limit: 15 });
+
+    expect(result.items.map((item) => item.pageId)).toEqual(['page-1']);
+    expect(pagePermissionRepo.filterAccessiblePageIds).toHaveBeenCalledWith({
+      pageIds: ['page-1'],
+      userId: user.id,
+      spaceId: undefined,
+    });
+    expect(spaceAbility.createForUser).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([undefined, 'space-revoked'])(
+    'returns an empty list when no visited space is accessible (space filter: %s)',
+    async (spaceId) => {
+      const { service, pageVisitRepo, spaceAbility, pagePermissionRepo } =
+        createSubject();
+      pageVisitRepo.findRecent.mockResolvedValue([
+        visitRow('page-revoked', 'space-revoked'),
+      ]);
+      spaceAbility.createForUser.mockRejectedValue(
+        new NotFoundException('Space permissions not found'),
+      );
+
+      await expect(
+        service.findRecent({ user, workspace, spaceId, limit: 15 }),
+      ).resolves.toEqual({ items: [] });
+      expect(pagePermissionRepo.filterAccessiblePageIds).not.toHaveBeenCalled();
+    },
+  );
+
+  it('propagates unexpected failures during space permission checks', async () => {
+    const { service, pageVisitRepo, spaceAbility, pagePermissionRepo } =
+      createSubject();
+    pageVisitRepo.findRecent.mockResolvedValue([visitRow('page-1', 'space-1')]);
+    const error = new Error('Database connection failed');
+    spaceAbility.createForUser.mockRejectedValue(error);
+
+    await expect(
+      service.findRecent({ user, workspace, limit: 15 }),
+    ).rejects.toBe(error);
+    expect(pagePermissionRepo.filterAccessiblePageIds).not.toHaveBeenCalled();
+  });
 });
+
+function visitRow(pageId: string, spaceId: string) {
+  return {
+    id: `visit-${pageId}`,
+    pageId,
+    lastVisitedAt: new Date('2026-09-21T08:00:00.000Z'),
+    title: `Title ${pageId}`,
+    icon: null,
+    slugId: pageId,
+    spaceId,
+    spaceName: spaceId,
+    spaceSlug: spaceId,
+    spaceLogo: null,
+  };
+}
