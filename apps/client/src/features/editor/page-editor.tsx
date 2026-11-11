@@ -112,9 +112,7 @@ export default function PageEditor({
 }: PageEditorProps) {
   const { t } = useTranslation();
   const { pageEditMode } = usePageEditMode();
-  const collaborationURL = useCollaborationUrl(
-    pageEditMode === PageEditMode.Read,
-  );
+  const collaborationURL = useCollaborationUrl();
   const isComponentMounted = useRef(false);
   const editorRef = useRef<Editor | null>(null);
 
