@@ -8,8 +8,37 @@ import {
 } from './knowledge-import.service';
 import { KnowledgeEmbeddingError } from './knowledge-embedding-provider.service';
 import { CompileSpaceInput } from '../types/compiler-artifact.types';
+import { describeKnowledgeCompilationError } from '../../../common/helpers/knowledge-compilation-error';
 
 describe('KnowledgeImportService', () => {
+  it('identifies a failed source-chunk write without changing the thrown error', async () => {
+    const error = new Error('source chunk insert failed');
+    const capsuleRepo = { upsertCompiledArtifacts: jest.fn() };
+    const service = new KnowledgeImportService(
+      {
+        upsertPageSource: jest.fn().mockResolvedValue({ id: 'source-row-1' }),
+        replaceSourceChunks: jest.fn().mockRejectedValue(error),
+      } as never,
+      capsuleRepo as never,
+      {
+        validateCompileResult: () => ({ accepted: [], quarantined: [] }),
+      } as never,
+      {} as never,
+      {} as never,
+      createTransactionDb() as never,
+      {} as never,
+      createContributionRepo() as never,
+      createMaterializer() as never,
+    );
+    await expect(
+      service.importCompileResult({ input: compileInput(), artifacts: [] }),
+    ).rejects.toBe(error);
+    expect(describeKnowledgeCompilationError(error).operation).toBe(
+      'import.replace_source_chunks',
+    );
+    expect(capsuleRepo.upsertCompiledArtifacts).not.toHaveBeenCalled();
+  });
+
   it('requires contribution merge dependencies at application startup', () => {
     expect(
       Reflect.getMetadata(OPTIONAL_DEPS_METADATA, KnowledgeImportService) ?? [],

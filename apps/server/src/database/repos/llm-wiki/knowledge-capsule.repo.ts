@@ -22,6 +22,7 @@ import {
 } from '@akasha/db/types/entity.types';
 import { sql } from 'kysely';
 import { fromSql as vectorFromSql, toSql as vectorToSql } from 'pgvector';
+import { runKnowledgeCompilationOperation } from '../../../common/helpers/knowledge-compilation-error';
 
 type SourcePageRow = { sourcePageId: string };
 type ChunkSourcePageRow = { chunkId: string; sourcePageId: string };
@@ -373,12 +374,21 @@ export class KnowledgeCapsuleRepo {
     const db = dbOrTx(this.db, trx);
 
     for (const input of inputs) {
-      await this.deleteChildArtifacts(input.page.id, trx);
+      await runKnowledgeCompilationOperation(
+        'import.delete_artifact_children',
+        () => this.deleteChildArtifacts(input.page.id, trx),
+      );
     }
 
     const pages: KnowledgePage[] = [];
     for (const input of inputs) {
-      pages.push(await this.upsertCompiledPage(input, trx));
+      pages.push(
+        await runKnowledgeCompilationOperation(
+          'import.upsert_knowledge_page',
+          () => this.upsertCompiledPage(input, trx),
+          { artifactId: input.page.id },
+        ),
+      );
     }
 
     await this.insertArtifactChildren(
@@ -477,10 +487,12 @@ export class KnowledgeCapsuleRepo {
       offset < rows.length;
       offset += CHILD_INSERT_BATCH_SIZE
     ) {
-      await db
-        .insertInto(table)
-        .values(rows.slice(offset, offset + CHILD_INSERT_BATCH_SIZE) as never)
-        .execute();
+      await runKnowledgeCompilationOperation(`import.insert.${table}`, () =>
+        db
+          .insertInto(table)
+          .values(rows.slice(offset, offset + CHILD_INSERT_BATCH_SIZE) as never)
+          .execute(),
+      );
     }
   }
 

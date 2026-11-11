@@ -11,6 +11,7 @@ import {
   QueryResult,
 } from 'kysely';
 import { DbInterface } from '@akasha/db/types/db.interface';
+import { describeKnowledgeCompilationError } from '../../../common/helpers/knowledge-compilation-error';
 
 type QueryCall = {
   method: string;
@@ -175,6 +176,21 @@ function basePageSource(knowledgePageId: string, sourcePageId: string) {
 }
 
 describe('KnowledgeCapsuleRepo', () => {
+  it('retains the attempted artifact id when a knowledge-page upsert fails', async () => {
+    const query = new FakeKyselyQuery();
+    const error = new Error('unique constraint violation');
+    jest.spyOn(query, 'executeTakeFirstOrThrow').mockRejectedValue(error);
+    await expect(
+      createRepo(query).upsertCompiledArtifacts([
+        { page: basePage('incoming-artifact-id') },
+      ]),
+    ).rejects.toBe(error);
+    expect(describeKnowledgeCompilationError(error)).toMatchObject({
+      operation: 'import.upsert_knowledge_page',
+      artifactId: 'incoming-artifact-id',
+    });
+  });
+
   it('discovers active source artifacts without requiring semantic contributions', async () => {
     const { repo, queries } = createSqlRepo();
 
