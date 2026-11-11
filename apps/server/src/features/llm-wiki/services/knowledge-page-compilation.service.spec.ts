@@ -1,8 +1,115 @@
 import { Logger } from '@nestjs/common';
+import { PostgresError } from 'postgres';
+import { runKnowledgeCompilationOperation } from '../../../common/helpers/knowledge-compilation-error';
 import { KnowledgeCompilerLlmError } from '../compiler/knowledge-compiler-llm.provider';
 import { KnowledgePageCompilationService } from './knowledge-page-compilation.service';
 
 describe('KnowledgePageCompilationService contract', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it.each(['text', 'image'] as const)(
+    'persists and logs database failure details for %s publication',
+    async (kind) => {
+      const logSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+      const error = Object.assign(new PostgresError(''), {
+        code: '23505',
+        table_name: 'knowledge_chunks',
+        constraint_name: 'knowledge_chunks_pkey',
+        detail: 'sensitive-page-body',
+        query: 'INSERT sensitive-page-body',
+        parameters: ['sensitive-page-body'],
+      });
+      const fixture = failureFixture(async () =>
+        runKnowledgeCompilationOperation(
+          'import.insert.knowledgeChunks',
+          async () => {
+            throw error;
+          },
+        ),
+      );
+      const outcome = await fixture.run(kind);
+      expect(outcome).toMatchObject({
+        outcome: 'failed',
+        code: 'compile_failed',
+        retryable: true,
+        cause: error,
+      });
+      const failure = fixture.compilationRepo.failAttempt.mock.calls[0][0];
+      expect(failure.errorCode).toBe('compile_failed');
+      expect(failure.errorMessage).toContain('[import.insert.knowledgeChunks]');
+      expect(failure.errorMessage).toContain('sqlState=23505');
+      expect(failure.errorMessage).toContain('table=knowledge_chunks');
+      expect(failure.errorMessage).toContain(
+        'constraint=knowledge_chunks_pkey',
+      );
+      expect(fixture.execution.completePage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'failed',
+          errorCode: failure.errorCode,
+          errorMessage: failure.errorMessage,
+          retryable: true,
+        }),
+      );
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: 'knowledge_page_compilation_failed',
+          sourcePageId: 'page-1',
+          compileTaskId: 'task-1',
+          operation: 'import.insert.knowledgeChunks',
+          database: expect.objectContaining({ sqlState: '23505' }),
+        }),
+      );
+      expect(JSON.stringify(logSpy.mock.calls)).not.toContain(
+        'sensitive-page-body',
+      );
+      expect(failure.errorMessage).not.toContain('sensitive-page-body');
+    },
+  );
+
+  it('retains the reason for an ordinary compilation error', async () => {
+    jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    const fixture = failureFixture(async () => {
+      throw new TypeError('Cannot read properties of undefined');
+    });
+    await expect(fixture.run('text')).resolves.toMatchObject({
+      outcome: 'failed',
+      code: 'compile_failed',
+      message: 'TypeError: Cannot read properties of undefined',
+      retryable: true,
+    });
+    expect(fixture.compilationRepo.failAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorMessage: 'TypeError: Cannot read properties of undefined',
+      }),
+    );
+  });
+
+  it('distinguishes an access-index failure after a successful import', async () => {
+    jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    const fixture = failureFixture(async () => ({
+      importedArtifactCount: 1,
+      quarantinedArtifactCount: 0,
+    }));
+    fixture.accessIndexer.reindexSourcePages.mockRejectedValue(
+      new Error('Permission snapshot failed'),
+    );
+    await expect(fixture.run('text')).resolves.toMatchObject({
+      outcome: 'failed',
+      message:
+        '[access_index.reindex_source_pages] Error: Permission snapshot failed',
+    });
+    expect(fixture.compilationRepo.succeedAttempt).not.toHaveBeenCalled();
+  });
+
+  it('preserves propagation of image-merge source read errors', async () => {
+    const fixture = failureFixture(async () => ({}));
+    const error = new Error('Source read failed');
+    fixture.sourceExporter.exportPageSources.mockRejectedValue(error);
+    await expect(fixture.run('image')).rejects.toBe(error);
+    expect(fixture.compilationRepo.failAttempt).not.toHaveBeenCalled();
+    expect(fixture.execution.completePage).not.toHaveBeenCalled();
+  });
+
   it('exposes page operations without accepting a BullMQ Job', () => {
     expect(KnowledgePageCompilationService.prototype.compileTextPage).toEqual(
       expect.any(Function),
@@ -185,6 +292,7 @@ describe('KnowledgePageCompilationService contract', () => {
   });
 
   it('logs provider diagnostics when compiler failures carry diagnostic metadata', async () => {
+    jest.spyOn(Logger.prototype, 'error').mockImplementation();
     const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
     const compilerError = new KnowledgeCompilerLlmError(
       'input_too_large',
@@ -637,3 +745,78 @@ describe('KnowledgePageCompilationService contract', () => {
     );
   });
 });
+
+function failureFixture(importResult: () => Promise<unknown>) {
+  const source = {
+    workspaceId: 'workspace-1',
+    spaceId: 'space-1',
+    sourcePageId: 'page-1',
+    sourceVersion: 'v1',
+    contentHash: 'sha256:page-1',
+    title: 'Page one',
+    text: 'Page body',
+    references: [],
+    images: [],
+  };
+  const compilationRepo = {
+    startAttempt: jest.fn(),
+    updateSourceSnapshot: jest.fn(),
+    updateStage: jest.fn(),
+    succeedAttempt: jest.fn(),
+    failAttempt: jest.fn(),
+    skipAttempt: jest.fn(),
+  };
+  const accessIndexer = { reindexSourcePages: jest.fn() };
+  const sourceExporter = {
+    exportPageSources: jest.fn().mockResolvedValue([source]),
+  };
+  const service = new KnowledgePageCompilationService(
+    sourceExporter as never,
+    {
+      compileSpace: jest.fn().mockResolvedValue({
+        artifacts: [],
+        compilerRunId: 'run-1',
+      }),
+    } as never,
+    { importCompileResult: jest.fn(importResult) } as never,
+    accessIndexer as never,
+    compilationRepo as never,
+    {
+      readFrozenSource: jest.fn().mockResolvedValue({
+        source,
+        readyImages: [],
+        missingExtractionIds: [],
+      }),
+    } as never,
+  );
+  const execution = {
+    isActive: jest.fn().mockResolvedValue(true),
+    completePage: jest.fn(),
+    catalog: jest.fn().mockResolvedValue([]),
+    publicationGuard: jest.fn(),
+    publicationComplete: jest.fn(),
+  };
+  const data = {
+    workspaceId: source.workspaceId,
+    spaceId: source.spaceId,
+    spaceRunId: 'run-1',
+    knowledgeGeneration: 1,
+    sourcePageId: source.sourcePageId,
+    sourcePageIds: [source.sourcePageId],
+    sourceVersion: source.sourceVersion,
+    sourceContentHash: source.contentHash,
+    images: [],
+    expectedExtractionIds: [],
+  };
+  return {
+    compilationRepo,
+    accessIndexer,
+    sourceExporter,
+    execution,
+    run: (kind: 'text' | 'image') =>
+      service[kind === 'text' ? 'compileTextPage' : 'mergePageImages'](
+        { data, compileTaskId: 'task-1', execution },
+        new AbortController().signal,
+      ),
+  };
+}

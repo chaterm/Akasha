@@ -33,6 +33,7 @@ import {
   mapKnowledgeOperations,
 } from './knowledge-operation-budget';
 import { stableKnowledgeUuid } from './knowledge-stable-id';
+import { runKnowledgeCompilationOperation } from '../../../common/helpers/knowledge-compilation-error';
 
 // This slices every content type, not only table rows. Batching does not alter
 // individual embedding inputs, so prose/attachment vector quality is unchanged.
@@ -130,20 +131,24 @@ export class KnowledgeImportService {
       quarantineInputs.length > 0
     ) {
       let quarantinePublicationRejected = false;
-      await executeTx(this.db, async (trx) => {
-        if (input.publicationGuard && !(await input.publicationGuard(trx))) {
-          quarantinePublicationRejected = true;
-          return;
-        }
-        await this.quarantineRepo.recordQuarantinedArtifacts(
-          {
-            workspaceId: input.input.workspaceId,
-            spaceId: input.input.spaceId,
-            artifacts: quarantineInputs,
-          },
-          trx,
-        );
-      });
+      await runKnowledgeCompilationOperation('import.transaction', () =>
+        executeTx(this.db, async (trx) => {
+          if (input.publicationGuard && !(await input.publicationGuard(trx))) {
+            quarantinePublicationRejected = true;
+            return;
+          }
+          await runKnowledgeCompilationOperation('import.quarantine', () =>
+            this.quarantineRepo.recordQuarantinedArtifacts(
+              {
+                workspaceId: input.input.workspaceId,
+                spaceId: input.input.spaceId,
+                artifacts: quarantineInputs,
+              },
+              trx,
+            ),
+          );
+        }),
+      );
       if (quarantinePublicationRejected) {
         return {
           importedArtifactCount: 0,
@@ -480,134 +485,174 @@ export class KnowledgeImportService {
       input.retireSources === true
     ) {
       operationBudget.throwIfAborted();
-      await executeTx(this.db, async (trx) => {
-        if (input.publicationGuard && !(await input.publicationGuard(trx))) {
-          publicationRejected = true;
-          return;
-        }
+      await runKnowledgeCompilationOperation('import.transaction', () =>
+        executeTx(this.db, async (trx) => {
+          if (input.publicationGuard && !(await input.publicationGuard(trx))) {
+            publicationRejected = true;
+            return;
+          }
 
-        if (input.retireSources) {
-          await this.sourceRepo.markSpaceSourcesStale(
-            {
-              workspaceId: input.input.workspaceId,
-              spaceId: input.input.spaceId,
-              sourcePageIds: uniqueSourcePageIds(input.input),
-            },
-            trx,
-          );
-        }
-
-        if (persistSources) {
-          for (const source of input.input.sources) {
-            const sourceRow = await this.sourceRepo.upsertPageSource(
-              {
-                workspaceId: source.workspaceId,
-                sourcePageId: source.sourcePageId,
-                sourceSpaceId: source.spaceId,
-                sourceType: 'docmost_page',
-                sourceVersion: source.sourceVersion,
-                contentHash: source.contentHash,
-                extractedText: source.text,
-                mimeType: 'text/plain',
-              },
-              trx,
-            );
-            const sourceChunks = chunkKnowledgeSource({
-              pageTitle: source.title,
-              text: source.text,
-            }).flatMap((parent) =>
-              parent.children.map((child) => ({
-                id: stableKnowledgeUuid(
-                  `${sourceRow.id}:${child.startOffset}:${child.endOffset}:${child.quoteHash}`,
+          if (input.retireSources) {
+            await runKnowledgeCompilationOperation(
+              'import.retire_sources',
+              () =>
+                this.sourceRepo.markSpaceSourcesStale(
+                  {
+                    workspaceId: input.input.workspaceId,
+                    spaceId: input.input.spaceId,
+                    sourcePageIds: uniqueSourcePageIds(input.input),
+                  },
+                  trx,
                 ),
-                text: child.text,
-                contentHash: child.quoteHash,
-                sourceRange: {
-                  startOffset: child.startOffset,
-                  endOffset: child.endOffset,
-                },
-                quoteHash: child.quoteHash,
-              })),
-            );
-            await this.sourceRepo.replaceSourceChunks(
-              {
-                workspaceId: source.workspaceId,
-                sourceId: sourceRow.id,
-                sourcePageId: source.sourcePageId,
-                chunks: sourceChunks,
-              },
-              trx,
             );
           }
-        }
 
-        if (contributionPublication) {
-          // Semantic artifacts use canonical IDs, so rollout from the older
-          // deterministic compiler can otherwise leave two active summaries
-          // for one source. Stale source-owned summaries and publish the new
-          // canonical summary in the same transaction.
-          await this.capsuleRepo.markSourceArtifactsStaleBySourcePageIds(
-            {
-              workspaceId: input.input.workspaceId,
-              spaceId: input.input.spaceId,
-              sourcePageIds: [contributionPublication.sourcePageId],
-            },
-            trx,
-          );
-          await this.contributionRepo.replaceSourceContributions(
-            {
-              workspaceId: input.input.workspaceId,
-              spaceId: input.input.spaceId,
-              sourcePageId: contributionPublication.sourcePageId,
-              contributions: contributionPublication.contributions,
-            },
-            trx,
-          );
-          await this.capsuleRepo.markArtifactsStaleByIds(
-            {
-              workspaceId: input.input.workspaceId,
-              artifactIds: contributionPublication.removedArtifactIds,
-            },
-            trx,
-          );
-        } else if (input.retireSources) {
-          await this.capsuleRepo.markSourceArtifactsStaleBySourcePageIds(
-            {
-              workspaceId: input.input.workspaceId,
-              spaceId: input.input.spaceId,
-              sourcePageIds: uniqueSourcePageIds(input.input),
-            },
-            trx,
-          );
-        } else if (artifactInputs.length > 0) {
-          await this.capsuleRepo.markSourceArtifactsStaleBySourcePageIds(
-            {
-              workspaceId: input.input.workspaceId,
-              spaceId: input.input.spaceId,
-              sourcePageIds: uniqueSourcePageIds(input.input),
-            },
-            trx,
-          );
-        }
+          if (persistSources) {
+            for (const source of input.input.sources) {
+              const sourceRow = await runKnowledgeCompilationOperation(
+                'import.upsert_source',
+                () =>
+                  this.sourceRepo.upsertPageSource(
+                    {
+                      workspaceId: source.workspaceId,
+                      sourcePageId: source.sourcePageId,
+                      sourceSpaceId: source.spaceId,
+                      sourceType: 'docmost_page',
+                      sourceVersion: source.sourceVersion,
+                      contentHash: source.contentHash,
+                      extractedText: source.text,
+                      mimeType: 'text/plain',
+                    },
+                    trx,
+                  ),
+              );
+              const sourceChunks = chunkKnowledgeSource({
+                pageTitle: source.title,
+                text: source.text,
+              }).flatMap((parent) =>
+                parent.children.map((child) => ({
+                  id: stableKnowledgeUuid(
+                    `${sourceRow.id}:${child.startOffset}:${child.endOffset}:${child.quoteHash}`,
+                  ),
+                  text: child.text,
+                  contentHash: child.quoteHash,
+                  sourceRange: {
+                    startOffset: child.startOffset,
+                    endOffset: child.endOffset,
+                  },
+                  quoteHash: child.quoteHash,
+                })),
+              );
+              await runKnowledgeCompilationOperation(
+                'import.replace_source_chunks',
+                () =>
+                  this.sourceRepo.replaceSourceChunks(
+                    {
+                      workspaceId: source.workspaceId,
+                      sourceId: sourceRow.id,
+                      sourcePageId: source.sourcePageId,
+                      chunks: sourceChunks,
+                    },
+                    trx,
+                  ),
+              );
+            }
+          }
 
-        if (quarantineInputs.length > 0) {
-          await this.quarantineRepo.recordQuarantinedArtifacts(
-            {
-              workspaceId: input.input.workspaceId,
-              spaceId: input.input.spaceId,
-              artifacts: quarantineInputs,
-            },
-            trx,
-          );
-        }
+          if (contributionPublication) {
+            // Semantic artifacts use canonical IDs, so rollout from the older
+            // deterministic compiler can otherwise leave two active summaries
+            // for one source. Stale source-owned summaries and publish the new
+            // canonical summary in the same transaction.
+            await runKnowledgeCompilationOperation(
+              'import.retire_source_artifacts',
+              () =>
+                this.capsuleRepo.markSourceArtifactsStaleBySourcePageIds(
+                  {
+                    workspaceId: input.input.workspaceId,
+                    spaceId: input.input.spaceId,
+                    sourcePageIds: [contributionPublication.sourcePageId],
+                  },
+                  trx,
+                ),
+            );
+            await runKnowledgeCompilationOperation(
+              'import.replace_contributions',
+              () =>
+                this.contributionRepo.replaceSourceContributions(
+                  {
+                    workspaceId: input.input.workspaceId,
+                    spaceId: input.input.spaceId,
+                    sourcePageId: contributionPublication.sourcePageId,
+                    contributions: contributionPublication.contributions,
+                  },
+                  trx,
+                ),
+            );
+            await runKnowledgeCompilationOperation(
+              'import.retire_artifacts',
+              () =>
+                this.capsuleRepo.markArtifactsStaleByIds(
+                  {
+                    workspaceId: input.input.workspaceId,
+                    artifactIds: contributionPublication.removedArtifactIds,
+                  },
+                  trx,
+                ),
+            );
+          } else if (input.retireSources) {
+            await runKnowledgeCompilationOperation(
+              'import.retire_source_artifacts',
+              () =>
+                this.capsuleRepo.markSourceArtifactsStaleBySourcePageIds(
+                  {
+                    workspaceId: input.input.workspaceId,
+                    spaceId: input.input.spaceId,
+                    sourcePageIds: uniqueSourcePageIds(input.input),
+                  },
+                  trx,
+                ),
+            );
+          } else if (artifactInputs.length > 0) {
+            await runKnowledgeCompilationOperation(
+              'import.retire_source_artifacts',
+              () =>
+                this.capsuleRepo.markSourceArtifactsStaleBySourcePageIds(
+                  {
+                    workspaceId: input.input.workspaceId,
+                    spaceId: input.input.spaceId,
+                    sourcePageIds: uniqueSourcePageIds(input.input),
+                  },
+                  trx,
+                ),
+            );
+          }
 
-        if (artifactInputs.length > 0) {
-          await this.capsuleRepo.upsertCompiledArtifacts(artifactInputs, trx);
-        }
+          if (quarantineInputs.length > 0) {
+            await runKnowledgeCompilationOperation('import.quarantine', () =>
+              this.quarantineRepo.recordQuarantinedArtifacts(
+                {
+                  workspaceId: input.input.workspaceId,
+                  spaceId: input.input.spaceId,
+                  artifacts: quarantineInputs,
+                },
+                trx,
+              ),
+            );
+          }
 
-        operationBudget.throwIfAborted();
-        await input.publicationComplete?.(trx);
-      });
+          if (artifactInputs.length > 0) {
+            await runKnowledgeCompilationOperation(
+              'import.upsert_artifacts',
+              () =>
+                this.capsuleRepo.upsertCompiledArtifacts(artifactInputs, trx),
+            );
+          }
+
+          operationBudget.throwIfAborted();
+          await input.publicationComplete?.(trx);
+        }),
+      );
     }
 
     if (publicationRejected) {

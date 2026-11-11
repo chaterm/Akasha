@@ -36,6 +36,11 @@ import {
 import { uniqueValues } from './knowledge-queue.utils';
 import { KnowledgeEmbeddingError } from './knowledge-embedding-provider.service';
 import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
+import {
+  compilationFailureMessage,
+  describeKnowledgeCompilationError,
+  runKnowledgeCompilationOperation,
+} from '../../../common/helpers/knowledge-compilation-error';
 
 export type PageCompilationOutcome =
   | { outcome: 'succeeded' | 'noop'; result: KnowledgePageCompilationResult }
@@ -161,12 +166,16 @@ export class KnowledgePageCompilationService {
         compilerRunId: compileTaskId,
         compileTaskId,
       });
-      const sources = await this.sourceExporter.exportPageSources({
-        workspaceId: data.workspaceId,
-        spaceId: data.spaceId,
-        sourcePageIds,
-        abortSignal,
-      });
+      const sources = await runKnowledgeCompilationOperation(
+        'read_source',
+        () =>
+          this.sourceExporter.exportPageSources({
+            workspaceId: data.workspaceId,
+            spaceId: data.spaceId,
+            sourcePageIds,
+            abortSignal,
+          }),
+      );
       if (sources.length !== 1 || sources[0].sourcePageId !== sourcePageId) {
         throw new UnavailableKnowledgeSourceError();
       }
@@ -242,11 +251,15 @@ export class KnowledgePageCompilationService {
       }
 
       if (!source.text.trim()) {
-        const latestSources = await this.sourceExporter.exportPageSources({
-          workspaceId: data.workspaceId,
-          spaceId: data.spaceId,
-          sourcePageIds,
-        });
+        const latestSources = await runKnowledgeCompilationOperation(
+          'read_source',
+          () =>
+            this.sourceExporter.exportPageSources({
+              workspaceId: data.workspaceId,
+              spaceId: data.spaceId,
+              sourcePageIds,
+            }),
+        );
         if (!isSameSourceSnapshot(exportedSource, latestSources[0])) {
           await this.compilationRepo.skipAttempt({
             workspaceId: data.workspaceId,
@@ -336,19 +349,26 @@ export class KnowledgePageCompilationService {
         publicationGuard: input.execution.publicationGuard,
         operationBudget,
       };
-      const compileResult = await this.compiler.compileSpace(compileInput);
+      const compileResult = await runKnowledgeCompilationOperation(
+        'compile',
+        () => this.compiler.compileSpace(compileInput),
+      );
       await this.compilationRepo.updateStage({
         workspaceId: data.workspaceId,
         sourcePageId,
         compileTaskId,
         stage: 'validation',
       });
-      const latestSources = await this.sourceExporter.exportPageSources({
-        workspaceId: data.workspaceId,
-        spaceId: data.spaceId,
-        sourcePageIds,
-        abortSignal,
-      });
+      const latestSources = await runKnowledgeCompilationOperation(
+        'read_source',
+        () =>
+          this.sourceExporter.exportPageSources({
+            workspaceId: data.workspaceId,
+            spaceId: data.spaceId,
+            sourcePageIds,
+            abortSignal,
+          }),
+      );
       if (!isSameSourceSnapshot(exportedSource, latestSources[0])) {
         throw new SourceChangedDuringCompilationError();
       }
@@ -380,10 +400,14 @@ export class KnowledgePageCompilationService {
         compileTaskId,
         importResult,
       });
-      await this.accessIndexer.reindexSourcePages({
-        workspaceId: data.workspaceId,
-        sourcePageIds: [sourcePageId],
-      });
+      await runKnowledgeCompilationOperation(
+        'access_index.reindex_source_pages',
+        () =>
+          this.accessIndexer.reindexSourcePages({
+            workspaceId: data.workspaceId,
+            sourcePageIds: [sourcePageId],
+          }),
+      );
       await this.compilationRepo.succeedAttempt({
         workspaceId: data.workspaceId,
         sourcePageId,
@@ -418,15 +442,20 @@ export class KnowledgePageCompilationService {
         await this.skipCancelledAttempt({ data, sourcePageId, compileTaskId });
         return { outcome: 'noop', result: noOpPageResult(data, startedAt) };
       }
-      const failure = abortSignal.aborted
+      const classified = abortSignal.aborted
         ? pageTimeoutFailure()
         : classifyCompilationFailure(error);
-      this.logCompilerDiagnostic(error, {
+      const failure = {
+        ...classified,
+        message: compilationFailureMessage(error, classified.message),
+      };
+      this.logCompilationFailure(error, {
         workspaceId: data.workspaceId,
         spaceId: data.spaceId,
         sourcePageId,
         compileTaskId,
         failureCode: failure.code,
+        elapsedMs: Math.max(0, Date.now() - startedAt),
         retryable: failure.retryable,
       });
       await this.compilationRepo.failAttempt({
@@ -581,13 +610,18 @@ export class KnowledgePageCompilationService {
         sources: [source],
         operationBudget,
       };
-      const compileResult = await this.compiler.compileSpace(compileInput);
-      const latest = await this.sourceExporter.exportPageSources({
-        workspaceId: data.workspaceId,
-        spaceId: data.spaceId,
-        sourcePageIds: [data.sourcePageId],
-        abortSignal,
-      });
+      const compileResult = await runKnowledgeCompilationOperation(
+        'compile',
+        () => this.compiler.compileSpace(compileInput),
+      );
+      const latest = await runKnowledgeCompilationOperation('read_source', () =>
+        this.sourceExporter.exportPageSources({
+          workspaceId: data.workspaceId,
+          spaceId: data.spaceId,
+          sourcePageIds: [data.sourcePageId],
+          abortSignal,
+        }),
+      );
       if (!isSameImageMergeSnapshot(data, latest[0], true)) {
         throw new SourceChangedDuringCompilationError();
       }
@@ -639,10 +673,14 @@ export class KnowledgePageCompilationService {
         compileTaskId,
         importResult,
       });
-      await this.accessIndexer.reindexSourcePages({
-        workspaceId: data.workspaceId,
-        sourcePageIds: [data.sourcePageId],
-      });
+      await runKnowledgeCompilationOperation(
+        'access_index.reindex_source_pages',
+        () =>
+          this.accessIndexer.reindexSourcePages({
+            workspaceId: data.workspaceId,
+            sourcePageIds: [data.sourcePageId],
+          }),
+      );
       return {
         outcome: 'succeeded',
         result: {
@@ -676,15 +714,20 @@ export class KnowledgePageCompilationService {
         });
         return { outcome: 'noop', result: noOpMergeResult(data, startedAt) };
       }
-      const failure = abortSignal.aborted
+      const classified = abortSignal.aborted
         ? pageTimeoutFailure()
         : classifyCompilationFailure(error);
-      this.logCompilerDiagnostic(error, {
+      const failure = {
+        ...classified,
+        message: compilationFailureMessage(error, classified.message),
+      };
+      this.logCompilationFailure(error, {
         workspaceId: data.workspaceId,
         spaceId: data.spaceId,
         sourcePageId: data.sourcePageId,
         compileTaskId,
         failureCode: failure.code,
+        elapsedMs: Math.max(0, Date.now() - startedAt),
         retryable: failure.retryable,
       });
       await this.compilationRepo.failAttempt({
@@ -751,7 +794,7 @@ export class KnowledgePageCompilationService {
     });
   }
 
-  private logCompilerDiagnostic(
+  private logCompilationFailure(
     error: unknown,
     context: {
       workspaceId: string;
@@ -759,9 +802,16 @@ export class KnowledgePageCompilationService {
       sourcePageId: string;
       compileTaskId: string;
       failureCode: string;
+      elapsedMs: number;
       retryable: boolean;
     },
   ): void {
+    this.logger.error({
+      message: 'Knowledge page compilation failed',
+      event: 'knowledge_page_compilation_failed',
+      ...context,
+      ...describeKnowledgeCompilationError(error),
+    });
     if (!(error instanceof KnowledgeCompilerLlmError)) return;
     if (!error.diagnostic && !error.diagnosticClass) return;
     this.logger.warn({
@@ -889,9 +939,10 @@ function classifyCompilationFailure(error: unknown): {
   if (error instanceof Error && error.name === 'TimeoutError') {
     return pageTimeoutFailure();
   }
+  const diagnostic = describeKnowledgeCompilationError(error);
   return {
     code: 'compile_failed',
-    message: 'Knowledge compilation failed.',
+    message: `${diagnostic.errorName}: ${diagnostic.errorMessage}`,
     retryable: true,
   };
 }
