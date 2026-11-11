@@ -234,11 +234,25 @@ export class SearchService {
       .map((id) => detailById.get(id))
       .filter(Boolean)
       .map((result: SearchResponseDto) => {
-        if (result.highlight) {
-          result.highlight = result.highlight
-            .replace(/\r\n|\r|\n/g, ' ')
-            .replace(/\s+/g, ' ');
+        result.wholeWord = true;
+        if (!result.highlight) {
+          result.matchedText = [];
+          return result;
         }
+
+        result.highlight = result.highlight
+          .replace(/\r\n|\r|\n/g, ' ')
+          .replace(/\s+/g, ' ');
+
+        result.matchedText = [
+          ...new Set(
+            Array.from(
+              result.highlight.matchAll(/<b>([^<]*)<\/b>/gi),
+              (match) => match[1],
+            ),
+          ),
+        ];
+
         return result;
       });
 
