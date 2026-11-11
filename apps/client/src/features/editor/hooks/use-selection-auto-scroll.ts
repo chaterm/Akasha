@@ -1,66 +1,19 @@
 import { TextSelection } from "@tiptap/pm/state";
 import type { Editor } from "@tiptap/react";
 import { useEffect } from "react";
+import {
+  autoScrollSpeed,
+  findScroller,
+  MAX_FRAME_MS,
+  scrollerBounds,
+} from "@/features/editor/utils/auto-scroll";
 
-/** Distance from the scroll edge where accelerated scrolling starts. */
-const EDGE_BAND_PX = 96;
-/** Scroll rate at the far end of the band and at the edge itself. */
-const MIN_SPEED_PX_PER_SECOND = 240;
-const MAX_SPEED_PX_PER_SECOND = 8000;
-/** Long frames (background tab, GC pause) must not jump the document. */
-const MAX_FRAME_MS = 64;
-
-/**
- * Scroll rate for a drag selection, in CSS px per second. Positive scrolls
- * down, negative scrolls up, zero keeps the current scroll position.
- *
- * The rate grows quadratically as the pointer approaches the edge of the
- * scrollable area, which is what makes long selections feel like they
- * accelerate instead of crawling at the browser's fixed auto-scroll rate.
- */
-export function selectionScrollSpeed(
-  clientY: number,
-  top: number,
-  bottom: number,
-  edgeBand = EDGE_BAND_PX,
-): number {
-  if (clientY <= top) return -Infinity;
-  if (clientY >= bottom) return Infinity;
-  const distance = Math.min(clientY - top, bottom - clientY);
-  if (distance >= edgeBand) return 0;
-  const ratio = 1 - distance / edgeBand;
-  const speed =
-    MIN_SPEED_PX_PER_SECOND +
-    (MAX_SPEED_PX_PER_SECOND - MIN_SPEED_PX_PER_SECOND) * ratio * ratio;
-  return clientY < (top + bottom) / 2 ? -speed : speed;
-}
+export { autoScrollSpeed as selectionScrollSpeed };
 
 interface SelectionDrag {
   clientX: number;
   clientY: number;
   scroller: HTMLElement;
-}
-
-function isDocumentScroller(scroller: HTMLElement) {
-  return scroller === document.scrollingElement || scroller === document.body;
-}
-
-function findScroller(target: HTMLElement): HTMLElement {
-  let node: HTMLElement | null = target;
-  while (node && node !== document.body) {
-    const { overflowY } = window.getComputedStyle(node);
-    if (
-      /(auto|scroll|overlay)/.test(overflowY) &&
-      node.scrollHeight - node.clientHeight > 1
-    ) {
-      return node;
-    }
-    node = node.parentElement;
-  }
-  return (
-    (document.scrollingElement as HTMLElement | null) ??
-    document.documentElement
-  );
 }
 
 /**
@@ -82,13 +35,7 @@ export function useSelectionAutoScroll(editor: Editor | null) {
     let frame = 0;
     let lastFrameAt = 0;
 
-    const bounds = (scroller: HTMLElement) =>
-      isDocumentScroller(scroller)
-        ? { top: 0, bottom: window.innerHeight }
-        : {
-            top: scroller.getBoundingClientRect().top,
-            bottom: scroller.getBoundingClientRect().bottom,
-          };
+    const bounds = scrollerBounds;
 
     const extendSelection = (clientX: number, clientY: number) => {
       if (view.dragging) return;
@@ -131,7 +78,7 @@ export function useSelectionAutoScroll(editor: Editor | null) {
         : 16;
       lastFrameAt = now;
       const { top, bottom } = bounds(drag.scroller);
-      const speed = selectionScrollSpeed(drag.clientY, top, bottom);
+      const speed = autoScrollSpeed(drag.clientY, top, bottom);
       if (!Number.isFinite(speed)) {
         const toEnd = speed > 0;
         drag.scroller.scrollTop = toEnd ? drag.scroller.scrollHeight : 0;
