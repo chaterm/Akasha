@@ -85,17 +85,27 @@ export function SearchSpotlight({ spaceId }: SearchSpotlightProps) {
     ? attachmentQuery.isLoading
     : pageQuery.isLoading;
 
-  // 滚动到列表底部时加载下一页
+  const {
+    data: recentVisitPages,
+    isLoading: isRecentLoading,
+    isError: isRecentError,
+    hasNextPage: hasMoreRecentVisits,
+    isFetchingNextPage: isFetchingMoreRecentVisits,
+    fetchNextPage: fetchMoreRecentVisits,
+  } = useRecentPageVisitsQuery(recentSpaceId, opened && isRecentMode);
+  const recentVisits =
+    recentVisitPages?.pages.flatMap((page) => page.items) ?? [];
+
+  // 滚动到列表底部时，按当前模式加载下一页。
   const handleBottomReached = () => {
-    if (!isAttachmentSearch && hasNextPage && !isFetchingNextPage) {
+    if (isRecentMode) {
+      if (hasMoreRecentVisits && !isFetchingMoreRecentVisits) {
+        fetchMoreRecentVisits();
+      }
+    } else if (!isAttachmentSearch && hasNextPage && !isFetchingNextPage) {
       fetchNextPage();
     }
   };
-  const {
-    data: recentVisits = [],
-    isLoading: isRecentLoading,
-    isError: isRecentError,
-  } = useRecentPageVisitsQuery(recentSpaceId, opened && isRecentMode);
 
   useEffect(() => {
     setRecentSpaceOnly(false);
@@ -183,12 +193,19 @@ export function SearchSpotlight({ spaceId }: SearchSpotlightProps) {
           {...({ onBottomReached: handleBottomReached } as object)}
         >
           {isRecentMode ? (
-            <RecentPageVisits
-              items={recentVisits}
-              isLoading={isRecentLoading}
-              isError={isRecentError}
-              showSpace={!recentSpaceId}
-            />
+            <>
+              <RecentPageVisits
+                items={recentVisits}
+                isLoading={isRecentLoading}
+                isError={isRecentError && recentVisits.length === 0}
+                showSpace={!recentSpaceId}
+              />
+              {isFetchingMoreRecentVisits && (
+                <Center py="sm">
+                  <Loader size="sm" />
+                </Center>
+              )}
+            </>
           ) : (
             <>
               {!isLoading && resultItems.length === 0 && (

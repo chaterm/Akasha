@@ -19,11 +19,12 @@ describe("page visit service", () => {
 
   it("loads recent visits using the active space scope", async () => {
     const items = [{ id: "visit-1" }];
-    vi.mocked(api.post).mockResolvedValue({ data: { items } });
+    const meta = { hasNextPage: true, nextCursor: "next-visit" };
+    vi.mocked(api.post).mockResolvedValue({ data: { items, meta } });
 
     await expect(
       getRecentPageVisits({ spaceId: "space-1", limit: 15 }),
-    ).resolves.toEqual(items);
+    ).resolves.toEqual({ items, meta });
     expect(api.post).toHaveBeenCalledWith("/page-visits/recent", {
       spaceId: "space-1",
       limit: 15,
