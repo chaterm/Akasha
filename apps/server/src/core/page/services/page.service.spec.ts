@@ -47,6 +47,7 @@ describe('PageService', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
     );
     const dto = {
       pageId: pending.id,
@@ -119,6 +120,7 @@ describe('PageService', () => {
       {} as any,
       {} as any,
       attachmentRehome as any,
+      {} as any,
     );
     jest.spyOn(service, 'nextPagePosition').mockResolvedValue('a0');
     return { service, pageRepo, generalQueue, attachmentRehome };
@@ -265,6 +267,7 @@ describe('PageService', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
     );
 
     await service.update(
@@ -306,6 +309,7 @@ describe('PageService', () => {
       };
       const service = new PageService(
         pageRepo as any,
+        {} as any,
         {} as any,
         {} as any,
         {} as any,

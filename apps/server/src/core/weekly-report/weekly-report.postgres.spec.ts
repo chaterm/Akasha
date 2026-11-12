@@ -128,6 +128,7 @@ describePostgres(
         undefined,
         undefined,
         undefined,
+        undefined,
       );
       const weekly = new WeeklyReportService(
         connection as never,
