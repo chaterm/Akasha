@@ -2,6 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { InjectKysely } from 'nestjs-kysely';
 import { sql } from 'kysely';
 import { KyselyDB } from '@akasha/db/types/kysely.types';
+import {
+  CursorPaginationResult,
+  executeWithCursorPagination,
+} from '@akasha/db/pagination/cursor-pagination';
 
 export interface RecentPageVisitRow {
   id: string;
@@ -50,7 +54,8 @@ export class PageVisitRepo {
     cutoff: Date;
     spaceId?: string;
     limit: number;
-  }): Promise<RecentPageVisitRow[]> {
+    cursor?: string;
+  }): Promise<CursorPaginationResult<RecentPageVisitRow, true>> {
     let query = this.db
       .selectFrom('pageVisits')
       .innerJoin('pages', 'pages.id', 'pageVisits.pageId')
@@ -77,11 +82,19 @@ export class PageVisitRepo {
       query = query.where('pages.spaceId', '=', input.spaceId);
     }
 
-    return query
-      .orderBy('pageVisits.lastVisitedAt', 'desc')
-      .orderBy('pageVisits.id', 'desc')
-      .limit(input.limit)
-      .execute();
+    return executeWithCursorPagination(query, {
+      perPage: input.limit,
+      cursor: input.cursor,
+      cursorPerRow: true,
+      fields: [
+        { expression: 'pageVisits.lastVisitedAt', direction: 'desc' },
+        { expression: 'pageVisits.id', direction: 'desc' },
+      ],
+      parseCursor: (cursor) => ({
+        lastVisitedAt: new Date(cursor.lastVisitedAt),
+        id: cursor.id,
+      }),
+    });
   }
 
   async deleteOlderThan(cutoff: Date): Promise<number> {

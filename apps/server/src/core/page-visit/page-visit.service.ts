@@ -1,6 +1,9 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
-import { PageVisitRepo } from '@akasha/db/repos/page/page-visit.repo';
+import {
+  PageVisitRepo,
+  RecentPageVisitRow,
+} from '@akasha/db/repos/page/page-visit.repo';
 import { PageRepo } from '@akasha/db/repos/page/page.repo';
 import { PagePermissionRepo } from '@akasha/db/repos/page/page-permission.repo';
 import { PageAccessService } from '../page/page-access/page-access.service';
@@ -55,72 +58,101 @@ export class PageVisitService {
     workspace: Workspace;
     spaceId?: string;
     limit: number;
+    cursor?: string;
   }) {
     const candidateLimit = Math.min(Math.max(input.limit * 5, 50), 100);
-    const candidates = await this.pageVisitRepo.findRecent({
-      workspaceId: input.workspace.id,
-      userId: input.user.id,
-      cutoff: retentionCutoff(),
-      spaceId: input.spaceId,
-      limit: candidateLimit,
-    });
+    const cutoff = retentionCutoff();
+    const spaceAccess = new Map<string, boolean>();
+    const readable: (RecentPageVisitRow & { $cursor: string })[] = [];
+    let cursor = input.cursor;
 
-    if (candidates.length === 0) return { items: [] };
+    // Find one extra readable visit so denied history cannot end pagination early.
+    while (readable.length <= input.limit) {
+      const batch = await this.pageVisitRepo.findRecent({
+        workspaceId: input.workspace.id,
+        userId: input.user.id,
+        cutoff,
+        spaceId: input.spaceId,
+        limit: candidateLimit,
+        cursor,
+      });
+      const candidates = batch.items;
 
-    let readableSpaceIds = new Set(candidates.map((item) => item.spaceId));
-    let readablePageIds = new Set(candidates.map((item) => item.pageId));
+      if (input.user.role === UserRole.OWNER) {
+        readable.push(...candidates);
+      } else {
+        const uncheckedSpaceIds = [
+          ...new Set(candidates.map((item) => item.spaceId)),
+        ].filter((spaceId) => !spaceAccess.has(spaceId));
+        await Promise.all(
+          uncheckedSpaceIds.map(async (spaceId) => {
+            try {
+              const ability = await this.spaceAbility.createForUser(
+                input.user,
+                spaceId,
+              );
+              spaceAccess.set(
+                spaceId,
+                !ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page),
+              );
+            } catch (error) {
+              // Visit history can outlive the user's space membership.
+              if (!(error instanceof NotFoundException)) throw error;
+              spaceAccess.set(spaceId, false);
+            }
+          }),
+        );
 
-    if (input.user.role !== UserRole.OWNER) {
-      const spaceIds = [...readableSpaceIds];
-      const spaceChecks = await Promise.all(
-        spaceIds.map(async (spaceId) => {
-          const ability = await this.spaceAbility.createForUser(
-            input.user,
-            spaceId,
+        const spaceCandidates = candidates.filter((item) =>
+          spaceAccess.get(item.spaceId),
+        );
+        if (spaceCandidates.length > 0) {
+          const accessibleIds = new Set(
+            await this.pagePermissionRepo.filterAccessiblePageIds({
+              pageIds: spaceCandidates.map((item) => item.pageId),
+              userId: input.user.id,
+              spaceId: input.spaceId,
+            }),
           );
-          return ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page)
-            ? null
-            : spaceId;
-        }),
-      );
-      readableSpaceIds = new Set(spaceChecks.filter(Boolean) as string[]);
+          readable.push(
+            ...spaceCandidates.filter((item) => accessibleIds.has(item.pageId)),
+          );
+        }
+      }
 
-      const accessibleIds =
-        await this.pagePermissionRepo.filterAccessiblePageIds({
-          pageIds: candidates
-            .filter((item) => readableSpaceIds.has(item.spaceId))
-            .map((item) => item.pageId),
-          userId: input.user.id,
-          spaceId: input.spaceId,
-        });
-      readablePageIds = new Set(accessibleIds);
+      if (!batch.meta.hasNextPage) break;
+      cursor = batch.meta.nextCursor;
     }
 
-    const items = candidates
-      .filter(
-        (item) =>
-          readableSpaceIds.has(item.spaceId) &&
-          readablePageIds.has(item.pageId),
-      )
-      .slice(0, input.limit)
-      .map((item) => ({
-        id: item.id,
-        pageId: item.pageId,
-        lastVisitedAt: item.lastVisitedAt,
-        page: {
-          title: item.title,
-          icon: item.icon,
-          slugId: item.slugId,
-        },
-        space: {
-          id: item.spaceId,
-          name: item.spaceName,
-          slug: item.spaceSlug,
-          logo: item.spaceLogo,
-        },
-      }));
+    const hasNextPage = readable.length > input.limit;
+    const page = readable.slice(0, input.limit);
+    const items = page.map((item) => ({
+      id: item.id,
+      pageId: item.pageId,
+      lastVisitedAt: item.lastVisitedAt,
+      page: {
+        title: item.title,
+        icon: item.icon,
+        slugId: item.slugId,
+      },
+      space: {
+        id: item.spaceId,
+        name: item.spaceName,
+        slug: item.spaceSlug,
+        logo: item.spaceLogo,
+      },
+    }));
 
-    return { items };
+    return {
+      items,
+      meta: {
+        limit: input.limit,
+        hasNextPage,
+        hasPrevPage: !!input.cursor,
+        nextCursor: hasNextPage ? page[page.length - 1].$cursor : null,
+        prevCursor: null,
+      },
+    };
   }
 
   @Interval('page-visit-cleanup', CLEANUP_INTERVAL_MS)

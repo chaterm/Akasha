@@ -39,6 +39,7 @@ export class PageVisitController {
       user,
       workspace,
       spaceId: dto.spaceId,
+      cursor: dto.cursor,
       limit: dto.limit,
     });
   }
