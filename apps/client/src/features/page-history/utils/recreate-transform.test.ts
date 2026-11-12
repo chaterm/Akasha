@@ -10,7 +10,6 @@ const schema = getSchema([StarterKit]);
 const paragraph = (content: object[]) =>
   Node.fromJSON(schema, { type: "doc", content: [{ type: "paragraph", content }] });
 
-// same options as the history and review diff
 const diff = (before: Node, after: Node) =>
   recreateTransform(before, after, {
     complexSteps: false,
@@ -31,7 +30,6 @@ const item = (value: string) => ({
 const doc = (content: object[]) =>
   Node.fromJSON(schema, { type: "doc", content });
 
-// edits spread over the page: attrs, words, list items, code, marks, a new block
 const editedPage = () => ({
   before: doc([
     block("heading", "Title", { level: 1 }),

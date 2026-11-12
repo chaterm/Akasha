@@ -1,7 +1,6 @@
 import { type Kysely, sql } from 'kysely';
 
 export async function up(db: Kysely<any>): Promise<void> {
-  // tsv is only rebuilt when the text changes, so backfills must set tsv directly
   await sql`
     CREATE OR REPLACE FUNCTION pages_tsvector_trigger() RETURNS trigger AS $$
     begin

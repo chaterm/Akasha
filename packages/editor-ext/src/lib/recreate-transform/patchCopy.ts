@@ -1,7 +1,6 @@
 import { applyPatch, Operation, Pointer } from "rfc6902";
 import { AnyObject } from "./types";
 
-// copy of json with the operation applied, sharing everything off its path
 export function patchCopy(json: AnyObject, operation: Operation): AnyObject {
   const tokens = Pointer.fromJSON(operation.path).tokens;
   const root = shallowCopy(json);

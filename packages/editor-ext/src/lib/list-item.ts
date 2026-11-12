@@ -5,7 +5,6 @@ import {
 } from "@tiptap/extension-list";
 import type { EditorState } from "@tiptap/pm/state";
 
-// The list item the selection is in, within its table cell. List commands act on it.
 export function closestListItem(
   state: EditorState,
 ): "listItem" | "taskItem" | undefined {
@@ -18,8 +17,6 @@ export function closestListItem(
   return undefined;
 }
 
-// TipTap's Tab and Shift-Tab move the nearest item of their own type, which can be an
-// outer item around a list of the other type, so they only act for the innermost item.
 function innermostItemShortcuts(editor: Editor, name: string, nested: boolean) {
   const isInnermost = () => closestListItem(editor.state) === name;
   return {

@@ -46,7 +46,6 @@ const table = (...cells: JSONContent[][]): JSONContent => ({
 const textOf = (node: JSONContent): string =>
   node.text ?? (node.content ?? []).map(textOf).join("");
 
-// Lists as nested item texts, so ["A", ["B"]] is B nested under A; other blocks as "type:text".
 function outline(node: JSONContent): unknown {
   if (!node.type.endsWith("List")) return `${node.type}:${textOf(node)}`;
   return node.content.flatMap((item) => {
@@ -67,7 +66,6 @@ function editWith(content: JSONContent[], cursorText: string) {
       TaskItem.configure({ nested: true }),
       CustomTable.configure({ resizable: false }),
       TableRow,
-      // the real cells also allow Docmost blocks this editor doesn't load
       TableCell.extend({ content: "block+" }),
       TableHeader.extend({ content: "block+" }),
     ],
@@ -80,8 +78,6 @@ function editWith(content: JSONContent[], cursorText: string) {
   editor.commands.setTextSelection(cursor);
 }
 
-// A keydown as the browser delivers it; TipTap's keyboardShortcut command drops
-// selection changes such as moving to the next cell.
 function press(key: string): boolean {
   const event = new KeyboardEvent("keydown", {
     key: "Tab",
@@ -147,7 +143,6 @@ describe("Tab in lists of mixed kinds", () => {
       [taskList(taskItem("P"), taskItem("Q", bulletList(listItem("B1"), listItem("B2"))))],
       "B1",
     );
-    // nothing takes the key, so focus can leave the editor
     expect(press("Tab")).toBe(false);
     expect(outlineOf(docBlocks())).toEqual([["P", "Q", ["B1", "B2"]]]);
   });

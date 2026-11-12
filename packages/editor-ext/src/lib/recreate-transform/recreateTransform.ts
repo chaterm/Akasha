@@ -31,7 +31,6 @@ export class RecreateTransform {
   ops: Array<Operation>;
   nodes = new WeakMap<AnyObject, Node>();
   checked = new WeakSet<Node>();
-  // schema whose nodeFromJSON reuses the nodes built so far
   nodeSchema: Schema;
 
   constructor(fromDoc: Node, toDoc: Node, options: Options = {}) {
@@ -53,7 +52,6 @@ export class RecreateTransform {
     this.nodeSchema.nodeFromJSON = (json) => this.nodeFromJSON(json);
   }
 
-  // json objects are never changed once built, so their nodes can be reused
   nodeFromJSON(json: AnyObject): Node {
     let node = this.nodes.get(json);
     if (!node) {
@@ -63,7 +61,6 @@ export class RecreateTransform {
     return node;
   }
 
-  // Node.check, skipping checked nodes (Node.fromJSON already checked attrs)
   checkNode(node: Node) {
     if (this.checked.has(node)) return;
     if (!node.type.validContent(node.content)) {
@@ -113,7 +110,7 @@ export class RecreateTransform {
       ops.push(op);
 
       let toDoc;
-      let afterStepJSON = this.currentJSON; // working document receiving patches
+      let afterStepJSON = this.currentJSON;
       const pathParts = op.path.split("/");
 
       // collect operations until we receive a valid document:
@@ -160,7 +157,6 @@ export class RecreateTransform {
         ops = [];
         // console.log("%cop", logStyle, "- other", ops);
       } else {
-        // the patch changed nothing visible; keep it so later patches still apply
         this.currentJSON = afterStepJSON;
         ops = [];
       }

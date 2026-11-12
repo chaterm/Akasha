@@ -11,8 +11,6 @@ type ArrayOperation =
   | { op: "remove"; index: number }
   | { op: "replace"; index: number; original: any; value: any };
 
-// same patch as rfc6902's diffArrays, computed in a diagonal band that
-// doubles until it holds the edit distance
 export function diffJsonArrays(
   input: any,
   output: any,
@@ -21,7 +19,6 @@ export function diffJsonArrays(
   if (!Array.isArray(input) || !Array.isArray(output)) return;
   if (input === output) return [];
 
-  // equal last elements are always matched first
   let n = input.length;
   let m = output.length;
   while (n > 0 && m > 0 && jsonEqual(input[n - 1], output[m - 1])) {
@@ -49,7 +46,6 @@ export function diffJsonArrays(
   for (let slack = 16; ; slack *= 2) {
     const lo = Math.min(0, delta) - slack;
     const hi = Math.max(0, delta) + slack;
-    // a row holds its cells inside the band, starting from the first one
     const stride = Math.min(hi - lo + 1, m + 1);
     const start = (i: number) => i * stride - Math.max(0, i + lo);
     const cost = new Int32Array((n + 1) * stride);
@@ -89,7 +85,6 @@ export function diffJsonArrays(
       }
     }
 
-    // every path costing up to |delta| + 2 * slack stays inside the band
     const distance = cost[start(n) + m];
     const covered = lo <= -n && hi >= m;
     if (distance > Math.abs(delta) + 2 * slack && !covered) continue;
@@ -148,7 +143,6 @@ export function diffJsonArrays(
   return operations;
 }
 
-// same key for values rfc6902 treats as equal
 function canonicalKey(value: any): string {
   if (typeof value === "string") return JSON.stringify(value);
   if (typeof value !== "object" || value === null) return String(value);
@@ -166,7 +160,6 @@ function canonicalKey(value: any): string {
   return key + "}";
 }
 
-// rfc6902 equality, where a key holding undefined counts as missing
 function jsonEqual(a: any, b: any): boolean {
   if (a === b) return true;
   if (typeof a !== "object" || typeof b !== "object" || !a || !b) return false;
