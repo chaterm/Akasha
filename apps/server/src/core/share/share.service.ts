@@ -109,17 +109,24 @@ export class ShareService {
     }
   }
 
-  async getSharedPage(dto: ShareInfoDto, workspaceId: string) {
+  async getSharedPage(
+    dto: ShareInfoDto,
+    workspaceId: string,
+    opts?: { includeContent?: boolean },
+  ) {
     const share = await this.getShareForPage(dto.pageId, workspaceId);
 
     if (!share) {
       throw new NotFoundException('Shared page not found');
     }
 
-    const page = await this.pageRepo.findById(dto.pageId, {
-      includeContent: true,
-      includeCreator: true,
-    });
+    const includeContent = opts?.includeContent !== false;
+    const page = includeContent
+      ? await this.pageRepo.findById(dto.pageId, {
+          includeContent: true,
+          includeCreator: true,
+        })
+      : await this.pageRepo.findById(dto.pageId);
 
     if (!page || page.deletedAt) {
       throw new NotFoundException('Shared page not found');
@@ -132,7 +139,9 @@ export class ShareService {
       throw new NotFoundException('Shared page not found');
     }
 
-    page.content = await this.updatePublicAttachments(page);
+    if (includeContent) {
+      page.content = await this.updatePublicAttachments(page);
+    }
 
     return { page, share };
   }
