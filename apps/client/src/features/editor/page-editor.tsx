@@ -66,6 +66,8 @@ import DrawioMenu from "./components/drawio/drawio-menu";
 import { useCollabToken } from "@/features/auth/queries/auth-query.tsx";
 import SearchAndReplaceDialog from "@/features/editor/components/search-and-replace/search-and-replace-dialog.tsx";
 import { EmptyPageHint } from "@/features/editor/components/empty-page-hint/empty-page-hint";
+import SearchNavigationDialog from "@/features/editor/components/search-and-replace/search-navigation-dialog.tsx";
+import { useSearchNavigationParams } from "@/features/editor/components/search-and-replace/use-search-navigation-params.ts";
 import { useDebouncedCallback, useDocumentVisibility } from "@mantine/hooks";
 import { useIdle } from "@/hooks/use-idle.ts";
 import { queryClient } from "@/main.tsx";
@@ -110,9 +112,7 @@ export default function PageEditor({
 }: PageEditorProps) {
   const { t } = useTranslation();
   const { pageEditMode } = usePageEditMode();
-  const collaborationURL = useCollaborationUrl(
-    pageEditMode === PageEditMode.Read,
-  );
+  const collaborationURL = useCollaborationUrl();
   const isComponentMounted = useRef(false);
   const editorRef = useRef<Editor | null>(null);
 
@@ -446,6 +446,14 @@ export default function PageEditor({
   const hasConnectedOnceRef = useRef(false);
   const [showStatic, setShowStatic] = useState(true);
 
+  useSearchNavigationParams({
+    editor,
+    isSynced,
+    pageId,
+    searchParams,
+    showStatic,
+  });
+
   useEffect(() => {
     if (
       !hasConnectedOnceRef.current &&
@@ -502,6 +510,7 @@ export default function PageEditor({
             {editor && (
               <SearchAndReplaceDialog editor={editor} editable={editable} />
             )}
+            {editor && <SearchNavigationDialog editor={editor} />}
 
             {editor && editable && (
               <EditorAiMenu editor={editor} readOnly={!editorIsEditable} />

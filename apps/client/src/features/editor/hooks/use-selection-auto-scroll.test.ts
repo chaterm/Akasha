@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { selectionScrollSpeed } from "./use-selection-auto-scroll";
+import { MAX_SPEED_PX_PER_SECOND } from "@/features/editor/utils/auto-scroll";
 
 const TOP = 0;
 const BOTTOM = 1000;
@@ -21,7 +22,7 @@ describe("selectionScrollSpeed", () => {
     const edge = selectionScrollSpeed(995, TOP, BOTTOM);
     expect(near).toBeGreaterThan(far);
     expect(edge).toBeGreaterThan(near);
-    expect(edge).toBeLessThanOrEqual(8000);
+    expect(edge).toBeLessThanOrEqual(MAX_SPEED_PX_PER_SECOND);
   });
 
   it("jumps to the document boundary at and past the edges", () => {

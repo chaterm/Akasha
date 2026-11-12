@@ -81,8 +81,8 @@ export default function SharedTree({ sharedPageTree }: SharedTreeProps) {
     [setOpenTreeNodes],
   );
   const getDragLabel = useCallback(
-    (n: SharedPageTreeNode) => n.name || "untitled",
-    [],
+    (n: SharedPageTreeNode) => n.name?.trim() || t("untitled"),
+    [t],
   );
 
   if (!sharedPageTree || !sharedPageTree?.pageTree) {

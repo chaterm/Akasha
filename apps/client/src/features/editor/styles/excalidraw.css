@@ -1,0 +1,4 @@
+body > .excalidraw.excalidraw-modal-container {
+  position: fixed;
+  inset: 0;
+}

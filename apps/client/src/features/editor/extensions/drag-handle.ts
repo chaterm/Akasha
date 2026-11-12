@@ -7,17 +7,18 @@ import {
 } from "@tiptap/pm/state";
 import { Fragment, Slice, Node } from "@tiptap/pm/model";
 import { EditorView } from "@tiptap/pm/view";
+import {
+  autoScrollSpeed,
+  findScroller,
+  MAX_FRAME_MS,
+  scrollerBounds,
+} from "@/features/editor/utils/auto-scroll";
 
 export interface GlobalDragHandleOptions {
   /**
    * The width of the drag handle
    */
   dragHandleWidth: number;
-
-  /**
-   * The treshold for scrolling
-   */
-  scrollThreshold: number;
 
   /*
    * The css selector to query for the drag handle. (eg: '.custom-handle').
@@ -136,6 +137,13 @@ function isCustomNodeDOM(
     }
   }
   return false;
+}
+
+export function hasUsableDragCoords(event: {
+  clientX: number;
+  clientY: number;
+}): boolean {
+  return event.clientX !== 0 || event.clientY !== 0;
 }
 
 function calcNodePos(pos: number, view: EditorView) {
@@ -313,17 +321,67 @@ export function DragHandlePlugin(
 
       dragHandleElement.addEventListener("dragstart", onDragHandleDragStart);
 
-      function onDragHandleDrag(e: DragEvent) {
-        hideDragHandle();
-        let scrollY = window.scrollY;
-        if (e.clientY < options.scrollThreshold) {
-          window.scrollTo({ top: scrollY - 30, behavior: "smooth" });
-        } else if (window.innerHeight - e.clientY < options.scrollThreshold) {
-          window.scrollTo({ top: scrollY + 30, behavior: "smooth" });
+      let autoScrollY: number | null = null;
+      let autoScrollScroller: HTMLElement | null = null;
+      let autoScrollFrame: number | null = null;
+      let autoScrollLastFrameAt = 0;
+
+      function stepAutoScroll(now: number) {
+        autoScrollFrame = null;
+        if (autoScrollY === null || !autoScrollScroller) return;
+
+        const elapsed = autoScrollLastFrameAt
+          ? Math.min(now - autoScrollLastFrameAt, MAX_FRAME_MS)
+          : 16;
+        autoScrollLastFrameAt = now;
+
+        const { top, bottom } = scrollerBounds(autoScrollScroller);
+        const speed = autoScrollSpeed(autoScrollY, top, bottom);
+
+        if (!Number.isFinite(speed)) {
+          autoScrollScroller.scrollTop =
+            speed > 0 ? autoScrollScroller.scrollHeight : 0;
+        } else if (speed !== 0) {
+          autoScrollScroller.scrollTop += (speed * elapsed) / 1000;
+        }
+
+        autoScrollFrame = requestAnimationFrame(stepAutoScroll);
+      }
+
+      function startAutoScroll(clientY: number) {
+        autoScrollY = clientY;
+        autoScrollScroller ??= findScroller(view.dom as HTMLElement);
+        if (autoScrollFrame === null) {
+          autoScrollFrame = requestAnimationFrame(stepAutoScroll);
         }
       }
 
+      function stopAutoScroll() {
+        autoScrollY = null;
+        autoScrollScroller = null;
+        autoScrollLastFrameAt = 0;
+        if (autoScrollFrame !== null) {
+          cancelAnimationFrame(autoScrollFrame);
+          autoScrollFrame = null;
+        }
+      }
+
+      function onDragHandleDrag(e: DragEvent) {
+        hideDragHandle();
+        if (hasUsableDragCoords(e)) startAutoScroll(e.clientY);
+      }
+
+      function onDocumentDragOver(e: DragEvent) {
+        if (autoScrollFrame === null && autoScrollY === null) return;
+        if (hasUsableDragCoords(e)) autoScrollY = e.clientY;
+      }
+
       dragHandleElement.addEventListener("drag", onDragHandleDrag);
+      dragHandleElement.addEventListener("dragend", stopAutoScroll);
+      document.addEventListener("dragend", stopAutoScroll);
+      document.addEventListener("drop", stopAutoScroll);
+      document.addEventListener("dragover", onDocumentDragOver);
+      window.addEventListener("blur", stopAutoScroll);
 
       hideDragHandle();
 
@@ -337,10 +395,16 @@ export function DragHandlePlugin(
 
       return {
         destroy: () => {
+          stopAutoScroll();
+          document.removeEventListener("dragend", stopAutoScroll);
+          document.removeEventListener("drop", stopAutoScroll);
+          document.removeEventListener("dragover", onDocumentDragOver);
+          window.removeEventListener("blur", stopAutoScroll);
           if (!handleBySelector) {
             dragHandleElement?.remove?.();
           }
           dragHandleElement?.removeEventListener("drag", onDragHandleDrag);
+          dragHandleElement?.removeEventListener("dragend", stopAutoScroll);
           dragHandleElement?.removeEventListener(
             "dragstart",
             onDragHandleDragStart,
@@ -494,7 +558,6 @@ const GlobalDragHandle = Extension.create({
   addOptions() {
     return {
       dragHandleWidth: 20,
-      scrollThreshold: 100,
       excludedTags: [],
       customNodes: [],
     };
@@ -505,7 +568,6 @@ const GlobalDragHandle = Extension.create({
       DragHandlePlugin({
         pluginKey: "globalDragHandle",
         dragHandleWidth: this.options.dragHandleWidth,
-        scrollThreshold: this.options.scrollThreshold,
         dragHandleSelector: this.options.dragHandleSelector,
         excludedTags: this.options.excludedTags,
         customNodes: this.options.customNodes,

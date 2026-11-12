@@ -1,50 +1,70 @@
 import DOMPurify from "dompurify";
 import { markdownToHtml } from "@docmost/editor-ext";
-import { memo, useEffect, useMemo, useState } from "react";
-import { useComputedColorScheme } from "@mantine/core";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { load, mount, Mounted, parse, registered, detectType } from "pele/lazy";
 
 type MarkdownSegment =
   | { type: "html"; html: string }
   | { type: "mermaid"; code: string };
-
-let mermaidSequence = 0;
 
 const defaultSanitize = (html: string): string => DOMPurify.sanitize(html);
 
 const MERMAID_STYLE = { overflowX: "auto", maxWidth: "100%" } as const;
 
 const MermaidDiagram = memo(({ code }: { code: string }) => {
-  const colorScheme = useComputedColorScheme();
-  const [svg, setSvg] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+  const diagramRef = useRef<Mounted | null>(null);
+  const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    setSvg("");
     setFailed(false);
+    setReady(false);
 
-    void import("mermaid")
-      .then(({ default: mermaid }) => {
-        mermaid.initialize({
-          startOnLoad: false,
-          suppressErrorRendering: true,
-          theme: colorScheme === "light" ? "default" : "dark",
-        });
+    let type: ReturnType<typeof detectType> | null = null;
+    try {
+      type = detectType(code);
+    } catch {
+      setFailed(true);
+      return;
+    }
 
-        return mermaid.render(`ai-mermaid-${++mermaidSequence}`, code);
-      })
-      .then((result) => {
-        if (!cancelled) setSvg(result.svg);
-      })
-      .catch(() => {
-        // Streamed or invalid diagram source: keep the raw code readable.
-        if (!cancelled) setFailed(true);
-      });
+    if (!type || registered(type)) {
+      if (!cancelled) setReady(true);
+      return;
+    }
+
+    const settle = () => {
+      if (!cancelled) setReady(true);
+    };
+    load(type).then(settle, settle);
 
     return () => {
       cancelled = true;
     };
-  }, [code, colorScheme]);
+  }, [code]);
+
+  useEffect(() => {
+    if (!ready || failed) return;
+
+    try {
+      parse(code);
+    } catch {
+      diagramRef.current?.destroy();
+      diagramRef.current = null;
+      setFailed(true);
+      return;
+    }
+
+    if (diagramRef.current) {
+      diagramRef.current.update(code);
+      return;
+    }
+    diagramRef.current = mount(containerRef.current, code);
+  }, [code, ready, failed]);
+
+  useEffect(() => () => diagramRef.current?.destroy(), []);
 
   if (failed) {
     return (
@@ -54,9 +74,7 @@ const MermaidDiagram = memo(({ code }: { code: string }) => {
     );
   }
 
-  return (
-    <div style={MERMAID_STYLE} dangerouslySetInnerHTML={{ __html: svg }} />
-  );
+  return <div ref={containerRef} style={MERMAID_STYLE} />;
 });
 
 MermaidDiagram.displayName = "MermaidDiagram";

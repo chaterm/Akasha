@@ -106,9 +106,7 @@ export default function ShareShell({
   const { data } = useGetSharedPageTreeQuery(shareId);
   const readOnlyEditor = useAtomValue(readOnlyEditorAtom);
 
-  // @ts-ignore
   const setSharedPageTree = useSetAtom(sharedPageTreeAtom);
-  // @ts-ignore
   const setSharedTreeData = useSetAtom(sharedTreeDataAtom);
 
   // Build and set the tree data when it changes

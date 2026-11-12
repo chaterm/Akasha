@@ -42,10 +42,6 @@ export function findBreadcrumbPath(
   path: SpaceTreeNode[] = [],
 ): SpaceTreeNode[] | null {
   for (const node of tree) {
-    if (!node.name || node.name.trim() === "") {
-      node.name = "untitled";
-    }
-
     if (node.id === pageId) {
       return [...path, node];
     }
@@ -215,4 +211,22 @@ export function mergeRootTrees(
   });
 
   return sortPositionKeys(merged);
+}
+
+export function spaceRoots(
+  tree: SpaceTreeNode[],
+  spaceId: string,
+): SpaceTreeNode[] {
+  return tree.filter((node) => node?.spaceId === spaceId);
+}
+
+export function updateSpaceRoots(
+  tree: SpaceTreeNode[],
+  spaceId: string,
+  update: (roots: SpaceTreeNode[]) => SpaceTreeNode[],
+): SpaceTreeNode[] {
+  const roots = spaceRoots(tree, spaceId);
+  const next = update(roots);
+  if (next === roots) return tree;
+  return [...tree.filter((node) => node?.spaceId !== spaceId), ...next];
 }

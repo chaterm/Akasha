@@ -30,6 +30,10 @@ function getTitle(name: string, icon: string) {
 
 export default function Breadcrumb() {
   const { t } = useTranslation();
+  const nodeName = useCallback(
+    (node: SpaceTreeNode) => node.name?.trim() || t("untitled"),
+    [t],
+  );
   const treeData = useAtomValue(treeDataAtom);
   const [breadcrumbNodes, setBreadcrumbNodes] = useState<
     SpaceTreeNode[] | null
@@ -58,7 +62,7 @@ export default function Breadcrumb() {
           style={{ border: "none" }}
         >
           <Text fz={"sm"} className={classes.truncatedText}>
-            {getTitle(node.name, node.icon)}
+            {getTitle(nodeName(node), node.icon)}
           </Text>
         </Button>
       </Button.Group>
@@ -75,7 +79,7 @@ export default function Breadcrumb() {
           style={{ border: "none" }}
         >
           <Text fz={"sm"} className={classes.truncatedText}>
-            {getTitle(node.name, node.icon)}
+            {getTitle(nodeName(node), node.icon)}
           </Text>
         </Button>
       </Button.Group>
@@ -83,7 +87,7 @@ export default function Breadcrumb() {
 
   const renderAnchor = useCallback(
     (node: SpaceTreeNode, isCurrent = false) => (
-      <Tooltip label={node.name} key={node.id}>
+      <Tooltip label={nodeName(node)} key={node.id}>
         <Anchor
           component={Link}
           to={buildPageUrl(spaceSlug, node.slugId, node.name)}
@@ -93,11 +97,11 @@ export default function Breadcrumb() {
           className={classes.truncatedText}
           aria-current={isCurrent ? "page" : undefined}
         >
-          {getTitle(node.name, node.icon)}
+          {getTitle(nodeName(node), node.icon)}
         </Anchor>
       </Tooltip>
     ),
-    [spaceSlug],
+    [spaceSlug, nodeName],
   );
 
   const getBreadcrumbItems = () => {

@@ -23,6 +23,7 @@ import { useAtom } from "jotai";
 import { useTranslation } from "react-i18next";
 import { getHotkeyHandler, useToggle } from "@mantine/hooks";
 import { useLocation } from "react-router-dom";
+import { isEditorReady } from "@docmost/editor-ext";
 import classes from "./search-replace.module.css";
 
 interface PageFindDialogDialogProps {
@@ -69,8 +70,8 @@ function SearchAndReplaceDialog({ editor, editable = true }: PageFindDialogDialo
       replaceButtonToggle();
     }
     // Clear search term in editor
-    if (editor) {
-      editor.commands.setSearchTerm("");
+    if (isEditorReady(editor)) {
+      editor.commands.setSearchTerms([""]);
     }
   };
 
@@ -116,7 +117,8 @@ function SearchAndReplaceDialog({ editor, editable = true }: PageFindDialogDialo
   };
 
   useEffect(() => {
-    editor.commands.setSearchTerm(searchText);
+    if (!isEditorReady(editor)) return;
+    editor.commands.setSearchTerms([searchText]);
     editor.commands.resetIndex();
     editor.commands.selectCurrentItem();
   }, [searchText]);
@@ -192,8 +194,10 @@ function SearchAndReplaceDialog({ editor, editable = true }: PageFindDialogDialo
 
   const location = useLocation();
   useEffect(() => {
-    closeDialog();
-  }, [location]);
+    if (pageFindState.isOpen) {
+      closeDialog();
+    }
+  }, [location.pathname]);
 
   return (
     <Dialog
