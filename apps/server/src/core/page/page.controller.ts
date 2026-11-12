@@ -1097,6 +1097,7 @@ export class PageController {
       );
     }
     let spaceId = dto.spaceId;
+    let pageId: string;
 
     if (dto.pageId) {
       const page = await this.pageRepo.findById(dto.pageId);
@@ -1105,6 +1106,7 @@ export class PageController {
       }
 
       spaceId = page.spaceId;
+      pageId = page.id;
       if (agentAccess) {
         await this.agentAccessService.assertPageReadable(agentAccess, page);
       }
@@ -1127,7 +1129,7 @@ export class PageController {
     return this.pageService.getSidebarPages(
       spaceId,
       pagination,
-      dto.pageId,
+      pageId,
       user.role === UserRole.OWNER
         ? undefined
         : agentAccess
