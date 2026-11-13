@@ -1,5 +1,7 @@
 import Fastify from 'fastify';
 import * as http from 'node:http';
+import * as net from 'node:net';
+import { Readable } from 'node:stream';
 import {
   MCP_BODY_LIMIT_BYTES,
   MCP_MANUAL_UPLOAD_GUIDANCE,
@@ -106,7 +108,9 @@ describe('payloadTooLargeMessage', () => {
     expect(MCP_MANUAL_UPLOAD_GUIDANCE).toContain('Do not retry');
     expect(MCP_MANUAL_UPLOAD_GUIDANCE).toContain('do not split the file');
     expect(MCP_MANUAL_UPLOAD_GUIDANCE).toContain('upload the file manually');
-    expect(MCP_MANUAL_UPLOAD_GUIDANCE).toContain('drag the file into the editor');
+    expect(MCP_MANUAL_UPLOAD_GUIDANCE).toContain(
+      'drag the file into the editor',
+    );
   });
 
   it('names the limit and includes the guidance', () => {
@@ -152,55 +156,212 @@ describe('uploadTooLargeMessage', () => {
 describe('MCP body limit over a real socket', () => {
   let app: ReturnType<typeof buildApp>;
   let port: number;
+  let proxy: http.Server;
+  let proxyPort: number;
+  const upstreamRequests = new Set<http.ClientRequest>();
 
   beforeAll(async () => {
     app = buildApp();
     await app.listen({ port: 0, host: '127.0.0.1' });
     const address = app.server.address();
     port = typeof address === 'object' && address ? address.port : 0;
+
+    proxy = http.createServer((request, response) => {
+      const upstream = http.request(
+        {
+          host: '127.0.0.1',
+          port,
+          method: request.method,
+          path: request.url,
+          // Vite/http-proxy uses Connection: close for its upstream request.
+          headers: { ...request.headers, connection: 'close' },
+        },
+        (upstreamResponse) => {
+          response.writeHead(
+            upstreamResponse.statusCode ?? 502,
+            upstreamResponse.headers,
+          );
+          upstreamResponse.on('error', () => response.destroy());
+          upstreamResponse.pipe(response);
+        },
+      );
+      upstreamRequests.add(upstream);
+      upstream.on('close', () => upstreamRequests.delete(upstream));
+      request.on('error', () => upstream.destroy());
+      response.on('error', () => upstream.destroy());
+      upstream.on('error', () => {
+        if (!response.headersSent) response.writeHead(502);
+        response.end();
+      });
+      request.pipe(upstream);
+    });
+    await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve));
+    const proxyAddress = proxy.address();
+    proxyPort =
+      typeof proxyAddress === 'object' && proxyAddress ? proxyAddress.port : 0;
   });
 
   afterAll(async () => {
+    await new Promise<void>((resolve, reject) => {
+      proxy.close((error) => (error ? reject(error) : resolve()));
+      proxy.closeAllConnections();
+      for (const upstream of upstreamRequests) upstream.destroy();
+    });
     await app.close();
   });
 
-  it('returns a readable 413 while the client is still sending', async () => {
-    const result = await new Promise<{ status: number; body: string }>(
-      (resolve, reject) => {
-        const declared = MCP_BODY_LIMIT_BYTES + 1024 * 1024;
-        const req = http.request(
-          {
-            host: '127.0.0.1',
-            port,
-            path: MCP_ROUTE_URL,
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              'content-length': String(declared),
-            },
-          },
-          (res) => {
-            let body = '';
-            res.setEncoding('utf8');
-            res.on('data', (chunk) => (body += chunk));
-            res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
-          },
-        );
-
-        req.on('error', reject);
-        req.write('x'.repeat(64 * 1024));
-
-        setTimeout(() => {
-          req.destroy();
-          reject(new Error('no response within 5s'));
-        }, 5000).unref();
-      },
+  const post = async (
+    targetPort: number,
+    payload: string,
+    { chunked = false, close = false } = {},
+  ) => {
+    const response = await fetch(
+      `http://127.0.0.1:${targetPort}${MCP_ROUTE_URL}`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(close ? { connection: 'close' } : {}),
+        },
+        body: chunked
+          ? Readable.from([
+              payload.slice(0, 64 * 1024),
+              payload.slice(64 * 1024),
+            ])
+          : payload,
+        ...(chunked ? { duplex: 'half' } : {}),
+        signal: AbortSignal.timeout(3000),
+      } as RequestInit,
     );
+    return { status: response.status, body: await response.text() };
+  };
 
+  it.each(['direct', 'proxy'])(
+    'returns a readable 413 for complete oversized uploads (%s)',
+    async (target) => {
+      const payload = payloadOfBytes(MCP_BODY_LIMIT_BYTES + 1);
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const result = await post(
+          target === 'direct' ? port : proxyPort,
+          payload,
+        );
+        expect(result.status).toBe(413);
+        expect(JSON.parse(result.body)).toMatchObject({
+          code: 'FILE_TOO_LARGE',
+          details: { remediation: 'manual_upload_in_akasha' },
+        });
+      }
+    },
+  );
+
+  it.each(['direct', 'proxy'])(
+    'returns a readable 413 for chunked uploads (%s)',
+    async (target) => {
+      const result = await post(
+        target === 'direct' ? port : proxyPort,
+        payloadOfBytes(MCP_BODY_LIMIT_BYTES + 1024),
+        { chunked: true },
+      );
+      expect(result.status).toBe(413);
+      expect(JSON.parse(result.body).code).toBe('FILE_TOO_LARGE');
+    },
+  );
+
+  it('returns a readable rejection through a proxy for a much larger upload', async () => {
+    const result = await post(proxyPort, payloadOfBytes(64 * 1024 * 1024));
     expect(result.status).toBe(413);
-    expect(JSON.parse(result.body)).toMatchObject({
-      code: 'FILE_TOO_LARGE',
-      details: { remediation: 'manual_upload_in_akasha' },
+    expect(JSON.parse(result.body).code).toBe('FILE_TOO_LARGE');
+  });
+
+  it('finishes reading uploads from clients that request Connection: close', async () => {
+    const result = await post(port, payloadOfBytes(MCP_BODY_LIMIT_BYTES + 1), {
+      close: true,
+    });
+    expect(result.status).toBe(413);
+    expect(JSON.parse(result.body).code).toBe('FILE_TOO_LARGE');
+  });
+
+  it('allows an upload to finish after the 413, then accepts the next request', async () => {
+    const payload = payloadOfBytes(MCP_BODY_LIMIT_BYTES + 1);
+    await new Promise<void>((resolve, reject) => {
+      const socket = net.createConnection({ host: '127.0.0.1', port });
+      let responses = '';
+      let continued = false;
+      let completed = false;
+      const timer = setTimeout(
+        () => finish(new Error('upload did not finish')),
+        3000,
+      );
+      let continueTimer: ReturnType<typeof setTimeout>;
+      const finish = (error?: Error) => {
+        if (completed) return;
+        completed = true;
+        clearTimeout(timer);
+        clearTimeout(continueTimer);
+        socket.destroy();
+        if (error) reject(error);
+        else resolve();
+      };
+      socket.setEncoding('utf8');
+      socket.on('error', finish);
+      socket.on('close', () => {
+        if (!completed)
+          finish(new Error('connection closed during the upload'));
+      });
+      socket.on('connect', () => {
+        socket.write(
+          `POST /mcp HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(payload)}\r\n\r\n`,
+        );
+        socket.write(payload.slice(0, 64 * 1024));
+      });
+      socket.on('data', (chunk) => {
+        responses += chunk;
+        if (!continued && responses.includes('manual_upload_in_akasha')) {
+          continued = true;
+          // Keep sending after the rejection, as a buffering proxy may do.
+          continueTimer = setTimeout(() => {
+            socket.write(payload.slice(64 * 1024));
+            socket.write(
+              'POST /mcp HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}',
+            );
+          }, 25);
+        }
+        if (
+          responses.includes('HTTP/1.1 200') &&
+          responses.includes('"ok":true')
+        ) {
+          finish();
+        }
+      });
+    });
+  });
+
+  it('closes a rejected upload that stalls without finishing its body', async () => {
+    await new Promise<void>((resolve, reject) => {
+      const socket = net.createConnection({ host: '127.0.0.1', port });
+      let response = '';
+      const timer = setTimeout(() => {
+        socket.destroy();
+        reject(new Error('stalled upload was not closed'));
+      }, 2500);
+      socket.setEncoding('utf8');
+      socket.on('error', reject);
+      socket.on('connect', () => {
+        socket.write(
+          `POST /mcp HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${MCP_BODY_LIMIT_BYTES + 1}\r\n\r\nx`,
+        );
+      });
+      socket.on('data', (chunk) => (response += chunk));
+      socket.on('close', () => {
+        clearTimeout(timer);
+        try {
+          expect(response).toContain('HTTP/1.1 413');
+          expect(response).toContain('manual_upload_in_akasha');
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
     });
   });
 });

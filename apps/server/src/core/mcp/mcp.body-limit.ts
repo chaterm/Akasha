@@ -1,8 +1,12 @@
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 export const MCP_ROUTE_URL = '/mcp';
 
 export const MCP_BODY_LIMIT_BYTES = 32 * 1024 * 1024;
+
+// Discard rather than parse rejected uploads, but bound their bandwidth/time.
+const REJECT_DRAIN_MAX_BYTES = 4 * MCP_BODY_LIMIT_BYTES;
+const REJECT_DRAIN_TIMEOUT_MS = 1000;
 
 export const MCP_UPLOAD_MAX_BASE64_CHARS = 14_000_000;
 
@@ -54,15 +58,64 @@ export function uploadTooLargeDetails() {
 }
 
 export function registerMcpBodyLimit(instance: FastifyInstance): void {
-  const reject = (reply: any): void => {
-    reply
-      .code(413)
-      .header('connection', 'close')
-      .send({
-        code: 'FILE_TOO_LARGE',
-        message: payloadTooLargeMessage(MCP_BODY_LIMIT_BYTES),
-        details: payloadTooLargeDetails(MCP_BODY_LIMIT_BYTES),
-      });
+  const reject = (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    maxDrainBytes: number,
+  ): void => {
+    const raw = request.raw;
+    const keepAlive = reply.raw.shouldKeepAlive;
+    const send = () => {
+      // Fastify's parser also sets Connection: close on errors. Keeping the
+      // connection open lets clients/proxies read the 413 while still writing.
+      reply
+        .code(413)
+        .removeHeader('connection')
+        .send({
+          code: 'FILE_TOO_LARGE',
+          message: payloadTooLargeMessage(MCP_BODY_LIMIT_BYTES),
+          details: payloadTooLargeDetails(MCP_BODY_LIMIT_BYTES),
+        });
+    };
+
+    if (raw.readableEnded) {
+      send();
+      return;
+    }
+
+    let drainedBytes = 0;
+    const cleanup = () => {
+      clearTimeout(timer);
+      raw.removeListener('data', onData);
+      raw.removeListener('end', onEnd);
+      raw.removeListener('close', cleanup);
+    };
+    const stop = () => {
+      cleanup();
+      if (keepAlive) {
+        raw.destroy();
+      } else if (!reply.raw.destroyed) {
+        send();
+      }
+    };
+    const onData = (chunk: Buffer) => {
+      drainedBytes += chunk.length;
+      if (drainedBytes > maxDrainBytes) stop();
+    };
+    const onEnd = () => {
+      cleanup();
+      // For Connection: close requests, Node closes as soon as the response
+      // finishes, so wait for the upload to end before sending that response.
+      if (!keepAlive && !reply.raw.destroyed) send();
+    };
+    const timer = setTimeout(stop, REJECT_DRAIN_TIMEOUT_MS);
+    timer.unref();
+
+    raw.on('data', onData);
+    raw.once('end', onEnd);
+    raw.once('close', cleanup);
+    raw.resume();
+    if (keepAlive) send();
   };
 
   instance.addHook('onRequest', (request, reply, done) => {
@@ -70,7 +123,9 @@ export function registerMcpBodyLimit(instance: FastifyInstance): void {
 
     const declared = Number(request.headers['content-length']);
     if (Number.isFinite(declared) && declared > MCP_BODY_LIMIT_BYTES) {
-      reject(reply);
+      // No body has been parsed yet. Discard a near-limit request without
+      // buffering it, while bounding the work spent on much larger uploads.
+      reject(request, reply, REJECT_DRAIN_MAX_BYTES);
       return;
     }
 
@@ -86,8 +141,8 @@ export function registerMcpBodyLimit(instance: FastifyInstance): void {
         return reply.send(error);
       }
 
-      reject(reply);
-      request.raw.resume();
+      // The parser has already consumed the allowed body before this error.
+      reject(request, reply, REJECT_DRAIN_MAX_BYTES - MCP_BODY_LIMIT_BYTES);
     };
   });
 }
