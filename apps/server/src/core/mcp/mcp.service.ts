@@ -47,6 +47,14 @@ import {
 } from '../../collaboration/collaboration.util';
 import { McpToolContext, McpToolRegistry } from './mcp-tool-registry';
 import { McpDisabledException } from './mcp.errors';
+import {
+  MCP_UPLOAD_MAX_BASE64_CHARS,
+  MCP_UPLOAD_MAX_BINARY_BYTES,
+  formatBytes,
+  uploadTooLargeDetails,
+  uploadTooLargeMessage,
+} from './mcp.body-limit';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 import { getApiKeyAccess } from '../../common/auth/api-key-access';
 import { getPageTitle } from '../../common/helpers';
 import { AttachmentService } from '../attachment/services/attachment.service';
@@ -615,8 +623,12 @@ export class McpService {
             contentBase64: z
               .string()
               .min(1)
-              .max(14_000_000)
-              .describe('Non-empty Base64 file content.'),
+              .max(MCP_UPLOAD_MAX_BASE64_CHARS, {
+                message: uploadTooLargeMessage(),
+              })
+              .describe(
+                `Non-empty Base64 file content, at most ${MCP_UPLOAD_MAX_BASE64_CHARS} characters (about ${formatBytes(MCP_UPLOAD_MAX_BINARY_BYTES)} of binary). For anything larger, ask the user to upload the file manually in Akasha instead.`,
+              ),
             attachmentId: z
               .string()
               .optional()
@@ -859,6 +871,16 @@ export class McpService {
       throw new NotFoundException('Page not found');
     }
     await this.pageAccessService.validateCanEdit(page, ctx.user);
+
+    if (args.contentBase64.length > MCP_UPLOAD_MAX_BASE64_CHARS) {
+      throw new BadRequestException({
+        ...errorBody(
+          ErrorCode.FILE_TOO_LARGE,
+          uploadTooLargeMessage(args.contentBase64.length),
+        ),
+        details: uploadTooLargeDetails(),
+      });
+    }
 
     let content: Buffer;
     try {
