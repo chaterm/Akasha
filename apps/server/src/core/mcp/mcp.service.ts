@@ -47,19 +47,11 @@ import {
 } from '../../collaboration/collaboration.util';
 import { McpToolContext, McpToolRegistry } from './mcp-tool-registry';
 import { McpDisabledException } from './mcp.errors';
-import {
-  MCP_UPLOAD_MAX_BASE64_CHARS,
-  MCP_UPLOAD_MAX_BINARY_BYTES,
-  formatBytes,
-  uploadTooLargeDetails,
-  uploadTooLargeMessage,
-} from './mcp.body-limit';
-import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 import { getApiKeyAccess } from '../../common/auth/api-key-access';
 import { getPageTitle } from '../../common/helpers';
-import { AttachmentService } from '../attachment/services/attachment.service';
 import { AttachmentRepo } from '@akasha/db/repos/attachment/attachment.repo';
-import { Readable } from 'stream';
+import { DomainService } from '../../integrations/environment/domain.service';
+import { EnvironmentService } from '../../integrations/environment/environment.service';
 import { SpaceRepo } from '@akasha/db/repos/space/space.repo';
 import { ApiKeyType } from '../../common/auth/api-key-type';
 import { TemplateService } from '../template/template.service';
@@ -123,9 +115,10 @@ export class McpService {
     private readonly spaceAbility: SpaceAbilityFactory,
     private readonly workspaceAbility: WorkspaceAbilityFactory,
     private readonly toolRegistry: McpToolRegistry,
-    private readonly attachmentService: AttachmentService,
     private readonly attachmentRepo: AttachmentRepo,
     private readonly agentAccessService: AgentAccessService,
+    private readonly domainService: DomainService,
+    private readonly environmentService: EnvironmentService,
     @InjectKysely() private readonly db: KyselyDB,
     @Optional() private readonly templateService?: TemplateService,
     @Optional() private readonly weeklyReportService?: WeeklyReportService,
@@ -607,28 +600,14 @@ export class McpService {
       server.registerTool(
         'upload_attachment',
         {
-          title: 'Upload Page attachment',
+          title: 'Prepare Page attachment upload',
           description:
-            'Upload a bounded Base64 file to an ACL-authorized Page.',
+            'Check edit permission on a Page and return instructions for uploading a local file to it. This Tool does not accept file content: it returns an upload URL that the Agent posts the file to locally as multipart/form-data, so the bytes never pass through the MCP request.',
           inputSchema: {
             pageId: z
               .string()
               .min(1)
               .describe('Page UUID obtained from another Tool.'),
-            fileName: z
-              .string()
-              .min(1)
-              .max(255)
-              .describe('File name including extension.'),
-            contentBase64: z
-              .string()
-              .min(1)
-              .max(MCP_UPLOAD_MAX_BASE64_CHARS, {
-                message: uploadTooLargeMessage(),
-              })
-              .describe(
-                `Non-empty Base64 file content, at most ${MCP_UPLOAD_MAX_BASE64_CHARS} characters (about ${formatBytes(MCP_UPLOAD_MAX_BINARY_BYTES)} of binary). For anything larger, ask the user to upload the file manually in Akasha instead.`,
-              ),
             attachmentId: z
               .string()
               .optional()
@@ -861,8 +840,6 @@ export class McpService {
     ctx: ToolContext,
     args: {
       pageId: string;
-      fileName: string;
-      contentBase64: string;
       attachmentId?: string;
     },
   ) {
@@ -870,59 +847,39 @@ export class McpService {
     if (!page || page.workspaceId !== ctx.workspace.id) {
       throw new NotFoundException('Page not found');
     }
-    await this.pageAccessService.validateCanEdit(page, ctx.user);
-
-    if (args.contentBase64.length > MCP_UPLOAD_MAX_BASE64_CHARS) {
-      throw new BadRequestException({
-        ...errorBody(
-          ErrorCode.FILE_TOO_LARGE,
-          uploadTooLargeMessage(args.contentBase64.length),
-        ),
-        details: uploadTooLargeDetails(),
-      });
+    if (ctx.agentAccess) {
+      await this.agentAccessService.assertPageWritable(ctx.agentAccess, page);
+    } else {
+      await this.pageAccessService.validateCanEdit(page, ctx.user);
     }
 
-    let content: Buffer;
-    try {
-      content = Buffer.from(args.contentBase64, 'base64');
-      if (
-        !content.length ||
-        content.toString('base64') !== args.contentBase64.replace(/\s/g, '')
-      ) {
-        throw new Error('invalid base64');
-      }
-    } catch {
-      throw new BadRequestException(
-        'contentBase64 must be valid non-empty Base64',
-      );
+    const uploadUrl = `${this.domainService.getUrl(ctx.workspace.hostname)}/api/files/upload`;
+    const fields: Record<string, string> = {
+      file: '<the local file, sent as a multipart file part>',
+      pageId: page.id,
+    };
+    if (args.attachmentId) {
+      fields.attachmentId = args.attachmentId;
     }
+    const curlFields = [
+      `-F "pageId=${page.id}"`,
+      ...(args.attachmentId ? [`-F "attachmentId=${args.attachmentId}"`] : []),
+      '-F "file=@<local-file-path>"',
+    ].join(' ');
 
-    const multipartFile = {
-      filename: args.fileName,
-      file: Readable.from(content),
-      toBuffer: async () => content,
-    } as any;
-    const attachment = await this.attachmentService.uploadFile({
-      filePromise: Promise.resolve(multipartFile),
+    return {
       pageId: page.id,
       spaceId: page.spaceId,
-      userId: ctx.user.id,
-      workspaceId: ctx.workspace.id,
-      attachmentId: args.attachmentId,
-    });
-    const fileName = attachment.fileName;
-    const url = `/api/files/${attachment.id}/${encodeURIComponent(fileName)}`;
-    return {
-      attachmentId: attachment.id,
-      pageId: page.id,
-      fileName,
-      mimeType: attachment.mimeType,
-      fileSize: attachment.fileSize,
-      url,
-      markdown: attachment.mimeType?.startsWith('image/')
-        ? `![${fileName}](${url})`
-        : `[${fileName}](${url})`,
-      replaced: Boolean(args.attachmentId),
+      uploadUrl,
+      method: 'POST',
+      contentType: 'multipart/form-data',
+      fields,
+      auth: 'Send the Akasha API Key already configured for this MCP endpoint as `Authorization: Bearer <key>`. Read it from the environment; never print it.',
+      maxFileSize: this.environmentService.getFileUploadSizeLimit(),
+      instructions:
+        'Upload the file yourself with one local multipart request. The response contains attachmentId, fileName, mimeType and fileSize. Reference the file in Page content by the relative path `/api/files/<attachmentId>/<fileName>`, not by the absolute url in the response: PDF and audio nodes only accept relative paths and blank out absolute ones. If you cannot make local HTTP requests, give the user the uploadUrl and say the file has not been uploaded.',
+      curlExample: `curl -X POST "${uploadUrl}" -H "Authorization: Bearer $AKASHA_API_KEY" ${curlFields}`,
+      replaces: args.attachmentId ?? null,
     };
   }
 

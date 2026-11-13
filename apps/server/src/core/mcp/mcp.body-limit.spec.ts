@@ -6,11 +6,9 @@ import {
   MCP_BODY_LIMIT_BYTES,
   MCP_MANUAL_UPLOAD_GUIDANCE,
   MCP_ROUTE_URL,
-  MCP_UPLOAD_MAX_BINARY_BYTES,
   formatBytes,
   payloadTooLargeMessage,
   registerMcpBodyLimit,
-  uploadTooLargeMessage,
 } from './mcp.body-limit';
 
 const GLOBAL_BODY_LIMIT = 1024 * 1024;
@@ -129,27 +127,6 @@ describe('payloadTooLargeMessage', () => {
 
   it('formats sub-megabyte sizes in KB', () => {
     expect(formatBytes(512 * 1024)).toBe('512.0KB');
-  });
-});
-
-describe('uploadTooLargeMessage', () => {
-  it('reports the binary ceiling, not the base64 character count', () => {
-    const message = uploadTooLargeMessage();
-
-    expect(MCP_UPLOAD_MAX_BINARY_BYTES).toBe(10_500_000);
-    expect(message).toContain('14,000,000 base64 characters');
-    expect(message).toContain('10.0MB of binary');
-    expect(message).not.toContain('13.4MB');
-  });
-
-  it('reports how many characters the caller actually sent', () => {
-    expect(uploadTooLargeMessage(15_000_000)).toContain(
-      '15,000,000 characters:',
-    );
-  });
-
-  it('includes the manual-upload guidance', () => {
-    expect(uploadTooLargeMessage()).toContain(MCP_MANUAL_UPLOAD_GUIDANCE);
   });
 });
 
