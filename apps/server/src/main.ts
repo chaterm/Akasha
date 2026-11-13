@@ -17,6 +17,7 @@ import { loadRuntimeConfiguration } from './integrations/environment/consul-conf
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { bootstrapLogger } from './common/logger/bootstrap-logger';
 import { SERVICE_NAME_SERVER } from './common/logger/log-service-name';
+import { registerMcpBodyLimit } from './core/mcp/mcp.body-limit';
 
 process.env.SERVICE_NAME ??= SERVICE_NAME_SERVER;
 
@@ -45,6 +46,8 @@ async function bootstrap() {
   );
 
   app.useLogger(app.get(PinoLogger));
+
+  registerMcpBodyLimit(app.getHttpAdapter().getInstance());
 
   app.useGlobalFilters(
     new AllExceptionsFilter(app.getHttpAdapter(), app.get(PinoLogger)),
