@@ -45,6 +45,7 @@ import {
   htmlToMarkdown,
   TransclusionSource,
   TransclusionReference,
+  ADDRESSABLE_NODE_TYPES,
 } from '@docmost/editor-ext';
 import { generateText, getSchema, JSONContent } from '@tiptap/core';
 import { generateHTML, generateJSON } from '../common/helpers/prosemirror/html';
@@ -69,7 +70,7 @@ export const tiptapExtensions = [
   }),
   Heading,
   UniqueID.configure({
-    types: ['heading', 'paragraph', 'transclusionSource'],
+    types: [...ADDRESSABLE_NODE_TYPES],
   }),
   Comment,
   TextAlign.configure({ types: ['heading', 'paragraph'] }),

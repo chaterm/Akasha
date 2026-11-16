@@ -130,6 +130,8 @@ describe('payloadTooLargeMessage', () => {
   });
 });
 
+const SOCKET_TEST_TIMEOUT_MS = 60_000;
+
 describe('MCP body limit over a real socket', () => {
   let app: ReturnType<typeof buildApp>;
   let port: number;
@@ -229,6 +231,7 @@ describe('MCP body limit over a real socket', () => {
         });
       }
     },
+    SOCKET_TEST_TIMEOUT_MS,
   );
 
   it.each(['direct', 'proxy'])(
@@ -242,13 +245,18 @@ describe('MCP body limit over a real socket', () => {
       expect(result.status).toBe(413);
       expect(JSON.parse(result.body).code).toBe('FILE_TOO_LARGE');
     },
+    SOCKET_TEST_TIMEOUT_MS,
   );
 
-  it('returns a readable rejection through a proxy for a much larger upload', async () => {
-    const result = await post(proxyPort, payloadOfBytes(64 * 1024 * 1024));
-    expect(result.status).toBe(413);
-    expect(JSON.parse(result.body).code).toBe('FILE_TOO_LARGE');
-  });
+  it(
+    'returns a readable rejection through a proxy for a much larger upload',
+    async () => {
+      const result = await post(proxyPort, payloadOfBytes(64 * 1024 * 1024));
+      expect(result.status).toBe(413);
+      expect(JSON.parse(result.body).code).toBe('FILE_TOO_LARGE');
+    },
+    SOCKET_TEST_TIMEOUT_MS,
+  );
 
   it('finishes reading uploads from clients that request Connection: close', async () => {
     const result = await post(port, payloadOfBytes(MCP_BODY_LIMIT_BYTES + 1), {

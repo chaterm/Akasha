@@ -58,6 +58,7 @@ import {
   ListItem,
   TaskItem,
   UniqueID,
+  ADDRESSABLE_NODE_TYPES,
   SharedStorage,
   Columns,
   Column,
@@ -223,7 +224,7 @@ export const mainExtensions = [
   SharedStorage,
   Heading,
   UniqueID.configure({
-    types: ["heading", "paragraph", "transclusionSource"],
+    types: [...ADDRESSABLE_NODE_TYPES],
     filterTransaction: (transaction) => !isChangeOrigin(transaction),
   }),
   MainPlaceholder,

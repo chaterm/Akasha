@@ -12,6 +12,7 @@
     "baseUrl": "./",
     "incremental": true,
     "skipLibCheck": true,
+    "isolatedModules": true,
     "strictNullChecks": false,
     "noImplicitAny": false,
     "strictBindCallApply": false,

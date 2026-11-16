@@ -1,7 +1,7 @@
 import { EditorProvider } from "@tiptap/react";
 import { useMemo } from "react";
 import { mainExtensions } from "@/features/editor/extensions/extensions";
-import { UniqueID } from "@docmost/editor-ext";
+import { UniqueID, ADDRESSABLE_NODE_TYPES } from "@docmost/editor-ext";
 
 type Props = {
   content: unknown;
@@ -15,7 +15,7 @@ export default function TransclusionContent({ content }: Props) {
     return [
       ...filtered,
       UniqueID.configure({
-        types: ["heading", "paragraph", "transclusionSource"],
+        types: [...ADDRESSABLE_NODE_TYPES],
         updateDocument: false,
       }),
     ];

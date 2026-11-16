@@ -26,7 +26,7 @@ import {
   PERMISSION_CACHE_TTL_MS,
 } from '../../../common/helpers/cache-keys';
 
-export { PagePermissionMember } from './types/page-permission.types';
+export type { PagePermissionMember } from './types/page-permission.types';
 
 @Injectable()
 export class PagePermissionRepo {

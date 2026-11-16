@@ -50,6 +50,10 @@ import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import { EventName } from '../../../common/events/event.contants';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { CollaborationGateway } from '../../../collaboration/collaboration.gateway';
+import type {
+  PageEditOp,
+  PageEditOutcome,
+} from '../../../collaboration/page-edit/page-edit.types';
 import {
   INTERNAL_LINK_REGEX,
   extractPageSlugId,
@@ -325,6 +329,18 @@ export class PageService {
       'updatePageContent',
       documentName,
       { operation, prosemirrorJson, user },
+    );
+  }
+
+  async editPageContent(
+    pageId: string,
+    ops: PageEditOp[],
+    user: User,
+  ): Promise<PageEditOutcome[]> {
+    return this.collaborationGateway.editPageContent(
+      `page.${pageId}`,
+      ops,
+      user,
     );
   }
 

@@ -1,11 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Hocuspocus, Document } from '@hocuspocus/server';
 import { TiptapTransformer } from '@hocuspocus/transformer';
+import { getSchema } from '@tiptap/core';
+import { initProseMirrorDoc, updateYFragment } from '@tiptap/y-tiptap';
 import {
   prosemirrorNodeToYElement,
   tiptapExtensions,
 } from './collaboration.util';
 import { setYjsMark, updateYjsMarkAttribute, YjsSelection } from './yjs.util';
+import { applyPageEdits } from './page-edit/page-edit';
+import type {
+  PageEditOp,
+  PageEditOutcome,
+} from './page-edit/page-edit.types';
 import * as Y from 'yjs';
 import { User } from '@akasha/db/types/entity.types';
 
@@ -111,6 +118,33 @@ export class CollaborationHandler {
             }
           },
         );
+      },
+      editPageContent: async (
+        documentName: string,
+        payload: { ops: PageEditOp[]; user: User },
+      ): Promise<PageEditOutcome[]> => {
+        const { ops, user } = payload;
+        let outcomes: PageEditOutcome[] = [];
+        await this.withYdocConnection(
+          hocuspocus,
+          documentName,
+          { user },
+          (doc) => {
+            const fragment = doc.getXmlFragment('default');
+            const schema = getSchema(tiptapExtensions);
+            const { doc: current, mapping } = initProseMirrorDoc(
+              fragment,
+              schema,
+            );
+            const result = applyPageEdits(current, ops);
+            outcomes = result.outcomes;
+            updateYFragment(doc, fragment, result.doc, {
+              mapping,
+              isOMark: new Map(),
+            });
+          },
+        );
+        return outcomes;
       },
       getDocumentJson: async (
         documentName: string,
