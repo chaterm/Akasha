@@ -379,7 +379,7 @@ export default function PageEditor({
     selector: (ctx) => ctx.editor?.isEmpty ?? false,
   });
   const showEmptyPageHint =
-    editable && pageEditMode === PageEditMode.Read && editorIsEmpty;
+    editable && pageEditMode === PageEditMode.Edit && editorIsEmpty;
 
   const debouncedUpdateContent = useDebouncedCallback((newContent: any) => {
     const pageData = queryClient.getQueryData<IPage>(["pages", slugId]);
@@ -504,8 +504,8 @@ export default function PageEditor({
       ) : (
         <div className="editor-container" style={{ position: "relative" }}>
           <div ref={menuContainerRef}>
-            {showEmptyPageHint && <EmptyPageHint />}
             <EditorContent editor={editor} />
+            {showEmptyPageHint && <EmptyPageHint />}
 
             {editor && (
               <SearchAndReplaceDialog editor={editor} editable={editable} />

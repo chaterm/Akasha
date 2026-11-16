@@ -206,8 +206,8 @@ export function useTreeMutation(spaceId: string): UseTreeMutation {
         createdPage.slugId,
         createdPage.title,
       );
-      // 用模板建的页面直接进入编辑模式，方便马上填写
-      navigate(pageUrl, opts?.templateId ? { state: OPEN_IN_EDIT_MODE_STATE } : undefined);
+      // 新建页面直接进入编辑模式，方便马上填写。
+      navigate(pageUrl, { state: OPEN_IN_EDIT_MODE_STATE });
     },
     [spaceId, createPageMutation, setData, store, emit, navigate, spaceSlug, t],
   );

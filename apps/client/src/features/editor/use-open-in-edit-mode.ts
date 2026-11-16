@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
-/** 导航到页面时带上这个 state，页面会以编辑模式打开一次（如用模板新建的页面）。 */
+/** 导航到页面时带上这个 state，页面会以编辑模式打开一次（如新建页面）。 */
 export const OPEN_IN_EDIT_MODE_STATE = { openInEditMode: true } as const;
 
 /**
