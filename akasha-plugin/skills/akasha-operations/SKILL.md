@@ -41,9 +41,22 @@ description: >
 - `move_page` 的 `position` 是页面排序键。先用 `list_pages` 或 `list_child_pages` 获取同级页面的
   `position`；跨空间移动使用 `move_page_to_space`。
 - `duplicate_page` 在原空间复制，`copy_page_to_space` 跨空间复制；两者都会产生新页面。
-- 附件上传使用非空且不超过 Tool Schema 限制的 `contentBase64`；替换附件时传 `attachmentId`。
-  `download_attachment` 返回受 ACL 保护的 URL，需要携带宿主中的 Bearer 凭据下载。无法获取或写入
-  文件时，明确说明只提供下载地址，不声称已经下载。
+- 附件上传分两步：先用 `upload_attachment` 校验页面写权限并取得 `uploadUrl`，再在本地用一次
+  `multipart/form-data` 请求把文件 POST 上去，字段为 `file`、`pageId`（替换附件时加 `attachmentId`）。
+  `upload_attachment` 不接收文件内容，不要传 base64。上传请求携带宿主中已配置的 Bearer 凭据，
+  从环境变量读取，不回显到输出或日志。在页面内容里引用文件时用相对路径
+  `/api/files/<attachmentId>/<fileName>`，不要用上传响应里的绝对 `url`：PDF 与音频节点只接受
+  相对路径，绝对地址会被清空导致文件不显示。
+- `download_attachment` 返回受 ACL 保护的 URL，需要携带宿主中的 Bearer 凭据下载。无法在本地发起
+  HTTP 请求或读写文件时，明确说明只提供上传或下载地址，不声称已经上传或下载。
+- 源文档含非文字内容（图片、截图、图表、扫描件等，常见于 docx、pdf、pptx、带图 Markdown）时，
+  先把文字和图片分离，不要把图片当作文字内容写进页面：
+  1. 抽取文字，按 `format: markdown` 用 `create_page` 或 `update_page` 写入页面。
+  2. 把每张图片存成本地文件，逐个按上条的两步流程上传为附件。
+  3. 按 `![说明](/api/files/<attachmentId>/<fileName>)` 在 Markdown 中引用，位置对应图片在原文
+     中的位置；`attachmentId` 和 `fileName` 取自上传响应。
+  表格、公式等可以用 Markdown 表达的结构化内容按文字处理，不要截图上传。无法抽取图片时，
+  说明哪些图片未处理，不要用占位描述冒充图片内容。
 
 ## 错误处理
 
