@@ -1,21 +1,25 @@
 {
   "name": "akasha",
-  "version": "1.3.0",
-  "description": "Autonomous access to the locally configured Akasha knowledge base and Page operations for coding agents.",
+  "version": "1.4.0",
+  "description": "Autonomous access to the locally configured Akasha knowledge base, Pages and weekly reports for coding agents.",
   "author": {
     "name": "Akasha"
   },
   "skills": "./skills/",
   "interface": {
     "displayName": "Akasha Knowledge",
-    "shortDescription": "Query the locally configured Akasha knowledge base",
-    "longDescription": "Install the Akasha Skill, then connect the locally configured Akasha MCP server with an explicit absolute URL.",
+    "shortDescription": "Query, edit and report on the local Akasha knowledge base",
+    "longDescription": "Ships three skills (query, pages, weekly report). Connect the locally configured Akasha MCP server with an explicit absolute URL before first use.",
     "developerName": "Akasha",
     "category": "Productivity",
-    "capabilities": ["Read", "Write"],
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
     "defaultPrompt": [
       "Use Akasha to answer a question from the local knowledge base",
-      "Find and update the relevant Akasha Page"
+      "Find and update the relevant Akasha Page",
+      "Draft this week's report with Akasha"
     ]
   }
 }

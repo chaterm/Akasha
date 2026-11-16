@@ -47,6 +47,9 @@ It brings together a collaborative Wiki, AI-powered knowledge compilation and re
   - [Start](#start)
   - [Build](#build)
 - [Agent Integration](#agent-integration)
+  - [Agent-assisted Installation](#agent-assisted-installation)
+  - [Manual Installation](#manual-installation)
+  - [Verification](#verification)
 - [Self-hosted](#self-hosted)
 - [Acknowledgements](#acknowledgements)
 - [Contributors](#contributors)
@@ -181,16 +184,61 @@ Build artifacts are generated under the corresponding `apps/*/dist` and `package
 
 ## Agent Integration
 
-Akasha provides an MCP endpoint for agents to access the knowledge workspace.
+Akasha provides an MCP endpoint together with three skills that define when and how agents should use it:
 
-Configure the MCP server with:
+- `akasha-query`: knowledge queries with source citations;
+- `akasha-pages`: operations on pages, spaces, comments, and attachments;
+- `akasha-weekly-report`: drafting and saving weekly reports.
 
-- the absolute URL of the deployed Akasha instance followed by `/mcp`;
-- an API key with the required workspace permissions.
+All requests are subject to Akasha's authorization rules. Before installation, obtain the URL of the deployed Akasha instance and a personal API key, which can be created under **Settings → API keys**.
 
-The MCP integration supports knowledge queries and permitted operations on pages, spaces, comments, attachments, and workspace information. Requests follow Akasha's authorization rules.
+### Agent-assisted Installation
 
-See [`akasha-plugin/README.md`](./akasha-plugin/README.md) for installation instructions and host-specific configuration examples.
+Send the following instruction to Claude Code, Codex, Cursor, OpenCode, or any other agent capable of executing shell commands:
+
+```text
+Install Akasha for me by reading https://raw.githubusercontent.com/chaterm/Akasha/beta/akasha-plugin/install.md
+```
+
+By default, the agent installs the skills globally for the host it is running in, then guides you through the MCP configuration. Commands that require approval must be confirmed in the host.
+
+### Manual Installation
+
+Install the skills with the `skills` CLI, which requires Node.js 22.20 or later:
+
+```bash
+npx -y skills@latest add https://github.com/chaterm/Akasha.git#beta \
+  --skill akasha-query --skill akasha-pages --skill akasha-weekly-report \
+  --agent claude-code --global --copy --yes
+```
+
+To install for additional hosts, repeat the `--agent` option (`codex`, `cursor`, `opencode`). Where Node.js is unavailable, download [`akasha-skills.zip`](https://raw.githubusercontent.com/chaterm/Akasha/beta/akasha-plugin/dist/akasha-skills.zip) and extract it without modification into the host's skill directory (for Claude Code, `~/.claude/skills/`).
+
+The skills depend on the MCP server and cannot operate until it is registered. For Claude Code:
+
+```bash
+claude mcp add --scope user --transport http akasha \
+  "https://<your-akasha-host>/mcp" \
+  --header "Authorization: Bearer <your-api-key>"
+```
+
+For Codex, add the following to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.akasha]
+url = "https://<your-akasha-host>/mcp"
+http_headers = { Authorization = "Bearer <your-api-key>" }
+```
+
+For other hosts, register an HTTP MCP server with the same URL and header according to the host's documentation. The endpoint must end in `/mcp` without an additional `/api` segment. API keys must be stored only in the host's local configuration and must not be committed to a repository or shared in a conversation.
+
+### Verification
+
+Ask a question about internal information, for example "What is our expense reimbursement policy?". The agent is expected to call `query_knowledge` and return an answer with source citations. General questions, such as "What is Redis AOF?", should not invoke Akasha.
+
+Optionally, a default weekly report template and save location can be configured with the `X-Akasha-Weekly-Template-Id` and `X-Akasha-Weekly-Parent-Page-Id` headers on the MCP connection.
+
+For skill development, packaging, and tool contracts, see [`akasha-plugin/README.md`](./akasha-plugin/README.md).
 
 ## Self-hosted
 

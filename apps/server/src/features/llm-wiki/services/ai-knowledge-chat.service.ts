@@ -35,7 +35,7 @@ import { KnowledgeAuthorizationCache } from './knowledge-source-authorization.ca
 import { KnowledgeSourceAuthorizationService } from './knowledge-source-authorization.service';
 import { ErrorCode, errorBody } from '../../../common/errors/error-codes';
 
-export { KnowledgeAnswerProvider, KnowledgeAnswerProviderInput };
+export type { KnowledgeAnswerProvider, KnowledgeAnswerProviderInput };
 
 export type AiKnowledgeCitationEvidence = KnowledgeCitation & {
   excerpts: Array<

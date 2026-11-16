@@ -13,7 +13,7 @@ import { normalizeWeeklyReportContent } from './weekly-report-content';
 /** The Skill tells the model to copy these examples; they must survive the real save path. */
 const rulesPath = resolve(
   __dirname,
-  '../../../../../skills/akasha-weekly-report/references/content-rules.md',
+  '../../../../../akasha-plugin/skills/akasha-weekly-report/references/content-rules.md',
 );
 const examples = [
   ...readFileSync(rulesPath, 'utf8').matchAll(/```json\s*\n([\s\S]*?)\n```/g),

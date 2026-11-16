@@ -5,7 +5,13 @@ endif
 
 .DEFAULT_GOAL := dev
 
-.PHONY: db install migrate migrate-dry-run prod prod-dry-run dev
+.PHONY: db install migrate migrate-dry-run prod prod-dry-run dev skills-zip skills-verify
+
+ifeq ($(OS),Windows_NT)
+PYTHON ?= python
+else
+PYTHON ?= python3
+endif
 
 #   make migrate DATABASE_URL="postgresql://akasha:STRONG_DB_PASSWORD@localhost:5432/akasha?schema=public"
 #   make dev DATABASE_URL="postgresql://akasha:STRONG_DB_PASSWORD@localhost:5432/akasha?schema=public"
@@ -26,6 +32,12 @@ migrate-dry-run:
 
 dev:
 	pnpm run dev
+
+skills-zip:
+	$(PYTHON) akasha-plugin/scripts/package-skills.py
+
+skills-verify:
+	$(PYTHON) akasha-plugin/scripts/package-skills.py --verify-only
 
 # 生产
 prod:

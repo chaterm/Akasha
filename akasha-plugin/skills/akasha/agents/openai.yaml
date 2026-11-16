@@ -1,4 +1,0 @@
-interface:
-  display_name: "Akasha"
-  short_description: "查询公司与个人知识库"
-  default_prompt: "公司制度、内部项目、个人笔记或用户明确指定 Akasha 时，使用 $akasha 查询并依据来源回答；普通公共知识不使用 Akasha 查询，除非用户明确指定 Akasha。"

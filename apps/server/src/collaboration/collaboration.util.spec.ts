@@ -1,9 +1,12 @@
-import { addUniqueIdsToDoc } from '@docmost/editor-ext';
+import {
+  addUniqueIdsToDoc,
+  ADDRESSABLE_NODE_TYPES,
+} from '@docmost/editor-ext';
 import type { JSONContent } from '@tiptap/core';
 import { generateJSON } from '../common/helpers/prosemirror/html';
 import { tiptapExtensions } from './collaboration.util';
 
-const ID_TYPES = ['heading', 'paragraph', 'transclusionSource'];
+const ID_TYPES: string[] = [...ADDRESSABLE_NODE_TYPES];
 
 function collectNodes(node: JSONContent, found: JSONContent[] = []) {
   found.push(node);
@@ -31,12 +34,22 @@ describe('addUniqueIdsToDoc', () => {
   ].join('');
   const doc = generateJSON(html, tiptapExtensions);
 
-  it('gives every heading and paragraph an id, at any depth', () => {
+  it('gives every addressable block an id, at any depth', () => {
     const result = addUniqueIdsToDoc(doc, tiptapExtensions);
 
     const nodes = nodesOfType(result, ID_TYPES);
-    expect(nodes).toHaveLength(6);
+    expect(nodes).toHaveLength(14);
     nodes.forEach((node) => expect(node.attrs.id).toEqual(expect.any(String)));
+    expect([...new Set(nodes.map((node) => node.type))].sort()).toEqual([
+      'blockquote',
+      'bulletList',
+      'codeBlock',
+      'heading',
+      'horizontalRule',
+      'listItem',
+      'paragraph',
+      'table',
+    ]);
   });
 
   it('gives every node a different id', () => {
@@ -61,13 +74,18 @@ describe('addUniqueIdsToDoc', () => {
     expect(withoutIds(result)).toEqual(withoutIds(doc));
   });
 
-  it('adds no id to other node types', () => {
+  it('adds no id to table cells, rows or text, which are addressed by position', () => {
     const result = addUniqueIdsToDoc(doc, tiptapExtensions);
 
     const others = collectNodes(result).filter(
       (node) => !ID_TYPES.includes(node.type),
     );
-    expect(others.length).toBeGreaterThan(0);
+    expect([...new Set(others.map((node) => node.type))].sort()).toEqual([
+      'doc',
+      'tableCell',
+      'tableRow',
+      'text',
+    ]);
     others.forEach((node) => expect(node.attrs?.id).toBeUndefined());
   });
 

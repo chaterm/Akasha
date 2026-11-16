@@ -49,6 +49,7 @@ import { McpToolContext, McpToolRegistry } from './mcp-tool-registry';
 import { McpDisabledException } from './mcp.errors';
 import { getApiKeyAccess } from '../../common/auth/api-key-access';
 import { getPageTitle } from '../../common/helpers';
+import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 import { AttachmentRepo } from '@akasha/db/repos/attachment/attachment.repo';
 import { DomainService } from '../../integrations/environment/domain.service';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
@@ -62,6 +63,9 @@ import {
   prepareWeeklyReportSchema,
   saveWeeklyReportSchema,
 } from './weekly-report.schemas';
+import { editPageSchema } from './page-edit.schemas';
+import type { PageEditOp } from '../../collaboration/page-edit/page-edit.types';
+import { normalizeEditorDocument } from '../../collaboration/content-validation';
 import { AgentAccessService } from '../page/page-access/agent-access.service';
 
 type ToolContext = McpToolContext;
@@ -268,6 +272,17 @@ export class McpService {
         },
       },
       (args) => this.runTool(() => this.updatePage(ctx, args)),
+    );
+
+    server.registerTool(
+      'edit_page',
+      {
+        title: 'Edit page nodes',
+        description:
+          'Edit a Page in place: replace or patch a block by node id, set table cells by row/column, and change database rows, cells, columns and views. Read the Page as JSON first and use the ids it returns. Prefer this over update_page replace, which overwrites the whole document.',
+        inputSchema: editPageSchema,
+      },
+      (args) => this.runTool(() => this.editPage(ctx, args as any)),
     );
 
     server.registerTool(
@@ -1047,7 +1062,7 @@ export class McpService {
       title: args.title,
       icon: args.icon,
       parentPageId: args.parentPageId,
-      content: args.content,
+      content: this.validatedContent(args.content, args.format),
       format: this.contentFormatFor(args.content, args.format),
     };
     const page = await this.pageService.create(
@@ -1103,7 +1118,7 @@ export class McpService {
       pageId: args.pageId,
       title: args.title,
       icon: args.icon,
-      content: args.content,
+      content: this.validatedContent(args.content, args.format),
       operation: args.operation,
       format: this.contentFormatFor(args.content, args.format),
     };
@@ -1112,6 +1127,45 @@ export class McpService {
       canEdit: true,
       hasRestriction,
     });
+  }
+
+  private async editPage(
+    ctx: ToolContext,
+    args: { pageId: string; ops: PageEditOp[] },
+  ) {
+    const page = await this.pageRepo.findById(args.pageId, {
+      includeContent: true,
+    });
+    if (!page || page.deletedAt || page.workspaceId !== ctx.workspace.id) {
+      throw new NotFoundException('Page not found');
+    }
+    if (page.isLocked) {
+      throw new ForbiddenException(
+        errorBody(ErrorCode.PAGE_DRAFT_LOCKED, 'The page is locked'),
+      );
+    }
+
+    const { hasRestriction } = ctx.agentAccess
+      ? await this.agentAccessService.assertPageWritable(ctx.agentAccess, page)
+      : await this.pageAccessService.validateCanEdit(page, ctx.user);
+
+    const outcomes = await this.pageService.editPageContent(
+      page.id,
+      args.ops,
+      ctx.user,
+    );
+    const updated = await this.pageRepo.findById(page.id, {
+      includeContent: true,
+      includeSpace: true,
+    });
+    return {
+      pageId: page.id,
+      slugId: page.slugId,
+      title: getPageTitle(updated?.title),
+      applied: outcomes,
+      content: updated?.content,
+      permissions: { canEdit: true, hasRestriction },
+    };
   }
 
   private async listPages(
@@ -1672,6 +1726,31 @@ export class McpService {
       return undefined;
     }
     return format ?? 'json';
+  }
+
+  private validatedContent(
+    content: unknown,
+    format?: ContentFormat,
+  ): string | object | undefined {
+    if (content === undefined) return undefined;
+    if (this.contentFormatFor(content, format) === 'json') {
+      const parsed =
+        typeof content === 'string' ? this.parsedJsonContent(content) : content;
+      normalizeEditorDocument(parsed as any);
+    }
+    return content as string | object;
+  }
+
+  private parsedJsonContent(content: string) {
+    try {
+      return JSON.parse(content);
+    } catch {
+      throw new BadRequestException({
+        code: 'INVALID_CONTENT',
+        message: 'content is not valid JSON',
+        details: { path: '$' },
+      });
+    }
   }
 
   private async formatPageContent(

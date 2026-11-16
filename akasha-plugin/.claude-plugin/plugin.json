@@ -1,7 +1,7 @@
 {
   "name": "akasha",
-  "version": "1.3.0",
-  "description": "Access the locally configured Akasha knowledge base and Page operations through MCP.",
+  "version": "1.4.0",
+  "description": "Query the locally configured Akasha knowledge base, maintain its Pages, and generate weekly reports through MCP.",
   "author": {
     "name": "Akasha"
   }

@@ -25,6 +25,10 @@ import {
   CollaborationHandler,
   CollabEventHandlers,
 } from './collaboration.handler';
+import type {
+  PageEditOp,
+  PageEditOutcome,
+} from './page-edit/page-edit.types';
 import { User } from '@akasha/db/types/entity.types';
 
 @Injectable()
@@ -156,6 +160,22 @@ export class CollaborationGateway {
     return this.collabEventsService
       .getHandlers(this.hocuspocus)
       .getDocumentJson(documentName, { user });
+  }
+
+  async editPageContent(
+    documentName: string,
+    ops: PageEditOp[],
+    user: User,
+  ): Promise<PageEditOutcome[]> {
+    if (this.redisSync) {
+      return this.redisSync.handleEvent('editPageContent', documentName, {
+        ops,
+        user,
+      });
+    }
+    return this.collabEventsService
+      .getHandlers(this.hocuspocus)
+      .editPageContent(documentName, { ops, user });
   }
 
   openDirectConnection(documentName: string, context?: any) {
