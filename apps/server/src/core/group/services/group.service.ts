@@ -185,6 +185,8 @@ export class GroupService {
         'users.avatarUrl',
       ])
       .where('groups.workspaceId', '=', workspaceId)
+      .where('users.deletedAt', 'is', null)
+      .where('users.deactivatedAt', 'is', null)
       .execute();
 
     const membersByGroup = new Map<
@@ -222,7 +224,7 @@ export class GroupService {
         id: group.id,
         name: group.name,
         displayName,
-        memberCount: Number(group.memberCount) || 0,
+        memberCount: membersByGroup.get(group.id)?.length ?? 0,
         isDefault: group.isDefault,
         isExternal: group.isExternal,
         children: [] as any[],

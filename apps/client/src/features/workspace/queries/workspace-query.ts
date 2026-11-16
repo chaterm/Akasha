@@ -118,6 +118,12 @@ export function useDeactivateWorkspaceMemberMutation() {
       queryClient.invalidateQueries({
         queryKey: ["workspaceMember"],
       });
+      queryClient.invalidateQueries({
+        queryKey: ["groupTree"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["search-suggestion"],
+      });
     },
     onError: (error) => {
       const errorMessage = error["response"]?.data?.message;
@@ -143,6 +149,12 @@ export function useActivateWorkspaceMemberMutation() {
       });
       queryClient.invalidateQueries({
         queryKey: ["workspaceMember"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["groupTree"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["search-suggestion"],
       });
     },
     onError: (error) => {

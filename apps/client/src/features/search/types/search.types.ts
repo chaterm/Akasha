@@ -20,6 +20,7 @@ export interface IPageSearch {
 export interface SearchSuggestionParams {
   query: string;
   includeUsers?: boolean;
+  excludeDeactivatedUsers?: boolean;
   includeGroups?: boolean;
   includePages?: boolean;
   spaceId?: string;
