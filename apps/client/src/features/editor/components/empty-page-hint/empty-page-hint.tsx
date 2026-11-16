@@ -32,13 +32,9 @@ export function EmptyPageHint() {
 
   return (
     <div className={classes.hint} aria-hidden="true">
-      <p className={classes.lead}>
-        {t('This page is empty. Switch to "Edit" to start writing.')}
-      </p>
+      <p className={classes.lead}>{t("This page is empty. Start writing above.")}</p>
       <p>
-        {t(
-          'In edit mode, type "/" to insert headings, tables, images and more:',
-        )}
+        {t('Type "/" to insert headings, tables, images and more:')}
       </p>
       <dl className={classes.groups}>
         {groups.map((group) => (
