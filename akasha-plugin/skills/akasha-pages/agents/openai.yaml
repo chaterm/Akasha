@@ -1,0 +1,4 @@
+interface:
+  display_name: "Akasha 页面维护"
+  short_description: "读写 Akasha 页面、评论与附件"
+  default_prompt: "使用 $akasha-pages 完成用户明确要求的 Akasha 页面操作：先搜索或读取拿到真实 ID，能定位到节点就用 edit_page 按 id 改，整篇替换前先确认。"

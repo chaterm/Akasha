@@ -47,6 +47,9 @@ Akasha 帮助组织把散落在日常工作中的信息和经验，沉淀为可�
   - [启动](#启动)
   - [构建](#构建)
 - [Agent 集成](#agent-集成)
+  - [通过 Agent 安装](#通过-agent-安装)
+  - [手动安装](#手动安装)
+  - [验证](#验证)
 - [私有化部署](#私有化部署)
 - [致谢](#致谢)
 - [贡献者](#贡献者)
@@ -181,16 +184,61 @@ pnpm run server:build    # 仅构建后端
 
 ## Agent 集成
 
-Akasha 提供 MCP 接口，供 Agent 访问知识工作区。
+Akasha 提供 MCP 接口，并配套三个 Skill，用于规定 Agent 使用该接口的时机与方式：
 
-配置 MCP Server 时需要提供：
+- `akasha-query`：带来源引用的知识查询；
+- `akasha-pages`：页面、空间、评论和附件的操作；
+- `akasha-weekly-report`：周报的起草与保存。
 
-- 部署后的 Akasha 实例绝对地址，并在末尾加上 `/mcp`；
-- 具有相应工作区权限的 API Key。
+所有请求均遵循 Akasha 的授权规则。安装前，请准备 Akasha 部署实例的访问地址，以及在 **个人设置 → API keys** 中创建的个人 API Key。
 
-MCP 集成支持知识查询，以及对页面、空间、评论、附件和工作区信息执行权限范围内的操作。所有请求都会遵循 Akasha 的授权规则。
+### 通过 Agent 安装
 
-安装方式和不同 Agent 宿主的配置示例，请参阅 [`akasha-plugin/README.md`](./akasha-plugin/README.md)。
+将以下指令发送给 Claude Code、Codex、Cursor、OpenCode 或其他可执行命令的 Agent：
+
+```text
+Install Akasha for me by reading https://raw.githubusercontent.com/chaterm/Akasha/beta/akasha-plugin/install.md
+```
+
+Agent 默认将 Skill 全局安装到其当前所在的宿主，随后引导完成 MCP 配置。安装过程中需要授权的命令，请在宿主中予以确认。
+
+### 手动安装
+
+使用 `skills` CLI 安装 Skill，需要 Node.js 22.20 或更高版本：
+
+```bash
+npx -y skills@latest add https://github.com/chaterm/Akasha.git#beta \
+  --skill akasha-query --skill akasha-pages --skill akasha-weekly-report \
+  --agent claude-code --global --copy --yes
+```
+
+如需安装到其他宿主，请重复 `--agent` 参数（`codex`、`cursor`、`opencode`）。无法使用 Node.js 时，可下载 [`akasha-skills.zip`](https://raw.githubusercontent.com/chaterm/Akasha/beta/akasha-plugin/dist/akasha-skills.zip)，并将其原样解压到宿主的 Skill 目录（Claude Code 为 `~/.claude/skills/`）。
+
+Skill 依赖 MCP 服务，须在注册 MCP 后方可使用。Claude Code 的注册方式如下：
+
+```bash
+claude mcp add --scope user --transport http akasha \
+  "https://<部署地址>/mcp" \
+  --header "Authorization: Bearer <个人-key>"
+```
+
+Codex 需在 `~/.codex/config.toml` 中添加以下配置：
+
+```toml
+[mcp_servers.akasha]
+url = "https://<部署地址>/mcp"
+http_headers = { Authorization = "Bearer <个人-key>" }
+```
+
+其他宿主请参照其官方文档注册 HTTP MCP Server，地址与请求头保持一致。接口地址须以 `/mcp` 结尾，无需添加 `/api`。API Key 仅应保存在宿主的本地配置中，不得提交至代码仓库或在对话中发送。
+
+### 验证
+
+提出一个涉及内部信息的问题，例如「公司的报销制度是什么」。Agent 应调用 `query_knowledge`，并返回附带来源引用的回答。对于「Redis 的 AOF 是什么」等通用问题，Agent 不应调用 Akasha。
+
+如需为周报设置默认模板和保存位置，可在 MCP 连接中配置 `X-Akasha-Weekly-Template-Id` 与 `X-Akasha-Weekly-Parent-Page-Id` 请求头，二者均为可选项。
+
+Skill 的开发、打包及工具契约，请参阅 [`akasha-plugin/README.md`](./akasha-plugin/README.md)。
 
 ## 私有化部署
 

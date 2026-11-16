@@ -1,8 +1,8 @@
 # MCP 契约
 
-通过当前实例 `/mcp` 的 Streamable HTTP 连接，凭据由 WorkBuddy 的 MCP 设置管理：`Authorization: Bearer <个人 API Key>`。Key 或 Token 不写入技能或报告。模板和上级页面通过工具参数选择，无需本地配置文件。工具的实际发现 schema 是调用依据；缺工具或 schema 与下列契约不符时提示升级/核对服务端，不猜参数。
+通过当前实例 `/mcp` 的 Streamable HTTP 连接，凭据由宿主的 MCP 设置管理：`Authorization: Bearer <个人 API Key>`。Key 或 Token 不写入 Skill 或报告。模板和上级页面通过工具参数选择，无需本地配置文件。工具的实际发现 schema 是调用依据；缺工具或 schema 与下列契约不符时提示升级/核对服务端，不猜参数。
 
-用户可在同一 MCP 连接的 `headers` 一次配置 `X-Akasha-Weekly-Template-Id`（模板 UUID）和 `X-Akasha-Weekly-Parent-Page-Id`（页面 UUID 或十位短标识）。例如 `MJ3eqsj1Ac` 和带链接分隔符的 `-MJ3eqsj1Ac` 都可使用。短标识在同一数据库内有唯一约束；服务端查到页面并校验工作区、ACL、锁定后才使用内部 UUID。这些值不授予权限。
+用户可在同一 MCP 连接的 `headers` 一次配置 `X-Akasha-Weekly-Template-Id`（模板 UUID）和 `X-Akasha-Weekly-Parent-Page-Id`（页面 UUID 或十位短标识）；不支持自定义请求头的宿主改用工具参数传入。例如 `MJ3eqsj1Ac` 和带链接分隔符的 `-MJ3eqsj1Ac` 都可使用。短标识在同一数据库内有唯一约束；服务端查到页面并校验工作区、ACL、锁定后才使用内部 UUID。这些值不授予权限。
 
 优先级为本次参数 > 连接请求头 > 系统默认。未指定对应参数时采用连接默认值，不要求用户重发 ID；配置格式错误、对象被删除或权限不足时明确提示修正，不静默换位置。“未配置”指请求头缺省，空请求头值为配置错误。
 
@@ -10,7 +10,7 @@
 
 需要 `get_current_user`、`prepare_weekly_report`、`save_weekly_report`，以及用于二步保存的 `get_page`、`update_page`；模板查询按需使用 `list_templates`、`get_template`。页面链接/名称用只读页面工具解析，只访问用户指定的来源或目标。
 
-`get_current_user({})` 返回当前用户及 `credentialType`、`personalSpaceId`、资料 `timezone`；资料时区不用于要求用户选择，周报未指定时固定使用 `Asia/Shanghai`。`credentialType` 为 `personal_key` / `agent_key` / `other`，只有 `personal_key` 进入专用流程。客户端自检不代替服务端认证。个人空间由服务端按真实用户/工作区查询，不能因缓存为空自行宣布不可用。
+`get_current_user({})` 返回当前用户及 `credentialType`、`personalSpaceId`、资料 `timezone`；资料时区不用于要求用户选择，周报未指定时固定使用 `Asia/Shanghai`。`credentialType` 为 `personal_key` / `agent_key` / `other`，只有 `personal_key` 进入周报流程。客户端自检不代替服务端认证。个人空间由服务端按真实用户/工作区查询，不能因缓存为空自行宣布不可用。
 
 ## 模板（按需）
 
@@ -55,7 +55,7 @@
 
 ## 二步保存
 
-只有用户明确要求保存时执行。完整 Tiptap 正文与长 Token 不再放在同一工具调用。
+只有用户明确要求保存时执行。完整 Tiptap 正文与长 Token 不放在同一工具调用：部分宿主在合并长 Token 与完整正文时会漏传 `saveToken`，拆成两步可以避免。
 
 ### 第一步：用短参数建页或复用占位页
 
@@ -77,11 +77,11 @@ save_weekly_report({ saveToken: 准备工具原样返回的字符串,
                      content: 上面的固定短标记文档 })
 ```
 
-不传独立周期、时区、用户、空间、父页面、模板或指纹；这些选择由 Token 绑定，变更须重新准备。无 `requestHash`、副本或覆盖参数。Token 不是登录凭据，仍需当前个人 Key；不能解码改写或自行签发，不假定固定有效期（方案建议约 30 分钟）。
+不传独立周期、时区、用户、空间、父页面、模板或指纹；这些选择由 Token 绑定，变更须重新准备。无 `requestHash`、副本或覆盖参数。Token 不是登录凭据，仍需当前个人 Key；不能解码改写或自行签发，也不假定固定有效期。
 
 回执包含 `pageId`、`url`、`title`、`spaceId`、`parentPageId`、`parentCreated`、`templateId`、周期、时区、`status`、`replayed`、`locationChanged` 和 `contentPending`。`contentPending=true` 才可继续填写；`false` 只返回已有报告，不覆盖。相对链接与当前实例地址拼接。
 
-第一步在同一事务创建必要父页面和占位报告，保留 Token 重放及业务键去重；同周期已有占位页可以恢复，无需另建。固定占位页不在创建时进入知识编译，搜索、ACL 和审计正常派发。用户看到第一步回执时还不能被告知正文保存成功。
+第一步在同一事务创建必要父页面和占位报告，保留 Token 重放及业务键去重；同周期已有占位页可以恢复，无需另建。固定占位页不在创建时进入知识编译，搜索、ACL 和审计正常派发。第一步回执只表示页面已建，不能据此告知用户正文保存成功。
 
 ### 第二步：用短页面 ID 写正文
 
@@ -107,7 +107,7 @@ MCP 响应可能将业务 JSON 放在 `content` 的文本块中；解析结构�
 | 业务码/情形 | 行为 |
 | --- | --- |
 | `AUTH_REQUIRED`, `MCP_DISABLED` | 停止保存，提示在宿主连接/授权，管理员启用 MCP。 |
-| `IDENTITY_UNSUPPORTED` | 首版仅个人 API Key；提示改用个人 Key。SSO 与 Agent Key 均拒绝，不改账号、借 Cookie 或误报个人空间缺失。 |
+| `IDENTITY_UNSUPPORTED` | 周报流程仅支持个人 API Key；提示改用个人 Key。SSO 与 Agent Key 均拒绝，不改账号、借 Cookie 或误报个人空间缺失。 |
 | `PERSONAL_SPACE_UNAVAILABLE` | 请用户初始化个人空间；不创建空间。 |
 | `TARGET_AMBIGUOUS` | 展示可见候选，请用户选择真实父页面。 |
 | `NOT_FOUND`, `FORBIDDEN` | 模板/父页面不可用；不泄露无权对象是否存在，不换模板/目标。 |

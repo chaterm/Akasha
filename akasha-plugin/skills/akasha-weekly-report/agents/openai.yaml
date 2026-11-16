@@ -1,0 +1,4 @@
+interface:
+  display_name: "Akasha 周报"
+  short_description: "生成周报草稿并按需保存到 Akasha"
+  default_prompt: "使用 $akasha-weekly-report 按用户提供的工作素材整理周报草稿；仅在用户明确要求保存时写入 Akasha。"
