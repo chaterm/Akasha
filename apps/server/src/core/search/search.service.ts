@@ -411,7 +411,7 @@ export class SearchService {
     const query = suggestion.query.toLowerCase().trim();
 
     if (suggestion.includeUsers) {
-      const userQuery = this.db
+      let userQuery = this.db
         .selectFrom('users')
         .select(['id', 'name', 'email', 'avatarUrl'])
         .where('workspaceId', '=', workspaceId)
@@ -427,6 +427,10 @@ export class SearchService {
           ]),
         )
         .limit(limit);
+
+      if (suggestion.excludeDeactivatedUsers) {
+        userQuery = userQuery.where('deactivatedAt', 'is', null);
+      }
 
       users = await userQuery.execute();
     }

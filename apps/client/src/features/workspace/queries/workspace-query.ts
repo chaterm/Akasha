@@ -117,6 +117,12 @@ export function useDeactivateWorkspaceMemberMutation() {
       queryClient.invalidateQueries({
         queryKey: ["workspaceMember"],
       });
+      queryClient.invalidateQueries({
+        queryKey: ["groupTree"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["search-suggestion"],
+      });
     },
     onError: (error) => notifyError(error, "Failed to deactivate member"),
   });
@@ -139,6 +145,12 @@ export function useActivateWorkspaceMemberMutation() {
       });
       queryClient.invalidateQueries({
         queryKey: ["workspaceMember"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["groupTree"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["search-suggestion"],
       });
     },
     onError: (error) => notifyError(error, "Failed to activate member"),

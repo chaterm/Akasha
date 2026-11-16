@@ -97,6 +97,10 @@ export class SearchSuggestionDTO {
 
   @IsOptional()
   @IsBoolean()
+  excludeDeactivatedUsers?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   includeGroups?: boolean;
 
   @IsOptional()

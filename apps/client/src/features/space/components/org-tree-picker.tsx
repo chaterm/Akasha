@@ -195,6 +195,7 @@ function UserSearchResults({
   const { data, isLoading } = useSearchSuggestionsQuery({
     query,
     includeUsers: true,
+    excludeDeactivatedUsers: true,
     includeGroups: false,
   });
 
