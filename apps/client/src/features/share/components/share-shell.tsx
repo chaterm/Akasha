@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActionIcon,
   AppShell,
@@ -41,7 +47,7 @@ import {
 } from "@/features/search/components/search-control.tsx";
 import { ShareSearchSpotlight } from "@/features/search/components/share-search-spotlight.tsx";
 import { shareSearchSpotlight } from "@/features/search/constants";
-import ShareBranding from '@/features/share/components/share-branding.tsx';
+import ShareBranding from "@/features/share/components/share-branding.tsx";
 import { MAIN_CONTENT_ID, SkipToMain } from "@/components/ui/skip-to-main.tsx";
 
 const MemoizedSharedTree = React.memo(SharedTree);
@@ -109,7 +115,6 @@ export default function ShareShell({
   const setSharedPageTree = useSetAtom(sharedPageTreeAtom);
   const setSharedTreeData = useSetAtom(sharedTreeDataAtom);
 
-  // Build and set the tree data when it changes
   const treeData = useMemo(() => {
     if (!data?.pageTree) return null;
     return buildSharedPageTree(data.pageTree);
@@ -124,147 +129,148 @@ export default function ShareShell({
     <>
       <SkipToMain />
       <AppShell
-      header={{ height: 50 }}
-      {...(data?.pageTree?.length > 1 && {
-        navbar: {
-          width: sidebarWidth,
+        header={{ height: 50 }}
+        {...(data?.pageTree?.length > 1 && {
+          navbar: {
+            width: sidebarWidth,
+            breakpoint: "sm",
+            collapsed: {
+              mobile: !mobileOpened,
+              desktop: !desktopOpened,
+            },
+          },
+        })}
+        aside={{
+          width: 300,
           breakpoint: "sm",
           collapsed: {
-            mobile: !mobileOpened,
-            desktop: !desktopOpened,
+            mobile: !mobileTocOpened,
+            desktop: !tocOpened,
           },
-        },
-      })}
-      aside={{
-        width: 300,
-        breakpoint: "sm",
-        collapsed: {
-          mobile: !mobileTocOpened,
-          desktop: !tocOpened,
-        },
-      }}
-      padding="md"
-    >
-      <AppShell.Header>
-        <Group wrap="nowrap" justify="space-between" py="sm" px="xl">
-          <Group wrap="nowrap">
-            {data?.pageTree?.length > 1 && (
+        }}
+        padding="md"
+      >
+        <AppShell.Header>
+          <Group wrap="nowrap" justify="space-between" py="sm" px="xl">
+            <Group wrap="nowrap">
+              {data?.pageTree?.length > 1 && (
+                <>
+                  <Tooltip label={t("Sidebar toggle")}>
+                    <SidebarToggle
+                      aria-label={t("Sidebar toggle")}
+                      opened={mobileOpened}
+                      onClick={toggleMobile}
+                      hiddenFrom="sm"
+                      size="sm"
+                    />
+                  </Tooltip>
+
+                  <Tooltip label={t("Sidebar toggle")}>
+                    <SidebarToggle
+                      aria-label={t("Sidebar toggle")}
+                      opened={desktopOpened}
+                      onClick={toggleDesktop}
+                      visibleFrom="sm"
+                      size="sm"
+                    />
+                  </Tooltip>
+                </>
+              )}
+            </Group>
+
+            {shareId && (
+              <Group visibleFrom="sm">
+                <SearchControl onClick={shareSearchSpotlight.open} />
+              </Group>
+            )}
+
+            <Group>
               <>
-                <Tooltip label={t("Sidebar toggle")}>
-                  <SidebarToggle
-                    aria-label={t("Sidebar toggle")}
-                    opened={mobileOpened}
-                    onClick={toggleMobile}
+                {shareId && (
+                  <Group hiddenFrom="sm">
+                    <SearchMobileControl onSearch={shareSearchSpotlight.open} />
+                  </Group>
+                )}
+
+                <Tooltip label={t("Table of contents")} withArrow>
+                  <ActionIcon
+                    variant="default"
+                    style={{ border: "none" }}
+                    onClick={toggleTocMobile}
                     hiddenFrom="sm"
                     size="sm"
-                  />
+                    aria-label={t("Table of contents")}
+                  >
+                    <IconList size={20} stroke={2} />
+                  </ActionIcon>
                 </Tooltip>
 
-                <Tooltip label={t("Sidebar toggle")}>
-                  <SidebarToggle
-                    aria-label={t("Sidebar toggle")}
-                    opened={desktopOpened}
-                    onClick={toggleDesktop}
+                <Tooltip label={t("Table of contents")} withArrow>
+                  <ActionIcon
+                    variant="default"
+                    style={{ border: "none" }}
+                    aria-label={t("Table of contents")}
+                    onClick={toggleToc}
                     visibleFrom="sm"
                     size="sm"
-                  />
+                  >
+                    <IconList size={20} stroke={2} />
+                  </ActionIcon>
+                </Tooltip>
+
+                <Tooltip label={t("Full width")} withArrow>
+                  <ActionIcon
+                    variant={fullWidth ? "light" : "default"}
+                    style={fullWidth ? undefined : { border: "none" }}
+                    aria-label={t("Full width")}
+                    aria-pressed={fullWidth}
+                    onClick={() => setFullWidth((v) => !v)}
+                    visibleFrom="sm"
+                    size="sm"
+                  >
+                    <IconArrowsHorizontal size={20} stroke={2} />
+                  </ActionIcon>
                 </Tooltip>
               </>
-            )}
-          </Group>
 
-          {shareId && (
-            <Group visibleFrom="sm">
-              <SearchControl onClick={shareSearchSpotlight.open} />
+              <ThemeToggle />
             </Group>
-          )}
-
-          <Group>
-            <>
-              {shareId && (
-                <Group hiddenFrom="sm">
-                  <SearchMobileControl onSearch={shareSearchSpotlight.open} />
-                </Group>
-              )}
-
-              <Tooltip label={t("Table of contents")} withArrow>
-                <ActionIcon
-                  variant="default"
-                  style={{ border: "none" }}
-                  onClick={toggleTocMobile}
-                  hiddenFrom="sm"
-                  size="sm"
-                  aria-label={t("Table of contents")}
-                >
-                  <IconList size={20} stroke={2} />
-                </ActionIcon>
-              </Tooltip>
-
-              <Tooltip label={t("Table of contents")} withArrow>
-                <ActionIcon
-                  variant="default"
-                  style={{ border: "none" }}
-                  aria-label={t("Table of contents")}
-                  onClick={toggleToc}
-                  visibleFrom="sm"
-                  size="sm"
-                >
-                  <IconList size={20} stroke={2} />
-                </ActionIcon>
-              </Tooltip>
-
-              <Tooltip label={t("Full width")} withArrow>
-                <ActionIcon
-                  variant={fullWidth ? "light" : "default"}
-                  style={fullWidth ? undefined : { border: "none" }}
-                  aria-label={t("Full width")}
-                  aria-pressed={fullWidth}
-                  onClick={() => setFullWidth((v) => !v)}
-                  visibleFrom="sm"
-                  size="sm"
-                >
-                  <IconArrowsHorizontal size={20} stroke={2} />
-                </ActionIcon>
-              </Tooltip>
-            </>
-
-            <ThemeToggle />
           </Group>
-        </Group>
-      </AppShell.Header>
+        </AppShell.Header>
 
-      {data?.pageTree?.length > 1 && (
-        <AppShell.Navbar p="md" className={classes.navbar} ref={sidebarRef}>
-          <div
-            className={classes.resizeHandle}
-            onMouseDown={startResizing}
-          />
-          <MemoizedSharedTree sharedPageTree={data} />
-        </AppShell.Navbar>
-      )}
+        {data?.pageTree?.length > 1 && (
+          <AppShell.Navbar p="md" className={classes.navbar} ref={sidebarRef}>
+            <div className={classes.resizeHandle} onMouseDown={startResizing} />
+            <MemoizedSharedTree sharedPageTree={data} />
+          </AppShell.Navbar>
+        )}
 
-      <AppShell.Main id={MAIN_CONTENT_ID} tabIndex={-1}>
-        {children}
+        <AppShell.Main id={MAIN_CONTENT_ID} tabIndex={-1}>
+          {children}
 
-        {data && shareId && !(data.features?.length > 0) && <ShareBranding />}
-      </AppShell.Main>
+          {data && shareId && !(data.features?.length > 0) && <ShareBranding />}
+        </AppShell.Main>
 
-      <AppShell.Aside
-        p="md"
-        withBorder={mobileTocOpened}
-        className={classes.aside}
-      >
-        <ScrollArea style={{ height: "80vh" }} scrollbarSize={5} type="scroll">
-          <div style={{ paddingBottom: "50px" }}>
-            {readOnlyEditor && (
-              <TableOfContents isShare={true} editor={readOnlyEditor} />
-            )}
-          </div>
-        </ScrollArea>
-      </AppShell.Aside>
+        <AppShell.Aside
+          p="md"
+          withBorder={mobileTocOpened}
+          className={classes.aside}
+        >
+          <ScrollArea
+            style={{ height: "80vh" }}
+            scrollbarSize={5}
+            type="scroll"
+          >
+            <div style={{ paddingBottom: "50px" }}>
+              {readOnlyEditor && (
+                <TableOfContents isShare={true} editor={readOnlyEditor} />
+              )}
+            </div>
+          </ScrollArea>
+        </AppShell.Aside>
 
-      <ShareSearchSpotlight shareId={shareId} />
-    </AppShell>
+        <ShareSearchSpotlight shareId={shareId} />
+      </AppShell>
     </>
   );
 }

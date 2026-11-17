@@ -130,7 +130,6 @@ export function ColumnsMenu({ editor }: EditorMenuProps) {
       const dom = editor.view.nodeDOM(parent?.pos) as HTMLElement;
       const domRect = dom.getBoundingClientRect();
 
-      // Columns entirely out of viewport — return real rect so menu goes off-screen
       if (domRect.bottom <= 0 || domRect.top >= window.innerHeight) {
         return {
           getBoundingClientRect: () => domRect,
@@ -138,8 +137,6 @@ export function ColumnsMenu({ editor }: EditorMenuProps) {
         };
       }
 
-      // Clamp bottom so menu stays within viewport when columns extend below it
-      // 55px = 15px offset + ~40px menu height
       const maxBottom = window.innerHeight - 55;
       if (domRect.bottom > maxBottom) {
         const clamped = new DOMRect(

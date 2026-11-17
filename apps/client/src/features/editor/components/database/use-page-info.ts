@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DatabaseColumn, DatabaseSelectOption } from "@docmost/editor-ext";
 
-/** What a viewer may see of a referenced document. */
 export interface PageInfo {
   title: string;
   icon?: string;
@@ -9,7 +8,6 @@ export interface PageInfo {
   spaceSlug?: string;
 }
 
-/** Shared across databases: page id -> info, or null when the viewer cannot see it. */
 const cache = new Map<string, PageInfo | null>();
 const inFlight = new Set<string>();
 const listeners = new Set<() => void>();
@@ -20,7 +18,6 @@ const BATCH = 200;
 async function load(ids: string[]) {
   ids.forEach((id) => inFlight.add(id));
   try {
-    // Loaded on demand so the database view does not pull in the API client up front.
     const { resolvePages } =
       await import("@/features/search/services/search-service");
     for (let i = 0; i < ids.length; i += BATCH) {
@@ -50,13 +47,11 @@ async function load(ids: string[]) {
   }
 }
 
-/** A page just picked from search is known to be visible; no lookup needed. */
 export function rememberPage(id: string, info: PageInfo) {
   cache.set(id, info);
   notify();
 }
 
-/** Looks up the referenced pages with the viewer's permissions. */
 export function usePageInfo(ids: string[]): Map<string, PageInfo | null> {
   const [version, setVersion] = useState(0);
   const key = [...new Set(ids)].sort().join(",");
@@ -76,21 +71,15 @@ export function usePageInfo(ids: string[]): Map<string, PageInfo | null> {
     if (missing.length) void load(missing);
   }, [key]);
 
-  // A new Map on every change so memoized consumers recompute.
   return useMemo(() => new Map(cache), [key, version]);
 }
 
-/** Page ids referenced by the document columns' options. */
 export function pageIdsOf(columns: DatabaseColumn[]): string[] {
   return columns
     .filter((column) => column.type === "page")
     .flatMap((column) => (column.options ?? []).map((option) => option.id));
 }
 
-/**
- * Document columns with the viewer's view of each page filled in: title, icon
- * and link when visible, `unavailable` when not. Nothing here is written back.
- */
 export function withPageInfo(
   columns: DatabaseColumn[],
   info: Map<string, PageInfo | null>,

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { sortSubpages, type SubpageListItem } from "./subpages.utils";
 
-// input order differs from every expected order
 const pages: SubpageListItem[] = [
   {
     id: "a",
@@ -11,7 +10,13 @@ const pages: SubpageListItem[] = [
     hasChildren: false,
     updatedAt: "2026-10-02T09:00:00.000Z",
   },
-  { id: "c", slugId: "c", title: "charlie", position: "a2", hasChildren: false },
+  {
+    id: "c",
+    slugId: "c",
+    title: "charlie",
+    position: "a2",
+    hasChildren: false,
+  },
   {
     id: "d",
     slugId: "d",

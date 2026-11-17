@@ -38,17 +38,10 @@ interface TagSelectProps {
   value: string[];
   multiple: boolean;
   onChange: (ids: string[]) => void;
-  /** Writes the option list (create, rename, recolor, delete, reorder). Omit to make options read-only. */
   onOptionsChange?: (options: DatabaseSelectOption[]) => void;
-  /** Called when the user is done: single choice made, or Escape. */
   onClose: () => void;
 }
 
-/**
- * Dropdown body for select / multiSelect values. Single select replaces and
- * closes; multi select only adds on click and removes via × or Backspace.
- * Option settings open as a second page instead of a nested popover.
- */
 export function TagSelect({
   options,
   value,
@@ -86,7 +79,6 @@ export function TagSelect({
       listRef.current?.querySelector<HTMLElement>("[data-active]") ?? null,
     );
   }, [active]);
-  // Also refocus when returning from option settings.
   useEffect(() => {
     if (!editingId) focusWithoutScroll(inputRef.current);
   }, [editingId]);
@@ -254,7 +246,6 @@ export function TagSelect({
   );
 }
 
-/** Rename / recolor / delete one option. Also used by kanban group headers. */
 export function OptionSettings({
   option,
   onChange,

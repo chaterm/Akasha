@@ -10,7 +10,6 @@ import type { DatabaseContext } from "./database-context";
 import { GroupName } from "./database-kanban-group";
 import classes from "./database.module.css";
 
-/** Header row of one group in a grouped table: collapse toggle, name, count, add. */
 export function DatabaseTableGroupRow({
   db,
   column,
@@ -23,7 +22,6 @@ export function DatabaseTableGroupRow({
   db: DatabaseContext;
   column: DatabaseColumn;
   group: DatabaseGroup;
-  /** Cells the header spans inside the table frame. */
   span: number;
   collapsed: boolean;
   onToggle: () => void;

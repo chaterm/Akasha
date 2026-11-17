@@ -11,14 +11,12 @@ import classes from "./database.module.css";
 interface CalendarBarProps {
   db: DatabaseContext;
   row: DatabaseRowData;
-  /** Visible non-date fields; the first is the heading, the rest follow it. */
   fields: DatabaseColumn[];
   style?: CSSProperties;
   continuesLeft?: boolean;
   continuesRight?: boolean;
   multiDay?: boolean;
   dragging?: boolean;
-  /** Resize handles only make sense when the view has an end date column. */
   resizable?: boolean;
   onPointerDown?: (
     event: PointerEvent<HTMLElement>,

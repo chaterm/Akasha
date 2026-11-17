@@ -31,16 +31,15 @@ interface PageFindDialogDialogProps {
   editable?: boolean;
 }
 
-function SearchAndReplaceDialog({ editor, editable = true }: PageFindDialogDialogProps) {
+function SearchAndReplaceDialog({
+  editor,
+  editable = true,
+}: PageFindDialogDialogProps) {
   const { t } = useTranslation();
   const [searchText, setSearchText] = useState("");
   const [replaceText, setReplaceText] = useState("");
   const [pageFindState, setPageFindState] = useAtom(searchAndReplaceStateAtom);
   const inputRef = useRef(null);
-  // The extension mutates `editor.storage.searchAndReplace.results` in place
-  // inside its ProseMirror plugin, which does not trigger a React re-render.
-  // Mirror the counts into React state via the editor's transaction event so
-  // the result counter stays in sync with the highlighted matches.
   const [resultState, setResultState] = useState({ index: 0, total: 0 });
 
   const [replaceButton, replaceButtonToggle] = useToggle([
@@ -65,11 +64,9 @@ function SearchAndReplaceDialog({ editor, editable = true }: PageFindDialogDialo
     setSearchText("");
     setReplaceText("");
     setPageFindState({ isOpen: false });
-    // Reset replace button state when closing
     if (replaceButton.isReplaceShow) {
       replaceButtonToggle();
     }
-    // Clear search term in editor
     if (isEditorReady(editor)) {
       editor.commands.setSearchTerms([""]);
     }
@@ -79,7 +76,6 @@ function SearchAndReplaceDialog({ editor, editable = true }: PageFindDialogDialo
     if (!editor) return;
 
     const { results, resultIndex } = editor.storage.searchAndReplace;
-    //TODO: check type error
     //@ts-ignore
     const position: Range = results[resultIndex];
 
@@ -123,8 +119,6 @@ function SearchAndReplaceDialog({ editor, editable = true }: PageFindDialogDialo
     editor.commands.selectCurrentItem();
   }, [searchText]);
 
-  // Keep the result counter in sync with the extension's storage, which is
-  // recomputed inside a ProseMirror transaction after the search term changes.
   useEffect(() => {
     if (!editor) return;
 
@@ -187,8 +181,8 @@ function SearchAndReplaceDialog({ editor, editable = true }: PageFindDialogDialo
       searchText.trim() === ""
         ? ""
         : resultState.total > 0
-        ? resultState.index + 1 + "/" + resultState.total
-        : t("Not found"),
+          ? resultState.index + 1 + "/" + resultState.total
+          : t("Not found"),
     [searchText, resultState.index, resultState.total, t],
   );
 
@@ -203,7 +197,6 @@ function SearchAndReplaceDialog({ editor, editable = true }: PageFindDialogDialo
     <Dialog
       className={classes.findDialog}
       opened={pageFindState.isOpen}
-
       size="lg"
       radius="md"
       w={"auto"}

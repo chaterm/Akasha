@@ -4,18 +4,10 @@ export type SaveState = "idle" | "pending" | "saving" | "saved" | "error";
 
 interface AutosaveOptions<K extends string, D> {
   delay: number;
-  /** 根据脏字段生成要提交的内容；返回 null 表示当前不满足保存条件（如缺标题） */
   buildDraft: (dirty: Record<K, boolean>) => D | null;
   save: (draft: D) => Promise<unknown>;
 }
 
-/**
- * 防抖自动保存：
- * - markDirty 后 delay 毫秒内无新改动才保存；保存中又有改动，成功后继续排队；
- * - 失败时保留脏标记但不自动重试，等下一次修改或手动 flush；
- * - 卸载时把未保存的改动发出去。
- * 所有回调都通过 ref 读取最新值，返回的 flush/markDirty 身份稳定。
- */
 export function useAutosave<K extends string, D>(
   kinds: readonly K[],
   options: AutosaveOptions<K, D>,
@@ -54,7 +46,6 @@ export function useAutosave<K extends string, D>(
       setSaveState(isDirty() ? "pending" : "saved");
     } catch {
       failed = true;
-      // 把这次没保存成功的字段标回去，与保存期间的新改动合并
       for (const k of kinds) dirty.current[k] = dirty.current[k] || sent[k];
       setSaveState("error");
     } finally {
@@ -79,7 +70,6 @@ export function useAutosave<K extends string, D>(
     [schedule],
   );
 
-  /** 清空脏标记并取消排队中的保存（例如删除模板前） */
   const discard = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;
@@ -87,7 +77,6 @@ export function useAutosave<K extends string, D>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 仅在卸载时执行：flush 身份稳定
   useEffect(() => () => void flush(), [flush]);
 
   const hasUnsaved = useCallback(() => isDirty() || inFlight.current, []);

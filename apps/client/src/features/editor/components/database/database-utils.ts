@@ -9,15 +9,10 @@ import {
   type DatabaseTimelineScale,
 } from "@docmost/editor-ext";
 
-/**
- * Use instead of `autoFocus` in popovers: they mount before being positioned,
- * so a plain focus scrolls the page.
- */
 export function focusWithoutScroll(element: HTMLElement | null) {
   element?.focus({ preventScroll: true });
 }
 
-/** Scrolls `item` into view within `list` only, not the page. */
 export function scrollIntoList(
   list: HTMLElement | null,
   item: HTMLElement | null,
@@ -33,7 +28,6 @@ export function scrollIntoList(
   }
 }
 
-/** Mantine palette name for each database color. */
 export const DATABASE_COLOR_MAP: Record<DatabaseColor, string> = {
   gray: "gray",
   red: "red",
@@ -58,7 +52,6 @@ export function parseDateKey(key: string): Date {
   return new Date(year, month - 1, day);
 }
 
-/** 0 = Sunday … 6 = Saturday, from the locale's week data when the runtime has it. */
 export function getWeekStart(locale: string): number {
   try {
     const info = (Intl.Locale.prototype as any).getWeekInfo
@@ -71,7 +64,6 @@ export function getWeekStart(locale: string): number {
   return /^(en-US|en-CA|ja|ko|zh-TW|pt-BR|he)/i.test(locale) ? 0 : 1;
 }
 
-/** Whole weeks covering the month (4 to 6), each 7 date keys long. */
 export function buildMonthWeeks(
   year: number,
   month: number,
@@ -90,7 +82,6 @@ export function buildMonthWeeks(
 
 export interface CalendarSegment<T> {
   item: T;
-  /** Column of the first day in this week (0-6) and number of days covered. */
   column: number;
   span: number;
   slot: number;
@@ -98,10 +89,6 @@ export interface CalendarSegment<T> {
   continuesRight: boolean;
 }
 
-/**
- * Cuts date ranges into one segment per week they touch and stacks the
- * segments of each week into non-overlapping slots (longest first).
- */
 export function layoutCalendarWeek<T>(
   week: string[],
   items: { item: T; start: string; end: string }[],
@@ -141,7 +128,6 @@ export function moveItem<T>(list: T[], from: number, to: number): T[] {
   return next;
 }
 
-/** Options a row has in `column`, in the row's order. */
 function rowOptions(
   column: DatabaseColumn,
   row: DatabaseRowData,
@@ -153,11 +139,6 @@ function rowOptions(
     .filter(Boolean) as DatabaseSelectOption[];
 }
 
-/**
- * A row reduced for compact layouts (calendar entries, timeline items): the first
- * field's text as title, the first select value as a colored tag, members as
- * people, and the remaining plain fields joined as dimmed text.
- */
 export function summarizeRow(
   fields: DatabaseColumn[],
   row: DatabaseRowData,
@@ -177,7 +158,6 @@ export function summarizeRow(
     people: rest
       .filter((c) => c.type === "person")
       .flatMap((c) => rowOptions(c, row)),
-    // Documents read as their titles.
     extra: rest
       .filter((c) => c.type === "page" || !hasDatabaseOptions(c.type))
       .map(text)
@@ -186,9 +166,6 @@ export function summarizeRow(
   };
 }
 
-// ---------------------------------------------------------------- timeline
-
-/** Pixels per day at each zoom level. */
 export const TIMELINE_DAY_WIDTH: Record<DatabaseTimelineScale, number> = {
   day: 40,
   week: 20,
@@ -201,7 +178,6 @@ const TIMELINE_PADDING: Record<DatabaseTimelineScale, number> = {
   month: 45,
 };
 
-/** The axis never gets shorter than this, so a nearly empty view still fills the width. */
 const TIMELINE_MIN_DAYS: Record<DatabaseTimelineScale, number> = {
   day: 42,
   week: 140,
@@ -220,10 +196,6 @@ function daysBetween(from: string, to: string): number {
   );
 }
 
-/**
- * Days shown on the time axis: every row date plus today, padded on both
- * sides and aligned to whole weeks (week scale) or months (month scale).
- */
 export function getTimelineWindow(
   dates: string[],
   today: string,
@@ -253,14 +225,11 @@ export function getTimelineWindow(
 }
 
 export interface TimelineSpan {
-  /** First date of the span. */
   date: string;
-  /** Day offset from the window start. */
   offset: number;
   days: number;
 }
 
-/** Splits the window into consecutive days, weeks (starting on `weekStart`), months or years. */
 export function splitTimeline(
   start: string,
   days: number,

@@ -50,13 +50,8 @@ export interface PublishPageKnowledgeResult {
 
 export type KnowledgeIndexMode = "compiled" | "original";
 
-/**
- * Space publish mode: `default` lets pages choose (falling back to
- * `compiled`); `compiled` / `original` apply to every page.
- */
 export type KnowledgeSpaceIndexMode = KnowledgeIndexMode | "default";
 
-/** Page-level choice; `inherit` follows the space default. */
 export type KnowledgePageIndexModeChoice = KnowledgeIndexMode | "inherit";
 
 export interface PagePublishCooldown {
@@ -80,7 +75,6 @@ export interface PageCompileStatusResult {
   errorMessage?: string;
   sourceVersion?: number;
   publishedSourceVersion?: number;
-  /** Effective mode after applying the space and page settings. */
   configuredIndexMode?: KnowledgeIndexMode;
   pageIndexMode?: KnowledgeIndexMode | null;
   spaceIndexMode?: KnowledgeSpaceIndexMode;
@@ -105,7 +99,6 @@ export async function getPagePublishCooldown(
   return req.data;
 }
 
-/** Saves the page publish mode without publishing; returns the new status. */
 export async function setPageIndexMode(
   pageId: string,
   indexMode: KnowledgePageIndexModeChoice,

@@ -13,7 +13,7 @@ import {
 } from "@/features/transclusion/services/transclusion-api";
 import type { TransclusionLookup } from "@/features/transclusion/types/transclusion.types";
 
-type LookupKey = string; // `${sourcePageId}::${transclusionId}`
+type LookupKey = string;
 
 type Subscriber = {
   key: LookupKey;
@@ -23,13 +23,7 @@ type Subscriber = {
 };
 
 type ContextValue = {
-  /** Register a subscriber. Returns an unsubscribe function. */
   subscribe: (s: Subscriber) => () => void;
-  /**
-   * Force a re-fetch of `key` and resolve when the response arrives (or the
-   * request fails). Bypasses the cache and any in-flight de-dup so the user
-   * always sees a fresh server read.
-   */
   refresh: (key: LookupKey) => Promise<void>;
 };
 
@@ -40,33 +34,15 @@ export function TransclusionLookupProvider({
   shareId,
 }: {
   children: React.ReactNode;
-  /**
-   * When set, lookups go through the share-scoped public endpoint and are
-   * gated by the share graph (source page must have its own share or inherit
-   * one). Used by the public share viewer; left undefined in the authenticated
-   * app, where personal permissions gate access.
-   */
   shareId?: string;
 }) {
   const subscribersRef = useRef(new Map<LookupKey, Subscriber[]>());
   const queueRef = useRef(new Set<LookupKey>());
   const tickRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Read inside flush() via ref so changing share context doesn't churn the
-  // memoized callbacks (and thus doesn't re-render every consumer).
   const shareIdRef = useRef<string | undefined>(shareId);
   shareIdRef.current = shareId;
-  // Last looked-up value for each key. Re-subscribers (e.g. when the editor
-  // remounts after switching from static to live) get this immediately
-  // instead of triggering a duplicate fetch.
   const resultCacheRef = useRef(new Map<LookupKey, TransclusionLookup>());
-  // Keys that are currently in flight in a batch request. A second subscribe
-  // for the same key while the first request is pending is a no-op; the
-  // subscriber is added to subscribersRef and will be notified when the
-  // pending request completes.
   const inFlightRef = useRef(new Set<LookupKey>());
-  // Resolvers waiting on the next response for a key. Populated by refresh()
-  // so callers can await the fetch round-trip; resolved on success and on
-  // network error so the UI never hangs in a loading state.
   const pendingRef = useRef(new Map<LookupKey, Array<() => void>>());
 
   const flush = useCallback(async () => {
@@ -108,8 +84,6 @@ export function TransclusionLookupProvider({
         resolveWaiters(key);
       }
     } catch {
-      // Network error — leave subscribers in pending state and clear the
-      // in-flight flag so a future subscribe can retry.
       for (const k of keys) {
         inFlightRef.current.delete(k);
         resolveWaiters(k);

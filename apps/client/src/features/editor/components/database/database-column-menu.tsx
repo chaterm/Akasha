@@ -68,7 +68,6 @@ const NUMBER_FORMAT_LABELS: Record<DatabaseNumberFormat, string> = {
   JPY: "Yen",
 };
 
-/** Types whose cells can show their full value on several lines. */
 const WRAPPABLE_TYPES: DatabaseColumnType[] = [
   "text",
   "multiSelect",
@@ -76,7 +75,6 @@ const WRAPPABLE_TYPES: DatabaseColumnType[] = [
   "page",
 ];
 
-/** Moves a column one visible step left/right in the active view. */
 function moveColumnInView(
   db: DatabaseContext,
   columnId: string,
@@ -97,11 +95,9 @@ interface ColumnMenuProps {
   column: DatabaseColumn;
   opened: boolean;
   onClose: () => void;
-  /** A column was inserted next to this one; the caller usually opens its menu. */
   onInserted?: (columnId: string) => void;
   children: ReactNode;
   position?: "bottom-start" | "right-start";
-  /** Offer the view's cell alignment (table only). */
   alignable?: boolean;
 }
 
@@ -152,7 +148,6 @@ export function ColumnMenu({
     .filter((entry) => !entry.hidden)
     .map((entry) => entry.id);
   const visibleIndex = visible.indexOf(column.id);
-  // The title column is fixed: always first, always text, never hidden or deleted.
   const isTitle = column.id === db.columns[0]?.id;
 
   const TypeIcon = COLUMN_TYPE_ICONS[column.type];
@@ -337,7 +332,6 @@ export function ColumnMenu({
             run(() =>
               db.apply((tr, pos) => {
                 changeDatabaseColumnType(tr, pos, column.id, type);
-                // A name that is still the old type's default follows the new type.
                 const current = name.trim();
                 if (!current || current === t(COLUMN_TYPE_LABELS[column.type]))
                   updateDatabaseColumn(tr, pos, column.id, {

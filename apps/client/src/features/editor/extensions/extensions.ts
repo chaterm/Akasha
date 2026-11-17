@@ -184,10 +184,6 @@ export const mainExtensions = [
     document: false,
   }),
   TiptapDocument,
-  // Override TipTap's Code extension to fix the inline code input rule.
-  // The upstream regex /(^|[^`])`([^`]+)`(?!`)$/ captures the character
-  // before the opening backtick as part of the match, causing markInputRule
-  // to delete it. Using a lookbehind avoids including it in the match.
   Code.configure({
     HTMLAttributes: {
       spellcheck: false,
@@ -275,7 +271,6 @@ export const mainExtensions = [
     },
   }).extend({
     addNodeView() {
-      // Force the react node view to render immediately using flush sync (https://github.com/ueberdosis/tiptap/blob/b4db352f839e1d82f9add6ee7fb45561336286d8/packages/react/src/ReactRenderer.tsx#L183-L191)
       this.editor.isInitialized = true;
 
       return ReactNodeViewRenderer(MentionView);
@@ -429,8 +424,6 @@ export const mainExtensions = [
   AutoJoiner.configure({
     elementsToJoin: [],
   }),
-  // Akasha-local Confluence-parity macros. Single touchpoint — see
-  // apps/client/src/features/editor/macros/index.ts
   ...macroExtensions,
 ] as any;
 

@@ -46,7 +46,6 @@ import classes from "./template-library.module.css";
 const ALL = "all";
 const ALL_SPACES = "allSpaces";
 
-/** 模板管理页：只负责创建、编辑、删除；"使用模板"在空间内完成。 */
 export default function TemplateLibrary() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -74,8 +73,6 @@ export default function TemplateLibrary() {
   const removeTemplate = useRemoveTemplate();
 
   const isSpaceFilter = filter !== ALL && filter !== ALL_SPACES;
-  // 只进入新建页，不落库；用户在新建页点"创建"才生成模板。
-  // 正在按某个空间筛选时，新建页默认指定该空间
   const handleCreate = () =>
     navigate(
       isSpaceFilter
@@ -107,7 +104,6 @@ export default function TemplateLibrary() {
 
   const isFiltered = filter !== ALL || !!debouncedQuery;
 
-  // 公共模板和团队自建模板分两组展示；某组为空时不显示组标题
   const sections = [
     {
       key: "builtin",

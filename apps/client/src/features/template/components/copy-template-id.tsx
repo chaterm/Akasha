@@ -5,8 +5,6 @@ import { notifications } from "@mantine/notifications";
 import { IconCopy } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 
-/** Same clipboard API / execCommand fallback as useClipboard, but verify the
- * legacy command's boolean result before reporting success. */
 async function copyId(value: string) {
   try {
     await navigator.clipboard.writeText(value);
@@ -45,7 +43,6 @@ export function CopyTemplateId({
       await copyId(templateId);
       notifications.show({ message: t("Template ID copied") });
     } catch {
-      // Open outside the dropdown so closing the menu cannot hide the fallback.
       modals.open({
         title: t("Copy template ID"),
         children: (

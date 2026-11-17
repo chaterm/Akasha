@@ -6,8 +6,6 @@ export { UpdateApiKeyModal } from "./components/update-api-key-modal";
 export { UpdatePublicApiKeyModal } from "./components/update-public-api-key-modal";
 export { RevokeApiKeyModal } from "./components/revoke-api-key-modal";
 
-// Services
 export * from "./services/api-key-service";
 
-// Types
 export * from "./types/api-key.types";

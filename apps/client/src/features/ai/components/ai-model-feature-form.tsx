@@ -78,8 +78,6 @@ export default function AiModelFeatureForm({
   const [isTesting, setIsTesting] = useState(false);
   const copy = useFeatureCopy(config.feature);
 
-  // Build the request payload from the current form values. apiKey is only sent
-  // when the admin typed a new one, so a blank field reuses the stored key.
   const buildInput = (values: FormValues): UpdateAiModelConfigInput => {
     const input: UpdateAiModelConfigInput = {
       provider: values.provider,

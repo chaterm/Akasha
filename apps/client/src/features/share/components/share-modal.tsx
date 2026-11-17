@@ -51,9 +51,7 @@ export default function ShareModal({ readOnly }: ShareModalProps) {
   const createShareMutation = useCreateShareMutation();
   const updateShareMutation = useUpdateShareMutation();
   const deleteShareMutation = useDeleteShareMutation();
-  // pageIsShared means that the share exists and its level equals zero.
   const pageIsShared = share && share.level === 0;
-  // if level is greater than zero, then it is a descendant page from a shared page
   const isDescendantShared = share && share.level > 0;
 
   const publicLink = `${getAppUrl()}/share/${share?.key}/p/${pageSlug}`;

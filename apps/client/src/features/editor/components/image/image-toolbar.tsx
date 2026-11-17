@@ -81,7 +81,6 @@ export function ImageToolbar({
   const handleFileChange = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
-      // Reset so the same file can be selected again
       event.target.value = "";
       if (!file) return;
 

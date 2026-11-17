@@ -25,7 +25,6 @@ export default function CodeBlockView(props: NodeViewProps) {
     const updateSelection = () => {
       const { state } = editor;
       const { from, to } = state.selection;
-      // Check if the selection intersects with the node's range
       const isNodeSelected =
         (from >= getPos() && from < getPos() + node.nodeSize) ||
         (to > getPos() && to <= getPos() + node.nodeSize);

@@ -1,12 +1,6 @@
 import { useEffect, type RefObject } from "react";
 import { computePinTop } from "@docmost/editor-ext";
 
-/**
- * Keeps the header row of a table visible below the page's fixed bars while
- * the table scrolls with the page. The table's own box scrolls sideways, so
- * native `position: sticky` (which would stick to that box) cannot be used;
- * the row is shifted with a transform instead, like the editor's tables.
- */
 export function useStickyHeader(
   table: RefObject<HTMLTableElement | null>,
   enabled = true,

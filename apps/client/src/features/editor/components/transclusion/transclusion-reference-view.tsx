@@ -78,9 +78,6 @@ function TransclusionReferenceBody({
   // @ts-ignore - editor.storage.pageId is set by the host editor
   const hostPageId: string | undefined = editor.storage?.pageId;
   const unsyncMutation = useUnsyncReferenceMutation();
-  // Cached against the dropdown's identical query so the source link target
-  // is ready as soon as the controls fade in on hover, without a second
-  // fetch.
   const referencesQuery = useReferencesQuery(
     sourcePageId,
     transclusionId,

@@ -20,17 +20,14 @@ import classes from "./template-availability-picker.module.css";
 interface Props {
   value: TemplateAvailability;
   onChange: (value: TemplateAvailability) => void;
-  /** 用户看不到的已指定空间数（只读，保存时服务端保留） */
   otherSpaceCount?: number;
   label?: string;
   size?: "xs" | "sm";
   fullWidth?: boolean;
-  /** 在触发器下方显示"至少选择一个空间"的错误（表单场景） */
   showError?: boolean;
   disabled?: boolean;
 }
 
-/** 选择模板可用范围：所有空间，或多个指定空间。 */
 export function TemplateAvailabilityPicker({
   value,
   onChange,

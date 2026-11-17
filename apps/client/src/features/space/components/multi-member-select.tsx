@@ -26,9 +26,13 @@ const renderMultiSelectOption: MultiSelectProps["renderOption"] = ({
     )}
     {option["type"] === "group" && <IconGroupCircle />}
     <div>
-      <Text size="sm" lineClamp={1}>{option.label}</Text>
+      <Text size="sm" lineClamp={1}>
+        {option.label}
+      </Text>
       {option["type"] === "user" && option["email"] && (
-        <Text size="xs" c="dimmed" lineClamp={1}>{option["email"]}</Text>
+        <Text size="xs" c="dimmed" lineClamp={1}>
+          {option["email"]}
+        </Text>
       )}
     </div>
   </Group>
@@ -47,7 +51,6 @@ export function MultiMemberSelect({ value, onChange }: MultiMemberSelectProps) {
 
   useEffect(() => {
     if (suggestion) {
-      // Extract user and group items
       const userItems = suggestion?.users.map((user: IUser) => ({
         value: `user-${user.id}`,
         label: user.name,
@@ -62,16 +65,15 @@ export function MultiMemberSelect({ value, onChange }: MultiMemberSelectProps) {
         type: "group",
       }));
 
-      // Create fresh data structure based on current search results
       const newData = [];
-      
+
       if (userItems && userItems.length > 0) {
         newData.push({
           group: t("Select a user"),
           items: userItems,
         });
       }
-      
+
       if (groupItems && groupItems.length > 0) {
         newData.push({
           group: t("Select a group"),

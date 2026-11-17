@@ -1,4 +1,12 @@
-import { Group, Box, Button, TextInput, Stack, Textarea, Text } from "@mantine/core";
+import {
+  Group,
+  Box,
+  Button,
+  TextInput,
+  Stack,
+  Textarea,
+  Text,
+} from "@mantine/core";
 import React, { useEffect } from "react";
 import { useForm } from "@mantine/form";
 import { zod4Resolver } from "mantine-form-zod-resolver";
@@ -43,7 +51,6 @@ export function CreateSpaceForm() {
     const name = form.values.name;
     const words = name.trim().split(/\s+/);
 
-    // Check if the last character is a space or if the last word is a single character (indicating it's in progress)
     const lastChar = name[name.length - 1];
     const lastWordIsIncomplete =
       words.length > 1 && words[words.length - 1].length === 1;

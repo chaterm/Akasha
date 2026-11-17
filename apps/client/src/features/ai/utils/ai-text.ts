@@ -14,11 +14,6 @@ function decodeJsonString(body: string): string {
   }
 }
 
-/**
- * Models occasionally answer with a serialized envelope such as
- * {"text": "..."} instead of plain markdown. Unwrap it so the answer renders
- * as text, while keeping partially streamed payloads readable.
- */
 export function stripAiTextWrapper(raw: string): string {
   if (!TEXT_WRAPPER_START_RE.test(raw)) return raw;
 

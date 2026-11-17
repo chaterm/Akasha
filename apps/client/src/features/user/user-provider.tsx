@@ -21,7 +21,6 @@ export function UserProvider({ children }: React.PropsWithChildren) {
   const { data: entitlements } = useEntitlements();
   const { i18n } = useTranslation();
   const [, setSocket] = useAtom(socketAtom);
-  // fetch collab token on load
   const { data: collab } = useCollabToken();
 
   useEffect(() => {
@@ -61,7 +60,8 @@ export function UserProvider({ children }: React.PropsWithChildren) {
   }, [data, isLoading]);
 
   useEffect(() => {
-    document.documentElement.lang = i18n.resolvedLanguage || i18n.language || "en-US";
+    document.documentElement.lang =
+      i18n.resolvedLanguage || i18n.language || "en-US";
   }, [i18n.language, i18n.resolvedLanguage]);
 
   useEffect(() => {

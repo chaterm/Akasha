@@ -273,8 +273,6 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
   useEffect(() => {
     setIndexMode(compileStatus?.pageIndexMode ?? "inherit");
   }, [page?.id, compileStatus?.pageIndexMode]);
-  // A space set to a specific mode locks every page; "default" lets the page
-  // choose and falls back to smart compilation.
   const spaceIndexMode = compileStatus?.spaceIndexMode ?? "default";
   const spaceLocksIndexMode = spaceIndexMode !== "default";
   const effectiveIndexMode = spaceLocksIndexMode
@@ -397,7 +395,6 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
     );
   };
 
-  // Saved immediately; independent of publishing and its cooldown.
   const handleIndexModeChange = (value: string) => {
     if (!page?.id || (value !== "compiled" && value !== "original")) return;
     const previous = indexMode;
@@ -449,9 +446,7 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
     };
     return (
       <Tooltip
-        label={
-          status === "failed" ? t("Publish failed") : config.label
-        }
+        label={status === "failed" ? t("Publish failed") : config.label}
         withArrow
       >
         <Badge
@@ -875,7 +870,6 @@ function ConnectionWarning() {
     }
   }, [yjsConnectionStatus]);
 
-  // Cleanup only on unmount
   useEffect(() => {
     return () => {
       if (timeoutRef.current) {

@@ -4,7 +4,6 @@ import { useGetSpacesQuery } from "@/features/space/queries/space-query";
 import { ISpace } from "@/features/space/types/space.types";
 import { PageTemplate } from "../api/template.types";
 
-/** 当前用户可见空间列表 + id→名称映射，用于渲染模板可用范围。 */
 export function useSpaceDirectory() {
   const { t } = useTranslation();
   const { data } = useGetSpacesQuery({ limit: 100 });
@@ -14,7 +13,6 @@ export function useSpaceDirectory() {
     return { spaces, names: new Map(spaces.map((s) => [s.id, s.name])) };
   }, [data]);
 
-  /** "所有空间" / "产品研发" / "产品研发 等 3 个空间" */
   const availabilityLabel = useCallback(
     (tpl: Pick<PageTemplate, "allSpaces" | "spaceIds" | "otherSpaceCount">) => {
       if (tpl.allSpaces) return t("All spaces");

@@ -216,7 +216,6 @@ const CommandGroups: SlashMenuGroupedItemsType = {
         const pageId = editor.storage?.pageId;
         if (!pageId) return;
 
-        // upload image
         const input = document.createElement("input");
         input.type = "file";
         input.accept = "image/*";
@@ -250,7 +249,6 @@ const CommandGroups: SlashMenuGroupedItemsType = {
         const pageId = editor.storage?.pageId;
         if (!pageId) return;
 
-        // upload video
         const input = document.createElement("input");
         input.type = "file";
         input.accept = "video/*";
@@ -292,7 +290,6 @@ const CommandGroups: SlashMenuGroupedItemsType = {
         const pageId = editor.storage?.pageId;
         if (!pageId) return;
 
-        // upload audio
         const input = document.createElement("input");
         input.type = "file";
         input.accept = "audio/*";
@@ -358,7 +355,6 @@ const CommandGroups: SlashMenuGroupedItemsType = {
         const pageId = editor.storage?.pageId;
         if (!pageId) return;
 
-        // upload file
         const input = document.createElement("input");
         input.type = "file";
         input.accept = "";
@@ -526,7 +522,14 @@ const CommandGroups: SlashMenuGroupedItemsType = {
       title: "Emoji",
       shortcut: "emoji",
       description: "Insert emoji.",
-      searchTerms: ["emoji", "icon", "smiley", "emoticon", "symbol", "reaction"],
+      searchTerms: [
+        "emoji",
+        "icon",
+        "smiley",
+        "emoticon",
+        "symbol",
+        "reaction",
+      ],
       icon: IconMoodSmile,
       command: ({ editor, range }: CommandProps) => {
         editor.chain().focus().deleteRange(range).insertContent(":").run();
@@ -793,8 +796,6 @@ const CommandGroups: SlashMenuGroupedItemsType = {
           .run();
       },
     },
-    // Akasha-local Confluence-parity macros. Single touchpoint — see
-    // apps/client/src/features/editor/macros/menu-items.ts
     ...macroMenuItems,
   ],
 };

@@ -9,7 +9,6 @@ import { usePageContentStats } from "../hooks/use-page-content-stats";
 import { limitStatus } from "../page-split.utils";
 import { PageSplitModal } from "./page-split-modal";
 
-/** 页面即将超限或已超限时显示，点击打开智能分页。 */
 export function PageSplitWarning({ page }: { page: IPage }) {
   const { t } = useTranslation();
   const pageEditor = useAtomValue(pageEditorAtom);

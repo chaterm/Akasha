@@ -6,13 +6,11 @@ import classes from "./database.module.css";
 interface SortableListProps<T> {
   items: T[];
   getKey: (item: T) => string;
-  /** Receives the dragged item's index and the "insert before" index. */
   onMove: (from: number, to: number) => void;
   renderItem: (item: T, index: number) => ReactNode;
   disabled?: boolean;
 }
 
-/** Vertical list reordered by dragging the grip on each row. */
 export function SortableList<T>({
   items,
   getKey,

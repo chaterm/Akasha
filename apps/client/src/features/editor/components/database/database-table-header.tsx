@@ -17,7 +17,6 @@ import { ColumnMenu } from "./database-column-menu";
 import { COLUMN_TYPE_LABELS } from "./database-ui";
 import classes from "./database.module.css";
 
-/** Width of the leading row-number column. */
 export const ROW_NUMBER_WIDTH = 56;
 
 const DEFAULT_WIDTHS: Record<DatabaseColumnType, number> = {
@@ -48,15 +47,12 @@ export function columnWidth(
 interface HeaderProps {
   db: DatabaseContext;
   columns: DatabaseColumn[];
-  /** Widths while a resize is in progress, keyed by column id. */
   liveWidths: Record<string, number>;
   setLiveWidths: (widths: Record<string, number>) => void;
   menuColumnId: string | null;
   setMenuColumnId: (id: string | null) => void;
-  /** Header cell selected by keyboard navigation. */
   selectedColumnId: string | null;
   draggingColumnId: string | null;
-  /** Select-all state over the view's rows. */
   checkState: "none" | "some" | "all";
   onCheckAll: () => void;
   onColumnPointerDown: (
@@ -105,7 +101,6 @@ export function DatabaseTableHeader({
       target.removeEventListener("pointerup", onUp);
       setResizing(null);
       setLiveWidths({});
-      // One write per drag keeps undo history and Yjs updates small.
       if (width !== startWidth) {
         patchView(db, {
           columns: db.view.columns.map((entry) =>
@@ -147,7 +142,6 @@ export function DatabaseTableHeader({
           </th>
         )}
         {columns.map((column) => {
-          // The title column stays first.
           const isTitle = column.id === db.columns[0]?.id;
           const draggable = db.editable && !isTitle;
           const label = (
@@ -183,7 +177,9 @@ export function DatabaseTableHeader({
               </Text>
             </UnstyledButton>
           );
-          const sort = db.view.sorts.find((item) => item.columnId === column.id);
+          const sort = db.view.sorts.find(
+            (item) => item.columnId === column.id,
+          );
           const SortIcon =
             sort?.direction === "desc" ? IconSortDescending : IconSortAscending;
           return (

@@ -26,15 +26,6 @@ export const ColumnHandle = React.memo(function ColumnHandle({
   tablePos,
 }: ColumnHandleProps) {
   const { t } = useTranslation();
-  // Hold the cell DOM in a ref-backed state so we never unmount the handle
-  // mid-drag. A remote edit can transiently flip `nodeDOM(anchorPos)` to null
-  // (the plugin re-emits `hoveringCell` with the mapped pos a tick later);
-  // unmounting the source element here would make pragmatic-dnd silently
-  // abort the active drag.
-  // `nodeDOM` is typed as `Node | null` — when `anchorPos` goes stale (e.g.
-  // an external drop reflows the doc before the plugin re-emits
-  // hoveringCell), it can resolve to a Text node, on which `.closest` is
-  // undefined. Filter to HTMLElement so downstream consumers stay safe.
   const lookupDom = editor.view.nodeDOM(anchorPos);
   const lookupCellDom = lookupDom instanceof HTMLElement ? lookupDom : null;
   const [cellDom, setCellDom] = useState<HTMLElement | null>(lookupCellDom);
@@ -59,9 +50,6 @@ export const ColumnHandle = React.memo(function ColumnHandle({
     refs.setReference(cellDom);
   }, [cellDom, refs]);
 
-  // `cellDom` is inside the table, so `closest('.tableWrapper')` finds the
-  // wrapper for this drag's auto-scroll. The handle itself lives in a
-  // floating layer outside the editor DOM, so we can't walk up from it.
   const wrapper = cellDom?.closest<HTMLElement>(".tableWrapper") ?? null;
 
   const [menuOpened, setMenuOpened] = useState(false);

@@ -16,14 +16,6 @@ interface SelectionDrag {
   scroller: HTMLElement;
 }
 
-/**
- * Accelerates selection drag-scrolling inside the page editor.
- *
- * Native selection auto-scroll is fixed-rate and only starts once the pointer
- * leaves the viewport, so selecting several screens of text crawls. This hook
- * drives the scroll itself near and past the edges of the scrollable area and
- * keeps the ProseMirror selection in sync with the content moving under it.
- */
 export function useSelectionAutoScroll(editor: Editor | null) {
   useEffect(() => {
     if (!editor) return;
@@ -97,7 +89,6 @@ export function useSelectionAutoScroll(editor: Editor | null) {
       if (event.button !== 0 || !view.editable) return;
       const target = event.target as HTMLElement | null;
       if (!target || !root.contains(target)) return;
-      // Nested editors (database cells, embedded editors) run their own drag.
       if (target.closest('[contenteditable="true"]') !== root) return;
       if (target.closest("[data-drag-handle]")) return;
       drag = {

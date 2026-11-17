@@ -28,11 +28,6 @@ interface Entry {
   end?: string;
 }
 
-/**
- * A vertical time axis showing only the dates that have rows, grouped by
- * month; rows without a date follow at the end. Drag an entry onto another
- * date to move it there; click it to open the row.
- */
 export default function DatabaseAgendaView({ db }: { db: DatabaseContext }) {
   const { t } = useTranslation();
   const rows = useViewRows(db);
@@ -92,7 +87,6 @@ export default function DatabaseAgendaView({ db }: { db: DatabaseContext }) {
     if (id) db.openRow(id);
   };
 
-  /** "Today", "Tomorrow", "Yesterday", otherwise the weekday. */
   const relative = (date: string) => {
     const days = diffDatabaseDays(todayKey, date);
     if (days === 0) return t("Today");

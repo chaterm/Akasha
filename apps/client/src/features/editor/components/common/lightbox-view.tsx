@@ -75,7 +75,6 @@ const LIGHTBOX_NODE_TYPES: Record<string, "image" | "video"> = {
   excalidraw: "image",
 };
 
-// video is excluded: clicks there operate the native controls
 const CLICK_TO_EXPAND_NODE_TYPES = new Set(["image", "drawio", "excalidraw"]);
 
 export function getLightboxClickRequest(node: PMNode): LightboxRequest {
@@ -114,7 +113,7 @@ export default function LightboxView({
 
   const selectedSlide = useMemo(
     () => getMedia(src, type),
-    [src, type, i18nInstance.language]
+    [src, type, i18nInstance.language],
   );
 
   const [pageSlides, setPageSlides] = useState<Slide[]>([]);
@@ -140,7 +139,8 @@ export default function LightboxView({
     return () => cancelAnimationFrame(frame);
   }, [editor, open, type, src]);
 
-  const slides = loadedMediaKey === `${type}:${src}` ? pageSlides : [selectedSlide];
+  const slides =
+    loadedMediaKey === `${type}:${src}` ? pageSlides : [selectedSlide];
 
   const index = useMemo(() => {
     if (!(pageSlides.length > 0)) {
@@ -150,7 +150,7 @@ export default function LightboxView({
     const idx = slides.findIndex((slide) =>
       type === "video"
         ? "sources" in slide && slide.sources.some((s) => s.src === src)
-        : "src" in slide && slide.src === src
+        : "src" in slide && slide.src === src,
     );
     return idx >= 0 ? idx : 0;
   }, [slides, src, type]);

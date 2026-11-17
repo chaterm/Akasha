@@ -18,14 +18,14 @@ export interface IUser {
   workspaceId: string;
   deactivatedAt: Date;
   deletedAt: Date;
-  fullPageWidth: boolean; // used for update
-  editorToolbar: boolean; // used for update
-  notificationPageUpdates: boolean; // used for update
-  notificationPageUserMention: boolean; // used for update
-  notificationCommentUserMention: boolean; // used for update
-  notificationCommentCreated: boolean; // used for update
-  notificationCommentResolved: boolean; // used for update
-  generalKnowledge: boolean; // used for update
+  fullPageWidth: boolean;
+  editorToolbar: boolean;
+  notificationPageUpdates: boolean;
+  notificationPageUserMention: boolean;
+  notificationCommentUserMention: boolean;
+  notificationCommentCreated: boolean;
+  notificationCommentResolved: boolean;
+  generalKnowledge: boolean;
   hasGeneratedPassword?: boolean;
 }
 

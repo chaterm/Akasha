@@ -46,7 +46,6 @@ import DatabaseAgendaView from "./database-agenda-view";
 import { pageIdsOf, usePageInfo, withPageInfo } from "./use-page-info";
 import classes from "./database.module.css";
 
-/** The active view is a per-user choice, so it lives in localStorage, not in the shared doc. */
 function useActiveViewId(databaseId: string | null) {
   const key = databaseId ? `akasha.database.view.${databaseId}` : null;
   const [viewId, setViewId] = useState<string | null>(() =>
@@ -132,7 +131,6 @@ export default function DatabaseView(props: NodeViewProps) {
     () => normalizeDatabaseViews(node.attrs.views, stored),
     [node.attrs.views, stored],
   );
-  // Documents are stored as ids; titles come from a lookup with this viewer's permissions.
   const pageInfo = usePageInfo(pageIdsOf(stored));
   const columns = useMemo(
     () => withPageInfo(stored, pageInfo),
@@ -160,7 +158,6 @@ export default function DatabaseView(props: NodeViewProps) {
     viewId: string;
     filter: DatabaseFilterGroup;
   } | null>(null);
-  // Local drafts must follow schema changes just like the stored view filters.
   const draftFilter = useMemo(
     () =>
       draft?.viewId === view.id
@@ -208,7 +205,6 @@ export default function DatabaseView(props: NodeViewProps) {
     setActiveView: setActiveViewId,
   };
   const mineColumn = columns.find((column) => column.type === "person");
-  // "Mine" is a table over the viewer's rows; new rows there are assigned to the viewer.
   const db: DatabaseContext =
     view.type === "mine" && user && mineColumn
       ? {
@@ -241,8 +237,6 @@ export default function DatabaseView(props: NodeViewProps) {
       data-database-id={node.attrs.id || undefined}
       contentEditable={false}
       onMouseDown={(event: MouseEvent) => {
-        // Keep focus out of the ProseMirror root: otherwise Backspace typed
-        // "inside" the block would be handled by the editor.
         const target = event.target as HTMLElement;
         if (
           !ownsEvent(event) ||
@@ -264,7 +258,6 @@ export default function DatabaseView(props: NodeViewProps) {
         const key = event.key.toLowerCase();
         const redo = (key === "z" && event.shiftKey) || key === "y";
         if (key !== "z" && !redo) return;
-        // Events inside the view never reach ProseMirror, so forward undo/redo.
         event.preventDefault();
         const commands = editor.commands as any;
         if (redo) commands.redo?.();

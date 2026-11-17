@@ -136,9 +136,6 @@ export default function AsideChatPanel() {
     }
   }, [chatInfoQuery.data, hydrateFromServer]);
 
-  // Drop the open chatId if the current user lost access to it (404/403 on
-  // the info fetch). Reverts the panel to a fresh chat instead of presenting
-  // an input tied to a chat the user does not own.
   useEffect(() => {
     if (chatId && chatInfoQuery.isError) {
       setChatId(undefined);

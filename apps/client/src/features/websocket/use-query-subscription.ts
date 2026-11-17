@@ -32,9 +32,9 @@ export const useQuerySubscription = () => {
           });
           break;
         case "commentCreated": {
-          const createCache = queryClient.getQueryData(
-            RQ_KEY(data.pageId),
-          ) as InfiniteData<IPagination<IComment>> | undefined;
+          const createCache = queryClient.getQueryData(RQ_KEY(data.pageId)) as
+            | InfiniteData<IPagination<IComment>>
+            | undefined;
 
           if (createCache && createCache.pages.length > 0) {
             const alreadyExists = createCache.pages.some((page) =>
@@ -56,9 +56,9 @@ export const useQuerySubscription = () => {
         }
         case "commentUpdated":
         case "commentResolved": {
-          const updateCache = queryClient.getQueryData(
-            RQ_KEY(data.pageId),
-          ) as InfiniteData<IPagination<IComment>> | undefined;
+          const updateCache = queryClient.getQueryData(RQ_KEY(data.pageId)) as
+            | InfiniteData<IPagination<IComment>>
+            | undefined;
 
           if (updateCache) {
             queryClient.setQueryData(RQ_KEY(data.pageId), {
@@ -74,9 +74,9 @@ export const useQuerySubscription = () => {
           break;
         }
         case "commentDeleted": {
-          const deleteCache = queryClient.getQueryData(
-            RQ_KEY(data.pageId),
-          ) as InfiniteData<IPagination<IComment>> | undefined;
+          const deleteCache = queryClient.getQueryData(RQ_KEY(data.pageId)) as
+            | InfiniteData<IPagination<IComment>>
+            | undefined;
 
           if (deleteCache) {
             queryClient.setQueryData(RQ_KEY(data.pageId), {
@@ -109,13 +109,11 @@ export const useQuerySubscription = () => {
         case "updateOne":
           entity = data.entity[0];
           if (entity === "pages") {
-            // we have to do this because the usePageQuery cache key is the slugId.
             queryKeyId = data.payload.slugId;
           } else {
             queryKeyId = data.id;
           }
 
-          // only update if data was already in cache
           if (queryClient.getQueryData([...data.entity, queryKeyId])) {
             queryClient.setQueryData([...data.entity, queryKeyId], {
               ...queryClient.getQueryData([...data.entity, queryKeyId]),
@@ -133,18 +131,6 @@ export const useQuerySubscription = () => {
             );
           }
 
-          /*
-          queryClient.setQueriesData(
-            { queryKey: [data.entity, data.id] },
-            (oldData: any) => {
-              const update = (entity: Record<string, unknown>) =>
-                entity.id === data.id ? { ...entity, ...data.payload } : entity;
-              return Array.isArray(oldData)
-                ? oldData.map(update)
-                : update(oldData as Record<string, unknown>);
-            },
-          );
-      */
           break;
         case "refetchRootTreeNodeEvent": {
           const spaceId = data.spaceId;

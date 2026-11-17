@@ -46,15 +46,11 @@ export default function SharedTree({ sharedPageTree }: SharedTreeProps) {
   }, [sharedPageTree?.pageTree]);
 
   const openIds = useMemo(
-    () =>
-      new Set(
-        Object.keys(openTreeNodes).filter((k) => openTreeNodes[k]),
-      ),
+    () => new Set(Object.keys(openTreeNodes).filter((k) => openTreeNodes[k])),
     [openTreeNodes],
   );
 
   useEffect(() => {
-    // Auto-open the first level of the shared tree on initial load.
     const root = treeData?.[0];
     if (!root) return;
     setOpenTreeNodes((prev) => {
@@ -73,8 +69,6 @@ export default function SharedTree({ sharedPageTree }: SharedTreeProps) {
     }
   }, [currentNodeId, treeData]);
 
-  // Stable callbacks so memo(DocTreeRow) actually saves work — see I2 in the
-  // post-implementation code review.
   const handleToggle = useCallback(
     (id: string, isOpen: boolean) =>
       setOpenTreeNodes((prev) => ({ ...prev, [id]: isOpen })),
@@ -107,7 +101,6 @@ export default function SharedTree({ sharedPageTree }: SharedTreeProps) {
   );
 }
 
-// Module-scope noop so it's a stable reference across renders.
 const noopMove = () => {};
 
 function SharedTreeRow({
@@ -151,13 +144,7 @@ function SharedTreeRow({
       <div style={{ marginRight: "4px" }}>
         <EmojiPicker
           onEmojiSelect={() => {}}
-          icon={
-            node.icon ? (
-              node.icon
-            ) : (
-              <IconFileDescription size="18" />
-            )
-          }
+          icon={node.icon ? node.icon : <IconFileDescription size="18" />}
           readOnly={true}
           removeEmojiAction={() => {}}
           actionIconProps={{ tabIndex: -1 }}

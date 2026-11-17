@@ -29,7 +29,6 @@ export default function AddSpaceMembersModal({
   };
 
   const handleSubmit = async () => {
-    // member can be a users or groups
     const userIds = memberIds
       .map((id) => (id.startsWith("user-") ? id.split("user-")[1] : null))
       .filter((id) => id !== null);

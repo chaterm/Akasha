@@ -147,7 +147,6 @@ export default function PageEditor({
     [isComponentMounted],
   );
   const { handleScrollTo } = useEditorScroll({ canScroll });
-  // Providers only created once per pageId
   const providersRef = useRef<{
     local: IndexeddbPersistence;
     remote: HocuspocusProvider;
@@ -224,7 +223,6 @@ export default function PageEditor({
     } else {
       setProvidersReady(true);
     }
-    // Only destroy on final unmount
     return () => {
       // @ts-ignore
       setEditor(null);
@@ -236,7 +234,6 @@ export default function PageEditor({
     };
   }, [pageId, collaborationURL, setEditor, setCollabProvider]);
 
-  // Only connect/disconnect on tab/idle, not destroy
   useEffect(() => {
     if (!providersReady || !providersRef.current) return;
     const socket = providersRef.current.socket;
@@ -258,7 +255,6 @@ export default function PageEditor({
     }
   }, [isIdle, documentState, providersReady, resetIdle]);
 
-  // Attach here, to make sure the connection gets properly established
   providersRef.current?.remote.attach();
 
   const extensions = useMemo(() => {
@@ -359,7 +355,6 @@ export default function PageEditor({
       onUpdate({ editor }) {
         if (editor.isEmpty) return;
         const editorJson = editor.getJSON();
-        //update local page cache to reduce flickers
         debouncedUpdateContent(editorJson);
       },
     },
@@ -403,7 +398,6 @@ export default function PageEditor({
     setCommentPanelTab("open");
     setAsideState({ tab: "comments", isAsideOpen: true });
 
-    //wait if aside is closed
     setTimeout(() => {
       const selector = `div[data-comment-id="${commentId}"]`;
       const commentElement = document.querySelector(selector);

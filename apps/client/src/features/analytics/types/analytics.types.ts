@@ -16,8 +16,7 @@ export interface IAnalyticsCards {
   avgDau: number;
   wau: number;
   mau: number;
-  stickiness: number; // average daily DAU / MAU, 0-1
-  // Workspace scope only.
+  stickiness: number;
   totalUsers?: number;
   newUsers?: number;
   totalSpaces?: number;
@@ -84,7 +83,7 @@ export interface IAnalyticsAgents {
   newAgents: number;
   activeAgents: number;
   ops: number;
-  failedOps: number; // REST calls only; MCP outcomes are not observable
+  failedOps: number;
   trackingSince: string | null;
   daily: { date: string; api: number; mcp: number }[];
   byCategory: { category: AgentOpCategory; count: number }[];
@@ -111,7 +110,7 @@ export interface IAnalyticsOverview {
     topSpaces?: IAnalyticsTopSpace[];
     routeBreakdown?: { route: string; pv: number }[];
   };
-  agents?: IAnalyticsAgents; // workspace scope only
+  agents?: IAnalyticsAgents;
 }
 
 export interface ITrackPageView {

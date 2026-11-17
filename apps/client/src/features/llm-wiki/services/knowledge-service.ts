@@ -710,7 +710,6 @@ function normalizeDelayedPageDiagnostics(
           lastChangedAt: readString(item.lastChangedAt),
           eligibleAt: readString(item.eligibleAt),
           remainingWaitMs: readNumber(item.remainingWaitMs),
-          // Older servers omit these; fall back to the quiet-period deadline.
           compileStartsAt:
             readString(item.compileStartsAt) || readString(item.eligibleAt),
           remainingUntilCompileMs:

@@ -35,16 +35,13 @@ import classes from "./database.module.css";
 
 interface RowDetailProps {
   db: DatabaseContext;
-  /** The database node's id; presses inside it keep the drawer open. */
   databaseId: string;
   rowId: string | null;
-  /** Row ids in the active view's order, for previous / next. */
   order: string[];
   onNavigate: (rowId: string) => void;
   onClose: () => void;
 }
 
-/** The row's title as a large heading input; saves on blur and Enter. */
 function TitleField({
   db,
   row,
@@ -58,7 +55,6 @@ function TitleField({
   const value = String(row.values[column.id] ?? "");
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value, row.id]);
-  // Escape blurs without saving.
   const cancelled = useRef(false);
   return (
     <textarea
@@ -95,11 +91,6 @@ function TitleField({
   );
 }
 
-/**
- * Side peek of one row: the title, then every property, including ones hidden
- * in the view. It has no overlay, so the view stays usable and clicking
- * another row switches to it.
- */
 export function DatabaseRowDetail({
   db,
   databaseId,
@@ -112,7 +103,6 @@ export function DatabaseRowDetail({
   const row = rowId ? db.rows.find((item) => item.id === rowId) : null;
   const contentRef = useRef<HTMLDivElement>(null);
   const [menuColumnId, setMenuColumnId] = useState<string | null>(null);
-  // Nested editors close on Escape themselves; the drawer must not close with them.
   const editors = useRef(0);
   const [nested, setNested] = useState(false);
   const trackEditing = (editing: boolean) => {
@@ -124,7 +114,6 @@ export function DatabaseRowDetail({
     if (rowId && !row) onClose();
   }, [rowId, row, onClose]);
 
-  // No overlay: a press outside the drawer, its popovers and this database closes it.
   const open = !!row;
   useEffect(() => {
     if (!open) return;
@@ -136,8 +125,6 @@ export function DatabaseRowDetail({
         )
       )
         return;
-      // Closing unmounts the fields before the browser's normal focus change.
-      // Blur first so their pending drafts are committed while still mounted.
       const active = document.activeElement;
       if (active instanceof HTMLElement && contentRef.current?.contains(active))
         active.blur();
@@ -148,7 +135,6 @@ export function DatabaseRowDetail({
       document.removeEventListener("pointerdown", onPointerDown, true);
   }, [open, databaseId, onClose]);
 
-  // Mantine listens for Escape on the window; this only closes on Escape pressed inside the drawer.
   const onKeyDown = (event: KeyboardEvent) => {
     event.stopPropagation();
     if (event.key === "Escape" && !nested && !menuColumnId) onClose();
@@ -213,7 +199,6 @@ export function DatabaseRowDetail({
       }
     >
       {row && (
-        // The drawer is a portal child of the node view; its events must not reach the view's handlers.
         <div ref={contentRef} {...stopBubbling} onKeyDown={onKeyDown}>
           <Stack gap="sm">
             {title && <TitleField db={db} row={row} column={title} />}

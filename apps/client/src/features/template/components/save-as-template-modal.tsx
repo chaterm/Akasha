@@ -23,7 +23,6 @@ interface SaveAsTemplateModalProps {
   page: { id: string; title?: string | null; icon?: string | null };
 }
 
-/** 页面菜单 → 另存为模板：正文由服务端从页面复制，这里只收集元信息。 */
 export function SaveAsTemplateModal({
   opened,
   onClose,

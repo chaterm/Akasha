@@ -5,7 +5,6 @@ import { CustomAvatar } from "@/components/ui/custom-avatar";
 import { useTimeAgo } from "@/hooks/use-time-ago";
 import { PageTemplate } from "../api/template.types";
 
-/** 创建人头像 + 名字（可选附带更新时间）；内置模板显示"公共模板"。 */
 export function TemplateCreator({
   template,
   withUpdated = false,

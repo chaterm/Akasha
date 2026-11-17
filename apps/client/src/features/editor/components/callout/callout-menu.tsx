@@ -16,7 +16,11 @@ import {
   IconMoodSmile,
   IconNotes,
 } from "@tabler/icons-react";
-import { CalloutType, isEditorReady, isTextSelected } from "@docmost/editor-ext";
+import {
+  CalloutType,
+  isEditorReady,
+  isTextSelected,
+} from "@docmost/editor-ext";
 import { useTranslation } from "react-i18next";
 import EmojiPicker from "@/components/ui/emoji-picker.tsx";
 import classes from "../common/toolbar-menu.module.css";
@@ -125,8 +129,6 @@ export function CalloutMenu({ editor }: EditorMenuProps) {
       getReferencedVirtualElement={getReferencedVirtualElement}
       options={{
         placement: "bottom",
-        // offset: 233, //      //         offset: [0, 10],
-        // zIndex: 99,
         flip: false,
       }}
       shouldShow={shouldShow}

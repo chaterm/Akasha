@@ -46,7 +46,6 @@ export interface ISpace {
   spaceId?: string;
   membership?: IMembership;
   settings?: ISpaceSettings;
-  // for updates
   disablePublicSharing?: boolean;
   allowViewerComments?: boolean;
   knowledgeIndexMode?: KnowledgeSpaceIndexMode;
@@ -83,7 +82,6 @@ export interface IChangeSpaceMemberRole {
   groupId?: string;
 }
 
-// space member
 export interface SpaceUserInfo {
   id: string;
   name: string;

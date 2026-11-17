@@ -4,7 +4,6 @@ import { ContentStats, measureDoc } from "../page-split.utils";
 
 const EMPTY: ContentStats = { imageCount: 0, bytes: 0, words: 0 };
 
-/** 编辑后防抖更新。 */
 export function usePageContentStats(editor: Editor | null): ContentStats {
   const [stats, setStats] = useState(() =>
     editor ? measureDoc(editor.state.doc) : EMPTY,

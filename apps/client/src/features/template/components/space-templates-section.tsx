@@ -17,7 +17,6 @@ interface SpaceTemplatesSectionProps {
   canCreatePages: boolean;
 }
 
-/** 空间概览中的"可用模板"：所有空间模板 + 指定到本空间的模板，点击即用它新建页面。 */
 export function SpaceTemplatesSection({
   spaceId,
   canCreatePages,
@@ -31,7 +30,6 @@ export function SpaceTemplatesSection({
     spaceId,
   });
 
-  // 本空间专属 → 团队的"所有空间"模板 → 公共模板
   const templates = useMemo(() => {
     const rank = (tpl: PageTemplate) =>
       tpl.builtin ? 2 : tpl.allSpaces ? 1 : 0;
@@ -40,7 +38,6 @@ export function SpaceTemplatesSection({
 
   if (!canCreatePages || isLoading) return null;
 
-  // 还没有可用模板：只留一行轻量引导，帮助冷启动
   if (templates.length === 0) {
     return (
       <Text size="xs" c="dimmed" className={classes.root}>
@@ -52,7 +49,6 @@ export function SpaceTemplatesSection({
     );
   }
 
-  /** 返回是否创建成功；错误提示已在 handleCreate 内处理。 */
   const create = async (tpl: PageTemplate): Promise<boolean> => {
     if (pendingId) return false;
     setPendingId(tpl.id);
@@ -117,7 +113,6 @@ export function SpaceTemplatesSection({
           preferredSpaceId={spaceId}
           restrictToSpaceId={spaceId}
           onConfirm={async (tpl) => {
-            // 失败时保持打开以便重试，与侧边栏入口一致
             if (await create(tpl)) setPickerOpen(false);
           }}
         />

@@ -25,7 +25,6 @@ import {
 import DatabaseView from "./database-view";
 import { clampText } from "./database-ui";
 
-// The viewer is Ann (u1); p1 is visible to her, p2 is not.
 vi.mock("@/features/search/services/search-service", () => ({
   resolvePages: vi.fn(async (ids: string[]) =>
     ids.includes("p1")
@@ -77,7 +76,6 @@ const doc = {
           options: [
             { id: "u1", name: "Ann", color: "blue" },
             { id: "u2", name: "Bob", color: "blue" },
-            // Assigned once, then removed from every row.
             { id: "u3", name: "Cid", color: "blue" },
           ],
         },
@@ -85,7 +83,6 @@ const doc = {
           id: "doc",
           name: "Doc",
           type: "page",
-          // Stored as ids only; titles come from the permission-checked lookup below.
           options: [
             { id: "p1", name: "", color: "blue" },
             { id: "p2", name: "", color: "blue" },
@@ -179,7 +176,6 @@ beforeAll(() => {
     disconnect() {}
   } as any;
   Element.prototype.scrollIntoView = vi.fn();
-  // jsdom does not implement CSS.escape; the fixture database id is alphanumeric.
   vi.stubGlobal("CSS", { escape: (value: string) => value });
 });
 
@@ -233,7 +229,6 @@ describe("DatabaseView", () => {
     expect(
       document.querySelectorAll("[data-day]").length,
     ).toBeGreaterThanOrEqual(28);
-    // Both rows have no date yet.
     expect(screen.getByText("Unassigned (2)")).toBeTruthy();
   });
 
@@ -245,7 +240,6 @@ describe("DatabaseView", () => {
     ) as HTMLElement;
     fireEvent.mouseDown(cell, { button: 0 });
     fireEvent.keyDown(cell.closest("[data-db-focus]")!, { key: "Enter" });
-    // The row already has a value, so the input shows the chip instead of a placeholder.
     const hint = await screen.findByText("Select an option or create one");
     const input = hint.parentElement!.querySelector("input")!;
     expect(
@@ -333,7 +327,6 @@ describe("DatabaseView", () => {
     const header = screen.getByText("Name").closest("th")!;
     expect(header.hasAttribute("data-selected")).toBe(true);
     fireEvent.keyDown(grid, { key: "Enter" });
-    // The title column's menu has no hide, delete or type change.
     expect(await screen.findByText("Insert right")).toBeTruthy();
     expect(screen.queryByText("Hide in view")).toBeNull();
     expect(screen.queryByText("Delete column")).toBeNull();
@@ -461,7 +454,6 @@ describe("DatabaseView", () => {
     const hidden = document.querySelector('[data-page-id="p2"]')!;
     expect(hidden.hasAttribute("data-unavailable")).toBe(true);
     expect(hidden.tagName).not.toBe("A");
-    // English counts as half width, so four CJK widths fit "No acces".
     expect(hidden.textContent).toBe("No acces…");
   });
 
@@ -542,7 +534,6 @@ describe("DatabaseView", () => {
       ),
     ).toContain("green");
 
-    // Typing a digit opens the editor with it; Enter writes the number.
     const cell = screen
       .getByText("Write spec")
       .closest("tr")!
@@ -554,7 +545,6 @@ describe("DatabaseView", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     expect(rows()[0].values.progress).toBe(45);
 
-    // The slider moves the same draft; Escape throws it away.
     fireEvent.doubleClick(cell);
     const slider = await screen.findByRole("slider");
     fireEvent.keyDown(slider, { key: "ArrowRight" });
@@ -563,7 +553,6 @@ describe("DatabaseView", () => {
     await waitFor(() => expect(screen.queryByRole("slider")).toBeNull());
     expect(rows()[0].values.progress).toBe(45);
 
-    // Confirm writes the draft and closes.
     fireEvent.doubleClick(cell);
     fireEvent.keyDown(await screen.findByRole("slider"), { key: "ArrowLeft" });
     fireEvent.click(screen.getByText("Confirm"));
@@ -588,7 +577,6 @@ describe("DatabaseView", () => {
       "group",
     ]);
     expect(screen.getByLabelText("Delete filter group")).toBeTruthy();
-    // The last Delete is the group's only condition.
     const deletes = screen.getAllByLabelText("Delete");
     fireEvent.click(deletes[deletes.length - 1]);
     fireEvent.click(screen.getByText("Save"));
@@ -605,10 +593,9 @@ describe("DatabaseView", () => {
     fireEvent.click(
       await screen.findByPlaceholderText("Add sort; manual ordering turns off"),
     );
-    const offered = (await screen.findAllByRole("option", { hidden: true })).map(
-      (option) => option.textContent,
-    );
-    // Members and documents have no order.
+    const offered = (
+      await screen.findAllByRole("option", { hidden: true })
+    ).map((option) => option.textContent);
     expect(offered).toEqual(["Name", "Status", "Due", "Progress"]);
     fireEvent.click(screen.getByRole("option", { name: "Due", hidden: true }));
     const sortsOf = () =>
@@ -659,7 +646,9 @@ describe("DatabaseView", () => {
     fireEvent.click(toggle);
     expect(sortsOf()[1]).toEqual({ columnId: "status", direction: "asc" });
     expect(
-      document.querySelector('th[data-column-id="name"] [aria-label="Toggle sort direction"]'),
+      document.querySelector(
+        'th[data-column-id="name"] [aria-label="Toggle sort direction"]',
+      ),
     ).toBeNull();
   });
 
@@ -674,7 +663,9 @@ describe("DatabaseView", () => {
         .child(0)
         .attrs.views.find((view: any) => view.id === "t").filter;
     fireEvent.click(await screen.findByText("Options"));
-    fireEvent.click(await screen.findByRole("option", { name: "To do", hidden: true }));
+    fireEvent.click(
+      await screen.findByRole("option", { name: "To do", hidden: true }),
+    );
     fireEvent.click(screen.getByRole("option", { name: "Done", hidden: true }));
     expect(screen.getByTitle("To do, Done")).toBeTruthy();
     expect(screen.getAllByLabelText("Clear")).toHaveLength(1);
@@ -806,7 +797,9 @@ describe("DatabaseView", () => {
     fireEvent.click(screen.getByText("Move down"));
     fireEvent.click(screen.getByText("Move down"));
     expect(names()).toEqual(["Write spec", "Not mine", "Ship it"]);
-    expect(screen.getByText("Move down").closest("button")!.disabled).toBe(true);
+    expect(screen.getByText("Move down").closest("button")!.disabled).toBe(
+      true,
+    );
     fireEvent.click(screen.getByText("Clear values"));
     expect(rows()[2].values).toMatchObject({ name: "", status: null });
     fireEvent.click(screen.getByLabelText("Clear selection"));
@@ -843,7 +836,9 @@ describe("DatabaseView", () => {
     });
     fireEvent.click(screen.getAllByLabelText("Select row")[0]);
     expect(screen.getByText("Move up").closest("button")!.disabled).toBe(true);
-    expect(screen.getByText("Move down").closest("button")!.disabled).toBe(true);
+    expect(screen.getByText("Move down").closest("button")!.disabled).toBe(
+      true,
+    );
   });
 
   it("previews a filter draft and saves it, or adds it as a new view", async () => {
@@ -857,12 +852,14 @@ describe("DatabaseView", () => {
     const menu = (await screen.findByText("Filter by")).parentElement!;
     fireEvent.click(within(menu).getByText("Status"));
     fireEvent.click(await screen.findByText("Options"));
-    fireEvent.click(await screen.findByRole("option", { name: "Done", hidden: true }));
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Done", hidden: true }),
+    );
     expect(document.querySelectorAll("tr[data-row-id]")).toHaveLength(1);
     expect(view("t").filter.conditions).toEqual([]);
-    const actionRow = screen.getByText("Add filter").closest(
-      '[class*="filterActions"]',
-    ) as HTMLElement;
+    const actionRow = screen
+      .getByText("Add filter")
+      .closest('[class*="filterActions"]') as HTMLElement;
     for (const label of [
       "Add filter group",
       "Clear filters",
@@ -907,7 +904,6 @@ describe("DatabaseView", () => {
       fireEvent.blur(value);
       expect(document.querySelectorAll("tr[data-row-id]")).toHaveLength(1);
 
-      // Schema transactions can originate from this editor or a collaborator.
       act(() => {
         const tr = editor!.state.tr;
         editor!.view.dispatch(
@@ -924,8 +920,9 @@ describe("DatabaseView", () => {
       expect(screen.getByText("Ship it")).toBeTruthy();
       fireEvent.click(screen.getByText("Save"));
       expect(
-        editor!.state.doc.child(0).attrs.views.find((view: any) => view.id === "t")
-          .filter.conditions,
+        editor!.state.doc
+          .child(0)
+          .attrs.views.find((view: any) => view.id === "t").filter.conditions,
       ).toEqual([
         { type: "condition", columnId: "name", op: "contains", value: "Ship" },
       ]);
@@ -942,7 +939,12 @@ describe("DatabaseView", () => {
             type: "group",
             mode: "and",
             conditions: [
-              { type: "condition", columnId: "status", op: "isAnyOf", value: ["done"] },
+              {
+                type: "condition",
+                columnId: "status",
+                op: "isAnyOf",
+                value: ["done"],
+              },
             ],
           },
         }),
@@ -1027,7 +1029,9 @@ describe("DatabaseView", () => {
   it("collapses a kanban group into a strip and expands it again", async () => {
     renderEditor();
     fireEvent.click(await screen.findByText("Board"));
-    const lane = document.querySelector('[data-lane-key="done"]') as HTMLElement;
+    const lane = document.querySelector(
+      '[data-lane-key="done"]',
+    ) as HTMLElement;
     fireEvent.click(within(lane).getAllByLabelText("More")[0]);
     fireEvent.click(await screen.findByText("Collapse group"));
     const view = () =>

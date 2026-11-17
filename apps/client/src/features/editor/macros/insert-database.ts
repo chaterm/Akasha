@@ -4,7 +4,6 @@ import { getDefaultStore } from "jotai";
 import i18n from "@/i18n.ts";
 import { userAtom } from "@/features/user/atoms/current-user-atom";
 
-/** Inserts the starter database (sample tasks assigned to the viewer), replacing `range` when given. */
 export function insertDefaultDatabase(editor: Editor, range?: Range) {
   const t = i18n.t.bind(i18n);
   const user = getDefaultStore().get(userAtom);

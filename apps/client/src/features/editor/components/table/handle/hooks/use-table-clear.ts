@@ -38,7 +38,6 @@ export function useTableClear(
         ? [scope.cellPos]
         : Array.from(new Set(cellOffsets)).map((o) => tableStart + o);
 
-    // Process in reverse position order so earlier replacements don't shift later ones.
     targets.sort((a, b) => b - a);
 
     for (const cellPos of targets) {

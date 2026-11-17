@@ -9,7 +9,6 @@ import {
 
 describe("buildMonthWeeks", () => {
   it("covers the month with whole weeks starting on the given day", () => {
-    // November 2026 starts on a Sunday and has 30 days.
     const monday = buildMonthWeeks(2026, 10, 1);
     expect(monday).toHaveLength(6);
     expect(monday[0][0]).toBe("2026-10-26");
@@ -22,13 +21,12 @@ describe("buildMonthWeeks", () => {
   });
 
   it("uses only 4 weeks when the month fits exactly", () => {
-    // February 2027 starts on a Monday and has 28 days.
     expect(buildMonthWeeks(2027, 1, 1)).toHaveLength(4);
   });
 });
 
 describe("layoutCalendarWeek", () => {
-  const week = buildMonthWeeks(2026, 10, 1)[1]; // 2026-11-02 .. 2026-11-08
+  const week = buildMonthWeeks(2026, 10, 1)[1];
 
   it("cuts ranges at week edges and stacks overlaps into slots", () => {
     const segments = layoutCalendarWeek(week, [
@@ -49,7 +47,6 @@ describe("layoutCalendarWeek", () => {
       continuesRight: false,
     });
     expect(byItem.mid).toMatchObject({ column: 1, span: 3, slot: 1 });
-    // The first slot is free again after "long" ends.
     expect(byItem.single).toMatchObject({ column: 4, span: 1, slot: 0 });
   });
 });
@@ -71,11 +68,15 @@ describe("getWeekStart", () => {
 });
 
 describe("planRowMoves", () => {
-  const apply = (all: string[], moves: { rowId: string; beforeRowId: string | null }[]) => {
+  const apply = (
+    all: string[],
+    moves: { rowId: string; beforeRowId: string | null }[],
+  ) => {
     const ids = [...all];
     for (const move of moves) {
       ids.splice(ids.indexOf(move.rowId), 1);
-      const at = move.beforeRowId === null ? ids.length : ids.indexOf(move.beforeRowId);
+      const at =
+        move.beforeRowId === null ? ids.length : ids.indexOf(move.beforeRowId);
       ids.splice(at, 0, move.rowId);
     }
     return ids;
@@ -84,15 +85,29 @@ describe("planRowMoves", () => {
   it("moves a block of selected rows up and down by one visible row", () => {
     const all = ["a", "b", "c", "d", "e"];
     const picked = new Set(["c", "d"]);
-    expect(apply(all, planRowMoves(all, all, picked, "up"))).toEqual(["a", "c", "d", "b", "e"]);
-    expect(apply(all, planRowMoves(all, all, picked, "down"))).toEqual(["a", "b", "e", "c", "d"]);
+    expect(apply(all, planRowMoves(all, all, picked, "up"))).toEqual([
+      "a",
+      "c",
+      "d",
+      "b",
+      "e",
+    ]);
+    expect(apply(all, planRowMoves(all, all, picked, "down"))).toEqual([
+      "a",
+      "b",
+      "e",
+      "c",
+      "d",
+    ]);
   });
 
   it("keeps rows already at the edge in place", () => {
     const all = ["a", "b", "c"];
     expect(planRowMoves(all, all, new Set(["a"]), "up")).toEqual([]);
     expect(planRowMoves(all, all, new Set(["c"]), "down")).toEqual([]);
-    expect(apply(all, planRowMoves(all, all, new Set(["a", "c"]), "down"))).toEqual(["b", "a", "c"]);
+    expect(
+      apply(all, planRowMoves(all, all, new Set(["a", "c"]), "down")),
+    ).toEqual(["b", "a", "c"]);
   });
 
   it("steps over rows hidden by the filter", () => {

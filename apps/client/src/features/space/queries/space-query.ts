@@ -70,7 +70,6 @@ export const prefetchSpace = (spaceSlug: string, spaceId?: string) => {
   });
 
   if (spaceId) {
-    // this endpoint only accepts uuid for now
     queryClient.prefetchInfiniteQuery({
       queryKey: ["recent-changes", spaceId],
       queryFn: () => getRecentChanges({ spaceId }),
@@ -149,14 +148,12 @@ export function useDeleteSpaceMutation() {
         });
       }
 
-      // Remove space-specific queries
       if (variables.id) {
         queryClient.removeQueries({
           queryKey: ["space", variables.id],
           exact: true,
         });
 
-        // Invalidate recent changes
         queryClient.invalidateQueries({
           queryKey: ["recent-changes"],
         });
@@ -166,16 +163,6 @@ export function useDeleteSpaceMutation() {
         });
       }
 
-      // Update spaces list cache
-      /* const spaces = queryClient.getQueryData(["spaces"]) as any;
-      if (spaces) {
-        spaces.items = spaces.items?.filter(
-          (space: ISpace) => space.id !== variables.id,
-        );
-        queryClient.setQueryData(["spaces"], spaces);
-      }*/
-
-      // Invalidate all spaces queries to refresh lists
       queryClient.invalidateQueries({
         predicate: (item) => ["spaces"].includes(item.queryKey[0] as string),
       });
@@ -237,7 +224,6 @@ export function useChangeSpaceMemberRoleMutation() {
     mutationFn: (data) => changeMemberRole(data),
     onSuccess: (data, variables) => {
       notifications.show({ message: t("Member role updated successfully") });
-      // due to pagination levels, change in cache instead
       queryClient.refetchQueries({
         queryKey: ["spaceMembers", variables.spaceId],
       });

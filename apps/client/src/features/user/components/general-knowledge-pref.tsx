@@ -10,7 +10,6 @@ import {
   ResponsiveSettingsControl,
 } from "@/components/ui/responsive-settings-row";
 
-/** Controls automatic fallback to the model's general knowledge. */
 export default function GeneralKnowledgePref() {
   const { t } = useTranslation();
   const switchId = useId();

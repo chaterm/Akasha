@@ -39,7 +39,6 @@ export default function DeleteSpaceModal({ space }: DeleteSpaceModalProps) {
 
     setIsDeleting(true);
     try {
-      // pass slug too so we can clear the local cache
       await deleteSpaceMutation.mutateAsync({ id: space.id, slug: space.slug });
       navigate(APP_ROUTE.HOME);
     } catch (error) {

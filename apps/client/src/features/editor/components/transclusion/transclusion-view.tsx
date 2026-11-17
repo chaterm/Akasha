@@ -1,8 +1,4 @@
-import {
-  NodeViewContent,
-  NodeViewProps,
-  NodeViewWrapper,
-} from "@tiptap/react";
+import { NodeViewContent, NodeViewProps, NodeViewWrapper } from "@tiptap/react";
 import { ActionIcon, Menu, Tooltip } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import {
@@ -41,7 +37,6 @@ export default function TransclusionView(props: NodeViewProps) {
         }),
       ]);
     } catch {
-      // Fallback for browsers without ClipboardItem write support
       try {
         await navigator.clipboard.writeText(html);
       } catch {

@@ -5,18 +5,6 @@ import {
   SlashMenuItemType,
 } from "@/features/editor/components/slash-menu/types";
 
-/**
- * Slash-menu entries for Confluence-parity macros.
- *
- * Adding a macro means appending one entry here. The only upstream touchpoint
- * is a single `...macroMenuItems` spread in
- * `components/slash-menu/menu-items.ts`.
- *
- * `title`/`description` are i18n keys resolved by the upstream menu via
- * `t(item.title)` on the default namespace, so they still live in
- * `translation.json`. That file is high-churn but upstream only ever appends
- * keys, so conflicts are one-line and trivial to resolve.
- */
 export const macroMenuItems: SlashMenuItemType[] = [
   {
     title: "Table of contents",
@@ -43,13 +31,7 @@ export const macroMenuItems: SlashMenuItemType[] = [
     shortcut: "database",
     description:
       "Insert a database with table, kanban, calendar and timeline views.",
-    searchTerms: [
-      "database",
-      "kanban",
-      "board",
-      "calendar",
-      "table view",
-    ],
+    searchTerms: ["database", "kanban", "board", "calendar", "table view"],
     icon: IconDatabase,
     command: ({ editor, range }: CommandProps) =>
       insertDefaultDatabase(editor, range),

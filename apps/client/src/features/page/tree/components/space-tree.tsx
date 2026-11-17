@@ -67,9 +67,6 @@ export default function SpaceTree({ spaceId, readOnly }: SpaceTreeProps) {
     const allItems = pagesData.pages.flatMap((page) => page.items);
     const treeData = buildTree(allItems);
 
-    // Keep nodes belonging to other spaces — filteredData filters by spaceId
-    // for rendering, so accumulating is safe. Preserves lazy-loaded children
-    // and open-state when the user returns to a previously-visited space.
     setData((prev) =>
       updateSpaceRoots(prev, spaceId, (roots) =>
         roots.length > 0 ? mergeRootTrees(roots, treeData) : treeData,
@@ -83,14 +80,11 @@ export default function SpaceTree({ spaceId, readOnly }: SpaceTreeProps) {
 
     const fetchData = async () => {
       if (isDataLoaded && currentPage) {
-        // check if pageId node is present in the tree
         const node = treeModel.find(data, currentPage.id);
         if (node) {
-          // if node is found, no need to traverse its ancestors
           return;
         }
 
-        // if not found, fetch and build its ancestors and their children
         if (!currentPage.id) return;
         const ancestors = await getPageBreadcrumbs(currentPage.id);
 
@@ -100,7 +94,6 @@ export default function SpaceTree({ spaceId, readOnly }: SpaceTreeProps) {
           let flatTreeItems = [...buildTree(ancestors)];
 
           const fetchAndUpdateChildren = async (ancestor: IPage) => {
-            // we don't want to fetch the children of the opened page
             if (ancestor.id === currentPage.id) return;
             const children = await fetchAllAncestorChildren({
               pageId: ancestor.id,
@@ -122,12 +115,9 @@ export default function SpaceTree({ spaceId, readOnly }: SpaceTreeProps) {
           Promise.all(fetchPromises).then(() => {
             if (spaceIdRef.current !== effectSpaceId) return;
 
-            // build tree with children
             const ancestorsTree = buildTreeWithChildren(flatTreeItems);
-            // child of root page we're attaching the built ancestors to
             const rootChild = ancestorsTree[0];
 
-            // attach built ancestors to tree using functional updater
             setData((currentData) =>
               treeModel.appendChildren(
                 currentData,
@@ -136,9 +126,6 @@ export default function SpaceTree({ spaceId, readOnly }: SpaceTreeProps) {
               ),
             );
 
-            // open all ancestors of the current page. DocTree picks up the
-            // selectedId change and scrolls the row into view on its own once
-            // flat contains it.
             setOpenTreeNodes((prev) => {
               const next = { ...prev };
               for (const a of ancestors) {
@@ -184,9 +171,6 @@ export default function SpaceTree({ spaceId, readOnly }: SpaceTreeProps) {
     [data, spaceId],
   );
 
-  // Stable callbacks for DocTree. Without these, every parent render recreates
-  // the props and tears down every row's draggable/dropTarget subscription,
-  // defeating memo(DocTreeRow).
   const renderRow = useCallback(
     (rowProps: Parameters<typeof SpaceTreeRow>[0]) => (
       <SpaceTreeRow {...rowProps} readOnly={readOnly} />

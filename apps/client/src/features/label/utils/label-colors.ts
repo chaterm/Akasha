@@ -29,14 +29,10 @@ const DARK_PALETTE: Record<string, LabelColor> = {
 };
 
 function hashName(name: string): number {
-  // Per-char accumulation with 31. Note: 31 ≡ -1 (mod 8), so the low bits of
-  // this hash are highly correlated across short strings — `% 8` would cluster.
   let h = 0;
   for (let i = 0; i < name.length; i++) {
     h = (Math.imul(h, 31) + name.charCodeAt(i)) | 0;
   }
-  // Murmur3 fmix32 finalizer — avalanches high bits into low bits so the
-  // subsequent `% palette.length` (small power of two) is well-distributed.
   h ^= h >>> 16;
   h = Math.imul(h, 0x85ebca6b);
   h ^= h >>> 13;

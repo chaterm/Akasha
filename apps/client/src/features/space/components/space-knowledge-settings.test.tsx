@@ -45,7 +45,6 @@ describe("SpaceKnowledgeSettings", () => {
         dispatchEvent: vi.fn(),
       })),
     });
-    // SegmentedControl's floating indicator observes its size.
     globalThis.ResizeObserver ??= class {
       observe() {}
       unobserve() {}

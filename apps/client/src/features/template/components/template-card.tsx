@@ -5,7 +5,6 @@ import { useTranslation } from "react-i18next";
 import { PageTemplate, TemplateOutlineItem } from "../api/template.types";
 import classes from "./template-card.module.css";
 
-/** 缩略图底色；按模板 id 固定取一个，同一模板每次颜色一致。 */
 const TONES = ["blue", "violet", "teal", "orange", "pink", "indigo"] as const;
 
 export function toneOf(id: string | undefined) {
@@ -15,7 +14,6 @@ export function toneOf(id: string | undefined) {
   return TONES[Math.abs(hash) % TONES.length];
 }
 
-// 骨架条宽度按文本长度估算，空文本给默认宽度，最长到 88%
 const barWidth = (text: string, base: number) =>
   `${Math.min(88, Math.max(28, text ? text.length * 5 + 20 : base))}%`;
 
@@ -23,7 +21,6 @@ function Bar({ width }: { width: string }) {
   return <span className={classes.bar} style={{ width }} />;
 }
 
-/** 纸面上的一行骨架：只画结构，不显示文字。 */
 function OutlineLine({ item }: { item: TemplateOutlineItem }) {
   switch (item.kind) {
     case "heading":
@@ -72,7 +69,6 @@ function OutlineLine({ item }: { item: TemplateOutlineItem }) {
         case "code":
           return <div className={classes.code} />;
         default:
-          // toc / details 等：一行缩进的细条
           return (
             <div className={classes.lineItem}>
               <span className={classes.caret} />
@@ -85,10 +81,6 @@ function OutlineLine({ item }: { item: TemplateOutlineItem }) {
   }
 }
 
-/**
- * 缩略图：浅色渐变底，左上角是图标和标题，右下角斜放一张"纸"，
- * 纸上用正文结构概要画出页面骨架（表格、高亮块、分栏各有样子）。
- */
 export function TemplateThumbnail({
   template,
   compact = false,
@@ -130,7 +122,6 @@ export function TemplateThumbnail({
   );
 }
 
-/** 和卡片缩略图同色的横幅底，用在预览头部。 */
 export function TemplateToneBanner({
   templateId,
   className,
@@ -154,7 +145,6 @@ interface TemplateCardProps {
   template: PageTemplate;
   scopeLabel: string;
   onClick: () => void;
-  /** 鼠标悬停时右上角显示的操作 */
   actions?: ReactNode;
   footer?: ReactNode;
   compact?: boolean;

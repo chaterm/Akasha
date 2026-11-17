@@ -1,6 +1,5 @@
 import "katex/dist/katex.min.css";
 import katex from "katex";
-//import "katex/dist/contrib/mhchem.min.js";
 import { useEffect, useRef, useState } from "react";
 import { NodeViewProps, NodeViewWrapper } from "@tiptap/react";
 import { ActionIcon, Flex, Popover, Stack, Textarea } from "@mantine/core";
@@ -32,7 +31,6 @@ export default function MathBlockView(props: NodeViewProps) {
       });
       setError(null);
     } catch (e) {
-      //console.error(e.message);
       setError(e.message);
     }
   };
@@ -58,7 +56,8 @@ export default function MathBlockView(props: NodeViewProps) {
   useEffect(() => {
     const pos = getPos();
     const { from, to } = editor.state.selection;
-    const nodeSelected = props.selected && from === pos && to === pos + node.nodeSize;
+    const nodeSelected =
+      props.selected && from === pos && to === pos + node.nodeSize;
     setIsEditing(nodeSelected);
     if (nodeSelected) setPreview(node.attrs.text);
   }, [props.selected]);

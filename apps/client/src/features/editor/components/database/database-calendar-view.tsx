@@ -35,7 +35,6 @@ import {
 import { elementAt, usePointerDrag } from "./use-pointer-drag";
 import classes from "./database.module.css";
 
-/** Entries stack top-down in a day; past this many rows the rest is cut off. */
 const MAX_SLOTS = 4;
 const BAR_HEIGHT = 20;
 const BAR_GAP = 2;
@@ -45,7 +44,6 @@ const WEEK_HEIGHT = DAY_HEADER + MAX_SLOTS * (BAR_HEIGHT + BAR_GAP) + 4;
 interface CalendarDrag {
   rowId: string;
   mode: "move" | "start" | "end";
-  /** Days between the grabbed day and the row start (move only). */
   grabOffset: number;
 }
 
@@ -69,7 +67,6 @@ export default function DatabaseCalendarView({ db }: { db: DatabaseContext }) {
     (column) => column.id === view.dateColumnId,
   );
   const resizable = !!view.endDateColumnId && db.editable;
-  // The first one is the bar's heading.
   const fields = visibleColumns(db).filter(
     (column) =>
       column.id !== view.dateColumnId && column.id !== view.endDateColumnId,
@@ -353,7 +350,6 @@ function UndatedList({
   );
 }
 
-/** Shown by date-based views (calendar, timeline, agenda) until the view has a date column. */
 export function NoDateColumn({ db }: { db: DatabaseContext }) {
   const { t } = useTranslation();
   return (

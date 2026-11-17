@@ -33,7 +33,6 @@ export function groupLabel(
   return t("Ungrouped");
 }
 
-/** The group's option badge, or its label when it has no option. */
 export function GroupName({
   column,
   group,
@@ -60,7 +59,6 @@ interface GroupHeaderProps {
   onPointerDown?: (event: PointerEvent<HTMLDivElement>) => void;
 }
 
-/** Lane header: option badge (rename/recolor/delete), count, add card, collapse / hide group. */
 export function KanbanGroupHeader({
   db,
   column,

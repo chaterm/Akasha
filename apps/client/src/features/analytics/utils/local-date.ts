@@ -1,4 +1,3 @@
-/** YYYY-MM-DD in the viewer's timezone (an ISO slice would show the UTC day). */
 export function localDate(iso: string): string {
   const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, "0");

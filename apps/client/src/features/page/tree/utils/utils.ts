@@ -122,26 +122,21 @@ export function buildTreeWithChildren(items: SpaceTreeNode[]): SpaceTreeNode[] {
   const nodeMap = {};
   let result: SpaceTreeNode[] = [];
 
-  // Create a reference object for each item with the specified structure
   items.forEach((item) => {
     nodeMap[item.id] = { ...item, children: [] };
   });
 
-  // Build the tree array
   items.forEach((item) => {
     const node = nodeMap[item.id];
     if (item.parentPageId !== null) {
-      // Find the parent node and add the current node to its children
       nodeMap[item.parentPageId].children.push(node);
     } else {
-      // If the item has no parent, it's a root node, so add it to the result array
       result.push(node);
     }
   });
 
   result = sortPositionKeys(result);
 
-  // Recursively sort the children of each node
   function sortChildren(node: SpaceTreeNode) {
     if (node.children.length > 0) {
       node.hasChildren = true;
@@ -160,7 +155,6 @@ export function appendNodeChildren(
   nodeId: string,
   children: SpaceTreeNode[],
 ) {
-  // Preserve deeper children if they exist and remove node if deleted
   return treeItems.map((node) => {
     if (node.id === nodeId) {
       const newIds = new Set(children.map((c) => c.id));
@@ -195,16 +189,12 @@ export function appendNodeChildren(
   });
 }
 
-/**
- * Merge root nodes; keep existing ones intact, append new ones,
- */
 export function mergeRootTrees(
   prevRoots: SpaceTreeNode[],
   incomingRoots: SpaceTreeNode[],
 ): SpaceTreeNode[] {
   const seen = new Set(prevRoots.map((r) => r.id));
 
-  // add new roots that were not present before
   const merged = [...prevRoots];
   incomingRoots.forEach((node) => {
     if (!seen.has(node.id)) merged.push(node);

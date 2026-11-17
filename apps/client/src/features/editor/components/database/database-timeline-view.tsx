@@ -43,29 +43,21 @@ import classes from "./database.module.css";
 
 const LABEL_WIDTH = 220;
 const ROW_HEIGHT = 36;
-/** Bars shorter than this put their title beside them instead of inside. */
 const MIN_LABEL_WIDTH = 72;
 
 interface BarDrag {
   rowId: string;
   mode: "move" | "start" | "end";
   startX: number;
-  /** Whole days the pointer has moved. */
   days: number;
   moved: boolean;
 }
 
-/**
- * Gantt chart: one row per record, a bar from its start to its end date.
- * Drag a bar to move it, its edges to change the dates (with an end date
- * column), and click an empty row to schedule it on that day.
- */
 export default function DatabaseTimelineView({ db }: { db: DatabaseContext }) {
   const { t } = useTranslation();
   const rows = useViewRows(db);
   const { view } = db;
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Read-only viewers can still zoom; only editors save the choice.
   const [localScale, setLocalScale] = useState<DatabaseTimelineScale | null>(
     null,
   );
@@ -127,10 +119,8 @@ export default function DatabaseTimelineView({ db }: { db: DatabaseContext }) {
       behavior,
     });
   };
-  // Open on today, and keep it in view after zooming.
   useLayoutEffect(() => scrollToToday("auto"), [scale]);
 
-  // Drag runs on window listeners so the bar can be released anywhere.
   const dragRef = useRef<BarDrag | null>(null);
   useEffect(() => {
     if (!drag) return;
@@ -206,7 +196,6 @@ export default function DatabaseTimelineView({ db }: { db: DatabaseContext }) {
     setDrag(next);
   };
 
-  /** The range a row shows, including the drag in progress. */
   const shownRange = (row: DatabaseRowData) => {
     const range = ranges.get(row.id);
     if (!range || drag?.rowId !== row.id || !drag.moved) return range;

@@ -169,14 +169,12 @@ export function HistoryEditor({
   const titleAdded = titleDiff?.addedCount ?? 0;
   const titleDeleted = titleDiff?.deletedCount ?? 0;
 
-  // Effect 1: immediate content render
   useEffect(() => {
     if (!editor || !content) return;
     decorationSetRef.current = DecorationSet.empty;
     editor.commands.setContent(content);
   }, [editor, content]);
 
-  // Effect 2: use persisted diff first and fall back to the Web Worker
   useEffect(() => {
     if (!editor || !content || !prevHistoryId) {
       setDiffState("idle");
@@ -330,7 +328,6 @@ export function HistoryEditor({
     setDiffState,
   ]);
 
-  // Effect 3: apply/toggle decorations
   useEffect(() => {
     if (!editor) return;
     editor.setOptions({

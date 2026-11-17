@@ -164,8 +164,6 @@ export function usePageCompileStatusQuery(pageId?: string) {
     queryKey: ["page-compile-status", pageId],
     queryFn: () => getPageCompileStatus(pageId!),
     enabled: !!pageId,
-    // Overrides the global default so the status reloads after space
-    // settings invalidate it.
     refetchOnMount: true,
     refetchInterval: (query) =>
       query.state.data?.status === "compiling" ? 5_000 : false,
@@ -179,7 +177,6 @@ export function useRemovePageMutation() {
     onSuccess: (_, pageId) => {
       notifications.show({ message: t("Page moved to trash") });
 
-      // Stamp deletedAt so a re-visit shows the trash banner, not stale state.
       const cached = queryClient.getQueryData<IPage>(["pages", pageId]);
       if (cached) {
         const stamped = { ...cached, deletedAt: new Date() };
@@ -207,7 +204,6 @@ export function useDeletePageMutation() {
       notifications.show({ message: t("Page deleted successfully") });
       invalidateOnDeletePage(pageId);
 
-      // Invalidate to refresh trash lists
       queryClient.invalidateQueries({
         predicate: (item) =>
           ["trash-list"].includes(item.queryKey[0] as string),
@@ -233,9 +229,7 @@ export function useRestorePageMutation() {
     onSuccess: async (restoredPage) => {
       notifications.show({ message: t("Page restored successfully") });
 
-      // Check if the page already exists in the tree (it shouldn't)
       if (!treeModel.find(treeData, restoredPage.id)) {
-        // Create the tree node data with hasChildren from backend
         const nodeData: SpaceTreeNode = {
           id: restoredPage.id,
           slugId: restoredPage.slugId,
@@ -248,7 +242,6 @@ export function useRestorePageMutation() {
           children: [],
         };
 
-        // Determine the parent and index
         const parentId = restoredPage.parentPageId || null;
         let index = 0;
 
@@ -258,14 +251,11 @@ export function useRestorePageMutation() {
             index = parentNode.children?.length || 0;
           }
         } else {
-          // Root level page
           index = treeData.length;
         }
 
-        // Add the node to the tree
         setTreeData(treeModel.insert(treeData, parentId, nodeData, index));
 
-        // Emit websocket event to sync with other users
         setTimeout(() => {
           emit({
             operation: "addTreeNode",
@@ -279,15 +269,10 @@ export function useRestorePageMutation() {
         }, 50);
       }
 
-      //  await queryClient.invalidateQueries({ queryKey: ["sidebar-pages", restoredPage.spaceId] });
-
-      // Also invalidate deleted pages query to refresh the trash list
       await queryClient.invalidateQueries({
         queryKey: ["trash-list", restoredPage.spaceId],
       });
 
-      // Merge — restore endpoint returns a skinny page;
-      // Replace would strip space/permissions/content and break the editor.
       const merge = (cached: IPage | undefined) =>
         cached ? { ...cached, ...restoredPage } : cached;
       queryClient.setQueryData<IPage>(["pages", restoredPage.id], merge);
@@ -341,7 +326,6 @@ export function usePageBreadcrumbsQuery(
 }
 
 export async function fetchAllAncestorChildren(params: SidebarPagesParams) {
-  // not using a hook here, so we can call it inside a useEffect hook
   const response = await queryClient.fetchQuery({
     queryKey: ["sidebar-pages", params],
     queryFn: () => getAllSidebarPages(params),
@@ -417,7 +401,6 @@ export function invalidateOnCreatePage(data: Partial<IPage>) {
     ];
   }
 
-  //update all sidebar pages
   queryClient.setQueryData<InfiniteData<IPagination<Partial<IPage>>>>(
     queryKey,
     (old) => {
@@ -437,9 +420,7 @@ export function invalidateOnCreatePage(data: Partial<IPage>) {
     },
   );
 
-  //update sidebar haschildren
   if (data.parentPageId !== null) {
-    //update sub sidebar pages haschildern
     const subSideBarMatches = queryClient.getQueriesData({
       queryKey: ["sidebar-pages"],
       exact: false,
@@ -462,7 +443,6 @@ export function invalidateOnCreatePage(data: Partial<IPage>) {
       });
     });
 
-    //update root sidebar pages haschildern
     const rootSideBarMatches = queryClient.getQueriesData({
       queryKey: ["root-sidebar-pages", data.spaceId],
       exact: false,
@@ -486,7 +466,6 @@ export function invalidateOnCreatePage(data: Partial<IPage>) {
     });
   }
 
-  //update recent changes
   queryClient.invalidateQueries({
     queryKey: ["recent-changes", data.spaceId],
   });
@@ -505,7 +484,6 @@ export function invalidateOnUpdatePage(
   } else {
     queryKey = ["sidebar-pages", { pageId: parentPageId, spaceId: spaceId }];
   }
-  //update all sidebar pages
   queryClient.setQueryData<InfiniteData<IPagination<IPage>>>(
     queryKey,
     (old) => {
@@ -524,7 +502,6 @@ export function invalidateOnUpdatePage(
     },
   );
 
-  //update recent changes
   queryClient.invalidateQueries({
     queryKey: ["recent-changes", spaceId],
   });
@@ -537,7 +514,6 @@ export function updateCacheOnMovePage(
   newParentId: string | null,
   pageData: Partial<IPage>,
 ) {
-  // Remove page from old parent's cache
   const oldQueryKey =
     oldParentId === null
       ? ["root-sidebar-pages", spaceId]
@@ -557,7 +533,6 @@ export function updateCacheOnMovePage(
     },
   );
 
-  // Update old parent's hasChildren flag if it has no more children
   if (oldParentId !== null) {
     const oldParentCache = queryClient.getQueryData<
       InfiniteData<IPagination<IPage>>
@@ -567,7 +542,6 @@ export function updateCacheOnMovePage(
       oldParentCache?.pages.flatMap((p) => p.items).length ?? 0;
 
     if (remainingChildren === 0) {
-      // Update hasChildren in all caches where old parent appears
       const allSideBarMatches = queryClient.getQueriesData({
         predicate: (query) =>
           query.queryKey[0] === "root-sidebar-pages" ||
@@ -596,7 +570,6 @@ export function updateCacheOnMovePage(
     }
   }
 
-  // Add page to new parent's cache
   const newQueryKey =
     newParentId === null
       ? ["root-sidebar-pages", spaceId]
@@ -607,7 +580,6 @@ export function updateCacheOnMovePage(
     (old) => {
       if (!old) return old;
 
-      // Check if page already exists in new location
       const exists = old.pages.some((page) =>
         page.items.some((item) => item.id === pageId),
       );
@@ -628,7 +600,6 @@ export function updateCacheOnMovePage(
     },
   );
 
-  // Update new parent's hasChildren flag
   if (newParentId !== null) {
     const allSideBarMatches = queryClient.getQueriesData({
       predicate: (query) =>
@@ -654,7 +625,6 @@ export function updateCacheOnMovePage(
 }
 
 export function invalidateOnDeletePage(pageId: string) {
-  //update all sidebar pages
   const allSideBarMatches = queryClient.getQueriesData({
     predicate: (query) =>
       query.queryKey[0] === "root-sidebar-pages" ||
@@ -676,7 +646,6 @@ export function invalidateOnDeletePage(pageId: string) {
     });
   });
 
-  //update recent changes
   queryClient.invalidateQueries({
     queryKey: ["recent-changes"],
   });

@@ -118,11 +118,6 @@ interface AiMarkdownProps {
   onClick?: (event: React.MouseEvent<HTMLDivElement>) => void;
 }
 
-/**
- * Renders AI markdown answers, turning fenced mermaid blocks into diagrams.
- * Diagrams render only once the answer stops streaming so partial source does
- * not flash an error.
- */
 function AiMarkdown({
   content,
   sanitize = defaultSanitize,

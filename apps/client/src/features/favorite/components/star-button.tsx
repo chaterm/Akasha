@@ -14,7 +14,6 @@ type StarButtonProps = {
   type: FavoriteType;
   pageId?: string;
   spaceId?: string;
-  /** Name of the item being favorited, used to make the button's accessible name descriptive. */
   name?: string;
   size?: number;
 };
@@ -69,8 +68,6 @@ export default function StarButton(props: StarButtonProps) {
     }
   };
 
-  // Tooltip label stays short. Accessible name expands to include the item
-  // so screen reader users can distinguish stars on different rows.
   const tooltipLabel = isFavorited
     ? t("Remove from favorites")
     : t("Add to favorites");

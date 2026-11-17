@@ -128,7 +128,6 @@ describe("usage exploration", () => {
     fireEvent.click(
       (await screen.findAllByRole("button", { name: "Sort by {{column}}" }))[0],
     );
-    // Move to page two, then drill into a result.
     fireEvent.click(await screen.findByRole("button", { name: "2" }));
     await waitFor(() =>
       expect(getAnalyticsUsage).toHaveBeenLastCalledWith(

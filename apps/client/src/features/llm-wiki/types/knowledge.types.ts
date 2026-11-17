@@ -58,7 +58,6 @@ export interface KnowledgeCompileSpacesResult {
   acceptedRunCount: number;
   coalescedRunCount: number;
   rerunRequestedCount: number;
-  /** Spaces held until the night compile window opens. */
   deferredCount: number;
   deferredUntil: string | null;
   runs: Array<
@@ -72,7 +71,6 @@ export interface KnowledgeCompileSpacesResult {
 }
 
 export interface KnowledgeSpaceOperationResult {
-  /** Absent when the request was deferred to the night compile window. */
   runId?: string;
   mode: "incremental" | "force_rebuild";
   knowledgeGeneration?: number;
@@ -252,10 +250,8 @@ export interface KnowledgeDelayedPageDiagnostic {
   lastChangedAt: string;
   eligibleAt: string;
   remainingWaitMs: number;
-  /** When compilation actually starts, night compile window included. */
   compileStartsAt: string;
   remainingUntilCompileMs: number;
-  /** True when the night window, not the quiet period, sets the start. */
   windowDeferred: boolean;
   createdAt: string;
   updatedAt: string;

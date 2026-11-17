@@ -31,11 +31,6 @@ export const CellChevron = React.memo(function CellChevron({
 
   const { refs, floatingStyles, middlewareData } = useFloating({
     placement: "top-end",
-    // crossAxis pulls the chevron INWARD from the cell's right edge. We need
-    // enough inset that we don't overlap PM-tables' column-resize hot zone
-    // (~5px wide around the column boundary). Without this, hovering near the
-    // column edge picks up the chevron's `cursor: pointer` instead of
-    // `col-resize`, and a drag near the edge clicks the chevron.
     middleware: [offset({ mainAxis: -22, crossAxis: -10 }), hide()],
     whileElementsMounted: autoUpdate,
     strategy: "absolute",
@@ -46,9 +41,6 @@ export const CellChevron = React.memo(function CellChevron({
     refs.setReference(cellDom);
   }, [cellDom, refs]);
 
-  // Hide the chevron while the user is resizing a column. PM-tables sets
-  // `activeHandle > -1` whenever the mouse is near a column boundary OR
-  // actively dragging it. Either way we don't want the chevron in the way.
   const isResizingColumn = useEditorState({
     editor,
     selector: (ctx) => {
@@ -63,8 +55,6 @@ export const CellChevron = React.memo(function CellChevron({
   const onOpen = useCallback(() => {
     const current = editor.state.selection;
 
-    // Preserve an existing multi-cell CellSelection that already covers
-    // this cell so merge etc. operate on the user's whole range.
     let preserveExisting = false;
     if (isCellSelection(current)) {
       current.forEachCell((_node, pos) => {
@@ -73,9 +63,6 @@ export const CellChevron = React.memo(function CellChevron({
     }
 
     if (!preserveExisting) {
-      // Drop a collapsed cursor inside the cell rather than a single-cell
-      // CellSelection — PM-tables paints the latter as a text-range
-      // highlight on the cell content.
       try {
         const $inside = editor.state.doc.resolve(cellPos + 1);
         const sel = TextSelection.near($inside, 1);

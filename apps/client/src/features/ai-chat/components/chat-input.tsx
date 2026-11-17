@@ -25,7 +25,6 @@ type PendingAttachment = ChatAttachment & { uploading: boolean };
 
 const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif"];
 const ACCEPTED_FILE_TYPES = ".pdf,.docx,.txt,.csv,.md,.png,.jpg,.jpeg,.webp";
-// Kept in sync with MAX_ATTACHMENTS_PER_MESSAGE in apps/server/src/ee/ai-chat/ai-chat-limits.ts
 const MAX_ATTACHMENTS_PER_MESSAGE = 5;
 const FILE_ATTACHMENTS_DISABLED = true;
 

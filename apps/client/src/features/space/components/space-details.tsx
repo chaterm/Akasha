@@ -25,7 +25,6 @@ import useUserRole from "@/hooks/use-user-role.tsx";
 interface SpaceDetailsProps {
   spaceId: string;
   readOnly?: boolean;
-  // Space admins can change the icon even when other settings are read-only.
   canEditIcon?: boolean;
 }
 export default function SpaceDetails({
