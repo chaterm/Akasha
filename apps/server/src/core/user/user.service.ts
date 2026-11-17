@@ -8,7 +8,10 @@ import {
 } from '@nestjs/common';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { NotificationSettingKey } from '../notification/notification.constants';
-import { comparePasswordHash, diffAuditTrackedFields } from 'src/common/helpers/utils';
+import {
+  comparePasswordHash,
+  diffAuditTrackedFields,
+} from 'src/common/helpers/utils';
 import { Workspace } from '@akasha/db/types/entity.types';
 import { validateSsoEnforcement } from '../auth/auth.util';
 import { AuditEvent, AuditResource } from '../../common/events/audit-events';
@@ -45,7 +48,6 @@ export class UserService {
       throw new NotFoundException('User not found');
     }
 
-    // preference update
     if (typeof updateUserDto.fullPageWidth !== 'undefined') {
       return this.userRepo.updatePreference(
         userId,
@@ -96,7 +98,11 @@ export class UserService {
       }
     }
 
-    const userBefore = { name: user.name, email: user.email, locale: user.locale };
+    const userBefore = {
+      name: user.name,
+      email: user.email,
+      locale: user.locale,
+    };
 
     if (updateUserDto.name) {
       user.name = updateUserDto.name;

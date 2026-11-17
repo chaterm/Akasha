@@ -85,7 +85,6 @@ export class AuthController {
       );
 
       if (mfaResult) {
-        // If user has MFA enabled OR workspace enforces MFA, require MFA verification
         if (mfaResult.userHasMfa || mfaResult.requiresMfaSetup) {
           return {
             userHasMfa: mfaResult.userHasMfa,
@@ -93,7 +92,6 @@ export class AuthController {
             isMfaEnforced: mfaResult.isMfaEnforced,
           };
         } else if (mfaResult.authToken) {
-          // User doesn't have MFA and workspace doesn't require it
           this.setAuthCookie(res, mfaResult.authToken);
           return;
         }
@@ -165,7 +163,6 @@ export class AuthController {
       };
     }
 
-    // Set auth cookie if no MFA is required
     this.setAuthCookie(res, result.authToken);
     return {
       requiresLogin: false,

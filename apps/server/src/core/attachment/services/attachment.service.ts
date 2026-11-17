@@ -60,8 +60,6 @@ export class AttachmentService {
     let isUpdate = false;
     let attachmentId = null;
 
-    // passing attachmentId to allow for updating diagrams
-    // instead of creating new files for each save
     if (opts?.attachmentId) {
       const existingAttachment = await this.attachmentRepo.findById(
         opts.attachmentId,
@@ -93,7 +91,6 @@ export class AttachmentService {
 
     await this.uploadToDrive(filePath, stream);
 
-    // Update fileSize from the consumed stream
     preparedFile.fileSize = getBytesRead();
 
     let attachment: Attachment = null;
@@ -119,7 +116,6 @@ export class AttachmentService {
         });
       }
 
-      // Only index PDFs and DOCX files
       if (['.pdf', '.docx'].includes(attachment.fileExt.toLowerCase())) {
         await this.attachmentQueue.add(
           QueueJob.ATTACHMENT_INDEX_CONTENT,
@@ -135,13 +131,8 @@ export class AttachmentService {
           },
         );
       }
-      // A newly uploaded file has a page id before the editor persists the
-      // actual attachment node. The subsequent page-content save is the
-      // authoritative compilation trigger. Overwrites change a file already
-      // referenced by a page and must still invalidate immediately.
       if (isUpdate) this.emitKnowledgePageAttachmentUpdated(attachment);
     } catch (err) {
-      // delete uploaded file on error
       this.logger.error(err);
     }
 
@@ -224,13 +215,11 @@ export class AttachmentService {
         }
       });
     } catch (err) {
-      // delete uploaded file on db update failure
       await this.deleteRedundantFile(filePath);
       throw new BadRequestException('Failed to upload image');
     }
 
     if (oldFileName && !oldFileName.toLowerCase().startsWith('http')) {
-      // delete old avatar or logo
       const oldFilePath =
         getAttachmentFolderPath(type, workspaceId) + '/' + oldFileName;
       await this.deleteRedundantFile(oldFilePath);
@@ -405,7 +394,6 @@ export class AttachmentService {
 
   async handleDeletePageAttachments(pageId: string) {
     try {
-      // Fetch attachments for this page from database
       const attachments = await this.db
         .selectFrom('attachments')
         .select(['id', 'filePath'])
@@ -421,9 +409,7 @@ export class AttachmentService {
       await Promise.all(
         attachments.map(async (attachment) => {
           try {
-            // Delete from storage
             await this.storageService.delete(attachment.filePath);
-            // Delete from database
             await this.attachmentRepo.deleteAttachmentById(attachment.id);
           } catch (err) {
             failedDeletions.push(attachment.id);
@@ -496,16 +482,6 @@ export class AttachmentService {
   }
 }
 
-/**
- * A page-owned File attachment whose overwrite/replace/delete must refresh the
- * owning page's knowledge (§9.1). This deliberately covers every non-image File
- * as well as images: a replaced file changes `updated_at` without touching the
- * page ProseMirror, and the Knowledge source fingerprint (§9.1) now folds in
- * that timestamp, so the recompile regenerates the attachment mapping. Avatars,
- * workspace/space icons and chat attachments are not `File`-with-`pageId`, and
- * files uploaded but never inserted into a page contribute no serializer
- * occurrence, so their recompile is a cheap fingerprint-reuse no-op.
- */
 function isKnowledgePageFileAttachment(attachment: Attachment): boolean {
   return attachment.type === AttachmentType.File && Boolean(attachment.pageId);
 }

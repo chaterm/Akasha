@@ -204,7 +204,6 @@ export class WorkspaceController {
       dto.hostname === updatedWorkspace.hostname &&
       workspace.hostname !== updatedWorkspace.hostname
     ) {
-      // log user out of old hostname
       res.clearCookie('authToken');
     }
 

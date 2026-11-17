@@ -10,14 +10,6 @@ export type RewriteResult = {
   copies: AttachmentRewritePlan[];
 };
 
-/**
- * Walk a ProseMirror JSON tree, rewrite every attachment-like node so its
- * `attachmentId` (and any `src` substring matching that id) point at a fresh
- * id. Each unique old id maps to exactly one new id; the caller is responsible
- * for actually copying the underlying storage file.
- *
- * Pure: does not mutate the input. Returns a deep clone.
- */
 export function rewriteAttachmentsForUnsync(
   content: unknown,
   generateId: () => string,
@@ -41,7 +33,10 @@ export function rewriteAttachmentsForUnsync(
           idMap.set(oldId, newId);
         }
         node.attrs.attachmentId = newId;
-        if (typeof node.attrs.src === 'string' && node.attrs.src.includes(oldId)) {
+        if (
+          typeof node.attrs.src === 'string' &&
+          node.attrs.src.includes(oldId)
+        ) {
           node.attrs.src = node.attrs.src.split(oldId).join(newId);
         }
       }

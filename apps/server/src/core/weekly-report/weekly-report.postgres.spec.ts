@@ -48,7 +48,6 @@ const document = (text = 'Delivered verified work'): JSONContent => ({
   content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
 });
 
-/** All DDL/DML is confined to a new schema on an explicitly supplied test URL. */
 describePostgres(
   'Weekly reports PostgreSQL transactions and durable effects',
   () => {
@@ -486,8 +485,6 @@ describePostgres(
       await outbox.drain();
       expect(compilationSpy).not.toHaveBeenCalled();
       expect((await counts()).schedules).toBe(0);
-      // Emulate a later committed collaboration document: the persisted content
-      // decides recovery, so completed pages are never mistaken for placeholders.
       const content = normalizeWeeklyReportContent(
         document('Verified completed body'),
       );
@@ -593,7 +590,6 @@ describePostgres(
         pageId: created.pageId,
         parentPageId: destination,
         locationChanged: true,
-        // date columns come back from the driver as Dates; results stay calendar dates.
         periodStart: period.periodStart,
         periodEnd: period.periodEnd,
       });

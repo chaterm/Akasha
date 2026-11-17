@@ -15,7 +15,6 @@ import { LabelType } from '@akasha/db/repos/label/label.repo';
 import { PageIdDto } from '../../page/dto/page.dto';
 import { normalizeLabelName } from '../utils';
 
-//TODO: We may support SPACE/TEMPLATE labels in the future
 const SUPPORTED_LABEL_TYPES: LabelType[] = [LabelType.PAGE];
 
 export class AddLabelsDto extends PageIdDto {

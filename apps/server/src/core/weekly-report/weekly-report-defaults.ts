@@ -5,7 +5,6 @@ import type { PrepareWeeklyReportInput } from './weekly-report.types';
 
 type Headers = Record<string, string | string[] | undefined>;
 
-/** Browser links end in a ten-character slug, sometimes copied with its separator. */
 export function normalizeWeeklyReportParentId(
   value: string,
 ): string | undefined {
@@ -14,7 +13,6 @@ export function normalizeWeeklyReportParentId(
   return undefined;
 }
 
-/** Keep malformed values until prepare so they do not break unrelated MCP tools. */
 export function readWeeklyReportDefaults(
   headers: Headers,
 ): McpToolContext['weeklyReportDefaults'] {
@@ -30,7 +28,6 @@ export function readWeeklyReportDefaults(
   return Object.keys(defaults).length ? defaults : undefined;
 }
 
-/** undefined inherits a connection default; null explicitly chooses the system default. */
 export function resolveWeeklyReportDefaults(
   ctx: McpToolContext,
   input: PrepareWeeklyReportInput,

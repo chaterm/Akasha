@@ -182,7 +182,6 @@ export class McpAuthService {
     ) => Promise<{ user: User; workspace: Workspace }>;
   } {
     try {
-      // Keep the core MCP module independent from the enterprise module.
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const {
         ApiKeyService,

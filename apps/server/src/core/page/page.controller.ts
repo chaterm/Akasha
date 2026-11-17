@@ -683,7 +683,6 @@ export class PageController {
       throw new BadRequestException('spaceId is required');
     }
     if (createPageDto.parentPageId) {
-      // Creating under a parent page - check edit permission on parent
       const parentPage = await this.pageRepo.findById(
         createPageDto.parentPageId,
       );
@@ -704,7 +703,6 @@ export class PageController {
         await this.pageAccessService.validateCanEdit(parentPage, user);
       }
     } else {
-      // Creating at root level - require space-level permission
       const ability = await this.spaceAbility.createForUser(
         user,
         createPageDto.spaceId,
@@ -833,7 +831,6 @@ export class PageController {
     const ability = await this.spaceAbility.createForUser(user, page.spaceId);
 
     if (deletePageDto.permanentlyDelete) {
-      // Permanent deletion requires space admin permissions
       if (ability.cannot(SpaceCaslAction.Manage, SpaceCaslSubject.Settings)) {
         throw new ForbiddenException(
           errorBody(
@@ -859,7 +856,6 @@ export class PageController {
         },
       });
     } else {
-      // User with edit permission can delete
       await this.pageAccessService.validateCanEdit(page, user);
 
       await this.pageService.removePage(
@@ -898,13 +894,11 @@ export class PageController {
       throw new NotFoundException('Page not found');
     }
 
-    // only users with "can edit" space level permission can restore pages
     const ability = await this.spaceAbility.createForUser(user, page.spaceId);
     if (ability.cannot(SpaceCaslAction.Edit, SpaceCaslSubject.Page)) {
       throw new ForbiddenException();
     }
 
-    // make sure they have page level access to the page
     await this.pageAccessService.validateCanEdit(page, user);
 
     await this.pageRepo.restorePage(pageIdDto.pageId, workspace.id);
@@ -1048,7 +1042,6 @@ export class PageController {
       throw new NotFoundException('Page history not found');
     }
 
-    // Get the page to check permissions
     const page = await this.pageRepo.findById(history.pageId);
     if (!page) {
       throw new NotFoundException('Page not found');
@@ -1166,10 +1159,8 @@ export class PageController {
       throw new ForbiddenException();
     }
 
-    // Check page-level edit permission on the source page
     await this.pageAccessService.validateCanEdit(movedPage, user);
 
-    // Moves only accessible pages; inaccessible child pages become root pages in original space
     const { childPageIds } = await this.pageService.movePageToSpace(
       movedPage,
       dto.spaceId,
@@ -1200,13 +1191,10 @@ export class PageController {
       throw new NotFoundException('Page to copy not found');
     }
 
-    // Check page-level view permission on the source page (need to read to copy)
-    // Inaccessible child branches are automatically skipped during duplication
     await this.pageAccessService.validateCanView(copiedPage, user);
 
     let result;
 
-    // If spaceId is provided, it's a copy to different space
     if (dto.spaceId) {
       const abilities = await Promise.all([
         this.spaceAbility.createForUser(user, copiedPage.spaceId),
@@ -1243,7 +1231,6 @@ export class PageController {
         },
       });
     } else {
-      // If no spaceId, it's a duplicate in same space
       const ability = await this.spaceAbility.createForUser(
         user,
         copiedPage.spaceId,
@@ -1293,10 +1280,8 @@ export class PageController {
       throw new ForbiddenException();
     }
 
-    // Check page-level edit permission
     await this.pageAccessService.validateCanEdit(movedPage, user);
 
-    // If moving to a new parent, check permission on the target parent
     if (dto.parentPageId && dto.parentPageId !== movedPage.parentPageId) {
       const targetParent = await this.pageRepo.findById(dto.parentPageId);
       if (!targetParent || targetParent.deletedAt) {

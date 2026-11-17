@@ -17,24 +17,81 @@ import {
   readDatabaseRows,
 } from '@docmost/editor-ext';
 import { jsonToNode } from '../../collaboration/collaboration.util';
-import { BUILTIN_WEEKLY_REPORT_ID, BUILTIN_TEMPLATES } from './builtin-templates';
+import {
+  BUILTIN_WEEKLY_REPORT_ID,
+  BUILTIN_TEMPLATES,
+} from './builtin-templates';
 
-const [WEEKLY_ID, CHECKLIST_ID, BOARD_ID, FLOWCHART_ID, MANUAL_ID, DESIGN_ID, PLAN_ID] =
-  BUILTIN_TEMPLATES.map((t) => t.id);
+const [
+  WEEKLY_ID,
+  CHECKLIST_ID,
+  BOARD_ID,
+  FLOWCHART_ID,
+  MANUAL_ID,
+  DESIGN_ID,
+  PLAN_ID,
+] = BUILTIN_TEMPLATES.map((t) => t.id);
 const BUILTIN_IDS = BUILTIN_TEMPLATES.map((t) => t.id);
-/** 每个内置模板必须保留下来的块（未知节点会被静默剥掉） */
 const EXPECTED_BLOCKS: Record<string, string[]> = {
-  [WEEKLY_ID]: ['table', 'tableHeader', 'status', 'callout', 'heading', 'taskList'],
-  [CHECKLIST_ID]: ['callout', 'columns', 'column', 'status', 'taskList', 'taskItem', 'bulletList'],
+  [WEEKLY_ID]: [
+    'table',
+    'tableHeader',
+    'status',
+    'callout',
+    'heading',
+    'taskList',
+  ],
+  [CHECKLIST_ID]: [
+    'callout',
+    'columns',
+    'column',
+    'status',
+    'taskList',
+    'taskItem',
+    'bulletList',
+  ],
   [FLOWCHART_ID]: ['callout', 'heading', 'excalidraw', 'table'],
-  [MANUAL_ID]: ['table', 'heading', 'callout', 'details', 'detailsSummary', 'bulletList'],
-  [DESIGN_ID]: ['table', 'status', 'callout', 'toc', 'heading', 'codeBlock', 'mathBlock', 'mathInline', 'taskList', 'bulletList'],
-  [BOARD_ID]: ['callout', 'database', 'databaseRow', 'databaseCell', 'heading', 'bulletList'],
-  [PLAN_ID]: ['callout', 'database', 'databaseRow', 'databaseCell', 'heading', 'bulletList', 'taskList'],
+  [MANUAL_ID]: [
+    'table',
+    'heading',
+    'callout',
+    'details',
+    'detailsSummary',
+    'bulletList',
+  ],
+  [DESIGN_ID]: [
+    'table',
+    'status',
+    'callout',
+    'toc',
+    'heading',
+    'codeBlock',
+    'mathBlock',
+    'mathInline',
+    'taskList',
+    'bulletList',
+  ],
+  [BOARD_ID]: [
+    'callout',
+    'database',
+    'databaseRow',
+    'databaseCell',
+    'heading',
+    'bulletList',
+  ],
+  [PLAN_ID]: [
+    'callout',
+    'database',
+    'databaseRow',
+    'databaseCell',
+    'heading',
+    'bulletList',
+    'taskList',
+  ],
 };
 
-/** 正文里的第一个数据库块 */
-const findDatabase = (content: any) => content.content.find((n: any) => n.type === 'database');
+const findDatabase = (content: any) =>
+  content.content.find((n: any) => n.type === 'database');
 
 const DOC = {
   type: 'doc',
@@ -90,17 +147,23 @@ describe('TemplateService', () => {
       validateCanEdit: jest.fn().mockResolvedValue({}),
     };
     const pageService = {
-      create: jest.fn().mockResolvedValue({ id: 'page-new', spaceId: 'space-1' }),
+      create: jest
+        .fn()
+        .mockResolvedValue({ id: 'page-new', spaceId: 'space-1' }),
     };
     const auditService = { log: jest.fn() };
-    // 事务直接执行回调
     const db = {
       transaction: () => ({ execute: (cb: any) => cb('trx') }),
     };
 
     const spaceRepo = {
-      findById: jest.fn().mockImplementation(async (id: string) =>
-        opts?.targetSpace === null ? undefined : opts?.targetSpace ?? { id, workspaceId: 'ws-1' }),
+      findById: jest
+        .fn()
+        .mockImplementation(async (id: string) =>
+          opts?.targetSpace === null
+            ? undefined
+            : (opts?.targetSpace ?? { id, workspaceId: 'ws-1' }),
+        ),
     };
     const service = new TemplateService(
       templateRepo as any,
@@ -120,16 +183,24 @@ describe('TemplateService', () => {
     it('uses the semantic builtin ID and returns normalized JSON plus a fingerprint', async () => {
       const { service } = createSubject();
       expect(BUILTIN_WEEKLY_REPORT_ID).toBe(WEEKLY_ID);
-      const result = await service.getForSpace(WEEKLY_ID, 'space-1', member, ws());
+      const result = await service.getForSpace(
+        WEEKLY_ID,
+        'space-1',
+        member,
+        ws(),
+      );
       expect(result.builtin).toBe(true);
       expect(result.templateFingerprint).toMatch(/^[0-9a-f]{64}$/);
-      expect(result.content).toEqual(jsonToNode(structuredClone(BUILTIN_TEMPLATES[0].content)).toJSON());
+      expect(result.content).toEqual(
+        jsonToNode(structuredClone(BUILTIN_TEMPLATES[0].content)).toJSON(),
+      );
     });
 
     it('checks target access before looking up a template', async () => {
       const { service, templateRepo } = createSubject({ targetSpace: null });
-      await expect(service.getForSpace('t1', 'missing', member, ws()))
-        .rejects.toBeInstanceOf(NotFoundException);
+      await expect(
+        service.getForSpace('t1', 'missing', member, ws()),
+      ).rejects.toBeInstanceOf(NotFoundException);
       expect(templateRepo.findById).not.toHaveBeenCalled();
     });
 
@@ -138,42 +209,70 @@ describe('TemplateService', () => {
       { id: 'space-1', workspaceId: 'ws-1', deletedAt: new Date() },
     ])('rejects foreign or deleted target spaces', async (targetSpace) => {
       const { service, templateRepo } = createSubject({ targetSpace });
-      await expect(service.getForSpace('t1', 'space-1', member, ws()))
-        .rejects.toBeInstanceOf(NotFoundException);
+      await expect(
+        service.getForSpace('t1', 'space-1', member, ws()),
+      ).rejects.toBeInstanceOf(NotFoundException);
       expect(templateRepo.findById).not.toHaveBeenCalled();
     });
 
     it('does not disclose a template when the target is inaccessible', async () => {
-      const { service, templateRepo } = createSubject({ cannotCreateIn: ['space-1'] });
-      await expect(service.getForSpace('t1', 'space-1', member, ws()))
-        .rejects.toBeInstanceOf(NotFoundException);
+      const { service, templateRepo } = createSubject({
+        cannotCreateIn: ['space-1'],
+      });
+      await expect(
+        service.getForSpace('t1', 'space-1', member, ws()),
+      ).rejects.toBeInstanceOf(NotFoundException);
       expect(templateRepo.findById).not.toHaveBeenCalled();
     });
 
     it('distinguishes visible but inapplicable templates without exposing hidden space IDs', async () => {
-      const { service } = createSubject({ template: row({ spaceIds: ['hidden'] }) });
-      await expect(service.getForSpace('t1', 'space-1', member, ws()))
-        .rejects.toMatchObject({ response: { code: 'TEMPLATE_NOT_APPLICABLE' } });
-      const visible = createSubject({ template: row({ spaceIds: ['space-1', 'hidden'] }) });
-      const result = await visible.service.getForSpace('t1', 'space-1', member, ws());
+      const { service } = createSubject({
+        template: row({ spaceIds: ['hidden'] }),
+      });
+      await expect(
+        service.getForSpace('t1', 'space-1', member, ws()),
+      ).rejects.toMatchObject({
+        response: { code: 'TEMPLATE_NOT_APPLICABLE' },
+      });
+      const visible = createSubject({
+        template: row({ spaceIds: ['space-1', 'hidden'] }),
+      });
+      const result = await visible.service.getForSpace(
+        't1',
+        'space-1',
+        member,
+        ws(),
+      );
       expect(result.spaceIds).toEqual(['space-1']);
       expect(result.otherSpaceCount).toBe(1);
     });
 
     it('hides inaccessible templates behind not-found', async () => {
-      const { service } = createSubject({ template: row({ creatorId: 'other', spaceIds: ['hidden'] }) });
-      await expect(service.getForSpace('t1', 'space-1', member, ws()))
-        .rejects.toBeInstanceOf(NotFoundException);
+      const { service } = createSubject({
+        template: row({ creatorId: 'other', spaceIds: ['hidden'] }),
+      });
+      await expect(
+        service.getForSpace('t1', 'space-1', member, ws()),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('validates listing target and filters usability, including admin spaces without membership', async () => {
       const { service, templateRepo } = createSubject({ userSpaceIds: [] });
-      await service.listForMcp(admin, ws(), { scope: 'available', spaceId: 'space-1' } as any);
-      expect(templateRepo.findTemplates).toHaveBeenCalledWith('ws-1', ['space-1'],
-        expect.anything(), { mode: 'availableIn', spaceId: 'space-1' }, expect.anything());
+      await service.listForMcp(admin, ws(), {
+        scope: 'available',
+        spaceId: 'space-1',
+      } as any);
+      expect(templateRepo.findTemplates).toHaveBeenCalledWith(
+        'ws-1',
+        ['space-1'],
+        expect.anything(),
+        { mode: 'availableIn', spaceId: 'space-1' },
+        expect.anything(),
+      );
       const hidden = createSubject({ targetSpace: null });
-      await expect(hidden.service.listForMcp(member, ws(), { spaceId: 'missing' } as any))
-        .rejects.toBeInstanceOf(NotFoundException);
+      await expect(
+        hidden.service.listForMcp(member, ws(), { spaceId: 'missing' } as any),
+      ).rejects.toBeInstanceOf(NotFoundException);
       expect(hidden.templateRepo.findTemplates).not.toHaveBeenCalled();
     });
 
@@ -184,13 +283,24 @@ describe('TemplateService', () => {
       const first = await read();
       template.updatedAt = new Date();
       template.content = { content: DOC.content, type: 'doc' };
-      expect((await read()).templateFingerprint).toBe(first.templateFingerprint);
+      expect((await read()).templateFingerprint).toBe(
+        first.templateFingerprint,
+      );
       template.title = 'changed';
-      expect((await read()).templateFingerprint).not.toBe(first.templateFingerprint);
+      expect((await read()).templateFingerprint).not.toBe(
+        first.templateFingerprint,
+      );
       template.title = 'weekly';
-      template.content = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'New facts' }] }] };
+      template.content = {
+        type: 'doc',
+        content: [
+          { type: 'paragraph', content: [{ type: 'text', text: 'New facts' }] },
+        ],
+      };
       const snapshot = structuredClone(template.content);
-      expect((await read()).templateFingerprint).not.toBe(first.templateFingerprint);
+      expect((await read()).templateFingerprint).not.toBe(
+        first.templateFingerprint,
+      );
       expect(template.content).toEqual(snapshot);
     });
   });
@@ -209,7 +319,11 @@ describe('TemplateService', () => {
         expect.objectContaining({ allSpaces: true, textContent: '你好' }),
         'trx',
       );
-      expect(templateRepo.setTemplateSpaces).toHaveBeenCalledWith('tpl-new', [], 'trx');
+      expect(templateRepo.setTemplateSpaces).toHaveBeenCalledWith(
+        'tpl-new',
+        [],
+        'trx',
+      );
       expect(result.canManage).toBe(true);
     });
 
@@ -243,14 +357,22 @@ describe('TemplateService', () => {
         expect.objectContaining({ allSpaces: true }),
         'trx',
       );
-      expect(templateRepo.setTemplateSpaces).toHaveBeenCalledWith('tpl-new', [], 'trx');
+      expect(templateRepo.setTemplateSpaces).toHaveBeenCalledWith(
+        'tpl-new',
+        [],
+        'trx',
+      );
     });
 
     it('获准的成员也可以创建"所有空间"模板，并能管理它', async () => {
       const { service } = createSubject({
         template: row({ allSpaces: true, spaceIds: [], creatorId: 'member-1' }),
       });
-      const view = await service.create({ title: 't', allSpaces: true }, member, ws(true));
+      const view = await service.create(
+        { title: 't', allSpaces: true },
+        member,
+        ws(true),
+      );
       expect(view.canManage).toBe(true);
     });
 
@@ -267,7 +389,9 @@ describe('TemplateService', () => {
     });
 
     it('任一指定空间没有建页权限时拒绝', async () => {
-      const { service, templateRepo } = createSubject({ cannotCreateIn: ['space-2'] });
+      const { service, templateRepo } = createSubject({
+        cannotCreateIn: ['space-2'],
+      });
       await expect(
         service.create(
           { title: 't', spaceIds: ['space-1', 'space-2'] },
@@ -300,7 +424,11 @@ describe('TemplateService', () => {
         page: { id: 'p1', workspaceId: 'ws-other', content: DOC },
       });
       await expect(
-        service.create({ title: 't', allSpaces: true, sourcePageId: 'p1' }, admin, ws()),
+        service.create(
+          { title: 't', allSpaces: true, sourcePageId: 'p1' },
+          admin,
+          ws(),
+        ),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
@@ -319,7 +447,10 @@ describe('TemplateService', () => {
   describe('可见性与管理', () => {
     it('模板创建者可以看到自己的模板，即使指定的空间不在访问范围内', async () => {
       const { service } = createSubject({
-        template: row({ spaceIds: ['space-x', 'space-y'], creatorId: 'member-1' }),
+        template: row({
+          spaceIds: ['space-x', 'space-y'],
+          creatorId: 'member-1',
+        }),
         userSpaceIds: ['space-1'],
       });
       const view = await service.getById('t1', member, ws());
@@ -344,9 +475,9 @@ describe('TemplateService', () => {
       expect(own.templateRepo.deleteTemplate).toHaveBeenCalled();
 
       const other = createSubject({ template: row({ creatorId: 'someone' }) });
-      await expect(other.service.delete('t1', member, ws(true))).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
+      await expect(
+        other.service.delete('t1', member, ws(true)),
+      ).rejects.toBeInstanceOf(ForbiddenException);
     });
 
     it('改为指定空间但一个都没选时返回 400', async () => {
@@ -381,12 +512,15 @@ describe('TemplateService', () => {
 
     it('只对新增的空间校验建页权限', async () => {
       const { service } = createSubject({
-        // 管理员对原空间 space-1 已无建页权限，但没有新增空间时不应被拦
         template: row({ spaceIds: ['space-1'] }),
         cannotCreateIn: ['space-1'],
       });
       await expect(
-        service.update({ templateId: 't1', spaceIds: ['space-1'] }, admin, ws()),
+        service.update(
+          { templateId: 't1', spaceIds: ['space-1'] },
+          admin,
+          ws(),
+        ),
       ).resolves.toBeDefined();
     });
   });
@@ -394,9 +528,16 @@ describe('TemplateService', () => {
   describe('内置模板', () => {
     it('列表首页把内置模板排在最前，内容只有中文', async () => {
       const { service, templateRepo } = createSubject();
-      templateRepo.findTemplates.mockResolvedValue({ items: [row()], meta: {} });
+      templateRepo.findTemplates.mockResolvedValue({
+        items: [row()],
+        meta: {},
+      });
 
-      const zh = await service.list({ ...member, locale: 'zh-CN' }, ws(), {} as any);
+      const zh = await service.list(
+        { ...member, locale: 'zh-CN' },
+        ws(),
+        {} as any,
+      );
       expect(zh.items.map((t) => t.id)).toEqual([...BUILTIN_IDS, 't1']);
       expect(zh.items[0]).toMatchObject({
         title: '周报',
@@ -407,7 +548,11 @@ describe('TemplateService', () => {
       expect(zh.items[0].outline.length).toBeGreaterThan(0);
       expect(zh.items[zh.items.length - 1].builtin).toBe(false);
 
-      const en = await service.list({ ...member, locale: 'en-US' }, ws(), {} as any);
+      const en = await service.list(
+        { ...member, locale: 'en-US' },
+        ws(),
+        {} as any,
+      );
       expect(en.items[0].title).toBe('周报');
     });
 
@@ -425,7 +570,9 @@ describe('TemplateService', () => {
       expect(await ids({ query: '技术方案' })).toEqual([DESIGN_ID]);
       expect(await ids({ query: '任务看板' })).toEqual([BOARD_ID]);
       expect(await ids({ query: '项目计划' })).toEqual([PLAN_ID]);
-      expect(await ids({ scope: 'available', spaceId: 'space-1' })).toEqual(BUILTIN_IDS);
+      expect(await ids({ scope: 'available', spaceId: 'space-1' })).toEqual(
+        BUILTIN_IDS,
+      );
     });
 
     it('内置模板可以查看详情，正文是合法文档', async () => {
@@ -434,11 +581,9 @@ describe('TemplateService', () => {
       expect(templateRepo.findById).not.toHaveBeenCalled();
       expect(view.builtin).toBe(true);
       expect(view.content).toEqual(BUILTIN_TEMPLATES[0].content);
-      // 正文要能被编辑器 schema 解析
       for (const tpl of BUILTIN_TEMPLATES) {
         const node = jsonToNode(tpl.content);
         expect(() => node.check()).not.toThrow();
-        // 未知节点会被静默剥掉，这里确认关键块都还在
         const types = new Set<string>();
         node.descendants((n) => {
           types.add(n.type.name);
@@ -454,7 +599,14 @@ describe('TemplateService', () => {
         jsonToNode(tpl.content).descendants((n) => {
           if (n.type.name === 'status') {
             expect(n.attrs.text.length).toBeGreaterThan(0);
-            expect(['gray', 'blue', 'green', 'yellow', 'red', 'purple']).toContain(n.attrs.color);
+            expect([
+              'gray',
+              'blue',
+              'green',
+              'yellow',
+              'red',
+              'purple',
+            ]).toContain(n.attrs.color);
           }
           if (n.type.name === 'callout') {
             expect(n.attrs.icon).toBeTruthy();
@@ -486,12 +638,16 @@ describe('TemplateService', () => {
     it('流程图模板的示例画布：标准图形，文字和连线都绑定在图形上，引用互相一致', () => {
       const tpl = BUILTIN_TEMPLATES.find((t) => t.id === FLOWCHART_ID)!;
       {
-        const excalidraw = tpl.content.content.find((n: any) => n.type === 'excalidraw');
+        const excalidraw = tpl.content.content.find(
+          (n: any) => n.type === 'excalidraw',
+        );
         const elements: any[] = excalidraw.attrs.initialScene.elements;
         const byId = new Map(elements.map((e) => [e.id, e]));
         expect(byId.size).toBe(elements.length);
 
-        const shapes = elements.filter((e) => ['ellipse', 'rectangle', 'diamond'].includes(e.type));
+        const shapes = elements.filter((e) =>
+          ['ellipse', 'rectangle', 'diamond'].includes(e.type),
+        );
         expect(shapes.map((s) => s.type).sort()).toEqual([
           'diamond',
           'ellipse',
@@ -501,38 +657,46 @@ describe('TemplateService', () => {
           'rectangle',
         ]);
 
-        // 文字 ↔ 容器 双向绑定
         for (const text of elements.filter((e) => e.type === 'text')) {
           const container = byId.get(text.containerId);
           expect(container).toBeDefined();
-          expect(container.boundElements).toContainEqual({ id: text.id, type: 'text' });
+          expect(container.boundElements).toContainEqual({
+            id: text.id,
+            type: 'text',
+          });
           expect(text.text.length).toBeGreaterThan(0);
         }
-        // 每个图形都有文字
         for (const shape of shapes) {
-          expect(shape.boundElements.some((b: any) => b.type === 'text')).toBe(true);
+          expect(shape.boundElements.some((b: any) => b.type === 'text')).toBe(
+            true,
+          );
         }
 
-        // 箭头两端绑定到存在的图形，且图形里登记了这条箭头
         const arrows = elements.filter((e) => e.type === 'arrow');
         expect(arrows).toHaveLength(6);
         for (const arrow of arrows) {
           for (const binding of [arrow.startBinding, arrow.endBinding]) {
             const target = byId.get(binding.elementId);
             expect(['ellipse', 'rectangle', 'diamond']).toContain(target?.type);
-            expect(target.boundElements).toContainEqual({ id: arrow.id, type: 'arrow' });
+            expect(target.boundElements).toContainEqual({
+              id: arrow.id,
+              type: 'arrow',
+            });
             expect(binding.mode).toBe('orbit');
           }
           expect(arrow.points[0]).toEqual([0, 0]);
         }
-        // 判断节点有"是 / 否"两个分支，"否"的分支回到提交（循环）
         const decision = shapes.find((s) => s.type === 'diamond');
-        const outgoing = arrows.filter((a) => a.startBinding.elementId === decision.id);
+        const outgoing = arrows.filter(
+          (a) => a.startBinding.elementId === decision.id,
+        );
         expect(outgoing.map((a) => a.boundElements.length)).toEqual([1, 1]);
         const revise = byId.get(outgoing[1].endBinding.elementId);
         expect(
           arrows.some(
-            (a) => a.startBinding.elementId === revise.id && a.endBinding.elementId === 'submit',
+            (a) =>
+              a.startBinding.elementId === revise.id &&
+              a.endBinding.elementId === 'submit',
           ),
         ).toBe(true);
       }
@@ -548,16 +712,38 @@ describe('TemplateService', () => {
       const views = normalizeDatabaseViews(db!.attrs.views, columns);
       const byId = new Map(views.map((v) => [v.id, v]));
 
-      expect(views.map((v) => v.type)).toEqual(['table', 'kanban', 'kanban', 'calendar', 'timeline', 'table', 'mine']);
+      expect(views.map((v) => v.type)).toEqual([
+        'table',
+        'kanban',
+        'kanban',
+        'calendar',
+        'timeline',
+        'table',
+        'mine',
+      ]);
       expect(byId.get('by-status')).toMatchObject({ groupBy: 'status' });
-      expect(byId.get('by-priority')).toMatchObject({ groupBy: 'priority', orientation: 'horizontal' });
-      expect(byId.get('calendar')).toMatchObject({ dateColumnId: 'start', endDateColumnId: 'end' });
+      expect(byId.get('by-priority')).toMatchObject({
+        groupBy: 'priority',
+        orientation: 'horizontal',
+      });
+      expect(byId.get('calendar')).toMatchObject({
+        dateColumnId: 'start',
+        endDateColumnId: 'end',
+      });
       expect(countDatabaseFilterConditions(byId.get('focus')!.filter)).toBe(3);
-      // 每种列类型都用上（关联页面列需要真实页面，不放）
       expect(new Set(columns.map((c) => c.type))).toEqual(
-        new Set(['text', 'person', 'select', 'multiSelect', 'date', 'number', 'checkbox', 'url', 'progress']),
+        new Set([
+          'text',
+          'person',
+          'select',
+          'multiSelect',
+          'date',
+          'number',
+          'checkbox',
+          'url',
+          'progress',
+        ]),
       );
-      // 每行的日期都合法，结束不早于开始
       for (const row of readDatabaseRows(db!)) {
         expect(row.values.end >= row.values.start).toBe(true);
       }
@@ -568,9 +754,9 @@ describe('TemplateService', () => {
       await expect(
         service.update({ templateId: WEEKLY_ID, title: 'x' }, admin, ws()),
       ).rejects.toBeInstanceOf(ForbiddenException);
-      await expect(service.delete(WEEKLY_ID, admin, ws())).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
+      await expect(
+        service.delete(WEEKLY_ID, admin, ws()),
+      ).rejects.toBeInstanceOf(ForbiddenException);
       expect(templateRepo.updateTemplate).not.toHaveBeenCalled();
       expect(templateRepo.deleteTemplate).not.toHaveBeenCalled();
     });
@@ -579,7 +765,12 @@ describe('TemplateService', () => {
   describe('use', () => {
     it('以模板标题/图标/正文创建页面', async () => {
       const { service, pageService } = createSubject({
-        template: row({ allSpaces: true, spaceIds: [], title: '会议纪要', icon: '📝' }),
+        template: row({
+          allSpaces: true,
+          spaceIds: [],
+          title: '会议纪要',
+          icon: '📝',
+        }),
       });
       await service.use({ templateId: 't1', spaceId: 'space-1' }, member, ws());
       expect(pageService.create).toHaveBeenCalledWith('member-1', 'ws-1', {
@@ -634,18 +825,37 @@ describe('TemplateService', () => {
       jest.useFakeTimers().setSystemTime(new Date('2026-12-01T02:00:00.000Z'));
       try {
         const { service, pageService } = createSubject();
-        const user = { ...member, name: '小明', avatarUrl: 'a.png', timezone: 'Asia/Shanghai' };
-        await service.use({ templateId: PLAN_ID, spaceId: 'space-1' }, user, ws());
-        await service.use({ templateId: PLAN_ID, spaceId: 'space-1' }, user, ws());
-        const [first, second] = pageService.create.mock.calls.map(([, , dto]: any) => findDatabase(dto.content));
+        const user = {
+          ...member,
+          name: '小明',
+          avatarUrl: 'a.png',
+          timezone: 'Asia/Shanghai',
+        };
+        await service.use(
+          { templateId: PLAN_ID, spaceId: 'space-1' },
+          user,
+          ws(),
+        );
+        await service.use(
+          { templateId: PLAN_ID, spaceId: 'space-1' },
+          user,
+          ws(),
+        );
+        const [first, second] = pageService.create.mock.calls.map(
+          ([, , dto]: any) => findDatabase(dto.content),
+        );
 
         const owner = first.attrs.columns.find((c: any) => c.id === 'owner');
-        expect(owner.options).toEqual([{ id: 'member-1', name: '小明', color: 'blue', avatarUrl: 'a.png' }]);
+        expect(owner.options).toEqual([
+          { id: 'member-1', name: '小明', color: 'blue', avatarUrl: 'a.png' },
+        ]);
 
         const cell = (row: any, columnId: string) =>
-          row.content.find((c: any) => c.attrs.columnId === columnId)?.attrs.value;
-        // 模板基准日 2026-11-02 平移到 2026-12-01（+29 天）
-        const source = findDatabase(BUILTIN_TEMPLATES.find((t) => t.id === PLAN_ID)!.content);
+          row.content.find((c: any) => c.attrs.columnId === columnId)?.attrs
+            .value;
+        const source = findDatabase(
+          BUILTIN_TEMPLATES.find((t) => t.id === PLAN_ID)!.content,
+        );
         expect(cell(source.content[4], 'start')).toBe('2026-11-02');
         expect(cell(first.content[4], 'start')).toBe('2026-12-01');
         expect(cell(first.content[0], 'owner')).toEqual(['member-1']);
@@ -653,7 +863,6 @@ describe('TemplateService', () => {
 
         expect(first.attrs.id).not.toBe(second.attrs.id);
         expect(first.content[0].attrs.id).not.toBe(second.content[0].attrs.id);
-        // 模板对象本身不变
         expect(source.attrs.id).toBe('database');
         expect(cell(source.content[0], 'owner')).toEqual(['$me']);
       } finally {

@@ -13,12 +13,6 @@ import {
 } from 'class-validator';
 import { PaginationOptions } from '@akasha/db/pagination/pagination-options';
 
-/**
- * - all：用户可见的全部模板（管理页默认）
- * - allSpaces：仅"所有空间"模板
- * - space：明确指定到 spaceId 的模板
- * - available：在 spaceId 中可用的模板（所有空间 + 指定到该空间），空间内建页使用
- */
 export type TemplateScope = 'all' | 'allSpaces' | 'space' | 'available';
 
 export class ListTemplatesDto extends PaginationOptions {
@@ -36,7 +30,6 @@ export class TemplateIdDto {
   templateId: string;
 }
 
-/** 可用范围：allSpaces=true 时忽略 spaceIds；否则 spaceIds 至少一个。 */
 class TemplateAvailabilityDto {
   @IsOptional()
   @IsBoolean()
@@ -69,7 +62,6 @@ export class CreateTemplateDto extends TemplateAvailabilityDto {
   @IsObject()
   content?: Record<string, any>;
 
-  // 另存为模板：从已有页面复制正文（与 content 二选一）
   @IsOptional()
   @IsUUID()
   sourcePageId?: string;

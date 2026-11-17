@@ -11,7 +11,6 @@ import { PagePermissionRepo } from '@akasha/db/repos/page/page-permission.repo';
 import { UserRole } from '../../common/helpers/types/permission';
 import { LabelType } from '@akasha/db/repos/label/label.repo';
 
-// 页面搜索最多返回的结果数（按相关度取前 N 条），再多对用户没有意义
 const MAX_PAGE_SEARCH_RESULTS = 500;
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -57,8 +56,6 @@ export class SearchService {
     const limit = searchParams.limit || 50;
     const offset = searchParams.offset || 0;
 
-    // 第一阶段只取相关度最高的前 500 个命中 id + rank：权限过滤后得到准确总数，
-    // 再按 offset/limit 切出当前页，避免对全部结果计算 ts_headline。
     let queryResults = this.db
       .selectFrom('pages')
       .select([
@@ -128,10 +125,8 @@ export class SearchService {
       .limit(MAX_PAGE_SEARCH_RESULTS);
 
     if (searchParams.spaceId) {
-      // search by spaceId
       queryResults = queryResults.where('spaceId', '=', searchParams.spaceId);
     } else if (opts.userId && !searchParams.spaceId) {
-      // only search spaces the user is a member of
       queryResults = queryResults
         .where(
           'spaceId',
@@ -140,7 +135,6 @@ export class SearchService {
         )
         .where('workspaceId', '=', opts.workspaceId);
     } else if (searchParams.shareId && !searchParams.spaceId && !opts.userId) {
-      // search in shares
       const shareId = searchParams.shareId;
       const share = await this.shareRepo.findById(shareId);
       if (!share || share.workspaceId !== opts.workspaceId) {
@@ -182,7 +176,6 @@ export class SearchService {
 
     let candidates = await queryResults.execute();
 
-    // Filter results by page-level permissions (if user is authenticated)
     if (opts.userId && candidates.length > 0) {
       const accessibleIds =
         await this.pagePermissionRepo.filterAccessiblePageIds({
@@ -195,14 +188,11 @@ export class SearchService {
     }
 
     const total = candidates.length;
-    const pageIds = candidates
-      .slice(offset, offset + limit)
-      .map((r) => r.id);
+    const pageIds = candidates.slice(offset, offset + limit).map((r) => r.id);
     if (pageIds.length === 0) {
       return { items: [], total };
     }
 
-    // 第二阶段：只为当前页取详情和高亮片段
     let detailQuery = this.db
       .selectFrom('pages')
       .select([
@@ -274,8 +264,6 @@ export class SearchService {
 
     const limit = searchParams.limit || 25;
     const offset = searchParams.offset || 0;
-    // 有上限地多取候选结果，以复用现有页面权限过滤；
-    // 仅当受限页面经常导致结果不足时再改为 SQL 过滤。
     const candidateLimit = Math.min((offset + limit) * 5, 500);
 
     let attachmentsQuery = this.db
@@ -467,7 +455,6 @@ export class SearchService {
         .where('workspaceId', '=', workspaceId)
         .limit(limit);
 
-      // search all spaces the user has access to, prioritizing the current space
       const userSpaceIds = await this.spaceMemberRepo.getUserSpaceIds(userId);
 
       if (userSpaceIds?.length > 0) {
@@ -483,7 +470,6 @@ export class SearchService {
         pages = await pageSearch.execute();
       }
 
-      // Filter by page-level permissions
       if (pages.length > 0) {
         const pageIds = pages.map((p) => p.id);
         const accessibleIds =
@@ -499,11 +485,6 @@ export class SearchService {
     return { users, groups, pages };
   }
 
-  /**
-   * Title, icon and link of the given pages, limited to the ones the user can
-   * read: same workspace, not deleted, in a space they belong to, and allowed
-   * by page-level permissions. Pages they cannot see are simply left out.
-   */
   async resolvePages(pageIds: string[], userId: string, workspaceId: string) {
     const ids = [...new Set(pageIds)];
     if (!ids.length) return { pages: [] };

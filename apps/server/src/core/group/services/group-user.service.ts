@@ -64,7 +64,6 @@ export class GroupUserService {
 
     if (userIds.length === 0) return;
 
-    // make sure we have valid workspace users
     const validUsers = await db
       .selectFrom('users')
       .select(['id', 'name'])
@@ -75,7 +74,6 @@ export class GroupUserService {
 
     if (validUsers.length === 0) return;
 
-    // prepare users to add to group
     const groupUsersToInsert = [];
     for (const user of validUsers) {
       groupUsersToInsert.push({
@@ -84,7 +82,6 @@ export class GroupUserService {
       });
     }
 
-    // batch insert new group users
     await db
       .insertInto('groupUsers')
       .values(groupUsersToInsert)
@@ -146,7 +143,6 @@ export class GroupUserService {
 
     const spaceIds = await this.spaceMemberRepo.getSpaceIdsByGroupId(groupId);
 
-    // TODO: use queue instead
     await executeTx(this.db, async (trx) => {
       await this.groupUserRepo.delete(userId, groupId, { trx });
 

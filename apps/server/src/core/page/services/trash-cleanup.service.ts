@@ -18,7 +18,7 @@ export class TrashCleanupService {
     @InjectQueue(QueueName.ATTACHMENT_QUEUE) private attachmentQueue: Queue,
   ) {}
 
-  @Interval('trash-cleanup', 24 * 60 * 60 * 1000) // every 24 hours
+  @Interval('trash-cleanup', 24 * 60 * 60 * 1000)
   @WithJobContext('trash-cleanup')
   async cleanupOldTrash() {
     try {
@@ -72,7 +72,6 @@ export class TrashCleanupService {
   }
 
   private async cleanupPage(pageId: string) {
-    // Get all descendants using recursive CTE (including the page itself)
     const descendants = await this.db
       .withRecursive('page_descendants', (db) =>
         db
@@ -92,7 +91,6 @@ export class TrashCleanupService {
 
     const pageIds = descendants.map((d) => d.id);
 
-    // Queue attachment deletion for all pages with unique job IDs to prevent duplicates
     for (const id of pageIds) {
       await this.attachmentQueue.add(
         QueueJob.DELETE_PAGE_ATTACHMENTS,

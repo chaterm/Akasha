@@ -152,7 +152,6 @@ describe('MCP body limit over a real socket', () => {
           port,
           method: request.method,
           path: request.url,
-          // Vite/http-proxy uses Connection: close for its upstream request.
           headers: { ...request.headers, connection: 'close' },
         },
         (upstreamResponse) => {
@@ -303,7 +302,6 @@ describe('MCP body limit over a real socket', () => {
         responses += chunk;
         if (!continued && responses.includes('manual_upload_in_akasha')) {
           continued = true;
-          // Keep sending after the rejection, as a buffering proxy may do.
           continueTimer = setTimeout(() => {
             socket.write(payload.slice(64 * 1024));
             socket.write(

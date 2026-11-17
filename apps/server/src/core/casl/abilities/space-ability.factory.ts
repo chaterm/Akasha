@@ -25,7 +25,6 @@ export default class SpaceAbilityFactory {
     private readonly spaceRepo: SpaceRepo,
   ) {}
   async createForUser(user: User, spaceId: string) {
-    // Workspace administrators have full access within their own workspace.
     if (isWorkspaceAdmin(user.role)) {
       const space = await this.spaceRepo.findById(spaceId, user.workspaceId);
       if (!space) {

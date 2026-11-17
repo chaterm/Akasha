@@ -129,7 +129,6 @@ export class FavoriteController {
     }
 
     if (dto.type === 'template') {
-      // 模板已不支持收藏：只允许移除历史收藏，移除自己的记录无需再校验模板权限
       if (!dto.templateId)
         throw new BadRequestException('templateId is required');
       if (intent === 'add') {

@@ -19,12 +19,10 @@ import {
 import { groupAgentOpsByCategory } from './agent-op-category';
 import { WithJobContext } from '../../common/logger/with-job-context.decorator';
 
-// Applies to page_view and agent_op events.
 const EVENT_RETENTION_DAYS = 400;
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const OVERVIEW_CACHE_SECONDS = 5 * 60;
 const DAY_MS = 24 * 60 * 60 * 1000;
-// Matches ANALYTICS_TIMEZONE (Asia/Shanghai, no DST).
 const TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
 
 const RANGE_DAYS: Partial<Record<AnalyticsRangeKey, number>> = {
@@ -35,7 +33,6 @@ const RANGE_DAYS: Partial<Record<AnalyticsRangeKey, number>> = {
   '90d': 90,
 };
 
-/** [from, to) covering the last `days` local days, today included. */
 export function resolveRange(
   key: AnalyticsRangeKey,
   now: Date = new Date(),
@@ -82,11 +79,6 @@ export function normalizeRoute(route: string): AnalyticsRoute {
     : 'other';
 }
 
-/**
- * DAU/WAU/MAU headline numbers. WAU/MAU are taken at the last day of the
- * range; stickiness is the average of daily DAU/MAU, skipping days with no
- * monthly actives.
- */
 export function summarizeActivity(daily: DailyRow[]) {
   if (daily.length === 0) {
     return { avgDau: 0, wau: 0, mau: 0, stickiness: 0 };
@@ -129,8 +121,6 @@ export class AnalyticsService {
     let spaceId: string | null = null;
     let pageId: string | null = null;
 
-    // Ids are resolved server-side and scoped to the caller's workspace;
-    // anything unresolvable is recorded without attribution.
     if (dto.pageSlugId) {
       const page = await this.pageRepo.findById(dto.pageSlugId);
       if (page && !page.deletedAt && page.workspaceId === workspace.id) {
@@ -197,7 +187,6 @@ export class AnalyticsService {
       this.analyticsEventRepo.topUsers(range),
       spaceId ? null : this.analyticsEventRepo.topSpaces(range),
       spaceId ? null : this.analyticsEventRepo.routeBreakdown(range),
-      // Agents act across spaces, so they are workspace-scope only.
       spaceId ? null : this.analyticsEventRepo.agentSummary(range),
     ]);
 
@@ -221,7 +210,6 @@ export class AnalyticsService {
         ? {
             agents: {
               ...agents,
-              // Categories use every op; the per-op list is trimmed for display.
               byCategory: groupAgentOpsByCategory(agents.byOp),
               byOp: agents.byOp.slice(0, 15),
             },

@@ -76,8 +76,6 @@ class OutboxQuery {
     this.matching().forEach((row) => Object.assign(row, this.update));
   }
 }
-/** Pending rows are isolated per callback, so a failed transaction cannot retain
- * a delivery checkpoint or a retry counter. PostgreSQL concurrency is tested separately. */
 class OutboxDb {
   entries: Entry[] = [];
   pages: PageRow[] = [];
@@ -193,20 +191,19 @@ describe('WeeklyReportOutboxService durable effect delivery', () => {
     );
     expect(f.search.add).not.toHaveBeenCalled();
     const drain = f.service.drain();
-    // Let the first queued effect start without settling it.
     for (let i = 0; i < 8 && !f.search.add.mock.calls.length; i++)
       await Promise.resolve();
     expect(f.search.add).toHaveBeenCalledTimes(1);
     expect(f.knowledge.add).not.toHaveBeenCalled();
     expect(f.db.entries.every((row) => row.deliveredAt === null)).toBe(true);
-    await f.service.drain(); // An overlapping timer must not dispatch the same row.
+    await f.service.drain();
     expect(f.search.add).toHaveBeenCalledTimes(1);
     resolveSearch();
     await drain;
     expect(f.db.entries.every((row) => row.deliveredAt instanceof Date)).toBe(
       true,
     );
-    expect(f.db.transactions).toHaveLength(6); // Five checkpoints plus the empty poll.
+    expect(f.db.transactions).toHaveLength(6);
     expect(
       f.db.transactions.every(
         (trx) => trx.lockedReads === 1 && trx.skippedLockedReads === 1,

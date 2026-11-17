@@ -53,7 +53,5 @@ export const prepareWeeklyReportSchema = {
 export const saveWeeklyReportSchema = {
   saveToken: z.string().min(1).max(16384),
   title: z.string().min(1).max(200).optional(),
-  // Detailed schema/content checks belong to the first-write domain path.
-  // A successful token replay must remain independent of new document content.
   content: z.record(z.string(), z.unknown()),
 };

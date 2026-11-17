@@ -110,7 +110,6 @@ export class PageService {
   ): Promise<Page> {
     let parentPageId = undefined;
 
-    // check if parent page exists
     if (createPageDto.parentPageId) {
       const parentPage = await this.pageRepo.findById(
         createPageDto.parentPageId,
@@ -210,7 +209,6 @@ export class PageService {
       .limit(1);
 
     if (parentPageId) {
-      // check for children of this page
       const lastPage = await lastPageQuery
         .where('parentPageId', '=', parentPageId)
         .executeTakeFirst();
@@ -218,20 +216,16 @@ export class PageService {
       if (!lastPage) {
         pagePosition = generateJitteredKeyBetween(null, null);
       } else {
-        // if there is an existing page, we should get a position below it
         pagePosition = generateJitteredKeyBetween(lastPage.position, null);
       }
     } else {
-      // for root page
       const lastPage = await lastPageQuery
         .where('parentPageId', 'is', null)
         .executeTakeFirst();
 
-      // if no existing page, make this the first
       if (!lastPage) {
-        pagePosition = generateJitteredKeyBetween(null, null); // we expect "a0"
+        pagePosition = generateJitteredKeyBetween(null, null);
       } else {
-        // if there is an existing page, we should get a position below it
         pagePosition = generateJitteredKeyBetween(lastPage.position, null);
       }
     }
@@ -272,8 +266,6 @@ export class PageService {
       contributorIds: contributorIds,
     };
     if (fillingWeeklyDraft) {
-      // The collaboration content commit owns ACL reindexing and compilation;
-      // do not compile the placeholder from this preliminary metadata update.
       await this.pageRepo.updatePage(metadata, page.id, undefined, {
         skipKnowledgeCompile: true,
       });
@@ -455,7 +447,6 @@ export class PageService {
       includeContent: false,
     });
 
-    // Filter to only accessible pages while maintaining tree integrity
     const accessiblePages = await this.filterAccessibleTreePages(
       allPages,
       rootPage.id,
@@ -464,7 +455,6 @@ export class PageService {
     );
     const accessibleIds = new Set(accessiblePages.map((p) => p.id));
 
-    // Find inaccessible pages whose parent is being moved - these need to be orphaned
     const pagesToOrphan = allPages.filter(
       (p) =>
         !accessibleIds.has(p.id) &&
@@ -473,7 +463,6 @@ export class PageService {
     );
 
     await executeTx(this.db, async (trx) => {
-      // Orphan inaccessible child pages (make them root pages in original space)
       for (const page of pagesToOrphan) {
         const orphanPosition = await this.nextPagePosition(
           rootPage.spaceId,
@@ -486,7 +475,6 @@ export class PageService {
         );
       }
 
-      // Update root page
       const nextPosition = await this.nextPagePosition(spaceId);
       await this.pageRepo.updatePage(
         { spaceId, parentPageId: null, position: nextPosition },
@@ -499,54 +487,45 @@ export class PageService {
       childPageIds = pageIdsToMove.filter((id) => id !== rootPage.id);
 
       if (pageIdsToMove.length > 1) {
-        // Update sub pages (all accessible pages except root)
         await this.pageRepo.updatePages({ spaceId }, childPageIds, trx);
       }
 
       if (pageIdsToMove.length > 0) {
-        // Clear page-level permissions - moved pages inherit destination space permissions
-        // (page_permissions cascade deletes via foreign key)
         await trx
           .deleteFrom('pageAccess')
           .where('pageId', 'in', pageIdsToMove)
           .execute();
 
-        // update spaceId in shares
         await trx
           .updateTable('shares')
           .set({ spaceId: spaceId })
           .where('pageId', 'in', pageIdsToMove)
           .execute();
 
-        // Update comments
         await trx
           .updateTable('comments')
           .set({ spaceId: spaceId })
           .where('pageId', 'in', pageIdsToMove)
           .execute();
 
-        // Update page verifications
         await trx
           .updateTable('pageVerifications')
           .set({ spaceId: spaceId })
           .where('pageId', 'in', pageIdsToMove)
           .execute();
 
-        // Update notifications — access follows the page after a move
         await trx
           .updateTable('notifications')
           .set({ spaceId: spaceId })
           .where('pageId', 'in', pageIdsToMove)
           .execute();
 
-        // Update attachments
         await this.attachmentRepo.updateAttachmentsByPageId(
           { spaceId },
           pageIdsToMove,
           trx,
         );
 
-        // Update watchers and remove those without access to new space
         await this.watcherService.movePageWatchersToSpace(
           pageIdsToMove,
           spaceId,
@@ -572,10 +551,8 @@ export class PageService {
     let nextPosition: string;
 
     if (isDuplicateInSameSpace) {
-      // For duplicate in same space, position right after the original page
       nextPosition = generateJitteredKeyBetween(rootPage.position, null);
     } else {
-      // For copy to different space, position at the end
       nextPosition = await this.nextPagePosition(spaceId);
     }
 
@@ -583,7 +560,6 @@ export class PageService {
       includeContent: true,
     });
 
-    // Filter to only accessible pages while maintaining tree integrity
     const pages = await this.filterAccessibleTreePages(
       allPages,
       rootPage.id,
@@ -654,7 +630,6 @@ export class PageService {
           });
         }
 
-        // Update internal page links in mention nodes
         prosemirrorDoc.descendants((node: PMNode) => {
           if (
             node.type.name === 'mention' &&
@@ -662,7 +637,6 @@ export class PageService {
           ) {
             const referencedPageId = node.attrs.entityId;
 
-            // Check if the referenced page is within the pages being copied
             if (referencedPageId && pageMap.has(referencedPageId)) {
               const mappedPage = pageMap.get(referencedPageId);
               //@ts-ignore
@@ -672,8 +646,6 @@ export class PageService {
             }
           }
 
-          // Remap transclusion-reference source pages to their copies when
-          // the source page is also being duplicated in the same operation.
           if (node.type.name === 'transclusionReference') {
             const sourcePageId = node.attrs.sourcePageId;
             if (sourcePageId && pageMap.has(sourcePageId)) {
@@ -683,7 +655,6 @@ export class PageService {
             }
           }
 
-          // Update internal page links in link marks
           for (const mark of node.marks) {
             if (
               mark.type.name === 'link' &&
@@ -708,7 +679,6 @@ export class PageService {
 
         const prosemirrorJson = prosemirrorDoc.toJSON();
 
-        // Add "Copy of " prefix to the root page title only for duplicates in same space
         let title = page.title;
         if (isDuplicateInSameSpace && page.id === rootPage.id) {
           const originalTitle = getPageTitle(page.title);
@@ -748,9 +718,6 @@ export class PageService {
       );
     });
 
-    // Extract transclusions from every duplicated page and persist them in
-    // one statement. Duplication bypasses Yjs onStoreDocument; brand-new
-    // pages never have prior rows so we can skip the diff and just bulk-insert.
     try {
       await this.transclusionService.insertTransclusionsForPages(
         insertablePages.map((p) => ({
@@ -787,7 +754,6 @@ export class PageService {
       workspaceId: authUser.workspaceId,
     });
 
-    //TODO: best to handle this in a queue
     const attachmentsIds = Array.from(attachmentMap.keys());
     if (attachmentsIds.length > 0) {
       const attachments = await this.db
@@ -801,7 +767,6 @@ export class PageService {
         try {
           const pageAttachment = attachmentMap.get(attachment.id);
 
-          // make sure the copied attachment belongs to the page it was copied from
           if (attachment.pageId !== pageAttachment.oldPageId) {
             continue;
           }
@@ -863,7 +828,6 @@ export class PageService {
   }
 
   async movePage(dto: MovePageDto, movedPage: Page) {
-    // validate position value by attempting to generate a key
     try {
       generateJitteredKeyBetween(dto.position, null);
     } catch (err) {
@@ -874,7 +838,6 @@ export class PageService {
     if (movedPage.parentPageId === dto.parentPageId) {
       parentPageId = undefined;
     } else {
-      // changing the page's parent
       if (dto.parentPageId) {
         const parentPage = await this.pageRepo.findById(dto.parentPageId);
         if (
@@ -1052,7 +1015,6 @@ export class PageService {
   }
 
   async forceDelete(pageId: string, workspaceId: string): Promise<void> {
-    // Get all descendant IDs (including the page itself) using recursive CTE
     const descendants = await this.db
       .withRecursive('page_descendants', (db) =>
         db
@@ -1072,7 +1034,6 @@ export class PageService {
 
     const pageIds = descendants.map((d) => d.id);
 
-    // Queue attachment deletion for all pages with unique job IDs to prevent duplicates
     for (const id of pageIds) {
       await this.attachmentQueue.add(
         QueueJob.DELETE_PAGE_ATTACHMENTS,
@@ -1141,13 +1102,6 @@ export class PageService {
     return prosemirrorJson;
   }
 
-  /**
-   * Filters a list of pages to only those accessible to the user while maintaining tree integrity.
-   * A page is included only if:
-   * 1. The user has access to it
-   * 2. Its parent is also included (or it's the root page)
-   * This ensures that if a middle page is inaccessible, its entire subtree is excluded.
-   */
   private async filterAccessibleTreePages<
     T extends { id: string; parentPageId: string | null },
   >(
@@ -1168,11 +1122,8 @@ export class PageService {
     );
     const accessibleSet = new Set(accessibleIds);
 
-    // Prune: include a page only if it's accessible AND its parent chain to root is included
     const includedIds = new Set<string>();
 
-    // Process pages in a way that ensures parents are processed before children
-    // We do this by iterating until no more pages can be added
     let changed = true;
     while (changed) {
       changed = false;
@@ -1180,14 +1131,12 @@ export class PageService {
         if (includedIds.has(page.id)) continue;
         if (!accessibleSet.has(page.id)) continue;
 
-        // Root page: include if accessible
         if (page.id === rootPageId) {
           includedIds.add(page.id);
           changed = true;
           continue;
         }
 
-        // Non-root: include if parent is already included
         if (page.parentPageId && includedIds.has(page.parentPageId)) {
           includedIds.add(page.id);
           changed = true;

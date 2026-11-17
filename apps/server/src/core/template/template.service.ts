@@ -51,19 +51,11 @@ import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
 const EMPTY_DOC = { type: 'doc', content: [{ type: 'paragraph' }] };
 
-/** 带 builtin 标记的模板行；内置模板不在数据库里。 */
 type ResolvedTemplate = TemplateRow & {
   builtin?: boolean;
-  /** 内置模板的建页标题格式，仅代码内置模板有值。 */
   pageTitlePattern?: string;
 };
 
-/**
- * 对外返回的模板：
- * - spaceIds 只包含当前用户能访问的空间；
- * - otherSpaceCount 为用户看不到的已指定空间数（只用于展示"另有 N 个空间"）；
- * - builtin 为 true 时是代码内置的公共模板，只读。
- */
 export type TemplateView = Omit<TemplateRow, 'spaceIds'> & {
   spaceIds: string[];
   otherSpaceCount: number;
@@ -98,12 +90,10 @@ export class TemplateService {
     return this.listVisible(user, workspace, dto, userSpaceIds);
   }
 
-  /** MCP listing validates its target before exposing any template metadata. */
   async listForMcp(user: User, workspace: Workspace, dto: ListTemplatesDto) {
     const userSpaceIds = await this.spaceMemberRepo.getUserSpaceIds(user.id);
     if (dto.spaceId) {
       await this.assertCanReadSpace(dto.spaceId, user, workspace);
-      // Workspace administrators can read spaces without explicit membership.
       if (!userSpaceIds.includes(dto.spaceId)) userSpaceIds.push(dto.spaceId);
     }
     return this.listVisible(user, workspace, dto, userSpaceIds);
@@ -138,7 +128,6 @@ export class TemplateService {
       },
     );
 
-    // 内置模板对所有空间可用：只在首页、且不是"指定到某空间"的筛选时追加在最前
     const builtins =
       scope === 'space' || dto.cursor || dto.beforeCursor
         ? []
@@ -176,7 +165,6 @@ export class TemplateService {
     return this.toView(template, user, workspace, userSpaceIds);
   }
 
-  /** Read a visible template only after checking the intended target space. */
   async getForSpace(
     templateId: string,
     spaceId: string,
@@ -198,7 +186,6 @@ export class TemplateService {
         ),
       );
     }
-    // Normalize a copy: parsing legacy template JSON may mutate its input.
     const node = jsonToNode(
       structuredClone(template.content ?? EMPTY_DOC) as Record<string, any>,
     );
@@ -238,7 +225,6 @@ export class TemplateService {
       );
     }
 
-    // 未指定范围时默认"所有空间"
     const availability = this.normalizeAvailability(
       dto.allSpaces === undefined && dto.spaceIds === undefined
         ? { allSpaces: true }
@@ -248,7 +234,11 @@ export class TemplateService {
 
     let content: any = dto.content ?? EMPTY_DOC;
     if (dto.sourcePageId) {
-      content = await this.readSourcePageContent(dto.sourcePageId, user, workspace);
+      content = await this.readSourcePageContent(
+        dto.sourcePageId,
+        user,
+        workspace,
+      );
     }
     const textContent = this.toText(content);
 
@@ -276,7 +266,9 @@ export class TemplateService {
       resourceType: AuditResource.TEMPLATE,
       resourceId: id,
       changes: { after: { title: dto.title, ...availability } },
-      metadata: dto.sourcePageId ? { sourcePageId: dto.sourcePageId } : undefined,
+      metadata: dto.sourcePageId
+        ? { sourcePageId: dto.sourcePageId }
+        : undefined,
     });
 
     return this.getById(id, user, workspace);
@@ -300,8 +292,9 @@ export class TemplateService {
         allSpaces: dto.allSpaces ?? template.allSpaces,
         spaceIds: dto.spaceIds ?? template.spaceIds,
       });
-      // 用户看不到的已指定空间原样保留，避免一次保存把别人加的空间删掉
-      const hidden = template.spaceIds.filter((id) => !userSpaceIds.includes(id));
+      const hidden = template.spaceIds.filter(
+        (id) => !userSpaceIds.includes(id),
+      );
       nextAvailability = requested.allSpaces
         ? requested
         : {
@@ -327,7 +320,12 @@ export class TemplateService {
     }
 
     await executeTx(this.db, async (trx) => {
-      await this.templateRepo.updateTemplate(patch, template.id, workspace.id, trx);
+      await this.templateRepo.updateTemplate(
+        patch,
+        template.id,
+        workspace.id,
+        trx,
+      );
       if (nextAvailability) {
         await this.templateRepo.setTemplateSpaces(
           template.id,
@@ -347,7 +345,10 @@ export class TemplateService {
       resourceId: template.id,
       changes: availabilityChanged
         ? {
-            before: { allSpaces: template.allSpaces, spaceIds: template.spaceIds },
+            before: {
+              allSpaces: template.allSpaces,
+              spaceIds: template.spaceIds,
+            },
             after: nextAvailability,
           }
         : undefined,
@@ -357,7 +358,11 @@ export class TemplateService {
   }
 
   async delete(templateId: string, user: User, workspace: Workspace) {
-    const { template } = await this.findVisibleOrThrow(templateId, user, workspace);
+    const { template } = await this.findVisibleOrThrow(
+      templateId,
+      user,
+      workspace,
+    );
     this.assertCanManage(template, user, workspace);
 
     await this.templateRepo.deleteTemplate(template.id, workspace.id);
@@ -427,12 +432,19 @@ export class TemplateService {
     const builtin = findBuiltinTemplate(templateId);
     if (builtin) {
       const userSpaceIds = await this.spaceMemberRepo.getUserSpaceIds(user.id);
-      return { template: this.builtinRow(builtin, workspace, user), userSpaceIds };
+      return {
+        template: this.builtinRow(builtin, workspace, user),
+        userSpaceIds,
+      };
     }
 
-    const template = await this.templateRepo.findById(templateId, workspace.id, {
-      includeContent: opts?.includeContent,
-    });
+    const template = await this.templateRepo.findById(
+      templateId,
+      workspace.id,
+      {
+        includeContent: opts?.includeContent,
+      },
+    );
     if (!template || template.deletedAt) {
       throw new NotFoundException('Template not found');
     }
@@ -442,7 +454,6 @@ export class TemplateService {
       template.creatorId === user.id ||
       template.allSpaces ||
       template.spaceIds.some((id) => userSpaceIds.includes(id));
-    // 不可见与不存在返回同一错误，避免泄露模板存在性
     if (!visible) throw new NotFoundException('Template not found');
     return { template, userSpaceIds };
   }
@@ -461,24 +472,26 @@ export class TemplateService {
     return { allSpaces: false, spaceIds };
   }
 
-  private canManage(template: ResolvedTemplate, user: User, workspace: Workspace) {
-    // 内置模板只读，管理员也不能改删
+  private canManage(
+    template: ResolvedTemplate,
+    user: User,
+    workspace: Workspace,
+  ) {
     if (template.builtin) return false;
     if (isWorkspaceAdmin(user.role)) return true;
-    // 普通用户可以管理自己创建的模板
     return template.creatorId === user.id;
   }
 
-  private assertCanManage(template: ResolvedTemplate, user: User, workspace: Workspace) {
+  private assertCanManage(
+    template: ResolvedTemplate,
+    user: User,
+    workspace: Workspace,
+  ) {
     if (!this.canManage(template, user, workspace)) {
       throw new ForbiddenException();
     }
   }
 
-  /**
-   * 校验能否设置该可用范围。
-   * @param currentSpaceIds 已指定的空间；新增的空间才需要建页权限。null 表示原来是"所有空间"。
-   */
   private async assertCanAssign(
     next: Availability,
     currentSpaceIds: string[] | null,
@@ -523,7 +536,6 @@ export class TemplateService {
     }
   }
 
-  /** 内置模板可以用日期命名页面标题；普通模板沿用模板标题。 */
   private resolvePageTitle(
     template: ResolvedTemplate,
     user: User,
@@ -561,7 +573,6 @@ export class TemplateService {
     );
   }
 
-  /** 把内置模板转成与数据库行同形的结构；给了 user 时按该用户实例化正文。 */
   private builtinRow(
     tpl: BuiltinTemplate,
     workspace: Workspace,
@@ -574,7 +585,6 @@ export class TemplateService {
       icon: tpl.icon,
       allSpaces: true,
       spaceIds: [],
-      // 复制一份，避免调用方改动共享的模块级对象
       content: user
         ? instantiateBuiltinContent(tpl.content, {
             today: localDate(user.timezone),
@@ -601,7 +611,6 @@ function sameSet(a: string[], b: string[]) {
   return a.length === b.length && a.every((x) => b.includes(x));
 }
 
-/** 按用户时区取当天日期（YYYY-MM-DD）；时区缺失或非法时退回服务器时区。 */
 function localDate(timeZone: string | null | undefined): string {
   const now = new Date();
   const options: Intl.DateTimeFormatOptions = {

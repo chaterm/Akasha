@@ -8,7 +8,6 @@ import {
 
 describe('analytics helpers', () => {
   it('resolves ranges to whole Asia/Shanghai days, today included', () => {
-    // 2026-10-12 09:30 in Shanghai.
     const now = new Date('2026-10-12T01:30:00.000Z');
 
     const { from, to } = resolveRange('7d', now);
@@ -18,7 +17,6 @@ describe('analytics helpers', () => {
   });
 
   it('treats late-night UTC as the next Shanghai day', () => {
-    // 2026-10-12 23:30 UTC is already 2026-10-13 in Shanghai.
     const now = new Date('2026-10-12T23:30:00.000Z');
 
     const { to } = resolveRange('30d', now);
@@ -40,7 +38,6 @@ describe('analytics helpers', () => {
       avgDau: 10,
       wau: 30,
       mau: 50,
-      // (10/40 + 20/50) / 2; the day with no MAU is skipped.
       stickiness: 0.325,
     });
     expect(summarizeActivity([])).toEqual({

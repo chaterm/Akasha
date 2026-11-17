@@ -21,7 +21,6 @@ class DistinctFromStartTimeConstraint implements ValidatorConstraintInterface {
   }
 }
 
-/** Times are HH:mm in the server's local timezone. */
 export class UpdateCompileWindowSettingsDto {
   @IsBoolean()
   enabled: boolean;

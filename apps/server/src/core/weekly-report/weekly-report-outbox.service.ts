@@ -16,7 +16,6 @@ import {
 import { AuditEvent, AuditResource } from '../../common/events/audit-events';
 import { WithJobContext } from '../../common/logger/with-job-context.decorator';
 
-/** Each effect has an independent durable checkpoint; the producer never emits early. */
 @Injectable()
 export class WeeklyReportOutboxService {
   private readonly logger = new Logger(WeeklyReportOutboxService.name);
@@ -142,8 +141,6 @@ export class WeeklyReportOutboxService {
               .where('id', '=', entry.id)
               .execute();
           } catch (error) {
-            // SQL failures abort the transaction. Let the outer handler roll it back;
-            // queue/service failures can safely checkpoint a delayed retry here.
             if ((error as any)?.code?.match?.(/^[0-9A-Z]{5}$/)) throw error;
             await trx
               .updateTable('weeklyReportOutbox')

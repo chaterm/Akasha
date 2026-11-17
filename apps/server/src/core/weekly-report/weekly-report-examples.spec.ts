@@ -10,7 +10,6 @@ import {
 import { BUILTIN_TEMPLATES } from '../template/builtin-templates';
 import { normalizeWeeklyReportContent } from './weekly-report-content';
 
-/** The Skill tells the model to copy these examples; they must survive the real save path. */
 const rulesPath = resolve(
   __dirname,
   '../../../../../akasha-plugin/skills/akasha-weekly-report/references/content-rules.md',
@@ -19,7 +18,6 @@ const examples = [
   ...readFileSync(rulesPath, 'utf8').matchAll(/```json\s*\n([\s\S]*?)\n```/g),
 ].map((match) => JSON.parse(match[1]));
 
-// Schema-added defaults are allowed; loss/change of any explicitly supplied value is not.
 function expectPreserved(raw: any, normalized: any, path = '$'): void {
   if (Array.isArray(raw)) {
     expect({ path, isArray: Array.isArray(normalized) }).toEqual({
@@ -35,8 +33,10 @@ function expectPreserved(raw: any, normalized: any, path = '$'): void {
     );
   } else if (raw !== null && typeof raw === 'object') {
     for (const [key, value] of Object.entries(raw)) {
-      expect({ path: `${path}.${key}`, present: key in (normalized ?? {}) })
-        .toEqual({ path: `${path}.${key}`, present: true });
+      expect({
+        path: `${path}.${key}`,
+        present: key in (normalized ?? {}),
+      }).toEqual({ path: `${path}.${key}`, present: true });
       expectPreserved(value, normalized[key], `${path}.${key}`);
     }
   } else {
@@ -83,7 +83,6 @@ describe('weekly report Skill content examples', () => {
         expect(TableMap.get(child).problems).toBeNull();
     });
 
-    // Rehydrate as plain JSON: Yjs checks attribute array constructors per realm.
     const ydoc = TiptapTransformer.toYdoc(
       JSON.parse(JSON.stringify(normalized)),
       'default',

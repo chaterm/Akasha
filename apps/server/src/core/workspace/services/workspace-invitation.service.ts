@@ -132,7 +132,6 @@ export class WorkspaceInvitationService {
 
     try {
       await executeTx(this.db, async (trx) => {
-        // we do not want to invite existing members
         const findExistingUsers = await this.db
           .selectFrom('users')
           .select(['email'])
@@ -145,7 +144,6 @@ export class WorkspaceInvitationService {
           existingUserEmails = findExistingUsers.map((user) => user.email);
         }
 
-        // filter out existing users
         const inviteEmails = emails.filter(
           (email) => !existingUserEmails.includes(email),
         );
@@ -187,7 +185,6 @@ export class WorkspaceInvitationService {
       );
     }
 
-    // do not send code to do nothing users
     if (invites) {
       invites.forEach((invitation: WorkspaceInvitation) => {
         this.sendInvitationMail(
@@ -199,7 +196,6 @@ export class WorkspaceInvitationService {
         );
       });
 
-      // Audit log for each invitation created
       for (const invitation of invites) {
         this.auditService.log({
           event: AuditEvent.WORKSPACE_INVITE_CREATED,
@@ -264,7 +260,6 @@ export class WorkspaceInvitationService {
           trx,
         );
 
-        // add user to default group
         await this.groupUserRepo.addUserToDefaultGroup(
           newUser.id,
           workspace.id,
@@ -273,7 +268,6 @@ export class WorkspaceInvitationService {
         await this.spaceService.ensurePersonalSpace(newUser, workspace.id, trx);
 
         if (invitation.groupIds && invitation.groupIds.length > 0) {
-          // Ensure the groups are valid
           const validGroups = await trx
             .selectFrom('groups')
             .select(['id', 'name'])
@@ -287,7 +281,6 @@ export class WorkspaceInvitationService {
               groupId: group.id,
             }));
 
-            // add user to groups specified during invite
             await trx
               .insertInto('groupUsers')
               .values(groupUsersToInsert)
@@ -296,7 +289,6 @@ export class WorkspaceInvitationService {
           }
         }
 
-        // delete invitation record
         await trx
           .deleteFrom('workspaceInvitations')
           .where('id', '=', invitation.id)
@@ -321,7 +313,6 @@ export class WorkspaceInvitationService {
       return;
     }
 
-    // notify the inviter
     const invitedByUser = await this.userRepo.findById(
       invitation.invitedById,
       workspace.id,

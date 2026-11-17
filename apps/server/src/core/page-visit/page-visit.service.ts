@@ -67,7 +67,6 @@ export class PageVisitService {
     const readable: (RecentPageVisitRow & { $cursor: string })[] = [];
     let cursor = input.cursor;
 
-    // Find one extra readable visit so denied history cannot end pagination early.
     while (readable.length <= input.limit) {
       const batch = await this.pageVisitRepo.findRecent({
         workspaceId: input.workspace.id,
@@ -97,7 +96,6 @@ export class PageVisitService {
                 !ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page),
               );
             } catch (error) {
-              // Visit history can outlive the user's space membership.
               if (!(error instanceof NotFoundException)) throw error;
               spaceAccess.set(spaceId, false);
             }

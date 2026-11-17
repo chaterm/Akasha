@@ -2,7 +2,6 @@ import { BadRequestException } from '@nestjs/common';
 import { jsonToNode } from '../../collaboration/collaboration.util';
 import type { JSONContent } from '@tiptap/core';
 
-/** Preserve the input snapshot: jsonToNode's compatibility cleanup mutates it. */
 export function normalizeWeeklyReportContent(raw: JSONContent): JSONContent {
   const invalid = (path: string) =>
     new BadRequestException({
@@ -25,8 +24,6 @@ export function normalizeWeeklyReportContent(raw: JSONContent): JSONContent {
         Object.values(value).forEach((v) => bound(v, depth + 1));
     };
     bound(raw, 0);
-    // Document JSON is plain data. Rehydrate in this realm as Yjs checks the
-    // constructors of nested attribute arrays/objects (e.g. table colwidth).
     const node = jsonToNode(JSON.parse(JSON.stringify(raw)));
     node.check();
     const normalized = node.toJSON();

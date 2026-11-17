@@ -74,10 +74,6 @@ export class McpController {
     await this.mcpService.handleRequest(ctx, req.raw, reply.raw, body);
   }
 
-  // Every MCP tool call is recorded, whether it came from an agent key, a
-  // personal key or an SSO token. Outcome is 'called': the response is
-  // streamed by the MCP transport and tool errors live inside the JSON-RPC
-  // result.
   private recordAgentToolCalls(
     ctx: Awaited<ReturnType<McpAuthService['authenticate']>>,
     body: unknown,

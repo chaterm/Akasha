@@ -7,7 +7,6 @@ export type McpToolContext = {
   user: User;
   workspace: Workspace;
   agentAccess?: AgentAccessContext;
-  /** Per-connection preferences, never an authorization grant. */
   weeklyReportDefaults?: { templateId?: string; parentPageId?: string };
 };
 
@@ -28,10 +27,6 @@ export type McpToolExtension = {
   ) => void;
 };
 
-/**
- * Extension point for optional modules (for example EE knowledge retrieval)
- * to contribute MCP tools without making the core MCP module depend on EE.
- */
 @Injectable()
 export class McpToolRegistry {
   private readonly extensions: McpToolExtension[] = [];

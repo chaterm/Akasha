@@ -46,8 +46,9 @@ export class ShareService {
       throw new NotFoundException('Share not found');
     }
 
-    const isRestricted =
-      await this.pagePermissionRepo.hasRestrictedAncestor(share.pageId);
+    const isRestricted = await this.pagePermissionRepo.hasRestrictedAncestor(
+      share.pageId,
+    );
     if (isRestricted) {
       throw new NotFoundException('Share not found');
     }
@@ -132,9 +133,9 @@ export class ShareService {
       throw new NotFoundException('Shared page not found');
     }
 
-    // Block access to restricted pages
-    const isRestricted =
-      await this.pagePermissionRepo.hasRestrictedAncestor(page.id);
+    const isRestricted = await this.pagePermissionRepo.hasRestrictedAncestor(
+      page.id,
+    );
     if (isRestricted) {
       throw new NotFoundException('Shared page not found');
     }
@@ -147,7 +148,6 @@ export class ShareService {
   }
 
   async getShareForPage(pageId: string, workspaceId: string) {
-    // here we try to check if a page was shared directly or if it inherits the share from its closest shared ancestor
     const share = await this.db
       .withRecursive('page_hierarchy', (cte) =>
         cte
@@ -194,7 +194,7 @@ export class ShareService {
                   's.createdAt',
                 ])
                 .where('p.deletedAt', 'is', null)
-                .where(sql`ph.share_id`, 'is', null) // stop if share found
+                .where(sql`ph.share_id`, 'is', null)
                 .where(sql`ph.level`, '<', sql`25`), // prevent loop
           ),
       )
@@ -293,16 +293,6 @@ export class ShareService {
     return ancestor;
   }
 
-  /**
-   * Resolve transclusion content for a public share viewer. Each requested
-   * source page must itself be reachable via the share graph (its own share
-   * or a shared ancestor with `includeSubPages`), in the same workspace as
-   * the requesting share, with sharing allowed and no restricted ancestors.
-   * Sources that don't qualify come back as `no_access` so the editor renders
-   * the existing placeholder. The viewer's personal permissions are
-   * intentionally ignored — share-served content is gated only by the share
-   * graph.
-   */
   async lookupTransclusionForShare(
     shareId: string,
     references: Array<{ sourcePageId: string; transclusionId: string }>,
@@ -324,17 +314,6 @@ export class ShareService {
       new Set(references.map((r) => r.sourcePageId)),
     );
 
-    // TODO: Reduce DB round trips at scale by replacing the per-page chain
-    // with bulk repo methods that take all candidate pageIds at once:
-    //   - shareRepo.getSharesForPages(pageIds, workspaceId): Map<pageId, share>
-    //   - pagePermissionRepo.filterRestrictedPageIds(pageIds): Set<pageId>
-    //   - isSharingAllowed for the distinct spaceIds in one query
-    // Brings per-request trip count from ~2N+1 (parallel) to 3 (constant)
-    // for N unique candidate pages. Worth doing if profiling ever flags it.
-
-    // Most candidates will share the host share's space, so cache by spaceId
-    // and seed with the host space we just verified. Stores in-flight
-    // promises so concurrent chains de-dupe at the request boundary.
     const sharingAllowedCache = new Map<string, Promise<boolean>>();
     sharingAllowedCache.set(share.spaceId, Promise.resolve(true));
     const isSharingAllowedFor = (spaceId: string) => {
@@ -345,9 +324,6 @@ export class ShareService {
       return p;
     };
 
-    // Per-page chains run in parallel; wall time is the slowest chain, not
-    // the sum. Each chain still does its 2–3 queries sequentially because
-    // each step gates the next.
     const accessibleResults = await Promise.all(
       candidatePageIds.map(async (pageId) => {
         const sourceShare = await this.getShareForPage(pageId, workspaceId);
@@ -369,9 +345,6 @@ export class ShareService {
       workspaceId,
     );
 
-    // Sanitize each item's content for public delivery
-    // generate per-attachment tokens scoped to the source page
-    // and strip comment marks.
     const tokenized = await Promise.all(
       items.map(async (item) => {
         if ('status' in item) return item;
@@ -384,9 +357,6 @@ export class ShareService {
       }),
     );
 
-    // Collapse `not_found` to `no_access` for share viewers so the response
-    // can't be used to tell "page is shared but transclusion id doesn't
-    // match" from "page isn't shared at all".
     const sanitized = tokenized.map((item) =>
       'status' in item && item.status === 'not_found'
         ? {
@@ -434,27 +404,6 @@ export class ShareService {
     return doc?.toJSON() ?? page.content;
   }
 
-  /**
-   * Prepare a ProseMirror JSON doc for delivery to a public share viewer.
-   * Performs the two transforms required by the share threat model:
-   *
-   * 1. Mint a per-attachment public token scoped to `attachmentOwnerPageId`
-   *    and rewrite each attachment node's `src`/`url` to the public form
-   *    (`/files/public/...?jwt=`). The receiver enforces
-   *    `attachment.pageId === token.pageId`, which is why the owner page id
-   *    has to be passed in explicitly: the host page for direct shared
-   *    content, the source page for transcluded source-block content
-   *    (attachments in a sync block were uploaded onto the source page).
-   *
-   * 2. Strip `comment` marks. Comments are internal-team metadata and must
-   *    not leak structure (existence, location, count, resolved state, or
-   *    comment ids) to public viewers.
-   *
-   * Both share-content paths — the host page (`updatePublicAttachments`) and
-   * the share-scoped transclusion lookup (`lookupTransclusionForShare`) —
-   * call into this single helper so the two paths can never drift on
-   * sanitization rules.
-   */
   private async prepareContentForShare(
     content: unknown,
     attachmentOwnerPageId: string,

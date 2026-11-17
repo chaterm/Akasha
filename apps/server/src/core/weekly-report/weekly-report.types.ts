@@ -5,9 +5,7 @@ export interface PrepareWeeklyReportInput {
   periodStart?: string;
   periodEnd?: string;
   timezone?: string;
-  /** Omitted inherits connection settings; null explicitly uses the builtin. */
   templateId?: string | null;
-  /** Omitted inherits connection settings; null explicitly uses the personal space. */
   parentPageId?: string | null;
 }
 
@@ -52,6 +50,5 @@ export interface WeeklyReportResult {
   status: 'created' | 'existing' | 'replayed';
   replayed: boolean;
   locationChanged: boolean;
-  /** The short first step created a draft whose full body still needs writing. */
   contentPending: boolean;
 }

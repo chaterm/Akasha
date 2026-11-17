@@ -1,8 +1,3 @@
-/**
- * 内置公共模板：写在代码里、所有工作区共享、只读，只提供中文。
- * 随版本统一更新；需要改动的用户可以先用它建页，再"另存为模板"。
- */
-
 import {
   addDatabaseDays,
   buildDatabaseJSON,
@@ -16,20 +11,15 @@ import {
 } from '@docmost/editor-ext';
 
 export interface BuiltinTemplate {
-  /** 固定 UUID，便于复用现有按 id 的接口与校验 */
   id: string;
   icon: string;
   title: string;
   description: string;
-  /** 建页标题格式：{date} 为用户本地日期，{title} 为模板标题。 */
   pageTitlePattern?: string;
   content: Record<string, any>;
 }
 
-/** 内置模板没有真实的创建/更新时间，用发布日期占位。 */
 export const BUILTIN_TEMPLATE_DATE = new Date('2026-10-27T00:00:00.000Z');
-
-// ---- 文档节点构造 ----
 
 type Inline = string | Record<string, any>;
 
@@ -39,7 +29,6 @@ const text = (value: string, bold = false) => ({
   ...(bold ? { marks: [{ type: 'bold' }] } : {}),
 });
 
-/** 加粗文字，用于"字段名：内容"这类行内标签。 */
 const b = (value: string) => text(value, true);
 
 const inline = (items: Inline[]) =>
@@ -73,9 +62,14 @@ const tasks = (...items: Array<Inline | Inline[]>) => ({
   })),
 });
 
-type CalloutType = 'default' | 'info' | 'note' | 'success' | 'warning' | 'danger';
+type CalloutType =
+  | 'default'
+  | 'info'
+  | 'note'
+  | 'success'
+  | 'warning'
+  | 'danger';
 
-/** 高亮块：用来放填写说明、结论或风险提示，和正文区分开。 */
 const callout = (type: CalloutType, icon: string, ...content: any[]) => ({
   type: 'callout',
   attrs: { type, icon },
@@ -88,15 +82,15 @@ const code = (language: string, value: string) => ({
   content: [text(value)],
 });
 
-/** 块级公式，内容为 KaTeX / LaTeX。 */
 const math = (latex: string) => ({ type: 'mathBlock', attrs: { text: latex } });
 
-/** 行内公式。 */
-const inlineMath = (latex: string) => ({ type: 'mathInline', attrs: { text: latex } });
+const inlineMath = (latex: string) => ({
+  type: 'mathInline',
+  attrs: { text: latex },
+});
 
 type StatusColor = 'gray' | 'blue' | 'green' | 'yellow' | 'red' | 'purple';
 
-/** 行内状态标签。 */
 const status = (value: string, color: StatusColor) => ({
   type: 'status',
   attrs: { text: value, color },
@@ -104,17 +98,23 @@ const status = (value: string, color: StatusColor) => ({
 
 type Cell = Inline | Inline[];
 
-const cell = (type: 'tableHeader' | 'tableCell', value: Cell, width?: number) => ({
+const cell = (
+  type: 'tableHeader' | 'tableCell',
+  value: Cell,
+  width?: number,
+) => ({
   type,
   attrs: { colspan: 1, rowspan: 1, colwidth: width ? [width] : null },
   content: [p(...(Array.isArray(value) ? value : [value]))],
 });
 
-/** 首行为表头的表格；widths 为各列宽度（px），不给则平均分配。 */
 const table = (header: string[], rows: Cell[][], widths: number[] = []) => ({
   type: 'table',
   content: [
-    { type: 'tableRow', content: header.map((v, i) => cell('tableHeader', v, widths[i])) },
+    {
+      type: 'tableRow',
+      content: header.map((v, i) => cell('tableHeader', v, widths[i])),
+    },
     ...rows.map((row) => ({
       type: 'tableRow',
       content: row.map((v, i) => cell('tableCell', v, widths[i])),
@@ -122,10 +122,6 @@ const table = (header: string[], rows: Cell[][], widths: number[] = []) => ({
   ],
 });
 
-/**
- * 页头信息表：左列为字段名（表头样式），右列为内容；
- * 放在正文最前面，记录负责人、日期、状态等元信息。
- */
 const infoTable = (rows: Array<[string, Cell]>) => ({
   type: 'table',
   content: rows.map(([label, value]) => ({
@@ -134,37 +130,32 @@ const infoTable = (rows: Array<[string, Cell]>) => ({
   })),
 });
 
-/** 分栏；每个参数是一栏里的块。 */
 const columns = (...cols: any[][]) => ({
   type: 'columns',
   attrs: { layout: cols.length === 3 ? 'three_equal' : 'two_equal' },
   content: cols.map((blocks) => ({ type: 'column', content: blocks })),
 });
 
-/** 折叠块：标题常显，内容点开再看。 */
 const details = (summary: string, ...content: any[]) => ({
   type: 'details',
   attrs: { open: false },
   content: [
     { type: 'detailsSummary', content: [text(summary)] },
-    { type: 'detailsContent', content: content.map((c) => (typeof c === 'string' ? p(c) : c)) },
+    {
+      type: 'detailsContent',
+      content: content.map((c) => (typeof c === 'string' ? p(c) : c)),
+    },
   ],
 });
 
-/** 目录，收录二、三级标题。 */
 const toc = () => ({ type: 'toc', attrs: { minLevel: 2, maxLevel: 3 } });
 
 const doc = (...content: any[]) => ({ type: 'doc', content });
 
-// ---- 数据库块 ----
-
-/** 示例日期的基准日，建页时整体平移到用户的今天。 */
 const SAMPLE_TODAY = '2026-11-02';
 
-/** 相对基准日期第 n 天。 */
 const day = (n: number) => addDatabaseDays(SAMPLE_TODAY, n);
 
-/** 人员列里的"我"，建页时换成创建人。 */
 const ME = '$me';
 
 const database = (
@@ -178,14 +169,25 @@ const database = (
     title,
     columns,
     views,
-    rows: rows.map((values, i): DatabaseRowInput => ({ id: `row-${i + 1}`, values })),
+    rows: rows.map(
+      (values, i): DatabaseRowInput => ({ id: `row-${i + 1}`, values }),
+    ),
   });
 
-/** 视图里隐藏这些列。 */
 const hide = (...ids: string[]) =>
-  ids.map((id) => ({ id, width: null, align: null, hidden: true, wrap: false }));
+  ids.map((id) => ({
+    id,
+    width: null,
+    align: null,
+    hidden: true,
+    wrap: false,
+  }));
 
-const option = (id: string, name: string, color: DatabaseSelectOption['color']) => ({ id, name, color });
+const option = (
+  id: string,
+  name: string,
+  color: DatabaseSelectOption['color'],
+) => ({ id, name, color });
 
 const ownerColumn: DatabaseColumn = {
   id: 'owner',
@@ -198,17 +200,22 @@ const priorityColumn: DatabaseColumn = {
   id: 'priority',
   name: '优先级',
   type: 'select',
-  options: [option('p0', 'P0 紧急', 'red'), option('p1', 'P1 重要', 'orange'), option('p2', 'P2 一般', 'gray')],
+  options: [
+    option('p0', 'P0 紧急', 'red'),
+    option('p1', 'P1 重要', 'orange'),
+    option('p2', 'P2 一般', 'gray'),
+  ],
 };
 
 export interface BuiltinTemplateContext {
-  /** 用户本地日期，YYYY-MM-DD */
   today: string;
   user: { id: string; name: string; avatarUrl?: string };
 }
 
-/** 建页时实例化：数据库和行换新 id，日期平移到今天，"我"换成创建人。不改动入参。 */
-export function instantiateBuiltinContent(content: Record<string, any>, ctx: BuiltinTemplateContext) {
+export function instantiateBuiltinContent(
+  content: Record<string, any>,
+  ctx: BuiltinTemplateContext,
+) {
   const shift = diffDatabaseDays(SAMPLE_TODAY, ctx.today);
   const me: DatabaseSelectOption = {
     id: ctx.user.id,
@@ -219,18 +226,26 @@ export function instantiateBuiltinContent(content: Record<string, any>, ctx: Bui
 
   const visit = (node: any): any => {
     if (node?.type !== 'database') {
-      return node?.content ? { ...node, content: node.content.map(visit) } : node;
+      return node?.content
+        ? { ...node, content: node.content.map(visit) }
+        : node;
     }
-    const columns: DatabaseColumn[] = node.attrs.columns.map((column: DatabaseColumn) =>
-      column.type === 'person'
-        ? { ...column, options: column.options!.map((o) => (o.id === ME ? me : o)) }
-        : column,
+    const columns: DatabaseColumn[] = node.attrs.columns.map(
+      (column: DatabaseColumn) =>
+        column.type === 'person'
+          ? {
+              ...column,
+              options: column.options!.map((o) => (o.id === ME ? me : o)),
+            }
+          : column,
     );
     const types = new Map(columns.map((column) => [column.id, column.type]));
     const value = (columnId: string, v: any) => {
       const type = types.get(columnId);
-      if (type === 'date' && typeof v === 'string') return addDatabaseDays(v, shift);
-      if (type === 'person' && Array.isArray(v)) return v.map((id) => (id === ME ? me.id : id));
+      if (type === 'date' && typeof v === 'string')
+        return addDatabaseDays(v, shift);
+      if (type === 'person' && Array.isArray(v))
+        return v.map((id) => (id === ME ? me.id : id));
       return v;
     };
     return {
@@ -241,7 +256,10 @@ export function instantiateBuiltinContent(content: Record<string, any>, ctx: Bui
         attrs: { ...row.attrs, id: generateNodeId() },
         content: (row.content ?? []).map((cell: any) => ({
           ...cell,
-          attrs: { ...cell.attrs, value: value(cell.attrs.columnId, cell.attrs.value) },
+          attrs: {
+            ...cell.attrs,
+            value: value(cell.attrs.columnId, cell.attrs.value),
+          },
         })),
       })),
     };
@@ -249,8 +267,6 @@ export function instantiateBuiltinContent(content: Record<string, any>, ctx: Bui
 
   return visit(structuredClone(content));
 }
-
-// ---- Excalidraw scene 构造（模板预置画布） ----
 
 const sceneElement = (
   type: string,
@@ -305,39 +321,43 @@ type FlowShape = 'ellipse' | 'rectangle' | 'diamond';
 
 const LINE_HEIGHT = 1.25;
 
-/** 估算单行文字宽度：中日韩字符按一个字号宽，其余按 0.55 个字号。 */
 const textWidth = (value: string, fontSize: number) =>
   [...value].reduce(
     (w, ch) => w + (/[⺀-鿿豈-﫿＀-￯]/.test(ch) ? fontSize : fontSize * 0.55),
     0,
   );
 
-/** 文字绑定到容器（图形或箭头），居中放在 (cx, cy)；拖动容器时文字跟着走。 */
-const boundText = (id: string, containerId: string, value: string, cx: number, cy: number, fontSize: number) => {
+const boundText = (
+  id: string,
+  containerId: string,
+  value: string,
+  cx: number,
+  cy: number,
+  fontSize: number,
+) => {
   const width = textWidth(value, fontSize);
   const height = fontSize * LINE_HEIGHT;
-  return sceneElement('text', id, cx - width / 2, cy - height / 2, width, height, {
-    text: value,
-    originalText: value,
-    fontSize,
-    fontFamily: 2,
-    textAlign: 'center',
-    verticalAlign: 'middle',
-    containerId,
-    lineHeight: LINE_HEIGHT,
-    autoResize: true,
-  });
+  return sceneElement(
+    'text',
+    id,
+    cx - width / 2,
+    cy - height / 2,
+    width,
+    height,
+    {
+      text: value,
+      originalText: value,
+      fontSize,
+      fontFamily: 2,
+      textAlign: 'center',
+      verticalAlign: 'middle',
+      containerId,
+      lineHeight: LINE_HEIGHT,
+      autoResize: true,
+    },
+  );
 };
 
-/**
- * 示例流程图：常见的审批流程，使用标准流程图图形——
- * 椭圆为开始/结束，矩形为步骤，菱形为判断；"否"的分支修改后回到提交，形成循环。
- *
- *   (开始) → [提交申请] → <审核通过？> —是→ [执行] → (结束)
- *                ↑             └—否→ [修改后重新提交] ┘
- *
- * 文字绑定在图形 / 箭头上，箭头两端绑定到图形，拖动节点时连线和文字都会跟着动。
- */
 const flowchartScene = (labels: FlowchartLabels) => {
   const nodes: Array<{
     id: string;
@@ -349,35 +369,157 @@ const flowchartScene = (labels: FlowchartLabels) => {
     height: number;
     fill: string;
   }> = [
-    { id: 'start', shape: 'ellipse', label: labels.start, x: 180, y: 20, width: 160, height: 60, fill: '#b2f2bb' },
-    { id: 'submit', shape: 'rectangle', label: labels.submit, x: 160, y: 130, width: 200, height: 64, fill: '#a5d8ff' },
-    { id: 'decision', shape: 'diamond', label: labels.decision, x: 150, y: 254, width: 220, height: 120, fill: '#ffec99' },
-    { id: 'execute', shape: 'rectangle', label: labels.execute, x: 160, y: 434, width: 200, height: 64, fill: '#a5d8ff' },
-    { id: 'end', shape: 'ellipse', label: labels.end, x: 180, y: 558, width: 160, height: 60, fill: '#ffc9c9' },
-    { id: 'revise', shape: 'rectangle', label: labels.revise, x: 460, y: 282, width: 220, height: 64, fill: '#ffd8a8' },
+    {
+      id: 'start',
+      shape: 'ellipse',
+      label: labels.start,
+      x: 180,
+      y: 20,
+      width: 160,
+      height: 60,
+      fill: '#b2f2bb',
+    },
+    {
+      id: 'submit',
+      shape: 'rectangle',
+      label: labels.submit,
+      x: 160,
+      y: 130,
+      width: 200,
+      height: 64,
+      fill: '#a5d8ff',
+    },
+    {
+      id: 'decision',
+      shape: 'diamond',
+      label: labels.decision,
+      x: 150,
+      y: 254,
+      width: 220,
+      height: 120,
+      fill: '#ffec99',
+    },
+    {
+      id: 'execute',
+      shape: 'rectangle',
+      label: labels.execute,
+      x: 160,
+      y: 434,
+      width: 200,
+      height: 64,
+      fill: '#a5d8ff',
+    },
+    {
+      id: 'end',
+      shape: 'ellipse',
+      label: labels.end,
+      x: 180,
+      y: 558,
+      width: 160,
+      height: 60,
+      fill: '#ffc9c9',
+    },
+    {
+      id: 'revise',
+      shape: 'rectangle',
+      label: labels.revise,
+      x: 460,
+      y: 282,
+      width: 220,
+      height: 64,
+      fill: '#ffd8a8',
+    },
   ];
 
-  // 连线端点离图形边缘留 8px；坐标为画布绝对坐标
-  const edges: Array<{ id: string; from: string; to: string; points: Array<[number, number]>; label?: string }> = [
-    { id: 'start-submit', from: 'start', to: 'submit', points: [[260, 88], [260, 122]] },
-    { id: 'submit-decision', from: 'submit', to: 'decision', points: [[260, 202], [260, 246]] },
-    { id: 'decision-execute', from: 'decision', to: 'execute', points: [[260, 382], [260, 426]], label: labels.yes },
-    { id: 'decision-revise', from: 'decision', to: 'revise', points: [[378, 314], [452, 314]], label: labels.no },
-    // 回到"提交申请"：从修改框顶部向上，再向左接到提交框右侧
-    { id: 'revise-submit', from: 'revise', to: 'submit', points: [[570, 274], [570, 162], [368, 162]] },
-    { id: 'execute-end', from: 'execute', to: 'end', points: [[260, 506], [260, 550]] },
+  const edges: Array<{
+    id: string;
+    from: string;
+    to: string;
+    points: Array<[number, number]>;
+    label?: string;
+  }> = [
+    {
+      id: 'start-submit',
+      from: 'start',
+      to: 'submit',
+      points: [
+        [260, 88],
+        [260, 122],
+      ],
+    },
+    {
+      id: 'submit-decision',
+      from: 'submit',
+      to: 'decision',
+      points: [
+        [260, 202],
+        [260, 246],
+      ],
+    },
+    {
+      id: 'decision-execute',
+      from: 'decision',
+      to: 'execute',
+      points: [
+        [260, 382],
+        [260, 426],
+      ],
+      label: labels.yes,
+    },
+    {
+      id: 'decision-revise',
+      from: 'decision',
+      to: 'revise',
+      points: [
+        [378, 314],
+        [452, 314],
+      ],
+      label: labels.no,
+    },
+    {
+      id: 'revise-submit',
+      from: 'revise',
+      to: 'submit',
+      points: [
+        [570, 274],
+        [570, 162],
+        [368, 162],
+      ],
+    },
+    {
+      id: 'execute-end',
+      from: 'execute',
+      to: 'end',
+      points: [
+        [260, 506],
+        [260, 550],
+      ],
+    },
   ];
 
-  const boundElements = new Map<string, Array<{ id: string; type: 'arrow' | 'text' }>>();
+  const boundElements = new Map<
+    string,
+    Array<{ id: string; type: 'arrow' | 'text' }>
+  >();
   const bind = (containerId: string, id: string, type: 'arrow' | 'text') =>
-    boundElements.set(containerId, [...(boundElements.get(containerId) ?? []), { id, type }]);
+    boundElements.set(containerId, [
+      ...(boundElements.get(containerId) ?? []),
+      { id, type },
+    ]);
 
   const texts: any[] = [];
   nodes.forEach((node) => {
     const textId = `${node.id}-text`;
     bind(node.id, textId, 'text');
     texts.push(
-      boundText(textId, node.id, node.label, node.x + node.width / 2, node.y + node.height / 2, 20),
+      boundText(
+        textId,
+        node.id,
+        node.label,
+        node.x + node.width / 2,
+        node.y + node.height / 2,
+        20,
+      ),
     );
   });
 
@@ -391,39 +533,67 @@ const flowchartScene = (labels: FlowchartLabels) => {
     bind(edge.from, edge.id, 'arrow');
     bind(edge.to, edge.id, 'arrow');
 
-    const binding = (elementId: string) => ({ elementId, mode: 'orbit', fixedPoint: [0.5, 0.5] });
+    const binding = (elementId: string) => ({
+      elementId,
+      mode: 'orbit',
+      fixedPoint: [0.5, 0.5],
+    });
     arrows.push(
-      sceneElement('arrow', edge.id, x, y, Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), {
-        points: relative,
-        lastCommittedPoint: null,
-        startBinding: binding(edge.from),
-        endBinding: binding(edge.to),
-        startArrowhead: null,
-        endArrowhead: 'arrow',
-        elbowed: false,
-        roundness: { type: 2 },
-      }),
+      sceneElement(
+        'arrow',
+        edge.id,
+        x,
+        y,
+        Math.max(...xs) - Math.min(...xs),
+        Math.max(...ys) - Math.min(...ys),
+        {
+          points: relative,
+          lastCommittedPoint: null,
+          startBinding: binding(edge.from),
+          endBinding: binding(edge.to),
+          startArrowhead: null,
+          endArrowhead: 'arrow',
+          elbowed: false,
+          roundness: { type: 2 },
+        },
+      ),
     );
 
     if (edge.label) {
       const labelId = `${edge.id}-label`;
       bind(edge.id, labelId, 'text');
       const [[x1, y1], [x2, y2]] = edge.points;
-      labelTexts.push(boundText(labelId, edge.id, edge.label, (x1 + x2) / 2, (y1 + y2) / 2, 16));
+      labelTexts.push(
+        boundText(
+          labelId,
+          edge.id,
+          edge.label,
+          (x1 + x2) / 2,
+          (y1 + y2) / 2,
+          16,
+        ),
+      );
     }
   });
 
   const shapes = nodes.map((node) =>
     sceneElement(node.shape, node.id, node.x, node.y, node.width, node.height, {
       backgroundColor: node.fill,
-      roundness: node.shape === 'rectangle' ? { type: 3 } : node.shape === 'diamond' ? { type: 2 } : null,
+      roundness:
+        node.shape === 'rectangle'
+          ? { type: 3 }
+          : node.shape === 'diamond'
+            ? { type: 2 }
+            : null,
     }),
   );
 
-  // 每个图形后面紧跟它的文字（Excalidraw 的约定），连线在后；同一张图里每个元素用不同 seed，线条手绘感不重复
   const elements = [
     ...shapes.flatMap((shape, i) => [shape, texts[i]]),
-    ...arrows.flatMap((arrow) => [arrow, ...labelTexts.filter((t) => t.containerId === arrow.id)]),
+    ...arrows.flatMap((arrow) => [
+      arrow,
+      ...labelTexts.filter((t) => t.containerId === arrow.id),
+    ]),
   ].map((element, i) => ({
     ...element,
     seed: 100 + i,
@@ -432,8 +602,6 @@ const flowchartScene = (labels: FlowchartLabels) => {
 
   return { elements, appState: { viewBackgroundColor: '#ffffff' }, files: {} };
 };
-
-// ---- 模板 ----
 
 export const BUILTIN_WEEKLY_REPORT_ID = '0b6f8a3e-5c1d-4e2a-9f47-1a2b3c4d5e01';
 
@@ -449,7 +617,14 @@ const weeklyReport: BuiltinTemplate = {
       ['周期', '第 N 周（MM/DD – MM/DD）'],
       ['整体状态', [status('正常推进', 'green')]],
     ]),
-    callout('info', '💡', p(b('本周要点：'), '用一两句话写最重要的结果，读者只看这一段也能知道进展。')),
+    callout(
+      'info',
+      '💡',
+      p(
+        b('本周要点：'),
+        '用一两句话写最重要的结果，读者只看这一段也能知道进展。',
+      ),
+    ),
     h(2, '一、本周进展'),
     table(
       ['事项', '状态', '结果 / 产出'],
@@ -470,9 +645,17 @@ const weeklyReport: BuiltinTemplate = {
       [200, 150, 150, 160],
     ),
     h(2, '三、问题与风险'),
-    callout('warning', '⚠️', '问题描述、影响范围，以及需要谁在什么时间前协助。'),
+    callout(
+      'warning',
+      '⚠️',
+      '问题描述、影响范围，以及需要谁在什么时间前协助。',
+    ),
     h(2, '四、下周计划'),
-    tasks('计划事项 1（负责人 / 截止时间）', '计划事项 2（负责人 / 截止时间）', '计划事项 3（负责人 / 截止时间）'),
+    tasks(
+      '计划事项 1（负责人 / 截止时间）',
+      '计划事项 2（负责人 / 截止时间）',
+      '计划事项 3（负责人 / 截止时间）',
+    ),
   ),
 };
 
@@ -486,7 +669,10 @@ const todoChecklist: BuiltinTemplate = {
     callout('default', '🎯', p(b('今日聚焦：'), '写下今天最想完成的一件事。')),
     columns(
       [p(status('P0 紧急', 'red')), tasks('今天必须完成的事', '卡住别人的事')],
-      [p(status('P1 重要', 'yellow')), tasks('需要重点推进的事', '本周内要完成的事')],
+      [
+        p(status('P1 重要', 'yellow')),
+        tasks('需要重点推进的事', '本周内要完成的事'),
+      ],
       [p(status('P2 一般', 'gray')), tasks('有空再做的小事')],
     ),
     h(2, '等待他人'),
@@ -573,10 +759,22 @@ const operationManual: BuiltinTemplate = {
     h(3, '步骤 3：确认完成'),
     p(b('操作：'), '怎么检查结果。'),
     p(b('预期结果：'), '确认成功的标志。'),
-    callout('warning', '⚠️', p(b('注意：'), '容易出错或不可撤销的操作写在这里。')),
+    callout(
+      'warning',
+      '⚠️',
+      p(b('注意：'), '容易出错或不可撤销的操作写在这里。'),
+    ),
     h(2, '三、常见问题'),
-    details('问题：遇到什么情况', p(b('原因：'), '为什么会这样。'), p(b('处理：'), '怎么解决。')),
-    details('问题：遇到什么情况', p(b('原因：'), '为什么会这样。'), p(b('处理：'), '怎么解决。')),
+    details(
+      '问题：遇到什么情况',
+      p(b('原因：'), '为什么会这样。'),
+      p(b('处理：'), '怎么解决。'),
+    ),
+    details(
+      '问题：遇到什么情况',
+      p(b('原因：'), '为什么会这样。'),
+      p(b('处理：'), '怎么解决。'),
+    ),
     h(2, '四、相关资料'),
     bullets('@相关文档', '负责人或联系方式'),
   ),
@@ -594,7 +792,11 @@ const techDesign: BuiltinTemplate = {
       ['状态', [status('草稿', 'gray')]],
       ['相关需求', '需求文档链接'],
     ]),
-    callout('info', '📌', p(b('一句话结论：'), '要做什么、选了哪个方案、预计多久上线。')),
+    callout(
+      'info',
+      '📌',
+      p(b('一句话结论：'), '要做什么、选了哪个方案、预计多久上线。'),
+    ),
     toc(),
     h(2, '一、背景与目标'),
     h(3, '1. 背景'),
@@ -607,13 +809,22 @@ const techDesign: BuiltinTemplate = {
     h(3, '1. 整体流程'),
     code(
       'mermaid',
-      ['flowchart LR', '  A[提出需求] --> B[方案设计] --> C[开发实现] --> D[测试验证] --> E[上线]'].join('\n'),
+      [
+        'flowchart LR',
+        '  A[提出需求] --> B[方案设计] --> C[开发实现] --> D[测试验证] --> E[上线]',
+      ].join('\n'),
     ),
     h(3, '2. 关键细节'),
     p('接口、数据结构或配置放在代码块里：'),
     code(
       'json',
-      ['{', '  "名称": "示例功能",', '  "开关": true,', '  "生效范围": ["空间 A", "空间 B"]', '}'].join('\n'),
+      [
+        '{',
+        '  "名称": "示例功能",',
+        '  "开关": true,',
+        '  "生效范围": ["空间 A", "空间 B"]',
+        '}',
+      ].join('\n'),
     ),
     h(2, '三、备选方案'),
     table(
@@ -625,9 +836,17 @@ const techDesign: BuiltinTemplate = {
       [100, 170, 130, 130, 100],
     ),
     h(2, '四、工作量与排期'),
-    p('按各项工作的人天 ', inlineMath('d_i'), ' 和风险系数 ', inlineMath('r'), ' 估算：'),
+    p(
+      '按各项工作的人天 ',
+      inlineMath('d_i'),
+      ' 和风险系数 ',
+      inlineMath('r'),
+      ' 估算：',
+    ),
     math(String.raw`\text{总工作量} = r \times \sum_{i=1}^{n} d_i`),
-    math(String.raw`r = 1.2,\ d = (3, 5, 2) \;\Rightarrow\; \text{总工作量} = 1.2 \times 10 = 12\ \text{人天}`),
+    math(
+      String.raw`r = 1.2,\ d = (3, 5, 2) \;\Rightarrow\; \text{总工作量} = 1.2 \times 10 = 12\ \text{人天}`,
+    ),
     table(
       ['里程碑', '时间', '负责人', '状态'],
       [
@@ -638,7 +857,11 @@ const techDesign: BuiltinTemplate = {
       [200, 140, 160, 130],
     ),
     h(2, '五、风险与回退'),
-    callout('warning', '⚠️', '可能出问题的地方、影响范围，以及出问题时怎么回退。'),
+    callout(
+      'warning',
+      '⚠️',
+      '可能出问题的地方、影响范围，以及出问题时怎么回退。',
+    ),
     h(2, '六、待确认问题'),
     tasks('@负责人 需要确认的问题'),
   ),
@@ -648,12 +871,16 @@ const taskBoard: BuiltinTemplate = {
   id: '0b6f8a3e-5c1d-4e2a-9f47-1a2b3c4d5e08',
   icon: '📋',
   title: '任务看板',
-  description: '待办、进行中、受阻、已完成四栏看板，拖动卡片更新状态，按负责人和截止日期跟进。',
+  description:
+    '待办、进行中、受阻、已完成四栏看板，拖动卡片更新状态，按负责人和截止日期跟进。',
   content: doc(
     callout(
       'info',
       '💡',
-      p(b('怎么用：'), '拖动卡片改状态，双击卡片上的字段直接修改；点卡片在右侧打开详情，填负责人、截止日期和进度。'),
+      p(
+        b('怎么用：'),
+        '拖动卡片改状态，双击卡片上的字段直接修改；点卡片在右侧打开详情，填负责人、截止日期和进度。',
+      ),
       '切到"按负责人"看每个人手上的事，切到"我的任务"只看分给自己的。',
     ),
     database(
@@ -678,25 +905,95 @@ const taskBoard: BuiltinTemplate = {
         { id: 'note', name: '备注', type: 'text' },
       ],
       [
-        { id: 'board', name: '看板', type: 'kanban', groupBy: 'status', columns: hide('status', 'note') },
-        { id: 'by-owner', name: '按负责人', type: 'kanban', groupBy: 'owner', columns: hide('owner', 'note') },
+        {
+          id: 'board',
+          name: '看板',
+          type: 'kanban',
+          groupBy: 'status',
+          columns: hide('status', 'note'),
+        },
+        {
+          id: 'by-owner',
+          name: '按负责人',
+          type: 'kanban',
+          groupBy: 'owner',
+          columns: hide('owner', 'note'),
+        },
         {
           id: 'list',
           name: '列表',
           type: 'table',
-          columns: [{ id: 'note', width: null, align: null, hidden: false, wrap: true }],
+          columns: [
+            { id: 'note', width: null, align: null, hidden: false, wrap: true },
+          ],
         },
         { id: 'calendar', name: '日历', type: 'calendar', dateColumnId: 'due' },
         { id: 'mine', name: '我的任务', type: 'mine' },
       ],
       [
-        { title: '整理需求清单', owner: [ME], status: 'todo', priority: 'p1', due: day(3), progress: 0, note: '' },
-        { title: '确认排期', owner: [], status: 'todo', priority: 'p2', due: day(5), progress: 0, note: '' },
-        { title: '完成方案初稿', owner: [ME], status: 'doing', priority: 'p0', due: day(1), progress: 60, note: '' },
-        { title: '准备评审材料', owner: [], status: 'doing', priority: 'p1', due: day(2), progress: 30, note: '' },
-        { title: '采购物料', owner: [], status: 'blocked', priority: 'p1', due: day(4), progress: 20, note: '等待预算审批' },
-        { title: '同步项目目标', owner: [ME], status: 'done', priority: 'p1', due: day(-2), progress: 100, note: '' },
-        { title: '建立沟通群', owner: [], status: 'done', priority: 'p2', due: day(-3), progress: 100, note: '' },
+        {
+          title: '整理需求清单',
+          owner: [ME],
+          status: 'todo',
+          priority: 'p1',
+          due: day(3),
+          progress: 0,
+          note: '',
+        },
+        {
+          title: '确认排期',
+          owner: [],
+          status: 'todo',
+          priority: 'p2',
+          due: day(5),
+          progress: 0,
+          note: '',
+        },
+        {
+          title: '完成方案初稿',
+          owner: [ME],
+          status: 'doing',
+          priority: 'p0',
+          due: day(1),
+          progress: 60,
+          note: '',
+        },
+        {
+          title: '准备评审材料',
+          owner: [],
+          status: 'doing',
+          priority: 'p1',
+          due: day(2),
+          progress: 30,
+          note: '',
+        },
+        {
+          title: '采购物料',
+          owner: [],
+          status: 'blocked',
+          priority: 'p1',
+          due: day(4),
+          progress: 20,
+          note: '等待预算审批',
+        },
+        {
+          title: '同步项目目标',
+          owner: [ME],
+          status: 'done',
+          priority: 'p1',
+          due: day(-2),
+          progress: 100,
+          note: '',
+        },
+        {
+          title: '建立沟通群',
+          owner: [],
+          status: 'done',
+          priority: 'p2',
+          due: day(-3),
+          progress: 100,
+          note: '',
+        },
       ],
     ),
     h(2, '一、状态约定'),
@@ -720,12 +1017,16 @@ const projectPlan: BuiltinTemplate = {
   id: '0b6f8a3e-5c1d-4e2a-9f47-1a2b3c4d5e09',
   icon: '🗂️',
   title: '项目计划',
-  description: '从启动到验收排好项目任务，用表格、看板、日历、时间线等视图跟进，改一处各视图同步。',
+  description:
+    '从启动到验收排好项目任务，用表格、看板、日历、时间线等视图跟进，改一处各视图同步。',
   content: doc(
     callout(
       'info',
       '📌',
-      p(b('一份数据，多种看法：'), '下面每个视图都是同一张任务表，在任何一个视图里改动，其他视图同步更新。'),
+      p(
+        b('一份数据，多种看法：'),
+        '下面每个视图都是同一张任务表，在任何一个视图里改动，其他视图同步更新。',
+      ),
       '示例任务是一个通用的项目流程，换成自己的任务和类型即可，活动策划、市场推广、产品研发都适用。',
     ),
     database(
@@ -760,7 +1061,13 @@ const projectPlan: BuiltinTemplate = {
         { id: 'start', name: '开始', type: 'date' },
         { id: 'end', name: '结束', type: 'date' },
         { id: 'progress', name: '进度', type: 'progress' },
-        { id: 'budget', name: '预算', type: 'number', format: 'CNY', decimals: 0 },
+        {
+          id: 'budget',
+          name: '预算',
+          type: 'number',
+          format: 'CNY',
+          decimals: 0,
+        },
         { id: 'risk', name: '有风险', type: 'checkbox' },
         { id: 'link', name: '相关链接', type: 'url' },
       ],
@@ -781,8 +1088,20 @@ const projectPlan: BuiltinTemplate = {
           orientation: 'horizontal',
           columns: hide('priority', 'tags', 'start', 'budget', 'risk', 'link'),
         },
-        { id: 'calendar', name: '日历', type: 'calendar', dateColumnId: 'start', endDateColumnId: 'end' },
-        { id: 'timeline', name: '时间线', type: 'timeline', dateColumnId: 'start', endDateColumnId: 'end' },
+        {
+          id: 'calendar',
+          name: '日历',
+          type: 'calendar',
+          dateColumnId: 'start',
+          endDateColumnId: 'end',
+        },
+        {
+          id: 'timeline',
+          name: '时间线',
+          type: 'timeline',
+          dateColumnId: 'start',
+          endDateColumnId: 'end',
+        },
         {
           id: 'focus',
           name: '重点关注',
@@ -792,13 +1111,28 @@ const projectPlan: BuiltinTemplate = {
             type: 'group',
             mode: 'and',
             conditions: [
-              { type: 'condition', columnId: 'status', op: 'isNoneOf', value: ['done'] },
+              {
+                type: 'condition',
+                columnId: 'status',
+                op: 'isNoneOf',
+                value: ['done'],
+              },
               {
                 type: 'group',
                 mode: 'or',
                 conditions: [
-                  { type: 'condition', columnId: 'priority', op: 'isAnyOf', value: ['p0'] },
-                  { type: 'condition', columnId: 'risk', op: 'isChecked', value: null },
+                  {
+                    type: 'condition',
+                    columnId: 'priority',
+                    op: 'isAnyOf',
+                    value: ['p0'],
+                  },
+                  {
+                    type: 'condition',
+                    columnId: 'risk',
+                    op: 'isChecked',
+                    value: null,
+                  },
                 ],
               },
             ],
@@ -807,23 +1141,125 @@ const projectPlan: BuiltinTemplate = {
         { id: 'mine', name: '我的任务', type: 'mine' },
       ],
       [
-        { title: '项目启动会', owner: [ME], status: 'done', priority: 'p0', tags: ['communicate'], start: day(-10), end: day(-10), progress: 100, budget: 1000, risk: false, link: 'https://example.com/projects/2026/kickoff-meeting-notes-and-action-items' },
-        { title: '现状调研', owner: [], status: 'done', priority: 'p1', tags: ['research'], start: day(-9), end: day(-5), progress: 100, budget: 5000, risk: false, link: '' },
-        { title: '制定方案', owner: [ME], status: 'review', priority: 'p0', tags: ['plan'], start: day(-4), end: day(1), progress: 90, budget: 2000, risk: false, link: '' },
-        { title: '方案评审', owner: [], status: 'doing', priority: 'p0', tags: ['review'], start: day(-1), end: day(2), progress: 50, budget: 500, risk: false, link: '' },
-        { title: '资源与预算申请', owner: [], status: 'doing', priority: 'p1', tags: ['communicate'], start: day(0), end: day(4), progress: 30, budget: 0, risk: false, link: '' },
-        { title: '执行落地', owner: [ME], status: 'todo', priority: 'p1', tags: ['execute'], start: day(3), end: day(12), progress: 0, budget: 30000, risk: true, link: '' },
-        { title: '中期复盘', owner: [], status: 'todo', priority: 'p2', tags: ['review', 'communicate'], start: day(8), end: day(8), progress: 0, budget: 500, risk: false, link: '' },
-        { title: '验收与总结', owner: [ME], status: 'todo', priority: 'p0', tags: ['review'], start: day(13), end: day(15), progress: 0, budget: 1000, risk: false, link: 'https://example.com/projects/2026/acceptance-checklist-and-final-report' },
+        {
+          title: '项目启动会',
+          owner: [ME],
+          status: 'done',
+          priority: 'p0',
+          tags: ['communicate'],
+          start: day(-10),
+          end: day(-10),
+          progress: 100,
+          budget: 1000,
+          risk: false,
+          link: 'https://example.com/projects/2026/kickoff-meeting-notes-and-action-items',
+        },
+        {
+          title: '现状调研',
+          owner: [],
+          status: 'done',
+          priority: 'p1',
+          tags: ['research'],
+          start: day(-9),
+          end: day(-5),
+          progress: 100,
+          budget: 5000,
+          risk: false,
+          link: '',
+        },
+        {
+          title: '制定方案',
+          owner: [ME],
+          status: 'review',
+          priority: 'p0',
+          tags: ['plan'],
+          start: day(-4),
+          end: day(1),
+          progress: 90,
+          budget: 2000,
+          risk: false,
+          link: '',
+        },
+        {
+          title: '方案评审',
+          owner: [],
+          status: 'doing',
+          priority: 'p0',
+          tags: ['review'],
+          start: day(-1),
+          end: day(2),
+          progress: 50,
+          budget: 500,
+          risk: false,
+          link: '',
+        },
+        {
+          title: '资源与预算申请',
+          owner: [],
+          status: 'doing',
+          priority: 'p1',
+          tags: ['communicate'],
+          start: day(0),
+          end: day(4),
+          progress: 30,
+          budget: 0,
+          risk: false,
+          link: '',
+        },
+        {
+          title: '执行落地',
+          owner: [ME],
+          status: 'todo',
+          priority: 'p1',
+          tags: ['execute'],
+          start: day(3),
+          end: day(12),
+          progress: 0,
+          budget: 30000,
+          risk: true,
+          link: '',
+        },
+        {
+          title: '中期复盘',
+          owner: [],
+          status: 'todo',
+          priority: 'p2',
+          tags: ['review', 'communicate'],
+          start: day(8),
+          end: day(8),
+          progress: 0,
+          budget: 500,
+          risk: false,
+          link: '',
+        },
+        {
+          title: '验收与总结',
+          owner: [ME],
+          status: 'todo',
+          priority: 'p0',
+          tags: ['review'],
+          start: day(13),
+          end: day(15),
+          progress: 0,
+          budget: 1000,
+          risk: false,
+          link: 'https://example.com/projects/2026/acceptance-checklist-and-final-report',
+        },
       ],
     ),
     h(2, '一、视图说明'),
     bullets(
-      [b('全部任务：'), '表格，拖动行左侧的把手调整顺序；点列名可以排序、改列类型或隐藏列，筛选在视图上方的工具栏里。'],
+      [
+        b('全部任务：'),
+        '表格，拖动行左侧的把手调整顺序；点列名可以排序、改列类型或隐藏列，筛选在视图上方的工具栏里。',
+      ],
       [b('按状态：'), '看板，拖动卡片就会修改状态。'],
       [b('按优先级：'), '横向泳道，每个优先级一行。'],
       [b('日历：'), '按开始和结束日期画出跨天的任务条，拖动可以改日期。'],
-      [b('时间线：'), '甘特图，横向看每个任务从开始到结束的时间段；拖动任务条改日期，拖两端改起止，可切换日、周、月。'],
+      [
+        b('时间线：'),
+        '甘特图，横向看每个任务从开始到结束的时间段；拖动任务条改日期，拖两端改起止，可切换日、周、月。',
+      ],
       [b('重点关注：'), '筛选出未完成、且是 P0 或有风险的任务。'],
       [b('我的任务：'), '只显示负责人包含自己的任务。'],
     ),

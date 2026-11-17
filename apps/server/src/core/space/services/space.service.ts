@@ -319,7 +319,6 @@ export class SpaceService {
     await this.spaceRepo.deleteSpace(spaceId, workspaceId);
     await this.attachmentQueue.add(QueueJob.DELETE_SPACE_ATTACHMENTS, space);
 
-    // Spaces are hard-deleted; this event lets analytics rebuild past counts.
     await this.analyticsEventRepo
       .insertSpaceDeleted({
         workspaceId,

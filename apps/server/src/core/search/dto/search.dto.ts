@@ -116,7 +116,6 @@ export class SearchSuggestionDTO {
   limit?: number;
 }
 
-/** Pages referenced by a database's document columns, looked up for the current user. */
 export class ResolvePagesDTO {
   @IsArray()
   @ArrayMaxSize(200)
