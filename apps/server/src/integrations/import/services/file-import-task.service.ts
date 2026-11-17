@@ -140,7 +140,6 @@ export class FileImportTaskService {
         await this.updateTaskStatus(fileTaskId, FileTaskStatus.Success, null);
         await cleanupTmpFile();
         await cleanupTmpDir();
-        // delete stored file on success
         await this.storageService.delete(fileTask.filePath);
       } catch (err) {
         this.logger.error(
@@ -178,7 +177,7 @@ export class FileImportTaskService {
       const relPath = path
         .relative(extractDir, absPath)
         .split(path.sep)
-        .join('/'); // normalize to forward-slashes
+        .join('/');
       const ext = path.extname(relPath).toLowerCase();
 
       const encodedPath = encodeFilePath(relPath);
@@ -196,33 +195,28 @@ export class FileImportTaskService {
       });
     }
 
-    // Create placeholder pages for folders without corresponding files
     const foldersWithContent = new Set<string>();
 
     pagesMap.forEach((page) => {
       const segments = page.filePath.split('/');
-      segments.pop(); // remove filename
+      segments.pop();
 
-      // Build up all folder paths and mark them as having content
       let currentPath = '';
       for (const segment of segments) {
         currentPath = currentPath ? `${currentPath}/${segment}` : segment;
-        foldersWithContent.add(currentPath); // All ancestor folders have content
+        foldersWithContent.add(currentPath);
       }
     });
 
-    // Determine if there's a single root container folder
     const rootLevelItems = new Set<string>();
     pagesMap.forEach((page) => {
       const firstSegment = page.filePath.split('/')[0];
       rootLevelItems.add(firstSegment);
     });
 
-    // If all files are in a single root folder and no files at root level exist
     let skipRootFolder: string | null = null;
     if (rootLevelItems.size === 1) {
       const onlyRootItem = Array.from(rootLevelItems)[0];
-      // Check if this is a folder (not a file at root)
       const hasRootFiles = Array.from(pagesMap.keys()).some(
         (filePath) => !filePath.includes('/'),
       );
@@ -231,9 +225,6 @@ export class FileImportTaskService {
       }
     }
 
-    // For each folder with content, create a placeholder page if no corresponding .md or .html exists
-    // Process folders with partial UUIDs first so they claim their specific files
-    // before plain folders (without partial UUIDs) take whatever remains.
     const sortedFolders = isNotion
       ? [...foldersWithContent].sort((a, b) => {
           const aHasPartial = extractNotionPartialId(path.basename(a)) ? 0 : 1;
@@ -257,8 +248,6 @@ export class FileImportTaskService {
         const folderName = path.basename(folderPath);
         const parentDir = path.dirname(folderPath);
 
-        // Notion no longer adds UUIDs to folder names, but still adds them to files.
-        // For duplicate names, Notion adds a partial UUID "{first4}-{last4}" to the folder.
         let matched = false;
         if (isNotion) {
           const partialId = extractNotionPartialId(folderName);
@@ -272,7 +261,6 @@ export class FileImportTaskService {
             if (page.name !== strippedFolderName) continue;
 
             if (partialId) {
-              // Match partial UUID against the full UUID in the filename
               const fileBase = path.basename(filePath, path.extname(filePath));
               const fullIdMatch = fileBase.match(/[a-f0-9]{32}$/i);
               if (!fullIdMatch) continue;
@@ -310,7 +298,6 @@ export class FileImportTaskService {
       }
     });
 
-    // parent/child linking
     pagesMap.forEach((page, filePath) => {
       const segments = filePath.split('/');
       segments.pop();
@@ -331,7 +318,6 @@ export class FileImportTaskService {
       if (parentPage) page.parentPageId = parentPage.id;
     });
 
-    // generate position keys
     const siblingsMap = new Map<string | null, ImportPageNode[]>();
 
     pagesMap.forEach((page) => {
@@ -347,7 +333,6 @@ export class FileImportTaskService {
       });
     }
 
-    // Sort siblings by metadata position if available, otherwise alphabetically
     const sortSiblings = (siblings: ImportPageNode[]) => {
       if (docmostMetadata) {
         siblings.sort((a, b) => {
@@ -356,7 +341,6 @@ export class FileImportTaskService {
           const posB =
             docmostMetadata.pages[encodedPathsMap.get(b.filePath)]?.position;
           if (posA && posB) {
-            // Use direct comparison to match PostgreSQL collation 'C' (byte order)
             if (posA < posB) return -1;
             if (posA > posB) return 1;
             return 0;
@@ -368,13 +352,11 @@ export class FileImportTaskService {
       }
     };
 
-    // get root pages
     const rootSibs = siblingsMap.get(null);
 
     if (rootSibs?.length) {
       sortSiblings(rootSibs);
 
-      // get first position key from the server
       const nextPosition = await this.pageService.nextPagePosition(
         fileTask.spaceId,
       );
@@ -390,9 +372,8 @@ export class FileImportTaskService {
       });
     }
 
-    // non-root buckets (children & deeper levels)
     siblingsMap.forEach((sibs, parentId) => {
-      if (parentId === null) return; // root already done
+      if (parentId === null) return;
 
       sortSiblings(sibs);
 
@@ -403,7 +384,6 @@ export class FileImportTaskService {
       }
     });
 
-    // internal page links
     const filePathToPageMetaMap = new Map<
       string,
       { id: string; title: string; slugId: string }
@@ -416,15 +396,12 @@ export class FileImportTaskService {
       });
     });
 
-    // Group pages by level (topological sort for parent-child relationships)
     const pagesByLevel = new Map<number, Array<[string, ImportPageNode]>>();
     const pageLevel = new Map<string, number>();
 
-    // Calculate levels using BFS
     const calculateLevels = () => {
       const queue: Array<{ filePath: string; level: number }> = [];
 
-      // Start with root pages (no parent)
       for (const [filePath, page] of pagesMap.entries()) {
         if (!page.parentPageId) {
           queue.push({ filePath, level: 0 });
@@ -432,12 +409,10 @@ export class FileImportTaskService {
         }
       }
 
-      // BFS to assign levels
       while (queue.length > 0) {
         const { filePath, level } = queue.shift()!;
         const currentPage = pagesMap.get(filePath)!;
 
-        // Find children of current page
         for (const [childFilePath, childPage] of pagesMap.entries()) {
           if (
             childPage.parentPageId === currentPage.id &&
@@ -449,7 +424,6 @@ export class FileImportTaskService {
         }
       }
 
-      // Group pages by level
       for (const [filePath, page] of pagesMap.entries()) {
         const level = pageLevel.get(filePath) || 0;
         if (!pagesByLevel.has(level)) {
@@ -463,18 +437,15 @@ export class FileImportTaskService {
 
     if (pagesMap.size < 1) return;
 
-    // Process pages level by level sequentially to respect foreign key constraints
     const allBacklinks: any[] = [];
     const validPageIds = new Set<string>();
     const pageTitles = new Map<string, string>();
     let totalPagesProcessed = 0;
 
-    // Sort levels to process in order
     const sortedLevels = Array.from(pagesByLevel.keys()).sort((a, b) => a - b);
 
     try {
       await executeTx(this.db, async (trx) => {
-        // Process pages level by level sequentially within the transaction
         for (const level of sortedLevels) {
           const levelPages = pagesByLevel.get(level)!;
 
@@ -482,7 +453,6 @@ export class FileImportTaskService {
             const absPath = path.join(extractDir, filePath);
             let content = '';
 
-            // Check if file exists (placeholder pages won't have physical files)
             try {
               await fs.access(absPath);
               content = await fs.readFile(absPath, 'utf-8');
@@ -492,7 +462,6 @@ export class FileImportTaskService {
               }
             } catch (err: any) {
               if (err?.code === 'ENOENT') {
-                // Use empty content, title will be the folder name
                 content = '';
               } else {
                 throw err;
@@ -556,7 +525,6 @@ export class FileImportTaskService {
             validPageIds.has(sourcePageId) && validPageIds.has(targetPageId),
         );
 
-        // Insert backlinks in batches
         if (filteredBacklinks.length > 0) {
           const BACKLINK_BATCH_SIZE = 100;
           for (

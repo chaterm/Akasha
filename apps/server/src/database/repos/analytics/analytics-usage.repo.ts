@@ -13,8 +13,6 @@ const iso = (value: unknown) =>
 export class AnalyticsUsageRepo {
   constructor(@InjectKysely() private readonly db: KyselyDB) {}
 
-  // Every query starts from the same workspace, time, attribution and filters.
-  // Join metadata IDs as text: old events can contain missing/invalid IDs.
   private base(range: AnalyticsRange, query: AnalyticsUsageQueryDto) {
     const keyType = sql`coalesce(e.metadata->>'keyType', k.key_type,
       CASE WHEN u.user_type = 'agent' THEN 'agent' ELSE 'unknown' END)`;
@@ -38,7 +36,6 @@ export class AnalyticsUsageRepo {
         : query.groupBy === 'agent'
           ? sql`actor_email`
           : sql`attributed_user_email`;
-    // Escape LIKE metacharacters so pasted IDs and tool names match literally.
     const search = `%${(query.search ?? '').trim().replace(/[\\%_]/g, '\\$&')}%`;
     return sql`
       WITH attributed AS (

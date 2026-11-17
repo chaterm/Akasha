@@ -33,7 +33,6 @@ export function updateAttachmentUrlsToLocalPaths(prosemirrorJson: any) {
   const doc = jsonToNode(prosemirrorJson);
   if (!doc) return null;
 
-  // Helper function to replace specific URL prefixes
   const replacePrefix = (url: string): string => {
     const prefixes = ['/files', '/api/files'];
     for (const prefix of prefixes) {
@@ -93,7 +92,6 @@ export function replaceInternalLinks(
           //@ts-expect-error
           mark.attrs.target = '_self';
           if (node.isText) {
-            // if link and text are same, use page title
             if (markLink === node.text) {
               //@ts-expect-error
               node.text = getInternalLinkPageName(

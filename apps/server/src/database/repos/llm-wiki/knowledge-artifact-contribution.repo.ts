@@ -69,11 +69,6 @@ export class KnowledgeArtifactContributionRepo {
       .execute();
   }
 
-  /**
-   * Title each source gave its own contribution to an artifact. Used when a
-   * reader cannot see every source of the merged artifact and must not see its
-   * merged title. Reads only the title field, not the whole payload.
-   */
   async findContributionTitles(input: {
     workspaceId: string;
     pairs: Array<{ artifactId: string; sourcePageId: string }>;

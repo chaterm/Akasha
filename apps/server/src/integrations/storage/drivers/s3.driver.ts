@@ -65,8 +65,6 @@ export class S3Driver implements StorageDriver {
     let clientToUse = this.s3Client;
     let shouldDestroyClient = false;
 
-    // optionally recreate client to avoid socket hang errors
-    // (during multi-attachments imports)
     if (options?.recreateClient) {
       clientToUse = this.createClient();
       shouldDestroyClient = true;

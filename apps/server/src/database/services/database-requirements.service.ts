@@ -3,8 +3,6 @@ import { sql } from 'kysely';
 import { InjectKysely } from 'nestjs-kysely';
 import { KyselyDB } from '@akasha/db/types/kysely.types';
 
-// Components the server needs from PostgreSQL. Keep in sync with
-// docker/postgres/Dockerfile and the cloud database configuration.
 export const MIN_SERVER_VERSION_NUM = 180000;
 export const REQUIRED_EXTENSIONS = ['vector', 'pg_trgm', 'pg_jieba'] as const;
 export const REQUIRED_PRELOAD_LIBRARIES = ['pg_jieba'] as const;
@@ -67,8 +65,6 @@ export function evaluateDatabaseEnvironment(
     (name) => !snapshot.sharedPreloadLibraries.includes(name),
   );
   if (missingPreload.length > 0) {
-    // Without preloading, every connection loads its own ~110 MB jieba
-    // dictionary on first use (≈4.5 GB for a 40-connection pool).
     errors.push(
       `shared_preload_libraries must include ${missingPreload.join(', ')} ` +
         `(current: '${snapshot.sharedPreloadLibraries.join(',')}')`,
@@ -138,14 +134,10 @@ export class DatabaseRequirementsService {
 
   constructor(@InjectKysely() private readonly db: KyselyDB) {}
 
-  // Before migrations: the server itself must provide every component the
-  // migrations depend on, so a missing extension fails here with a clear
-  // message instead of halfway through a migration.
   async assertEnvironment(): Promise<void> {
     this.apply(evaluateDatabaseEnvironment(await this.readEnvironment()));
   }
 
-  // After migrations: the schema objects the running code relies on exist.
   async assertSchema(): Promise<void> {
     this.apply(evaluateDatabaseSchema(await this.readSchema()));
   }
@@ -229,8 +221,6 @@ export class DatabaseRequirementsService {
 
     let pendingZhSearchRows: number | null = null;
     if (row.hasZhSearchColumn) {
-      // Bounded probe: only whether some rows are pending matters at startup,
-      // and an exact count over a large table would slow every boot.
       const pending = await sql<{ count: number }>`
         SELECT count(*)::int AS count FROM (
           SELECT 1 FROM knowledge_chunks WHERE search_tsv_zh IS NULL

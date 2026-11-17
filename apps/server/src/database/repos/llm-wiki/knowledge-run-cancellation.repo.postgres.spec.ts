@@ -96,8 +96,6 @@ describePostgres('Knowledge Run cancellation PostgreSQL round trip', () => {
       errorCode: 'manual_cancelled',
     });
 
-    // An image Worker that held the old exact identity cannot publish after
-    // cancellation because the parent Run is no longer compiling/images.
     await expect(
       repo.completeRunImage({
         runImageId: 'image-processing',

@@ -330,7 +330,6 @@ export class KnowledgeCompilationRepo {
     );
   }
 
-  /** Reads the index actually serving retrieval, independently of the latest Run. */
   async findPublishedPageIndex(input: {
     workspaceId: string;
     spaceId: string;
@@ -383,13 +382,6 @@ export class KnowledgeCompilationRepo {
       : undefined;
   }
 
-  /**
-   * Reads the last published page identity in one Space-scoped query. A row is
-   * returned only when the successful attempt still has its exact active
-   * source, semantic contribution, source-summary page, and searchable chunk.
-   * The current attempt status is intentionally informational: a later failed
-   * retry must not erase a still-valid successful publication.
-   */
   async findSpaceReuseCandidates(input: {
     workspaceId: string;
     spaceId: string;

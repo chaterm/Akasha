@@ -1,10 +1,3 @@
-// One-off backfill for knowledge_chunks.search_tsv_zh after migration
-// 20261015T100000-knowledge-chunk-zh-search.
-//
-//   dev:  pnpm --filter ./apps/server backfill:zh-search
-//   prod: node apps/server/dist/database/scripts/backfill-knowledge-chunk-zh-search.js
-//
-// Options (env): ZH_BACKFILL_BATCH_SIZE (default 2000), ZH_BACKFILL_PAUSE_MS (default 200)
 import { Kysely } from 'kysely';
 import { PostgresJSDialect } from 'kysely-postgres-js';
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- postgres is CommonJS in both tsx and the compiled script.

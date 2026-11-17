@@ -5,8 +5,6 @@ import { normalizePostgresUrl } from '../../../common/helpers';
 import { KnowledgeCompileWindowRepo } from './knowledge-compile-window.repo';
 import { nextCompileWindowStartAt } from '../../types/knowledge-compile-window.types';
 
-// The repo evaluates the window in the server's local time; probe instants
-// are chosen relative to that clock so the spec holds in any process TZ.
 function localTime(hhmm: string): Date {
   const [hours, minutes] = hhmm.split(':').map(Number);
   const date = new Date(2026, 9, 28, hours, minutes, 0, 0);
@@ -85,7 +83,6 @@ describePostgres('KnowledgeCompileWindowRepo PostgreSQL round trip', () => {
       },
     });
 
-    // Also enable the soft-deleted workspace: it must never be gated.
     await repo.saveConfig('workspace-deleted', {
       enabled: true,
       startTime: '23:00',

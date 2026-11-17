@@ -42,13 +42,6 @@ export interface SpaceJobReservation extends Omit<
   'executionToken'
 > {}
 
-/**
- * Immutable execution identity for an independent Page Merge job. Unlike the
- * space-level merge, a Page Merge does not hold a SpaceExecutionLease; its fence
- * lives entirely on the RunPage row (merge_job_id + merge_execution_token) plus
- * the frozen source identity, and is validated against the current Space/Run
- * generation on every heartbeat, failure settlement and publication.
- */
 export interface PageMergeExecutionFence {
   workspaceId: string;
   spaceId: string;
@@ -62,7 +55,6 @@ export interface PageMergeExecutionFence {
   sourceContentHash: string;
 }
 
-/** Deterministic reservation prior to claim; token is minted at claim time. */
 export interface PageMergeReservation {
   workspaceId: string;
   spaceId: string;
@@ -95,11 +87,6 @@ export interface RunPageBindingPlan {
   mergeStatus: KnowledgeSpaceCompileRunPageMergeStatus;
   errorCode?: string | null;
   errorMessage?: string | null;
-  /**
-   * Binding-time cache/reuse hint. It may omit images that were still pending
-   * at binding, so merge publication must derive its identity from frozen
-   * RunImage extraction ids instead.
-   */
   targetEffectiveKnowledgeHash?: string | null;
   reused?: boolean;
   qualityStatus?: 'normal' | 'degraded' | 'partial_image';
@@ -140,9 +127,6 @@ const NONTERMINAL_RUN_STATUSES: KnowledgeSpaceCompileRunStatus[] = [
 const TEXT_PHASES: KnowledgeSpaceCompileRunPhase[] = ['text'];
 const FINALIZE_PHASES: KnowledgeSpaceCompileRunPhase[] = ['finalizing'];
 
-// A Page Merge may run while the Run is still compiling text or images, or in
-// the dedicated image_merge phase. It is never dispatched in finalizing: by
-// then every merge must already be terminal.
 const PAGE_MERGE_RUN_PHASES: KnowledgeSpaceCompileRunPhase[] = [
   'text',
   'images',
@@ -224,12 +208,6 @@ export class KnowledgeSpaceExecutionRepo {
       .execute();
   }
 
-  /**
-   * Claims the next text barrier row under the Space execution lease. Exact
-   * source identity is deliberately absent until the worker exports the page.
-   * A recovered binding row is claimable again because the lease token fences
-   * the eventual bind CAS.
-   */
   async claimNextTextPage(lease: SpaceExecutionLease) {
     return executeTx(this.db, async (trx) => {
       const run = await this.lockLeasedRun(trx, lease);
@@ -367,14 +345,6 @@ export class KnowledgeSpaceExecutionRepo {
     return Boolean(page);
   }
 
-  // ===== Page Merge outbox + execution fence =====
-
-  /**
-   * Fair, cross-space Page Merge reservation. Candidate runs are read without a
-   * lock, then each run is reserved in its own short transaction so no single
-   * transaction locks more than one Space/Run. At most one page per run is
-   * reserved, enforcing the single-outstanding-merge-per-run rule.
-   */
   async reservePageMergesFairly(
     input: { runLimit?: number } = {},
   ): Promise<PageMergeReservation[]> {
@@ -444,7 +414,6 @@ export class KnowledgeSpaceExecutionRepo {
         .forUpdate()
         .executeTakeFirst();
       if (!run) return undefined;
-      // Single outstanding merge per run: bail if one is already in flight.
       const busy = await trx
         .selectFrom('knowledgeSpaceCompileRunPages')
         .select('id')
@@ -552,13 +521,6 @@ export class KnowledgeSpaceExecutionRepo {
     return Boolean(updated);
   }
 
-  /**
-   * Claim a dispatched Page Merge for execution. Locks Space -> Run -> RunPage,
-   * validates the deterministic job identity and frozen source identity, then
-   * atomically mints a fresh execution token and marks the page running. Returns
-   * the immutable fence plus the frozen image snapshot, or undefined if the job
-   * is stale / already claimed / superseded.
-   */
   async claimPageMerge(input: {
     runId: string;
     runPageId: string;
@@ -581,8 +543,6 @@ export class KnowledgeSpaceExecutionRepo {
       if (page.mergeStatus !== 'queued') return undefined;
       if (page.mergeJobId !== input.mergeJobId) return undefined;
       if (page.bindingStatus !== 'bound') return undefined;
-      // Transport recovery and duplicate delivery must never mint a fourth
-      // execution, even if an exhausted page was left queued by an old worker.
       if (page.mergeAttemptCount >= MERGE_ATTEMPT_BUDGET) {
         await this.failPageMergeInTransaction(trx, {
           runId: run.id,
@@ -598,7 +558,6 @@ export class KnowledgeSpaceExecutionRepo {
       ) {
         return undefined;
       }
-      // Single-outstanding-merge safety: no other page of this run is running.
       const otherRunning = await trx
         .selectFrom('knowledgeSpaceCompileRunPages')
         .select('id')
@@ -646,9 +605,6 @@ export class KnowledgeSpaceExecutionRepo {
       const snapshot = await this.loadPageMergeImageSnapshot(claimed.runPageId);
       return { ...claimed, ...snapshot };
     } catch (error) {
-      // A transient read failure after claim must release the token for the
-      // same BullMQ job's delayed retry, not leave a running row that retries
-      // can only noop against.
       await this.finishPageMerge(claimed, {
         status: 'failed',
         retryable: true,
@@ -659,12 +615,6 @@ export class KnowledgeSpaceExecutionRepo {
     }
   }
 
-  /**
-   * Locks Space -> Run -> RunPage for a Page Merge in the canonical order and
-   * validates generation + run activity. Returns the locked run/page rows, or
-   * undefined if the space generation drifted or the run is no longer active in
-   * a merge-eligible phase.
-   */
   private async lockPageMergeRunPage(
     trx: KyselyTransaction,
     input: { runId: string; runPageId: string; knowledgeGeneration: number },
@@ -763,11 +713,6 @@ export class KnowledgeSpaceExecutionRepo {
     };
   }
 
-  /**
-   * Non-transactional heartbeat/liveness check for the page merge fence: every
-   * identity dimension must still match a running page under the current
-   * generation. Used by the worker heartbeat loop.
-   */
   async isPageMergeFenceActive(
     fence: PageMergeExecutionFence,
   ): Promise<boolean> {
@@ -794,12 +739,6 @@ export class KnowledgeSpaceExecutionRepo {
     return Boolean(row);
   }
 
-  /**
-   * Transactional publication guard. Locks Space -> Run -> RunPage in canonical
-   * order and re-validates the full fence inside the caller's publication
-   * transaction so a stale worker (superseded token / generation / source
-   * drift) can never publish.
-   */
   async isPageMergeFenceActiveForPublication(
     fence: PageMergeExecutionFence,
     trx: KyselyTransaction,
@@ -821,13 +760,6 @@ export class KnowledgeSpaceExecutionRepo {
     );
   }
 
-  /**
-   * Completes a successful page merge inside the caller's knowledge-publication
-   * transaction: marks the page succeeded, records the effective hash, clears
-   * the execution fence, then reconciles the run pipeline barrier. Returns false
-   * if the fence no longer holds (stale worker), leaving the transaction to roll
-   * back its publication.
-   */
   async completePageMerge(
     fence: PageMergeExecutionFence,
     input: { effectiveKnowledgeHash: string },
@@ -868,17 +800,6 @@ export class KnowledgeSpaceExecutionRepo {
     return true;
   }
 
-  /**
-   * Settles a non-successful page merge attempt.
-   *
-   * - retryable + attempts remaining: clears the execution token/expiry/
-   *   heartbeat and returns the page to `queued`, keeping the deterministic job
-   *   identity and dispatched flag so BullMQ's delayed retry re-claims the same
-   *   job. The page keeps this run's single merge slot while it backs off.
-   * - non-retryable OR budget exhausted: marks the page failed/skipped, records
-   *   the failure class, clears the fence, and reconciles the run barrier so the
-   *   freed slot lets the next ready page reserve.
-   */
   async finishPageMerge(
     fence: PageMergeExecutionFence,
     input: {
@@ -1044,13 +965,6 @@ export class KnowledgeSpaceExecutionRepo {
       .execute();
   }
 
-  /**
-   * Reaper recovery: clears an expired running lease (or a stuck queued job)
-   * back to a redispatchable `queued` state, bumping the redis recovery count.
-   * If executions are already exhausted, settles failed instead; transport
-   * recovery never replenishes the independent execution attempt budget.
-   * Guarded by generation + job identity so a superseded page is never revived.
-   */
   async requeueMissingPageMerge(
     input: PageMergeRecoveryObservation,
   ): Promise<boolean> {
@@ -1093,11 +1007,6 @@ export class KnowledgeSpaceExecutionRepo {
     });
   }
 
-  /**
-   * Reaper terminalization by job identity (no execution token available).
-   * Marks an unrecoverable page merge `failed`, clears the fence, and reconciles
-   * the run barrier so the freed slot lets the next ready page proceed.
-   */
   async terminalizePageMerge(
     input: PageMergeRecoveryObservation & {
       errorCode: string;
@@ -1121,7 +1030,6 @@ export class KnowledgeSpaceExecutionRepo {
     });
   }
 
-  /** Caller holds Space -> Run -> RunPage and has validated its identity. */
   private async failPageMergeInTransaction(
     trx: KyselyTransaction,
     input: {
@@ -1322,8 +1230,6 @@ export class KnowledgeSpaceExecutionRepo {
       const targetFilter = input.targetSourcePageIds?.length
         ? sql`AND page.id IN (${sql.join(input.targetSourcePageIds)})`
         : sql``;
-      // Keep the projection metadata-only. In particular, this query must not
-      // touch text_content, content, attachments, backlinks, or Catalog data.
       await sql`
         INSERT INTO knowledge_space_compile_run_pages (
           run_id,
@@ -1406,7 +1312,6 @@ export class KnowledgeSpaceExecutionRepo {
     });
   }
 
-  /** Atomically publishes the exact snapshot and image plan for one RunPage. */
   async bindTextPage(
     lease: SpaceExecutionLease,
     input: RunPageBindingPlan & { images: RunImageInitializationPlan[] },
@@ -1509,7 +1414,6 @@ export class KnowledgeSpaceExecutionRepo {
     });
   }
 
-  /** Terminalizes a page that disappeared before its exact snapshot bound. */
   async terminalizeUnboundTextPage(
     lease: SpaceExecutionLease,
     input: {
@@ -1899,9 +1803,6 @@ export class KnowledgeSpaceExecutionRepo {
       if (
         run.rerunRequested &&
         run.knowledgeGeneration === run.currentKnowledgeGeneration &&
-        // A follow-up is a bounded convergence pass. If that pass also
-        // requests a rerun (for example because image knowledge is still not
-        // available), stop the automatic chain and require an explicit retry.
         run.trigger !== 'follow_up'
       ) {
         followUp = await trx
@@ -1917,8 +1818,6 @@ export class KnowledgeSpaceExecutionRepo {
             expectedPageCount: 0,
             compilerVersion: run.compilerVersion,
             promptVersion: run.promptVersion,
-            // Page updates and snapshot changes that arrive after initialization
-            // accumulate in a scope separate from the current Run's frozen plan.
             targetSourcePageIds: run.followUpTargetSourcePageIds,
             queuedAt: now,
             spaceJobQueuedAt: now,
@@ -1931,10 +1830,6 @@ export class KnowledgeSpaceExecutionRepo {
     });
   }
 
-  // When a page changes mid-run, accumulate it in the follow-up scope without
-  // mutating the current Run's frozen discovery scope. An explicitly requested
-  // full-Space follow-up stays full; otherwise only pages that changed after
-  // initialization are unioned into the bounded follow-up.
   private followUpScopeUpdate(
     run: { followUpTargetSourcePageIds: unknown; rerunRequested: boolean },
     changedSourcePageId: string,

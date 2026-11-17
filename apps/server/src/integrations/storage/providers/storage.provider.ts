@@ -43,8 +43,8 @@ export const storageDriverConfigProvider = {
           },
         };
 
-      case StorageOption.S3:
-        { const s3Config = {
+      case StorageOption.S3: {
+        const s3Config = {
           driver,
           config: {
             region: environmentService.getAwsS3Region(),
@@ -56,11 +56,6 @@ export const storageDriverConfigProvider = {
           },
         };
 
-        /**
-         * This makes use of AWS_S3_ACCESS_KEY_ID and AWS_S3_SECRET_ACCESS_KEY if present,
-         * If not present, it makes it lenient for the AWS SDK to use
-         * AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY if they are present in the environment
-         */
         if (
           environmentService.getAwsS3AccessKeyId() ||
           environmentService.getAwsS3SecretAccessKey()
@@ -71,7 +66,8 @@ export const storageDriverConfigProvider = {
           };
         }
 
-        return s3Config; }
+        return s3Config;
+      }
 
       case StorageOption.AZURE:
         return {

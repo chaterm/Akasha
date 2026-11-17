@@ -1,6 +1,5 @@
 import { Json, Timestamp, Generated } from '@akasha/db/types/db';
 
-// embeddings type
 export interface PageEmbeddings {
   id: Generated<string>;
   pageId: string;

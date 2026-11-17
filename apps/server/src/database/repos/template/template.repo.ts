@@ -13,11 +13,9 @@ import { ExpressionBuilder, sql } from 'kysely';
 import { DB } from '@akasha/db/types/db';
 import { jsonObjectFrom } from 'kysely/helpers/postgres';
 
-/** 模板行 + 指定空间列表（allSpaces 为 true 时通常为空）。 */
 export type TemplateRow = Template & { spaceIds: string[] };
 
 export type TemplateSpaceFilter =
-  /** 用户可见的全部：所有空间模板 + 指定到其可访问空间的模板 */
   | { mode: 'accessible' }
   /** 仅"所有空间"模板 */
   | { mode: 'allSpaces' }
@@ -88,7 +86,6 @@ export class TemplateRepo {
         break;
       case 'assignedTo':
       case 'availableIn': {
-        // 无权访问的空间一律返回空
         if (!accessibleSpaceIds.includes(filter.spaceId)) {
           query = query.where(sql<boolean>`false`);
           break;
@@ -97,15 +94,15 @@ export class TemplateRepo {
         query =
           filter.mode === 'assignedTo'
             ? query.where(assigned)
-            : query.where((eb) => eb.or([eb('allSpaces', '=', true), assigned]));
+            : query.where((eb) =>
+                eb.or([eb('allSpaces', '=', true), assigned]),
+              );
         break;
       }
       default:
-        // 管理员可以看到所有模板
         if (opts?.isAdmin) {
           // 不添加额外过滤条件，查询所有模板
         } else {
-          // 普通用户：自己有权限空间的模板 + 自己创建的模板
           query = query.where((eb) =>
             eb.or([
               eb('allSpaces', '=', true),
@@ -174,7 +171,6 @@ export class TemplateRepo {
       .execute();
   }
 
-  /** 整体替换模板的指定空间列表。 */
   async setTemplateSpaces(
     templateId: string,
     spaceIds: string[],
@@ -188,7 +184,9 @@ export class TemplateRepo {
     if (spaceIds.length > 0) {
       await db
         .insertInto('templateSpaces')
-        .values([...new Set(spaceIds)].map((spaceId) => ({ templateId, spaceId })))
+        .values(
+          [...new Set(spaceIds)].map((spaceId) => ({ templateId, spaceId })),
+        )
         .execute();
     }
   }

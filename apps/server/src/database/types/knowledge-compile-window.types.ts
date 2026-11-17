@@ -1,14 +1,6 @@
-/**
- * Night compile window: when enabled, deferrable (non-manual) knowledge
- * compilation only starts inside [startTime, endTime) of the server's local
- * time (the process TZ; the Docker image sets TZ=Asia/Shanghai). Pure
- * functions so the gate is testable without a clock or DB.
- */
 export interface KnowledgeCompileWindowConfig {
   enabled: boolean;
-  /** HH:mm, inclusive. */
   startTime: string;
-  /** HH:mm, exclusive. A value earlier than startTime crosses midnight. */
   endTime: string;
 }
 
@@ -24,7 +16,6 @@ export function isValidCompileWindowTime(value: unknown): value is string {
   return typeof value === 'string' && TIME_PATTERN.test(value);
 }
 
-/** IANA name of the server's local timezone, shown to admins as a hint. */
 export function serverTimezone(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -33,10 +24,6 @@ export function serverTimezone(): string {
   }
 }
 
-/**
- * Reads the stored settings value defensively. Anything malformed is treated
- * as disabled so a bad row can never block compilation.
- */
 export function parseCompileWindowConfig(
   value: unknown,
 ): KnowledgeCompileWindowConfig {
@@ -62,7 +49,6 @@ function toMinutes(time: string): number {
   return hours * 60 + minutes;
 }
 
-/** Minutes since local midnight (with seconds) in the given timezone. */
 function localMinutesOfDay(now: Date, timezone?: string): number {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
@@ -76,10 +62,6 @@ function localMinutesOfDay(now: Date, timezone?: string): number {
   return read('hour') * 60 + read('minute') + read('second') / 60;
 }
 
-/**
- * True when deferrable compilation may start now. Disabled = always open.
- * `timezone` defaults to the server's local timezone; tests pin it.
- */
 export function isCompileWindowOpen(
   config: KnowledgeCompileWindowConfig,
   now: Date,
@@ -93,11 +75,6 @@ export function isCompileWindowOpen(
   return current >= start || current < end;
 }
 
-/**
- * When a delayed page compile will actually start: the later of its
- * quiet-period deadline (or now, if already due) and the next window start.
- * `windowDeferred` is true when the window, not the quiet period, decides.
- */
 export function effectiveCompileStartAt(
   config: KnowledgeCompileWindowConfig,
   eligibleAt: Date,
@@ -111,12 +88,6 @@ export function effectiveCompileStartAt(
     : { startAt: base, windowDeferred: false };
 }
 
-/**
- * Next instant the window opens, or null when it is open (or disabled).
- * Computed as a minute offset from now in local time; a DST shift between
- * now and the start can move the result by up to the shift size, which is
- * acceptable for a user-facing hint.
- */
 export function nextCompileWindowStartAt(
   config: KnowledgeCompileWindowConfig,
   now: Date,
@@ -127,7 +98,6 @@ export function nextCompileWindowStartAt(
   const current = localMinutesOfDay(now, timezone);
   let delta = start - current;
   if (delta <= 0) delta += 24 * 60;
-  // Round away float noise from the seconds fraction onto the minute.
   return new Date(
     Math.round((now.getTime() + delta * 60_000) / 60_000) * 60_000,
   );

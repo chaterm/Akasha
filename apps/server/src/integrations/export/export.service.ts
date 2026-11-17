@@ -72,7 +72,6 @@ export class ExportService {
         baseUrl,
       );
     } else {
-      // mentions is already turned to links during the zip process
       prosemirrorJson = getProsemirrorContent(page.content);
     }
 
@@ -131,7 +130,6 @@ export class ExportService {
         includeContent: true,
       });
     } else {
-      // Only fetch the single page when includeChildren is false
       const page = await this.pageRepo.findById(pageId, {
         includeContent: true,
       });
@@ -162,11 +160,9 @@ export class ExportService {
 
     const parentPageIndex = pages.findIndex((obj) => obj.id === pageId);
 
-    //After filtering by permissions, if the root page itself is not accessible to the user, findIndex returns -1
     if (parentPageIndex === -1) {
       throw new BadRequestException('Root page is not accessible');
     }
-    // set to null to make export of pages with parentId work
     pages[parentPageIndex].parentPageId = null;
 
     const isSinglePage = pages.length === 1 && !includeAttachments;
@@ -205,8 +201,6 @@ export class ExportService {
     userId?: string,
     ignorePermissions = false,
   ) {
-    // Space exports always bundle attachments so pages remain intact when
-    // re-imported into another space.
     const includeAttachments = true;
 
     const space = await this.db
@@ -296,8 +290,6 @@ export class ExportService {
 
     computeLocalPath(tree, format, null, '', slugIdToPath);
 
-    // Batch resolve attachments once for the whole export so we only run the
-    // owning-page view check a single time, regardless of page count.
     const allowedAttachments = includeAttachments
       ? await this.resolveAccessibleAttachments(tree, userId, ignorePermissions)
       : new Map<string, AllowedAttachment>();
@@ -483,7 +475,6 @@ export class ExportService {
       return prosemirrorJson;
     }
 
-    // Filter to only accessible pages if permissions are enforced
     if (!ignorePermissions && userId) {
       pageMentionIds = await this.pagePermissionRepo.filterAccessiblePageIds({
         pageIds: pageMentionIds,
@@ -519,9 +510,6 @@ export class ExportService {
 
     let offset = 0;
 
-    /**
-     * Helper function to replace a mention node with a link node.
-     */
     const replaceMentionWithLink = (
       node: Node,
       pos: number,
@@ -535,22 +523,17 @@ export class ExportService {
 
       const link = `${baseUrl}/s/${spaceSlug}/p/${pageSlug}`;
 
-      // Create a link mark and a text node with that mark
       const linkMark = editorState.schema.marks.link.create({ href: link });
       const linkTextNode = editorState.schema.text(linkTitle, [linkMark]);
 
-      // Calculate positions (adjusted by the current offset)
       const from = pos + offset;
       const to = pos + offset + node.nodeSize;
 
-      // Replace the node in the transaction and update the offset
       transaction.replaceWith(from, to, linkTextNode);
       offset += linkTextNode.nodeSize - node.nodeSize;
     };
 
-    // find and convert page mentions to links
     editorState.doc.descendants((node: Node, pos: number) => {
-      // Check if the node is a page mention
       if (node.type.name === 'mention' && node.attrs.entityType === 'page') {
         const { entityId: pageId, slugId, label } = node.attrs;
         const page = pageMap.get(pageId);
@@ -564,7 +547,6 @@ export class ExportService {
             page.space.slug,
           );
         } else {
-          // if page is not found, default to  the node label and slugId
           replaceMentionWithLink(node, pos, label, slugId, 'undefined');
         }
       }
@@ -616,7 +598,6 @@ export class ExportService {
         if (includedIds.has(page.id)) continue;
         if (!accessibleSet.has(page.id)) continue;
 
-        // Root page or top-level page in space export
         if (
           page.id === rootPageId ||
           (rootPageId === null && page.parentPageId === null)
@@ -626,7 +607,6 @@ export class ExportService {
           continue;
         }
 
-        // Non-root: include if parent is already included
         if (page.parentPageId && includedIds.has(page.parentPageId)) {
           includedIds.add(page.id);
           changed = true;

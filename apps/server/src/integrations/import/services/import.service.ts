@@ -64,7 +64,6 @@ export class ImportService {
     let prosemirrorState = null;
     let createdPage = null;
 
-    // For DOCX, we need the page ID upfront so images can reference it
     const pageId =
       fileExtension === '.docx' || fileExtension === '.pdf'
         ? uuid7()
@@ -273,7 +272,6 @@ export class ImportService {
       if (title) content.shift();
     }
 
-    // ensure at least one paragraph
     if (content.length === 0) {
       content.push({
         type: 'paragraph',
@@ -334,7 +332,6 @@ export class ImportService {
     const fileTaskId = uuid7();
     const filePath = `${getFileTaskFolderPath(FileTaskType.Import, workspaceId)}/${fileTaskId}/${fileNameWithExt}`;
 
-    // upload file
     const { stream, getBytesRead } = createByteCountingStream(file.file);
 
     await this.storageService.upload(filePath, stream);

@@ -253,14 +253,6 @@ export class SpaceMemberRepo {
     return result;
   }
 
-  /*
-   * we want to get a user's role in a space.
-   * they user can be a member either directly or via a group
-   * we will pass the user id and space id to return the user's roles
-   * if the user is a member of the space via multiple groups
-   * if the user has no space permission it should return an empty array,
-   * maybe we should throw an exception?
-   */
   async getUserSpaceRoles(
     userId: string,
     spaceId: string,
@@ -396,8 +388,6 @@ export class SpaceMemberRepo {
       .execute();
   }
 
-  // Space IDs where the user's highest effective role (across direct and
-  // group memberships) equals the given role.
   async getUserSpaceIdsByHighestRole(
     userId: string,
     role: string,

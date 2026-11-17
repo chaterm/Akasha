@@ -10,19 +10,10 @@ import {
 } from '../../types/knowledge-compile-window.types';
 
 export interface KnowledgeCompileWindowDecision {
-  /** True when deferrable compilation must wait for the window. */
   deferred: boolean;
-  /** Next window start; set only when deferred. */
   deferredUntil: Date | null;
 }
 
-/**
- * Reads the per-workspace night compile window stored at
- * workspaces.settings.ai.compileWindow and answers gate questions. Times are
- * evaluated in the server's local timezone.
- * Deliberately uncached: the gate is polled every few seconds and an admin
- * toggling the switch must take effect on the next poll.
- */
 @Injectable()
 export class KnowledgeCompileWindowRepo {
   constructor(@InjectKysely() private readonly db: KyselyDB) {}
@@ -70,12 +61,10 @@ export class KnowledgeCompileWindowRepo {
     };
   }
 
-  /** True when the window switch is on, regardless of the current time. */
   async isEnabled(workspaceId: string): Promise<boolean> {
     return (await this.getConfig(workspaceId)).enabled;
   }
 
-  /** Workspaces whose deferrable compilation is currently held back. */
   async findGatedWorkspaceIds(now = new Date()): Promise<string[]> {
     const rows = await this.db
       .selectFrom('workspaces')

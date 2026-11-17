@@ -178,7 +178,6 @@ describePostgres('KnowledgeImageExtractionRepo PostgreSQL round trip', () => {
     ).resolves.toBe(0);
     expect(await extractionEvidence(db)).not.toHaveLength(0);
 
-    // A wrong workspace must not reach this workspace's attachments.
     await expect(
       repo.deleteByPageIds({
         workspaceId: 'workspace-other',

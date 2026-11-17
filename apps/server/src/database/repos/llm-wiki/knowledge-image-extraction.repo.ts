@@ -86,13 +86,6 @@ export class KnowledgeImageExtractionRepo {
       .executeTakeFirst();
   }
 
-  /**
-   * Drops the durable image-understanding cache for every attachment that
-   * belongs to the given source pages. An explicit page retry uses this to
-   * force VLM re-extraction instead of reusing a prior `ready` result: the
-   * cache key is (workspaceId, attachmentId, cacheFingerprint) and carries no
-   * pageId, so we reach the attachments through `attachments.pageId`.
-   */
   async deleteByPageIds(input: {
     workspaceId: string;
     sourcePageIds: string[];
@@ -201,17 +194,6 @@ export class KnowledgeImageExtractionRepo {
     });
   }
 
-  /**
-   * Reads extraction rows by the exact ids a run froze into its plan, and only
-   * returns rows that still pass the same identity gate as the live snapshot
-   * lookup (attachment ownership/version, ready status, model + prompt identity,
-   * non-empty content). Unlike findCurrentReadyForSnapshotImages this is keyed
-   * by the frozen extraction id rather than "whatever is currently ready for
-   * this attachment", so the merge build compiles the exact extractions the run
-   * planned. A caller detects drift by comparing the returned ids against the
-   * expected set: any id missing here (re-extraction, identity change, deletion)
-   * means the frozen plan can no longer be reproduced and must not be published.
-   */
   async findReadyByIds(input: {
     workspaceId: string;
     spaceId: string;
@@ -271,11 +253,6 @@ export class KnowledgeImageExtractionRepo {
     );
   }
 
-  /**
-   * Atomically claims a cache key. Only the lease owner may publish a result.
-   * A crashed worker can be replaced after its lease expires, and retryable
-   * failures can be reclaimed only after their shared database backoff.
-   */
   async claim(
     input: KnowledgeImageExtractionCacheKey,
     leaseMs: number,
@@ -284,9 +261,6 @@ export class KnowledgeImageExtractionRepo {
     const leaseExpiresAt = sql<Date>`now() + (${leaseMs} * interval '1 millisecond')`;
     const updatedAt = new Date();
 
-    // The caller has already re-read and validated ownership plus image bytes.
-    // Refresh the durable attachment version before reusing an otherwise
-    // identical ready cache entry.
     const validatedReady = await this.db
       .updateTable('knowledgeImageExtractions')
       .set({
@@ -365,12 +339,8 @@ export class KnowledgeImageExtractionRepo {
       return { state: 'claimed', extraction: claimed, leaseToken };
     }
 
-    // DO UPDATE ... WHERE returns no row when another worker owns the key or
-    // when it is already terminal, so read the winning state after the write.
     const existing = await this.findCached(input);
     if (!existing) {
-      // The attachment may have been deleted by the FK cascade between the two
-      // statements. Treat this as busy so callers safely skip the image.
       throw new Error('Knowledge image extraction claim disappeared.');
     }
     if (existing.status === 'ready') {

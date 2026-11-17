@@ -362,8 +362,6 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
       errorCode: 'source_changed',
     });
 
-    // A full-Space Run that finds one page changed mid-run must narrow its
-    // follow-up scope to that page, not re-discover the whole Space.
     const state = await sql<{
       rerunRequested: boolean;
       targetSourcePageIds: string[] | null;
@@ -437,7 +435,6 @@ describePostgres('KnowledgeSpaceExecutionRepo PostgreSQL fencing', () => {
       });
     }
 
-    // The second changed page must union with the first, not overwrite it.
     const state = await sql<{
       targetSourcePageIds: string[] | null;
       followUpTargetSourcePageIds: string[] | null;

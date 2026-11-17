@@ -85,13 +85,6 @@ export class UserRepo {
       .executeTakeFirst();
   }
 
-  /**
-   * Returns the active workspace owner (role=owner, normal user, not deleted or
-   * deactivated). Used by the platform-to-platform agent provisioning flow,
-   * which has no logged-in user but must attribute the created API key to a
-   * real owner account. When multiple owners exist, the earliest-created one is
-   * chosen for stable attribution.
-   */
   async findWorkspaceOwner(
     workspaceId: string,
     trx?: KyselyTransaction,

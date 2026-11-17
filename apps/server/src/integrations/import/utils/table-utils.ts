@@ -2,11 +2,6 @@ import { CheerioAPI, Cheerio } from 'cheerio';
 
 const DEFAULT_IMPORT_COL_WIDTH_PX = 150;
 
-/**
- * Extracts a pixel-integer width from either the `width` attribute or
- * `style="width: Npx"` on a <col>/<td>/<th>. Returns null when absent,
- * non-numeric, or a non-px unit (em, %).
- */
 function parsePixelWidth(el: Cheerio<any>): number | null {
   const attr = el.attr('width');
   if (attr) {
@@ -22,12 +17,6 @@ function parsePixelWidth(el: Cheerio<any>): number | null {
   return null;
 }
 
-/**
- * Derives per-column widths for a table, in visual column order.
- * Priority: <colgroup><col> → first-row cells' own width style.
- * Returns an array of length = number of columns, with null entries
- * for columns whose width couldn't be determined.
- */
 function deriveColumnWidths(
   $: CheerioAPI,
   table: Cheerio<any>,
@@ -41,7 +30,6 @@ function deriveColumnWidths(
     if (widths.some((w) => w !== null)) return widths;
   }
 
-  // Fallback: first row's cells.
   const firstRow = table.find('> tbody > tr, > thead > tr, > tr').first();
   if (!firstRow.length) return null;
 
@@ -58,14 +46,6 @@ function deriveColumnWidths(
   return widths;
 }
 
-/**
- * Apply colwidth attributes to the first row of each table based on
- * derived column widths. Accounts for colspan. Idempotent — re-running
- * on already-normalized markup is a no-op.
- *
- * This lives upstream of tiptap's generateJSON: tiptap reads
- * `colwidth="N[,N...]"` on <td>/<th> to build the runtime <colgroup>.
- */
 export function normalizeTableColumnWidths(
   $: CheerioAPI,
   $root: Cheerio<any>,
@@ -77,10 +57,6 @@ export function normalizeTableColumnWidths(
 
     let colWidths = deriveColumnWidths($, table);
     if (!colWidths) {
-      // No widths anywhere (e.g. markdown-sourced tables). Apply a default
-      // per-column width so the table's intrinsic width can exceed the
-      // editor container, letting .tableWrapper's overflow-x: auto scroll
-      // instead of cramming columns into the available width.
       let count = 0;
       firstRow.children('td, th').each(function () {
         count += parseInt($(this).attr('colspan') || '1', 10) || 1;

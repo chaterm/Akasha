@@ -1,27 +1,6 @@
 import { Kysely, sql } from 'kysely';
 
-/**
- * Explicit semantic graph edges were a page-to-page projection of the analysis
- * stage's relations. ~77% of their page pairs duplicated knowledge_links and
- * 92% connected artifacts of the same source, so retrieval graph expansion and
- * the graph view already get that connectivity from links and shared sources.
- * Nothing reads or writes these tables any more.
- *
- * The analysis relations themselves stay in knowledge_source_analyses; they
- * still feed generation and catalog candidates, and remain the source for any
- * future relation index.
- *
- * Stored artifact contributions also carried a `graphEdges` array. No reader
- * uses it any more (merge and import ignore unknown keys), so strip it too.
- *
- * Must ship after the release that stopped writing these tables, otherwise
- * instances still on the old code fail their artifact inserts during a
- * rolling deploy.
- */
 export async function up(db: Kysely<unknown>): Promise<void> {
-  // DROP TABLE needs ACCESS EXCLUSIVE on both tables and on the tables their
-  // foreign keys reference. Fail fast instead of queueing reads behind a
-  // long-running transaction; a redeploy retries the migration.
   await sql`SET LOCAL lock_timeout = '5s'`.execute(db);
   await sql`
     UPDATE knowledge_artifact_contributions
@@ -33,10 +12,6 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 }
 
 export async function down(db: Kysely<unknown>): Promise<void> {
-  // Restores the baseline-v1 table shape only; dropped rows and the stripped
-  // contribution `graphEdges` arrays are not recoverable. Old code treats a
-  // missing `graphEdges` as empty, and recompiling the affected spaces
-  // regenerates both.
   await sql`
     CREATE TABLE IF NOT EXISTS knowledge_graph_edges (
       id uuid DEFAULT gen_uuid_v7() NOT NULL PRIMARY KEY,

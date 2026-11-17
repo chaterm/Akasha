@@ -183,8 +183,6 @@ export class DatabaseModule implements OnModuleInit {
   async onModuleInit() {
     await this.establishConnection();
 
-    // Refuse to start on a database that lacks required components; a thrown
-    // error here aborts bootstrap (main.ts exits with a fatal log).
     await this.requirementsService.assertEnvironment();
 
     if (this.environmentService.getNodeEnv() === 'production') {

@@ -80,9 +80,6 @@ describe('PageListener knowledge jobs', () => {
       skipKnowledgeCompile: true,
     });
 
-    // Search indexing still runs. ACL reindex and scheduling are owned by the
-    // post-commit PAGE_CONTENT_UPDATED job; retirement is unnecessary because a
-    // collaboration content save does not change the page's Space.
     expect(searchQueue.add).toHaveBeenCalledWith(QueueJob.PAGE_UPDATED, {
       pageIds: ['page-1'],
     });

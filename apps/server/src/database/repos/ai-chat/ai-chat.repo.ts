@@ -338,12 +338,6 @@ type MessageBoundary = {
   messageId: string;
 };
 
-/**
- * Keep the timestamp comparison inside PostgreSQL. `timestamptz` can contain
- * microseconds, while JavaScript Date only retains milliseconds. Comparing a
- * timestamp loaded into JavaScript can therefore classify the boundary row as
- * being after itself and soft-delete the edited user message.
- */
 function messageIsAfter(input: MessageBoundary) {
   return sql<boolean>`
     (created_at, id) > (
