@@ -112,5 +112,5 @@ describe("HistoryEditor", () => {
       );
       expect(bodyAdded?.getAttribute("data-diff-index")).toBe("3");
     });
-  }, 240000);
+  }, 180000);
 });
