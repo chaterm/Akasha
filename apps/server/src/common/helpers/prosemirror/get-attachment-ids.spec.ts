@@ -34,9 +34,6 @@ describe('extractAttachmentIdFromUrl', () => {
 });
 
 describe('getAttachmentIds', () => {
-  // Regression: embedded image nodes that carry a valid /api/files/<uuid>/...
-  // src but no attachmentId attribute were skipped on export, so their files
-  // never entered the zip and the reference broke on re-import.
   it('collects id from src when attachmentId attr is missing', () => {
     const node = {
       type: 'image',

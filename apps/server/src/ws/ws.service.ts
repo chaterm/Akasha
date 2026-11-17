@@ -121,9 +121,6 @@ export class WsService {
   ): Promise<void> {
     const sockets = await this.server.in(room).fetchSockets();
 
-    // Exclude only the originating socket, not every socket of the originating
-    // user. Excluding by userId silently dropped the originator's other tabs
-    // from receiving restricted-space tree events.
     const otherSockets = excludeSocketId
       ? sockets.filter((s) => s.id !== excludeSocketId)
       : sockets;

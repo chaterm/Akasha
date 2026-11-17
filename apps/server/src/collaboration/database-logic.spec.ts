@@ -88,7 +88,6 @@ describe('sortDatabaseRows', () => {
         ]),
       ),
     ).toEqual(['r3', 'r2', 'r1', 'r4']);
-    // r4 points at a deleted option and sorts as empty.
     expect(
       ids(
         sortDatabaseRows(rows, columns, [
@@ -294,7 +293,6 @@ describe('person columns', () => {
     options: [
       { id: 'u1', name: 'Ann', color: 'blue' as const },
       { id: 'u2', name: 'Bob', color: 'blue' as const },
-      // Once assigned, then removed from every row.
       { id: 'u3', name: 'Cid', color: 'blue' as const },
     ],
   };
@@ -324,7 +322,11 @@ describe('person columns', () => {
 });
 
 describe('progress columns', () => {
-  const progress: DatabaseColumn = { id: 'done', name: 'Done', type: 'progress' };
+  const progress: DatabaseColumn = {
+    id: 'done',
+    name: 'Done',
+    type: 'progress',
+  };
   const rows: DatabaseRowData[] = [
     { id: 'r1', values: { done: 80 } },
     { id: 'r2', values: { done: 20 } },
@@ -343,23 +345,35 @@ describe('progress columns', () => {
   it('shows as a percentage, sorts and filters as a number', () => {
     expect(getDatabaseCellText(progress, 80)).toBe('80%');
     expect(getDatabaseCellText(progress, null)).toBe('');
-    expect(ids(sortDatabaseRows(rows, [progress], [{ columnId: 'done', direction: 'asc' }]))).toEqual([
-      'r2',
-      'r1',
-      'r3',
-    ]);
+    expect(
+      ids(
+        sortDatabaseRows(
+          rows,
+          [progress],
+          [{ columnId: 'done', direction: 'asc' }],
+        ),
+      ),
+    ).toEqual(['r2', 'r1', 'r3']);
     const filter: DatabaseFilterGroup = {
       type: 'group',
       mode: 'and',
-      conditions: [{ type: 'condition', columnId: 'done', op: 'gte', value: 50 }],
+      conditions: [
+        { type: 'condition', columnId: 'done', op: 'gte', value: 50 },
+      ],
     };
-    expect(ids(rows.filter((row) => matchDatabaseFilter(filter, [progress], row)))).toEqual(['r1']);
+    expect(
+      ids(rows.filter((row) => matchDatabaseFilter(filter, [progress], row))),
+    ).toEqual(['r1']);
   });
 
   it('converts from and to numbers, clamping to the range', () => {
     const number: DatabaseColumn = { id: 'done', name: 'Done', type: 'number' };
     const toProgress = convertDatabaseColumn(number, 'progress', []);
-    expect(toProgress.column).toEqual({ id: 'done', name: 'Done', type: 'progress' });
+    expect(toProgress.column).toEqual({
+      id: 'done',
+      name: 'Done',
+      type: 'progress',
+    });
     expect([12.4, 250, null].map(toProgress.convert)).toEqual([12, 100, null]);
     expect(convertDatabaseColumn(progress, 'number', []).convert(65)).toBe(65);
     expect(convertDatabaseColumn(progress, 'text', []).convert(65)).toBe('65');
@@ -380,12 +394,17 @@ describe('sortable columns', () => {
           id: 'v',
           name: 'x',
           type: 'table',
-          sorts: ['tags', 'owner', 'link', 'name'].map((columnId) => ({ columnId, direction: 'asc' })),
+          sorts: ['tags', 'owner', 'link', 'name'].map((columnId) => ({
+            columnId,
+            direction: 'asc',
+          })),
         },
       ],
       cols,
     );
     expect(view.sorts).toEqual([{ columnId: 'name', direction: 'asc' }]);
-    expect(cols.filter((c) => isDatabaseSortable(c.type)).map((c) => c.id)).toEqual(['name']);
+    expect(
+      cols.filter((c) => isDatabaseSortable(c.type)).map((c) => c.id),
+    ).toEqual(['name']);
   });
 });

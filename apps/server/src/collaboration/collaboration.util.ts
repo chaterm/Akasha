@@ -49,10 +49,6 @@ import {
 } from '@docmost/editor-ext';
 import { generateText, getSchema, JSONContent } from '@tiptap/core';
 import { generateHTML, generateJSON } from '../common/helpers/prosemirror/html';
-// @tiptap/html library works best for generating prosemirror json state but not HTML
-// see: https://github.com/ueberdosis/tiptap/issues/5352
-// see:https://github.com/ueberdosis/tiptap/issues/4089
-//import { generateJSON } from '@tiptap/html';
 import { Node, Schema } from '@tiptap/pm/model';
 import * as Y from 'yjs';
 import { Logger } from '@nestjs/common';
@@ -115,8 +111,6 @@ export const tiptapExtensions = [
   Status,
   TransclusionSource,
   TransclusionReference,
-  // Akasha-local Confluence-parity macros. Single touchpoint — see
-  // packages/editor-ext/src/lib/macros/index.ts
   ...macroNodes,
 ] as any;
 
@@ -197,7 +191,6 @@ function stripUnknownNodes(
 ): JSONContent | null {
   if (!json || typeof json !== 'object') return json;
 
-  // Recursively clean children first, flattening any unwrapped content
   if (json.content && Array.isArray(json.content)) {
     const newContent: JSONContent[] = [];
     for (const child of json.content) {
@@ -211,9 +204,7 @@ function stripUnknownNodes(
     json.content = newContent;
   }
 
-  // Check if this node is unknown AFTER processing children
   if (json.type && !schema.nodes[json.type]) {
-    // Unwrap: return cleaned children directly instead of wrapping
     return (
       json.content && json.content.length > 0 ? json.content : null
     ) as any;

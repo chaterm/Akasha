@@ -1,8 +1,6 @@
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
-// The guard lazily `require`s the EE service; stub the module so tests do not
-// pull in the enterprise dependency chain. moduleRef.get returns the fake below.
 jest.mock('../../ee/sso/hoidc.service', () => ({ HoidcService: class {} }));
 
 describe('JwtAuthGuard SSO / iself-agent auth', () => {
@@ -74,7 +72,10 @@ describe('JwtAuthGuard SSO / iself-agent auth', () => {
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
     expect(hoidcService.verifyAgentToken).not.toHaveBeenCalled();
-    expect(request.user).toEqual({ user: activeUser, workspace: { id: 'ws-1' } });
+    expect(request.user).toEqual({
+      user: activeUser,
+      workspace: { id: 'ws-1' },
+    });
     expect(request.sso).toEqual({ email: 'user@example.com' });
     expect(request.iselfAgent).toBeUndefined();
   });
@@ -107,7 +108,10 @@ describe('JwtAuthGuard SSO / iself-agent auth', () => {
       'agent-user@example.com',
       'ws-1',
     );
-    expect(request.user).toEqual({ user: activeUser, workspace: { id: 'ws-1' } });
+    expect(request.user).toEqual({
+      user: activeUser,
+      workspace: { id: 'ws-1' },
+    });
     expect(request.sso).toEqual({ email: 'agent-user@example.com' });
     expect(request.iselfAgent).toEqual({
       uid: 42,

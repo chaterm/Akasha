@@ -80,8 +80,6 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       await this.authenticateAgentApiKey(request, publicKey);
       agentAuthenticated = true;
     } else if (policy === AuthCredentialPolicy.DEFAULT && ssoToken) {
-      // Preserve the existing default-route behavior: X-Token is the primary
-      // credential unless an explicit public-key header was provided.
       await this.authenticateSso(request, ssoToken, isAgentRequest);
       ssoAuthenticated = true;
     } else if (bearerToken || !ssoToken) {
@@ -178,9 +176,10 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       ) => Promise<{ user: any; workspace: any }>;
     };
     try {
-      // Keep the core auth module independent from the enterprise API-key module.
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { ApiKeyService } = require('../../features/api-key/api-key.service');
+      const {
+        ApiKeyService,
+      } = require('../../features/api-key/api-key.service');
       apiKeyService = this.moduleRef.get(ApiKeyService, { strict: false });
     } catch {
       throw new UnauthorizedException(
@@ -234,9 +233,6 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       throw new UnauthorizedException('SSO authentication is not configured');
     }
 
-    // Keep the core auth module independent from the enterprise SSO module.
-    // ModuleRef resolves HoidcService when EE is bundled and gives a clear
-    // 401 when this build does not include SSO support.
     let hoidcService: {
       verifyToken: (
         config: {
@@ -270,16 +266,11 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
           ssoApi,
           platformId,
           workspaceId: workspace.id,
-          // API authentication must not implicitly create workspace members.
           allowSignup: false,
         },
         token,
       );
     } catch (error) {
-      // iself's agent proxy forwards a digital-employee token (marked by the
-      // X-Iself-Agent header) that a regular access-token verify cannot parse.
-      // Fall back to the agent-token verifier, which hits a different upstream
-      // endpoint and response contract, then map it to the real workspace user.
       if (isAgentRequest) {
         await this.authenticateAgent(request, token, {
           ssoApi,

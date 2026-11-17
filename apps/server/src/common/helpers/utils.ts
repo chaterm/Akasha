@@ -34,13 +34,11 @@ export type RedisConfig = {
 };
 
 export function parseRedisUrl(redisUrl: string): RedisConfig {
-  // format - redis[s]://[[username][:password]@][host][:port][/db-number][?family=4|6]
   const url = new URL(redisUrl);
   const { hostname, port, username, password, pathname, searchParams } = url;
   const portInt = parseInt(port, 10);
 
   let db: number = 0;
-  // extract db value if present
   if (pathname.length > 1) {
     const value = pathname.slice(1);
     if (!isNaN(parseInt(value))) {
@@ -48,7 +46,6 @@ export function parseRedisUrl(redisUrl: string): RedisConfig {
     }
   }
 
-  // extract family from query parameters
   let family: number | undefined;
   const familyParam = searchParams.get('family');
   if (familyParam && !isNaN(parseInt(familyParam))) {
@@ -72,7 +69,6 @@ export function createRetryStrategy() {
 }
 
 export function extractDateFromUuid7(uuid7: string) {
-  //https://park.is/blog_posts/20240803_extracting_timestamp_from_uuid_v7/
   const parts = uuid7.split('-');
   const highBitsHex = parts[0] + parts[1].slice(0, 4);
   const timestamp = parseInt(highBitsHex, 16);
@@ -81,8 +77,6 @@ export function extractDateFromUuid7(uuid7: string) {
 }
 
 export type SanitizeFileNameOptions = {
-  /** Keep spaces and `#` instead of replacing them with `_`. Useful for
-   * download filenames where readability matters. Defaults to false. */
   preserveSpaces?: boolean;
 };
 
@@ -90,10 +84,6 @@ export function sanitizeFileName(
   fileName: string,
   options: SanitizeFileNameOptions = {},
 ): string {
-  // Decode percent-encoded sequences so that bypasses like "..%2F" reach
-  // sanitize() as literal "../" and get stripped. sanitize-filename only
-  // strips literal characters and won't catch encoded path separators
-  // on its own.
   const decoded = fileName.replace(/%[0-9a-fA-F]{2}/g, (m) => {
     try {
       return decodeURIComponent(m);
@@ -121,12 +111,6 @@ export function extractBearerTokenFromHeader(
   return type?.toLowerCase() === 'bearer' ? token : undefined;
 }
 
-/**
- * Normalizes a database URL for postgres.js compatibility.
- * - Removes `sslmode=no-verify` (not supported by postgres.js), keeps other sslmode values
- * - Removes `schema` parameter (has no effect via connection string)
- * Note: If we don't strip them, the connection will fail
- */
 export function normalizePostgresUrl(url: string): string {
   const parsed = new URL(url);
   const newParams = new URLSearchParams();

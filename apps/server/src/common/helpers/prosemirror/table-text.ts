@@ -29,12 +29,6 @@ export function extractKnowledgeTableRows(value: unknown): KnowledgeTableRow[] {
   return rows;
 }
 
-/**
- * Counts data rows without serializing them. Knowledge compilation uses this
- * preflight before building row-level chunks, so an oversized table cannot
- * allocate an unbounded second in-memory representation merely to be rejected
- * later by the importer.
- */
 export function countKnowledgeTableRows(value: unknown): number {
   let count = 0;
   walk(value, (node) => {

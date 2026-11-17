@@ -1,7 +1,5 @@
 import { PostgresError } from 'postgres';
 
-// Keep the original error identity: publication fences and retry classifiers
-// rely on instanceof checks. The closest failing operation wins.
 type CompilationOperation = { operation: string; artifactId?: string };
 const operations = new WeakMap<object, CompilationOperation>();
 
@@ -29,7 +27,6 @@ export function describeKnowledgeCompilationError(error: unknown) {
     error instanceof Error
       ? (identifier(error.name) ?? 'Error')
       : 'UnknownError';
-  // Exclude the first stack line (which contains the raw error message).
   const stackFrames =
     error instanceof Error
       ? error.stack
@@ -51,8 +48,6 @@ export function describeKnowledgeCompilationError(error: unknown) {
     const fields = Object.entries(database)
       .filter(([, value]) => value !== undefined)
       .map(([key, value]) => `${key}=${value}`);
-    // PostgreSQL detail, where, query and parameters may contain page text or
-    // credentials. Persist only SQLSTATE and schema metadata, never the error.
     return {
       ...context,
       errorName,

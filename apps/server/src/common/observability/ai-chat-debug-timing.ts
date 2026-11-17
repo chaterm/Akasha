@@ -6,13 +6,6 @@ type DebugLogger = {
 
 type TimingDetails = Record<string, unknown>;
 
-/**
- * Request-scoped AI chat timing trace.
- *
- * The trace is only created when DEBUG_MODE=true. It intentionally records
- * identifiers, durations and counts, but never query text, answer text or
- * retrieved document content.
- */
 export class AiChatDebugTiming {
   private readonly traceId = randomUUID();
   private readonly startedAt = performance.now();

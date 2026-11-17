@@ -296,7 +296,6 @@ describe('database row and column transforms', () => {
         .columns.map((entry: any) => entry.id)
         .slice(0, 3),
     ).toEqual(['name', id, 'status']);
-    // Nothing goes before the title column.
     const first = addDatabaseColumn(
       tr,
       0,
@@ -342,7 +341,6 @@ describe('database row and column transforms', () => {
     expect(rowsOf(tr)[0].values.tags).toBe('a');
     changeDatabaseColumnType(tr, 0, 'status', 'text');
     expect(rowsOf(tr)[0].values.status).toBe('To do');
-    // The board grouped by status falls back to the next groupable column.
     expect(viewOf(tr, 'v2').groupBy).toBe('tags');
   });
 
@@ -416,7 +414,6 @@ describe('database view transforms', () => {
     });
     expect(rowsOf(tr)[0].values.status).toBe('done');
     expect(viewOf(tr, 'v2').cardOrder.done).toEqual(['r1', 'r2']);
-    // Document order is untouched: the table view is not affected.
     expect(rowsOf(tr).map((row) => row.id)).toEqual(['r1', 'r2', 'r3']);
   });
 
@@ -509,7 +506,9 @@ describe('default database', () => {
     const kanban = node.attrs.views.find((view: any) => view.type === 'kanban');
     expect(kanban.groupBy).toBe(status.id);
     expect(kanban.orientation).toBe('vertical');
-    const timeline = node.attrs.views.find((view: any) => view.type === 'timeline');
+    const timeline = node.attrs.views.find(
+      (view: any) => view.type === 'timeline',
+    );
     expect(timeline.dateColumnId).toBe(date.id);
     expect(node.attrs.views.map((view: any) => view.type)).toContain('mine');
     expect(rows.map((row) => row.values[task.id])).toEqual([
@@ -530,14 +529,19 @@ describe('default database', () => {
 
 describe('document columns', () => {
   it('store only page ids, so no title reaches the document or its search text', () => {
-    // Index 0 is the title column added for a database without text columns.
     const [, doc] = normalizeDatabaseColumns([
       {
         id: 'doc',
         name: 'Doc',
         type: 'page',
         options: [
-          { id: 'p1', name: 'Layoff list', color: 'blue', slugId: 'x', unavailable: true },
+          {
+            id: 'p1',
+            name: 'Layoff list',
+            color: 'blue',
+            slugId: 'x',
+            unavailable: true,
+          },
         ],
       },
     ]);

@@ -1,13 +1,5 @@
 import { DomainMiddleware } from './domain.middleware';
 
-/**
- * The log-contract spec drives tenant injection through a *stand-in* middleware,
- * so these tests are the only coverage of the real one. What matters here is the
- * seam between business behaviour and logging: the request keeps whatever it
- * always kept (including `null`), while the log field is normalised to `''`
- * (plan §3 forbids `null` anywhere in the pipeline), and a logging failure can
- * never fail the request.
- */
 describe('DomainMiddleware workspace log injection', () => {
   const makeSut = (opts: {
     selfHosted?: boolean;
@@ -39,7 +31,10 @@ describe('DomainMiddleware workspace log injection', () => {
   const makeReq = () => ({ headers: { host: 'acme.example.com' } }) as any;
 
   it('assigns the workspace id when self-hosted and a workspace exists', async () => {
-    const { sut, assign } = makeSut({ selfHosted: true, workspace: { id: 'ws-1' } });
+    const { sut, assign } = makeSut({
+      selfHosted: true,
+      workspace: { id: 'ws-1' },
+    });
     const req = makeReq();
     const next = jest.fn();
 
@@ -56,9 +51,7 @@ describe('DomainMiddleware workspace log injection', () => {
 
     await sut.use(req, {} as any, jest.fn());
 
-    // The log field must never carry null (plan §3)...
     expect(assign).toHaveBeenCalledWith({ workspaceId: '' });
-    // ...while the request keeps the original business value.
     expect(req.workspaceId).toBeNull();
   });
 

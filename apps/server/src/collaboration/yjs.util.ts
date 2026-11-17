@@ -22,7 +22,6 @@ export function setYjsMark(
   const schema = getSchema(tiptapExtensions);
   const { mapping } = initProseMirrorDoc(fragment, schema);
 
-  // Convert JSON positions to Y.js RelativePosition objects
   const anchorRelPos = Y.createRelativePositionFromJSON(yjsSelection.anchor);
   const headRelPos = Y.createRelativePositionFromJSON(yjsSelection.head);
 
@@ -48,8 +47,6 @@ export function setYjsMark(
   const from = Math.min(anchor, head);
   const to = Math.max(anchor, head);
 
-  // Apply mark directly to Y.js XmlText nodes
-  // This bypasses updateYFragment which has compatibility issues
   applyMarkToYFragment(fragment, from, to, markName, markAttributes);
 }
 
@@ -80,11 +77,11 @@ function applyMarkToYFragment(
       }
       pos = itemEnd;
     } else if (item instanceof Y.XmlElement) {
-      pos++; // Opening tag
+      pos++;
       for (let i = 0; i < item.length; i++) {
         if (!processItem(item.get(i), item.nodeName)) return false;
       }
-      pos++; // Closing tag
+      pos++;
     }
     return true;
   };
@@ -94,10 +91,6 @@ function applyMarkToYFragment(
   }
 }
 
-/**
- * Removes a mark from all text in the fragment that has the specified attribute value.
- * Useful for deleting comments by commentId.
- */
 export function removeYjsMarkByAttribute(
   fragment: Y.XmlFragment,
   markName: string,
@@ -106,7 +99,6 @@ export function removeYjsMarkByAttribute(
 ) {
   const processItem = (item: any) => {
     if (item instanceof Y.XmlText) {
-      // Get all formatting deltas to find ranges with this mark
       const deltas = item.toDelta();
       let offset = 0;
 
@@ -116,7 +108,6 @@ export function removeYjsMarkByAttribute(
         const markAttr = attributes[markName];
 
         if (markAttr && markAttr[attributeName] === attributeValue) {
-          // Remove the mark by setting it to null
           item.format(offset, length, { [markName]: null });
         }
         offset += length;
@@ -133,10 +124,6 @@ export function removeYjsMarkByAttribute(
   }
 }
 
-/**
- * Updates a mark's attributes for all text that has the specified attribute value.
- * Useful for resolving/unresolving comments by commentId.
- */
 export function updateYjsMarkAttribute(
   fragment: Y.XmlFragment,
   markName: string,
@@ -157,7 +144,6 @@ export function updateYjsMarkAttribute(
           markAttr &&
           markAttr[findByAttribute.name] === findByAttribute.value
         ) {
-          // Update the mark with new attributes (merge with existing)
           item.format(offset, length, {
             [markName]: { ...markAttr, ...newAttributes },
           });
