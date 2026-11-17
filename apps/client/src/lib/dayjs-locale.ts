@@ -12,7 +12,6 @@ import "dayjs/locale/uk";
 import "dayjs/locale/zh-cn";
 import i18n from "@/i18n.ts";
 
-// Maps our i18n language codes to the locale names registered by dayjs.
 const DAYJS_LOCALE_MAP: Record<string, string> = {
   "de-DE": "de",
   "en-US": "en",

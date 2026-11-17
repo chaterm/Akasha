@@ -45,11 +45,6 @@ function isEnglishLocale(locale: Locale): boolean {
   return locale.code === "en-US" || locale.code?.startsWith("en") === true;
 }
 
-/**
- * Picks `enUSPattern` for the English locale and `localizedPattern` for every
- * other locale. Keeps existing en-US output byte-identical while letting other
- * languages use date-fns localized format tokens (P, PP, p, PPp, …).
- */
 export function formatLocalized(
   date: Date | number | string,
   enUSPattern: string,

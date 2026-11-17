@@ -9,7 +9,6 @@ const api: AxiosInstance = axios.create({
 
 api.interceptors.response.use(
   (response) => {
-    // we need the response headers for these endpoints
     const exemptEndpoints = ["/api/pages/export", "/api/spaces/export"];
     if (response.request.responseURL) {
       const path = new URL(response.request.responseURL)?.pathname;
@@ -28,15 +27,12 @@ api.interceptors.response.use(
           if (url === "/api/auth/collab-token") return;
           if (window.location.pathname.startsWith("/share/")) return;
 
-          // Handle unauthorized error
           redirectToLogin();
           break;
         }
         case 403:
-          // Handle forbidden error
           break;
         case 404:
-          // Handle not found error
           if (
             error.response.data.message
               .toLowerCase()
@@ -52,7 +48,6 @@ api.interceptors.response.use(
           }
           break;
         case 500:
-          // Handle internal server error
           break;
         default:
           break;
@@ -77,7 +72,9 @@ function redirectToLogin() {
     if (pathname === APP_ROUTE.HOME) {
       window.location.href = APP_ROUTE.AUTH.LOGIN;
     } else {
-      const params = new URLSearchParams({ redirect: pathname + search + hash });
+      const params = new URLSearchParams({
+        redirect: pathname + search + hash,
+      });
       window.location.href = `${APP_ROUTE.AUTH.LOGIN}?${params.toString()}`;
     }
   }

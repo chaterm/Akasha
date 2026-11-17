@@ -57,7 +57,6 @@ export function LdapLoginModal({
         workspaceId,
       });
 
-      // Handle MFA like the regular login
       if (response?.userHasMfa) {
         onClose();
         navigate(APP_ROUTE.AUTH.MFA_CHALLENGE + window.location.search);

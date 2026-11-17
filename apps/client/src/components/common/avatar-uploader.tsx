@@ -42,14 +42,12 @@ export default function AvatarUploader({
       return;
     }
 
-    // Validate file size (max 10MB)
     const maxSizeInBytes = 10 * 1024 * 1024;
     if (file.size > maxSizeInBytes) {
       notifications.show({
         message: t("Image exceeds 10MB limit."),
         color: "red",
       });
-      // Reset the input
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -66,7 +64,6 @@ export default function AvatarUploader({
       });
     }
 
-    // Reset the input so the same file can be selected again
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -86,9 +83,6 @@ export default function AvatarUploader({
     [AvatarIconType.WORKSPACE_ICON]: t("Change workspace icon"),
   }[type];
 
-  // Per WCAG 2.5.3 (Label in Name), the accessible name must include the
-  // visible text. When no image is set, the avatar renders the name's
-  // initials, so prepend the name to the action label.
   const ariaLabel =
     !currentImageUrl && fallbackName
       ? `${fallbackName} – ${actionLabel}`

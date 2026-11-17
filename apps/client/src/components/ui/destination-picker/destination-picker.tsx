@@ -52,16 +52,15 @@ export function DestinationPicker({
     const items = spacesData?.items ?? [];
     if (!searchSpacesOnly || !debouncedQuery) return items;
     const fold = (s: string) =>
-      s
-        .normalize("NFD")
-        .replace(/[̀-ͯ]/g, "")
-        .toLocaleLowerCase();
+      s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLocaleLowerCase();
     const term = fold(debouncedQuery);
     return items.filter((s) => fold(s.name).includes(term));
   }, [spacesData, searchSpacesOnly, debouncedQuery]);
 
   const selectedId =
-    selection?.type === "space" ? selection.spaceId : selection?.pageId ?? null;
+    selection?.type === "space"
+      ? selection.spaceId
+      : (selection?.pageId ?? null);
 
   const updateSelection = useCallback(
     (next: DestinationSelection | null) => {
@@ -105,8 +104,6 @@ export function DestinationPicker({
     [updateSelection],
   );
 
-  // Pre-select space when initialSpaceId is set and spaces have loaded.
-  // Only runs once: skip if user has already made a selection.
   useEffect(() => {
     if (!initialSpaceId || selection) return;
     const match = spacesData?.items?.find((s) => s.id === initialSpaceId);
@@ -187,9 +184,7 @@ export function DestinationPicker({
                       {page.title || t("Untitled")}
                     </div>
                     {page.space && (
-                      <div className={classes.spaceName}>
-                        {page.space.name}
-                      </div>
+                      <div className={classes.spaceName}>{page.space.name}</div>
                     )}
                   </div>
                 ),

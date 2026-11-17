@@ -48,11 +48,9 @@ export default function SsoLogin() {
 
   const handleSsoLogin = (provider: IAuthProvider) => {
     if (provider.type === SSO_PROVIDER.LDAP) {
-      // Open modal for LDAP instead of redirecting
       setSelectedLdapProvider(provider);
       setLdapModalOpened(true);
     } else {
-      // Redirect for other SSO providers
       window.location.href = buildSsoLoginUrl({
         providerId: provider.id,
         type: provider.type,
@@ -62,16 +60,12 @@ export default function SsoLogin() {
     }
   };
 
-  // Auto-redirect when SSO is enforced and there is exactly one non-LDAP
-  // provider. The user has no other option, so skip the extra click.
   useEffect(() => {
     if (autoRedirectedRef.current) return;
     if (!data.authProviders || data.authProviders.length !== 1) return;
     const onlyProvider = data.authProviders[0];
     if (onlyProvider.type === SSO_PROVIDER.LDAP) return;
 
-    // Already signed in: let useRedirectIfAuthenticated handle navigation
-    // instead of racing it through the IdP.
     if (currentUser?.user) return;
 
     const params = new URLSearchParams(window.location.search);
@@ -81,9 +75,6 @@ export default function SsoLogin() {
     const isLoginPage = window.location.pathname === APP_ROUTE.AUTH.LOGIN;
     if (!data.enforceSso && !isLoginPage) return;
 
-    // Circuit-breaker: if we already auto-redirected within the TTL, the
-    // user came back (likely from an IdP failure). Show the page so they
-    // can read errors or pick a different account.
     if (!isLogout && recentAutoAttempt()) return;
 
     autoRedirectedRef.current = true;

@@ -61,7 +61,6 @@ export function getFileUrl(src: string) {
   if (!src) return src;
   if (src.startsWith("http")) return src;
   if (src.startsWith("/api/")) {
-    // Remove the '/api' prefix
     return getBackendUrl() + src.substring(4);
   }
   if (src.startsWith("/files/")) {

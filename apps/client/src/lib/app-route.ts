@@ -34,8 +34,6 @@ const APP_ROUTE = {
 export function safeRedirectPath(input: unknown): string | null {
   if (typeof input !== "string") return null;
   if (input.length === 0 || input.length > 2048) return null;
-  // Reject whitespace, backslash, and any Unicode "Other" category char
-  // (ASCII controls, zero-width space, BOM, bidi marks, etc).
   if (/[\s\\]|\p{C}/u.test(input)) return null;
   if (!input.startsWith("/") || input.startsWith("//")) return null;
   if (input.toLowerCase().includes("://")) return null;
@@ -54,12 +52,6 @@ export function getPostLoginRedirect(): string {
   return safeRedirectPath(params.get("redirect")) ?? APP_ROUTE.HOME;
 }
 
-/**
- * Returns the `?redirect=` value from the current URL only when it is a safe
- * same-origin path. Unlike {@link getPostLoginRedirect} this returns `null`
- * (not `/home`) when no redirect is present, so callers can distinguish
- * "user came here directly" from "user was bounced from a deep link".
- */
 export function getRedirectParam(): string | null {
   const params = new URLSearchParams(window.location.search);
   return safeRedirectPath(params.get("redirect"));

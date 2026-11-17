@@ -20,24 +20,20 @@ export function useMfaPageProtection() {
         return;
       }
 
-      // Check if user is on the correct page based on their MFA state
       const isOnChallengePage =
         location.pathname === APP_ROUTE.AUTH.MFA_CHALLENGE;
       const isOnSetupPage =
         location.pathname === APP_ROUTE.AUTH.MFA_SETUP_REQUIRED;
 
       if (result.requiresMfaSetup && !isOnSetupPage) {
-        // User needs to set up MFA but is on challenge page
         navigate(APP_ROUTE.AUTH.MFA_SETUP_REQUIRED + search);
       } else if (
         !result.requiresMfaSetup &&
         result.userHasMfa &&
         !isOnChallengePage
       ) {
-        // User has MFA and should be on challenge page
         navigate(APP_ROUTE.AUTH.MFA_CHALLENGE + search);
       } else if (!result.isTransferToken) {
-        // User has a regular auth token, shouldn't be on MFA pages
         navigate(getPostLoginRedirect());
       } else {
         setIsValid(true);

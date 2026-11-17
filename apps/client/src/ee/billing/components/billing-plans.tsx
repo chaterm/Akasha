@@ -40,13 +40,11 @@ export default function BillingPlans() {
     }
   };
 
-  // TODO: remove by July 30.
-  // Check if workspace was created between June 28 and July 14, 2025
   const showTieredPricingNotice = (() => {
     if (!workspace?.createdAt) return false;
     const createdDate = new Date(workspace.createdAt);
-    const startDate = new Date('2025-06-20');
-    const endDate = new Date('2025-07-14');
+    const startDate = new Date("2025-06-20");
+    const endDate = new Date("2025-07-14");
     return createdDate >= startDate && createdDate <= endDate;
   })();
 
@@ -54,39 +52,41 @@ export default function BillingPlans() {
     return null;
   }
 
-  // Check if any plan is tiered
-  const hasTieredPlans = plans.some(plan => plan.billingScheme === 'tiered' && plan.pricingTiers?.length > 0);
-  const firstTieredPlan = plans.find(plan => plan.billingScheme === 'tiered' && plan.pricingTiers?.length > 0);
+  const hasTieredPlans = plans.some(
+    (plan) => plan.billingScheme === "tiered" && plan.pricingTiers?.length > 0,
+  );
+  const firstTieredPlan = plans.find(
+    (plan) => plan.billingScheme === "tiered" && plan.pricingTiers?.length > 0,
+  );
 
-  // Set initial tier value if not set and we have tiered plans
   if (hasTieredPlans && !selectedTierValue && firstTieredPlan) {
     setSelectedTierValue(firstTieredPlan.pricingTiers[0].upTo.toString());
     return null;
   }
 
-  // For tiered plans, ensure we have a selected tier
   if (hasTieredPlans && !selectedTierValue) {
     return null;
   }
 
-  const selectData = firstTieredPlan?.pricingTiers
-    ?.filter((tier) => !tier.custom)
-    .map((tier, index) => {
-      const prevMaxUsers =
-        index > 0 ? firstTieredPlan.pricingTiers[index - 1].upTo : 0;
-      return {
-        value: tier.upTo.toString(),
-        label: `${prevMaxUsers + 1}-${tier.upTo} users`,
-      };
-    }) || [];
+  const selectData =
+    firstTieredPlan?.pricingTiers
+      ?.filter((tier) => !tier.custom)
+      .map((tier, index) => {
+        const prevMaxUsers =
+          index > 0 ? firstTieredPlan.pricingTiers[index - 1].upTo : 0;
+        return {
+          value: tier.upTo.toString(),
+          label: `${prevMaxUsers + 1}-${tier.upTo} users`,
+        };
+      }) || [];
 
   return (
     <Container size="xl" py="xl">
       {/* Tiered pricing notice for eligible workspaces */}
       {showTieredPricingNotice && !hasTieredPlans && (
         <Alert
-          icon={<IconInfoCircle size={16} />} 
-          title="Want the old tiered pricing?" 
+          icon={<IconInfoCircle size={16} />}
+          title="Want the old tiered pricing?"
           color="blue"
           mb="lg"
         >
@@ -137,8 +137,10 @@ export default function BillingPlans() {
           let displayPrice;
           const priceId = isAnnual ? plan.yearlyId : plan.monthlyId;
 
-          if (plan.billingScheme === 'tiered' && plan.pricingTiers?.length > 0) {
-            // Tiered billing logic
+          if (
+            plan.billingScheme === "tiered" &&
+            plan.pricingTiers?.length > 0
+          ) {
             const planSelectedTier =
               plan.pricingTiers.find(
                 (tier) => tier.upTo.toString() === selectedTierValue,
@@ -149,11 +151,12 @@ export default function BillingPlans() {
               : planSelectedTier.monthly;
             displayPrice = isAnnual ? (price / 12).toFixed(0) : price;
           } else {
-            // Per-unit billing logic
-            const monthlyPrice = parseFloat(plan.price?.monthly || '0');
-            const yearlyPrice = parseFloat(plan.price?.yearly || '0');
+            const monthlyPrice = parseFloat(plan.price?.monthly || "0");
+            const yearlyPrice = parseFloat(plan.price?.yearly || "0");
             price = isAnnual ? yearlyPrice : monthlyPrice;
-            displayPrice = isAnnual ? (yearlyPrice / 12).toFixed(0) : monthlyPrice;
+            displayPrice = isAnnual
+              ? (yearlyPrice / 12).toFixed(0)
+              : monthlyPrice;
           }
 
           return (
@@ -189,7 +192,7 @@ export default function BillingPlans() {
                       ${displayPrice}
                     </Title>
                     <Text size="lg" c="dimmed">
-                      {plan.billingScheme === 'per_unit' 
+                      {plan.billingScheme === "per_unit"
                         ? `per user/month`
                         : `per month`}
                     </Text>
@@ -197,9 +200,13 @@ export default function BillingPlans() {
                   <Text size="sm" c="dimmed">
                     {isAnnual ? "Billed annually" : "Billed monthly"}
                   </Text>
-                  {plan.billingScheme === 'tiered' && plan.pricingTiers && (
+                  {plan.billingScheme === "tiered" && plan.pricingTiers && (
                     <Text size="md" fw={500}>
-                      For {plan.pricingTiers.find(tier => tier.upTo.toString() === selectedTierValue)?.upTo || plan.pricingTiers[0].upTo} users
+                      For{" "}
+                      {plan.pricingTiers.find(
+                        (tier) => tier.upTo.toString() === selectedTierValue,
+                      )?.upTo || plan.pricingTiers[0].upTo}{" "}
+                      users
                     </Text>
                   )}
                 </Stack>
