@@ -84,7 +84,8 @@ export class KnowledgeSpaceResetService {
         }
       } catch {
         this.logger.warn(
-          `Unable to cancel superseded knowledge job ${jobId}; publication fencing remains authoritative.`,
+          { jobId },
+          'Unable to cancel superseded knowledge job; fencing remains authoritative',
         );
       }
     }

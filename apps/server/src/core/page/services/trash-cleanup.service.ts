@@ -51,8 +51,8 @@ export class TrashCleanupService {
             totalCleaned++;
           } catch (error) {
             this.logger.error(
-              `Failed to cleanup page ${page.id}: ${error instanceof Error ? error.message : 'Unknown error'}`,
-              error instanceof Error ? error.stack : undefined,
+              { pageId: page.id, err: error },
+              'Failed to cleanup page',
             );
           }
         }
@@ -92,10 +92,6 @@ export class TrashCleanupService {
 
     const pageIds = descendants.map((d) => d.id);
 
-    this.logger.debug(
-      `Cleaning up page ${pageId} with ${pageIds.length - 1} descendants`,
-    );
-
     // Queue attachment deletion for all pages with unique job IDs to prevent duplicates
     for (const id of pageIds) {
       await this.attachmentQueue.add(
@@ -119,9 +115,9 @@ export class TrashCleanupService {
         await this.db.deleteFrom('pages').where('id', 'in', pageIds).execute();
       }
     } catch (error) {
-      // Log but don't throw - pages might have been deleted by another node
       this.logger.warn(
-        `Error deleting pages, they may have been already deleted: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        { err: error },
+        'Pages may have already been deleted by another node',
       );
     }
   }

@@ -218,7 +218,8 @@ export class NotificationProcessor
   @OnWorkerEvent('failed')
   onError(job: Job) {
     this.logger.error(
-      `Error processing ${job.name} job. Reason: ${job.failedReason}`,
+      { jobId: job.id, jobName: job.name, reason: job.failedReason },
+      'Notification job failed',
     );
   }
 

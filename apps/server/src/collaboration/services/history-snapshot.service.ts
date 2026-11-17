@@ -94,7 +94,8 @@ export class HistorySnapshotService {
         await this.enqueueHistoryDiff(lastHistory.id, newHistory.id).catch(
           (err) => {
             this.logger.error(
-              `Failed to queue history diff for ${newHistory.id}: ${err.message}`,
+              { historyId: newHistory.id, err },
+              'Failed to queue history diff',
             );
           },
         );
@@ -157,9 +158,7 @@ export class HistorySnapshotService {
         internalLinkSlugIds,
       } as IPageBacklinkJob)
       .catch((err) => {
-        this.logger.error(
-          `Failed to queue backlinks for ${pageId}: ${err.message}`,
-        );
+        this.logger.error({ pageId, err }, 'Failed to queue backlinks');
       });
 
     if (contributorIds.length > 0 && hadPreviousContent) {
@@ -172,7 +171,8 @@ export class HistorySnapshotService {
         } as IPageUpdateNotificationJob)
         .catch((err) => {
           this.logger.error(
-            `Failed to queue page update notification for ${pageId}: ${err.message}`,
+            { pageId, err },
+            'Failed to queue page update notification',
           );
         });
     }

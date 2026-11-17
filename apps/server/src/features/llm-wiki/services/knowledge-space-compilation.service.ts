@@ -724,7 +724,8 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
         });
       } catch {
         this.logger.warn(
-          `Knowledge page merge outbox dispatch will retry RunPage ${merge.runPageId}.`,
+          { runPageId: merge.runPageId },
+          'Knowledge page merge outbox dispatch will retry',
         );
       }
     }
@@ -805,7 +806,8 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
         await this.runRepo.markSpaceJobDispatched(slice);
       } catch {
         this.logger.warn(
-          `Knowledge Space outbox dispatch will retry reservation ${slice.spaceJobId}.`,
+          { spaceJobId: slice.spaceJobId },
+          'Knowledge space outbox dispatch will retry',
         );
       }
     }
@@ -836,7 +838,8 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
         });
       } catch {
         this.logger.warn(
-          `Knowledge image outbox dispatch will retry RunImage ${image.runImageId}.`,
+          { runImageId: image.runImageId },
+          'Knowledge image outbox dispatch will retry',
         );
       }
     }

@@ -213,12 +213,14 @@ export class DatabaseModule implements OnModuleInit {
 
         if (i < retryAttempts - 1) {
           this.logger.log(
-            `Retrying [${i + 1}/${retryAttempts}] in ${retryDelay / 1000} seconds`,
+            { attempt: i + 1, retryAttempts, retryDelayMs: retryDelay },
+            'Retrying database connection',
           );
           await new Promise((resolve) => setTimeout(resolve, retryDelay));
         } else {
           this.logger.error(
-            `Failed to connect to database after ${retryAttempts} attempts. Exiting...`,
+            { retryAttempts },
+            'Failed to connect to database, exiting',
           );
           process.exit(1);
         }

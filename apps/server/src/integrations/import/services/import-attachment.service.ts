@@ -165,8 +165,8 @@ export class ImportAttachmentService {
             uploadStats.failed++;
             uploadStats.failedFiles.push(fileName);
             this.logger.error(
-              `Failed to upload Draw.io SVG ${fileName}:`,
-              error,
+              { fileName, err: error },
+              'Failed to upload Draw.io SVG',
             );
           }
         });
@@ -182,8 +182,8 @@ export class ImportAttachmentService {
         }
       } catch (error) {
         this.logger.error(
-          `Failed to process Draw.io pair ${pair.baseName}:`,
-          error,
+          { baseName: pair.baseName, err: error },
+          'Failed to process Draw.io pair',
         );
       }
     }
@@ -626,14 +626,14 @@ export class ImportAttachmentService {
         this.logger.error({ err }, 'Import attachment upload error');
       }
 
-      this.logger.debug(
-        `Upload completed: ${uploadStats.completed}/${uploadStats.total} successful, ${uploadStats.failed} failed`,
-      );
-
       if (uploadStats.failed > 0) {
         this.logger.warn(
-          `Failed to upload ${uploadStats.failed} files:`,
-          uploadStats.failedFiles,
+          {
+            failed: uploadStats.failed,
+            total: uploadStats.total,
+            failedFiles: uploadStats.failedFiles,
+          },
+          'Some attachment uploads failed',
         );
       }
     }
@@ -666,8 +666,8 @@ export class ImportAttachmentService {
           }
         } catch (error) {
           this.logger.debug(
-            `Could not get size for ${processedEntry.abs}:`,
-            error,
+            { path: processedEntry.abs, err: error },
+            'Could not get file size',
           );
         }
       }
@@ -817,11 +817,7 @@ export class ImportAttachmentService {
         }
       }
 
-      if (matchingPng) {
-        this.logger.debug(
-          `Found Draw.io pair: ${drawio.fileName} -> ${matchingPng.fileName}`,
-        );
-      } else {
+      if (!matchingPng) {
         this.logger.debug(
           { fileName: drawio.fileName },
           'No PNG found for Draw.io file',
@@ -871,8 +867,8 @@ export class ImportAttachmentService {
           imageElement = `<image href="data:image/png;base64,${pngBase64}" width="100%" height="100%"/>`;
         } catch (error) {
           this.logger.warn(
-            `Could not read PNG file for Draw.io diagram: ${pngPath}`,
-            error,
+            { pngPath, err: error },
+            'Could not read PNG file for Draw.io diagram',
           );
         }
       }
@@ -968,29 +964,27 @@ export class ImportAttachmentService {
                 removeOnFail: false,
               },
             );
-            this.logger.debug(
-              `Queued ${fileNameWithExt} for indexing (attachment ID: ${attachmentId})`,
-            );
           } catch (err) {
             this.logger.error(
-              `Failed to queue indexing for imported attachment ${attachmentId}: ${err}`,
+              { attachmentId, fileName: fileNameWithExt, err },
+              'Failed to queue indexing for imported attachment',
             );
           }
         }
 
         uploadStats.completed++;
 
-        if (uploadStats.completed % 10 === 0) {
-          this.logger.debug(
-            `Upload progress: ${uploadStats.completed}/${uploadStats.total}`,
-          );
-        }
-
         return;
       } catch (error) {
         lastError = error as Error;
         this.logger.warn(
-          `Upload attempt ${attempt}/${this.MAX_RETRIES} failed for ${fileNameWithExt}: ${error instanceof Error ? error.message : String(error)}`,
+          {
+            attempt,
+            maxRetries: this.MAX_RETRIES,
+            fileName: fileNameWithExt,
+            err: error,
+          },
+          'Attachment upload attempt failed',
         );
 
         if (attempt < this.MAX_RETRIES) {
@@ -1004,8 +998,12 @@ export class ImportAttachmentService {
     uploadStats.failed++;
     uploadStats.failedFiles.push(fileNameWithExt);
     this.logger.error(
-      `Failed to upload ${fileNameWithExt} after ${this.MAX_RETRIES} attempts:`,
-      lastError,
+      {
+        fileName: fileNameWithExt,
+        attempts: this.MAX_RETRIES,
+        err: lastError,
+      },
+      'Failed to upload attachment after all retries',
     );
   }
 }

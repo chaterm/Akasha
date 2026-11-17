@@ -78,7 +78,8 @@ export async function processBacklinks(
 
       await backlinkRepo.insertBacklink(newBacklinks, trx);
       logger.debug(
-        `Added ${newBacklinks.length} new backlinks to ${pageId}`,
+        { pageId, added: newBacklinks.length },
+        'Added new backlinks',
       );
     }
 
@@ -90,7 +91,8 @@ export async function processBacklinks(
         .execute();
 
       logger.debug(
-        `Removed ${backlinksToRemove.length} outdated backlinks from ${pageId}.`,
+        { pageId, removed: backlinksToRemove.length },
+        'Removed outdated backlinks',
       );
     }
   });

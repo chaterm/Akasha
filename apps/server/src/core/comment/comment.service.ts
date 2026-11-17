@@ -85,7 +85,8 @@ export class CommentService {
       );
       if (!parsed.success) {
         this.logger.warn(
-          `Invalid yjsSelection for comment ${inserted.id}: ${parsed.error.message}`,
+          { commentId: inserted.id, err: parsed.error },
+          'Invalid yjsSelection for comment',
         );
       } else {
         const documentName = `page.${page.id}`;
@@ -102,8 +103,8 @@ export class CommentService {
           );
         } catch (error) {
           this.logger.warn(
-            `Failed to apply comment mark for comment ${inserted.id}, comment saved without inline highlight`,
-            error,
+            { commentId: inserted.id, err: error },
+            'Comment saved without inline highlight: failed to apply mark',
           );
         }
       }
@@ -243,8 +244,8 @@ export class CommentService {
       );
     } catch (error) {
       this.logger.warn(
-        `Failed to update comment mark for comment ${comment.id}`,
-        error,
+        { commentId: comment.id, err: error },
+        'Failed to update comment mark',
       );
     }
 

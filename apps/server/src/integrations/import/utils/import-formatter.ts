@@ -3,6 +3,8 @@ import { Logger } from '@nestjs/common';
 import * as path from 'path';
 import { v7 } from 'uuid';
 import { InsertableBacklink } from '@akasha/db/types/entity.types';
+
+const logger = new Logger('ImportFormatter');
 import { Cheerio, CheerioAPI, load } from 'cheerio';
 import slugify from '@sindresorhus/slugify';
 import { normalizeTableColumnWidths } from './table-utils';
@@ -80,10 +82,7 @@ export async function formatImportHtml(opts: {
  *
  * Does NOT run rewriteInternalLinksToMentionHtml — that requires zip context.
  */
-export function normalizeImportHtml(
-  $: CheerioAPI,
-  $root: Cheerio<any>,
-): void {
+export function normalizeImportHtml($: CheerioAPI, $root: Cheerio<any>): void {
   notionFormatter($, $root);
   xwikiFormatter($, $root);
   defaultHtmlFormatter($, $root);
@@ -350,9 +349,9 @@ export async function rewriteInternalLinksToMentionHtml(
     try {
       decodedRaw = decodeURIComponent(raw);
     } catch (err) {
-      Logger.warn(
-        `URI malformed in page ${currentFilePath}: ${raw}. Falling back to raw path.`,
-        'ImportFormatter',
+      logger.warn(
+        { filePath: currentFilePath, raw },
+        'URI malformed in page, falling back to raw path',
       );
     }
 
@@ -364,8 +363,7 @@ export async function rewriteInternalLinksToMentionHtml(
 
     const linkText = $a.text().trim();
     const titleMatch =
-      linkText === meta.title ||
-      linkText === meta.title?.trim();
+      linkText === meta.title || linkText === meta.title?.trim();
 
     if (titleMatch) {
       const mentionId = v7();

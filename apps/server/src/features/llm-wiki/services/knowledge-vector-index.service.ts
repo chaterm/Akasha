@@ -168,7 +168,8 @@ export class KnowledgeVectorIndexService {
       });
     } catch (error) {
       this.logger.warn(
-        `Unable to record embedding rebuild batch usage: ${errorMessage(error)}`,
+        { err: error },
+        'Unable to record embedding rebuild batch usage',
       );
     }
   }
@@ -247,7 +248,8 @@ export class KnowledgeVectorIndexService {
       return 'created';
     } catch (error) {
       this.logger.warn(
-        `Unable to create ${identifier}; native exact vector search remains available: ${errorMessage(error)}`,
+        { identifier, err: error },
+        'Unable to create vector index; exact search remains available',
       );
       return 'exact-only';
     }

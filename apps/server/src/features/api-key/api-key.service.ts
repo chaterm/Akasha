@@ -191,7 +191,9 @@ export class ApiKeyService {
 
     try {
       const result = await this.apiKeyRepo.transaction(async (trx) => {
-        if (await this.apiKeyRepo.findActiveAgentByName(workspaceId, name, trx)) {
+        if (
+          await this.apiKeyRepo.findActiveAgentByName(workspaceId, name, trx)
+        ) {
           throw new ConflictException(
             errorBody(
               ErrorCode.AGENT_NAME_TAKEN,
@@ -339,12 +341,7 @@ export class ApiKeyService {
           name,
           trx,
         );
-        return this.apiKeyRepo.updateName(
-          key.id,
-          opts.workspaceId,
-          name,
-          trx,
-        );
+        return this.apiKeyRepo.updateName(key.id, opts.workspaceId, name, trx);
       });
       this.logAgentKeyChange(AuditEvent.API_KEY_UPDATED, result.id, 'rename');
       return result;
@@ -490,7 +487,12 @@ export class ApiKeyService {
     if (!workspace) throw new UnauthorizedException();
 
     if (key.keyType === ApiKeyType.PERSONAL) {
-      return this.validatePersonalApiKey(payload, key.id, key.expiresAt, workspace);
+      return this.validatePersonalApiKey(
+        payload,
+        key.id,
+        key.expiresAt,
+        workspace,
+      );
     }
     if (key.keyType !== ApiKeyType.AGENT) {
       throw new UnauthorizedException('Unsupported API key type');
@@ -505,11 +507,7 @@ export class ApiKeyService {
     }
 
     const user = await this.userRepo.findById(key.agentUserId, workspace.id);
-    if (
-      !user ||
-      user.userType !== UserType.AGENT ||
-      isUserDisabled(user)
-    ) {
+    if (!user || user.userType !== UserType.AGENT || isUserDisabled(user)) {
       throw new UnauthorizedException('Agent user is unavailable');
     }
 
@@ -539,7 +537,9 @@ export class ApiKeyService {
     if (!isAgentApiKeyAccess(access)) {
       throw new UnauthorizedException('An Agent API key is required');
     }
-    const spaceIds = await this.apiKeyRepo.findSpaceIdsByApiKeyId(access.apiKeyId);
+    const spaceIds = await this.apiKeyRepo.findSpaceIdsByApiKeyId(
+      access.apiKeyId,
+    );
     return {
       ...result,
       apiKeyId: access.apiKeyId,
@@ -559,11 +559,7 @@ export class ApiKeyService {
       throw new UnauthorizedException('API key has expired');
     }
     const user = await this.userRepo.findById(payload.sub, workspace.id);
-    if (
-      !user ||
-      user.userType === UserType.AGENT ||
-      isUserDisabled(user)
-    ) {
+    if (!user || user.userType === UserType.AGENT || isUserDisabled(user)) {
       throw new UnauthorizedException();
     }
     const personalSpace = await this.spaceRepo.findPersonalSpaceForUser({
@@ -609,11 +605,14 @@ export class ApiKeyService {
   }
 
   private trackLastUsed(apiKeyId: string) {
-    this.apiKeyRepo.updateLastUsed(apiKeyId).catch((error) =>
-      this.logger.warn(
-        `Failed to update lastUsedAt for API key ${apiKeyId}: ${error?.message}`,
-      ),
-    );
+    this.apiKeyRepo
+      .updateLastUsed(apiKeyId)
+      .catch((error) =>
+        this.logger.warn(
+          { apiKeyId, err: error },
+          'Failed to update API key lastUsedAt',
+        ),
+      );
   }
 
   private logAgentKeyChange(

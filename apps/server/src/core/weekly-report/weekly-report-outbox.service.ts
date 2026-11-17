@@ -157,7 +157,8 @@ export class WeeklyReportOutboxService {
               .where('id', '=', entry.id)
               .execute();
             this.logger.warn(
-              `Weekly report ${entry.effect} delivery will retry (${entry.id})`,
+              { entryId: entry.id, effect: entry.effect },
+              'Weekly report delivery will retry',
             );
           }
           return true;

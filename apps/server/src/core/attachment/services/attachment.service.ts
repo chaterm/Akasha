@@ -321,8 +321,8 @@ export class AttachmentService {
             this.emitKnowledgePageAttachmentUpdated(deleted);
           } catch (err) {
             this.logger.log(
-              `DeleteAiChatAttachments: failed to delete attachment ${attachment.id}:`,
-              err,
+              { attachmentId: attachment.id, err },
+              'Failed to delete AI chat attachment',
             );
           }
         }),
@@ -352,8 +352,8 @@ export class AttachmentService {
           } catch (err) {
             failedDeletions.push(attachment.id);
             this.logger.log(
-              `DeleteSpaceAttachments: failed to delete attachment ${attachment.id}:`,
-              err,
+              { attachmentId: attachment.id, err },
+              'Failed to delete space attachment',
             );
           }
         }),
@@ -392,8 +392,8 @@ export class AttachmentService {
             this.emitKnowledgePageAttachmentUpdated(deleted);
           } catch (err) {
             this.logger.log(
-              `DeleteUserAvatar: failed to delete user avatar ${attachment.id}:`,
-              err,
+              { attachmentId: attachment.id, err },
+              'Failed to delete user avatar',
             );
           }
         }),
@@ -428,8 +428,8 @@ export class AttachmentService {
           } catch (err) {
             failedDeletions.push(attachment.id);
             this.logger.error(
-              `Failed to delete attachment ${attachment.id} for page ${pageId}:`,
-              err,
+              { attachmentId: attachment.id, pageId, err },
+              'Failed to delete page attachment',
             );
           }
         }),
@@ -437,13 +437,14 @@ export class AttachmentService {
 
       if (failedDeletions.length > 0) {
         this.logger.warn(
-          `Failed to delete ${failedDeletions.length} attachments for page ${pageId}`,
+          { pageId, failedCount: failedDeletions.length },
+          'Some page attachments could not be deleted',
         );
       }
     } catch (err) {
       this.logger.error(
-        `Error in handleDeletePageAttachments for page ${pageId}:`,
-        err,
+        { pageId, err },
+        'Failed to handle page attachment deletion',
       );
       throw err;
     }

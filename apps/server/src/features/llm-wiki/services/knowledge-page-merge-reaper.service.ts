@@ -55,7 +55,8 @@ export class KnowledgePageMergeReaperService {
           state = job ? await job.getState() : 'missing';
         } catch {
           this.logger.warn(
-            `Unable to inspect page merge job ${candidate.mergeJobId}; recovery deferred.`,
+            { mergeJobId: candidate.mergeJobId },
+            'Unable to inspect page merge job; recovery deferred',
           );
           continue;
         }
@@ -95,7 +96,8 @@ export class KnowledgePageMergeReaperService {
           });
         } catch {
           this.logger.warn(
-            `Unable to settle page merge recovery for ${candidate.mergeJobId}; recovery deferred.`,
+            { mergeJobId: candidate.mergeJobId },
+            'Unable to settle page merge recovery; recovery deferred',
           );
         }
       }

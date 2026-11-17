@@ -51,7 +51,13 @@ export class SsoUserSyncService {
     try {
       const result = await this.syncAllUsers();
       this.logger.log(
-        `SSO user sync completed: fetched=${result.fetched}, synced=${result.synced}, skipped=${result.skipped}, failed=${result.failed}`,
+        {
+          fetched: result.fetched,
+          synced: result.synced,
+          skipped: result.skipped,
+          failed: result.failed,
+        },
+        'SSO user sync completed',
       );
     } finally {
       await this.redis.eval(
@@ -103,9 +109,7 @@ export class SsoUserSyncService {
         result.synced += 1;
       } catch (err) {
         result.failed += 1;
-        this.logger.error(
-          `Failed to sync SSO user ${email}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        this.logger.error({ email, err }, 'Failed to sync SSO user');
       }
     }
 

@@ -130,10 +130,6 @@ export class ImportService {
           workspaceId: workspaceId,
           lastUpdatedById: userId,
         });
-
-        this.logger.debug(
-          `Successfully imported "${title}${fileExtension}. ID: ${createdPage.id} - SlugId: ${createdPage.slugId}"`,
-        );
       } catch (err) {
         const message = 'Failed to create imported page';
         this.logger.error(message, err);

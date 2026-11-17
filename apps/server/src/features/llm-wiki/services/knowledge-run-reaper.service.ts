@@ -45,7 +45,8 @@ export class KnowledgeRunReaperService {
           state = job ? await job.getState() : 'missing';
         } catch {
           this.logger.warn(
-            `Unable to inspect Knowledge Space job ${candidate.spaceJobId}; recovery deferred.`,
+            { spaceJobId: candidate.spaceJobId },
+            'Unable to inspect knowledge space job; recovery deferred',
           );
           continue;
         }

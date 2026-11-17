@@ -115,16 +115,15 @@ export class TransclusionService {
     trx?: KyselyTransaction,
   ): Promise<{ inserted: number; deleted: number }> {
     const desired = collectReferencesFromPmJson(pmJson);
-    const keyOf = (s: {
-      sourcePageId: string;
-      transclusionId: string;
-    }) => `${s.sourcePageId}::${s.transclusionId}`;
+    const keyOf = (s: { sourcePageId: string; transclusionId: string }) =>
+      `${s.sourcePageId}::${s.transclusionId}`;
     const desiredKeys = new Set(desired.map(keyOf));
 
-    const existing = await this.pageTransclusionReferencesRepo.findByReferencePageId(
-      referencePageId,
-      trx,
-    );
+    const existing =
+      await this.pageTransclusionReferencesRepo.findByReferencePageId(
+        referencePageId,
+        trx,
+      );
     const existingKeys = new Set(existing.map(keyOf));
 
     const toInsert = desired
@@ -470,9 +469,7 @@ export class TransclusionService {
       const oldIds = copies.map((c) => c.oldAttachmentId);
       const oldRows = await this.attachmentRepo.findByIds(oldIds);
       const byOldId = new Map(
-        oldRows
-          .filter((a) => a.pageId === sourcePageId)
-          .map((a) => [a.id, a]),
+        oldRows.filter((a) => a.pageId === sourcePageId).map((a) => [a.id, a]),
       );
 
       for (const plan of copies) {
@@ -486,8 +483,8 @@ export class TransclusionService {
           await this.storageService.copy(old.filePath, newFilePath);
         } catch (err) {
           this.logger.error(
-            `unsync: failed to copy attachment ${old.id}`,
-            err as Error,
+            { attachmentId: old.id, err },
+            'Unsync: failed to copy attachment',
           );
           continue;
         }

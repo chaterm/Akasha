@@ -184,7 +184,9 @@ export class McpAuthService {
     try {
       // Keep the core MCP module independent from the enterprise module.
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { ApiKeyService } = require('../../features/api-key/api-key.service');
+      const {
+        ApiKeyService,
+      } = require('../../features/api-key/api-key.service');
       const service = this.moduleRef?.get(ApiKeyService, { strict: false });
       if (service) return service;
     } catch {
@@ -198,7 +200,8 @@ export class McpAuthService {
       .updateLastUsed(apiKeyId)
       .catch((err) =>
         this.logger.warn(
-          `Failed to update lastUsedAt for API key ${apiKeyId}: ${err?.message}`,
+          { apiKeyId, err },
+          'Failed to update API key lastUsedAt',
         ),
       );
   }

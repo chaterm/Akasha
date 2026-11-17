@@ -140,8 +140,8 @@ export class AiModelConfigService {
       row = await this.repo.findByFeature(feature);
     } catch (error) {
       this.logger.error(
-        `Failed to load AI model config for "${feature}". Returning unconfigured model config.`,
-        error instanceof Error ? error.stack : String(error),
+        { feature, err: error },
+        'Failed to load AI model config; returning unconfigured model config',
       );
     }
 
@@ -166,8 +166,8 @@ export class AiModelConfigService {
         apiKey = this.secretService.decrypt(row.apiKeyEncrypted);
       } catch (error) {
         this.logger.error(
-          `Failed to decrypt API key for "${feature}". Returning config without API key.`,
-          error instanceof Error ? error.stack : String(error),
+          { feature, err: error },
+          'Failed to decrypt API key; returning config without API key',
         );
       }
     }

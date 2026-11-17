@@ -116,7 +116,8 @@ export class PdfImportService {
               !imagePath.startsWith(`${path.resolve(outputDir)}${path.sep}`)
             ) {
               this.logger.warn(
-                `Skipping PDF image outside output directory: ${source}`,
+                { source },
+                'Skipping PDF image outside output directory',
               );
               return null;
             }

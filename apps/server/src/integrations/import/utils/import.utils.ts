@@ -3,6 +3,8 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import { ExportMetadata } from '../../../common/helpers/types/export-metadata.types';
 
+const logger = new Logger('ImportUtils');
+
 export async function buildAttachmentCandidates(
   extractDir: string,
 ): Promise<Map<string, string>> {
@@ -36,9 +38,9 @@ export function resolveRelativeAttachmentPath(
   try {
     mainRel = decodeURIComponent(mainRel);
   } catch (err) {
-    Logger.warn(
-      `URI malformed for attachment path: ${mainRel}. Falling back to raw path.`,
-      'ImportUtils',
+    logger.warn(
+      { path: mainRel },
+      'URI malformed for attachment path, falling back to raw path',
     );
   }
 
@@ -58,7 +60,10 @@ export function resolveRelativeAttachmentPath(
   if (attachmentCandidates.has(mainRel)) {
     return mainRel;
   }
-  if (confluenceStripped !== mainRel && attachmentCandidates.has(confluenceStripped)) {
+  if (
+    confluenceStripped !== mainRel &&
+    attachmentCandidates.has(confluenceStripped)
+  ) {
     return confluenceStripped;
   }
   if (attachmentCandidates.has(fallback)) {

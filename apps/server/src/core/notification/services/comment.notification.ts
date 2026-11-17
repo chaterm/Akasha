@@ -68,10 +68,9 @@ export class CommentNotificationService {
       );
 
     const usersWithPageAccess =
-      await this.pagePermissionRepo.getUserIdsWithPageAccess(
-        pageId,
-        [...usersWithSpaceAccess],
-      );
+      await this.pagePermissionRepo.getUserIdsWithPageAccess(pageId, [
+        ...usersWithSpaceAccess,
+      ]);
     const usersWithAccess = new Set(usersWithPageAccess);
 
     for (const userId of mentionedUserIds) {
@@ -154,16 +153,16 @@ export class CommentNotificationService {
 
     if (!roles) {
       this.logger.debug(
-        `Skipping resolved notification for user ${commentCreatorId}: no access to space ${spaceId}`,
+        { userId: commentCreatorId, spaceId },
+        'Skipping resolved notification: no space access',
       );
       return;
     }
 
     const hasPageAccess =
-      await this.pagePermissionRepo.getUserIdsWithPageAccess(
-        pageId,
-        [commentCreatorId],
-      );
+      await this.pagePermissionRepo.getUserIdsWithPageAccess(pageId, [
+        commentCreatorId,
+      ]);
     if (hasPageAccess.length === 0) return;
 
     const notification = await this.notificationService.create({

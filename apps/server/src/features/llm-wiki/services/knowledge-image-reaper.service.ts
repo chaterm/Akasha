@@ -52,7 +52,8 @@ export class KnowledgeImageReaperService {
           state = job ? await job.getState() : 'missing';
         } catch {
           this.logger.warn(
-            `Unable to inspect RunImage job ${candidate.jobId}; recovery deferred.`,
+            { jobId: candidate.jobId },
+            'Unable to inspect run image job; recovery deferred',
           );
           continue;
         }

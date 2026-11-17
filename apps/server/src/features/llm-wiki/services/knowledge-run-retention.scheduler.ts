@@ -88,9 +88,8 @@ export class KnowledgeRunRetentionScheduler {
         totals.failedBatches += 1;
         consecutiveFailures += 1;
         this.logger.warn(
-          `Stale knowledge artifact purge batch failed (${consecutiveFailures} in a row): ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          { consecutiveFailures, err: error },
+          'Stale knowledge artifact purge batch failed',
         );
         if (consecutiveFailures >= MAX_CONSECUTIVE_STALE_ARTIFACT_FAILURES) {
           break;
@@ -99,10 +98,8 @@ export class KnowledgeRunRetentionScheduler {
     }
     if (totals.deletedKnowledgePages > 0 || totals.failedBatches > 0) {
       this.logger.log(
-        `Purged stale knowledge artifacts: ${JSON.stringify({
-          ...totals,
-          durationMs: Date.now() - startedAt,
-        })}`,
+        { ...totals, durationMs: Date.now() - startedAt },
+        'Purged stale knowledge artifacts',
       );
     }
   }

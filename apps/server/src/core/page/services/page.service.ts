@@ -836,8 +836,8 @@ export class PageService {
               .execute();
           } catch (err) {
             this.logger.error(
-              `Duplicate page: failed to copy attachment ${attachment.id}`,
-              err,
+              { attachmentId: attachment.id, err },
+              'Duplicate page: failed to copy attachment',
             );
             // Continue with other attachments even if one fails
           }

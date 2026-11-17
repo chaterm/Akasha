@@ -322,7 +322,8 @@ export class ConfluenceImportService {
       }
 
       this.logger.log(
-        `Confluence import complete: ${totalProcessed} pages imported`,
+        { pagesImported: totalProcessed },
+        'Confluence import complete',
       );
     } catch (err) {
       this.logger.error({ err }, 'Confluence import failed');
@@ -1184,7 +1185,8 @@ export class ConfluenceImportService {
           });
         } else {
           this.logger.warn(
-            `Cannot map non-numeric Confluence HTML file: ${filePath}`,
+            { filePath },
+            'Cannot map non-numeric Confluence HTML file',
           );
         }
       }

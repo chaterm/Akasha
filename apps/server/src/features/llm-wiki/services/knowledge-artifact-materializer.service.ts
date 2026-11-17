@@ -57,11 +57,12 @@ export class KnowledgeArtifactMaterializerService {
       const stored = readStoredArtifact(contribution.artifact);
       const normalized = normalizeStoredContributionStructure(stored);
       if (!normalized) {
-        // Keep the stored shape rather than guess a source. Retrieval refuses
-        // parent expansion whose lineage does not match the child, so a
-        // colliding legacy parent cannot leak through this contribution.
         this.logger.warn(
-          `Stored knowledge contribution ${contribution.id} for artifact ${contribution.artifactId} is not attributable to one source; structural keys left unchanged.`,
+          {
+            contributionId: contribution.id,
+            artifactId: contribution.artifactId,
+          },
+          'Stored knowledge contribution is not attributable to one source; structural keys left unchanged',
         );
       }
       pushArtifact(

@@ -144,8 +144,8 @@ export class FileImportTaskService {
         await this.storageService.delete(fileTask.filePath);
       } catch (err) {
         this.logger.error(
-          `Failed to delete import file from storage. Task ID: ${fileTaskId}`,
-          err,
+          { fileTaskId, err },
+          'Failed to delete import file from storage',
         );
       }
     } catch (err) {
@@ -581,7 +581,11 @@ export class FileImportTaskService {
         }
 
         this.logger.log(
-          `Successfully imported ${totalPagesProcessed} pages with ${filteredBacklinks.length} backlinks`,
+          {
+            pagesImported: totalPagesProcessed,
+            backlinks: filteredBacklinks.length,
+          },
+          'Import completed',
         );
       });
 

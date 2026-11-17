@@ -501,7 +501,7 @@ export class KnowledgeImageEnrichmentService {
         claim = await this.extractionRepo.claim(
           cacheKey,
           this.environmentService.getKnowledgeImageTimeoutMs() +
-          CLAIM_LEASE_GRACE_MS,
+            CLAIM_LEASE_GRACE_MS,
         );
       } catch {
         warnings.push(warning(image.attachmentId, 'image_cache_unavailable'));
@@ -646,7 +646,8 @@ export class KnowledgeImageEnrichmentService {
           });
         } catch {
           this.logger.warn(
-            `Failed to persist image extraction failure for attachment ${image.attachmentId}.`,
+            { attachmentId: image.attachmentId },
+            'Failed to persist image extraction failure',
           );
         }
       }

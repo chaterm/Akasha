@@ -4,6 +4,8 @@ import { ExportFormat } from './dto/export-dto';
 import { Node } from '@tiptap/pm/model';
 import { validate as isValidUUID } from 'uuid';
 import * as path from 'path';
+
+const logger = new Logger('ExportUtils');
 import { Page } from '@akasha/db/types/entity.types';
 import { isAttachmentNode } from '../../common/helpers/prosemirror/utils';
 
@@ -94,7 +96,10 @@ export function replaceInternalLinks(
             // if link and text are same, use page title
             if (markLink === node.text) {
               //@ts-expect-error
-              node.text = getInternalLinkPageName(relativePath, currentPagePath);
+              node.text = getInternalLinkPageName(
+                relativePath,
+                currentPagePath,
+              );
             }
           }
         }
@@ -105,15 +110,18 @@ export function replaceInternalLinks(
   return doc.toJSON();
 }
 
-export function getInternalLinkPageName(path: string, currentFilePath?: string): string {
+export function getInternalLinkPageName(
+  path: string,
+  currentFilePath?: string,
+): string {
   const name = path?.split('/').pop().split('.').slice(0, -1).join('.');
   try {
     return decodeURIComponent(name);
   } catch (err) {
     if (currentFilePath) {
-      Logger.warn(
-        `URI malformed in page ${currentFilePath}: ${name}. Falling back to raw name.`,
-        'ExportUtils',
+      logger.warn(
+        { filePath: currentFilePath, name },
+        'URI malformed in page, falling back to raw name',
       );
     }
     return name;
