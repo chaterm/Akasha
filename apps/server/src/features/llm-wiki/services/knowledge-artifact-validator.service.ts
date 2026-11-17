@@ -205,23 +205,6 @@ type ReconstructedAttachmentBlock = {
   occurrences: ChunkAttachmentOccurrence[];
 };
 
-/**
- * Enforces design §6.2 for chunk attachment relations by INDEPENDENTLY
- * reconstructing the deterministic attachment-evidence blocks from the trusted
- * `attachmentSerializedText` in the compile input, instead of trusting the
- * range and occurrences an artifact declares.
- *
- * A relation is accepted only when its chunk is byte-for-byte a block the
- * deterministic chunker actually produces from the serialized source — same
- * stable key, same range, same cleaned text — and the occurrence is one that
- * block genuinely contains (matched by attachment id + exact marker range) with
- * matching snapshot metadata. This closes the gap where a hand-crafted artifact
- * (e.g. via the admin import endpoint) could wrap a real occurrence in an
- * unrelated chunk with a giant self-declared range: such a chunk matches no
- * reconstructed block and is quarantined. It is fail-closed — a source that
- * omits `attachmentSerializedText` yields no legitimate blocks, so any relation
- * riding on it is rejected rather than trusted.
- */
 function validateChunkAttachmentOccurrences(
   artifact: CompiledKnowledgeArtifact,
   input: CompileSpaceInput,
@@ -259,8 +242,6 @@ function validateChunkAttachmentOccurrences(
     const declared = chunk.attachmentOccurrences ?? [];
     if (declared.length === 0) continue;
 
-    // The chunk must BE a real deterministic block, not merely declare a range
-    // that happens to cover a marker: same stable key, range and cleaned text.
     const candidates = chunk.stableKey
       ? (legitByStableKey.get(chunk.stableKey) ?? [])
       : [];

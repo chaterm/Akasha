@@ -533,8 +533,6 @@ export class KnowledgeDiagnosticsService {
               sql<number>`count(*) filter (where rp.merge_status = 'skipped')`.as(
                 'skippedMergeCount',
               ),
-              // Page merge pipeline visibility: pages ready to merge but not yet
-              // dispatched vs. an actively running per-run merge slot.
               sql<number>`count(*) filter (where rp.merge_status = 'pending')`.as(
                 'readyMergeCount',
               ),
@@ -767,7 +765,6 @@ export class KnowledgeDiagnosticsService {
       SELECT clock_timestamp() AS "sampledAt"
     `.execute(this.db);
     const sampledAt = sampledAtResult.rows[0].sampledAt;
-    // The night window holds due pages back; expose when they really start.
     const windowConfig =
       (await this.compileWindowRepo?.getConfig(input.workspaceId)) ??
       KNOWLEDGE_COMPILE_WINDOW_DISABLED;
@@ -908,7 +905,6 @@ export class KnowledgeDiagnosticsService {
             0,
             row.eligibleAt.getTime() - sampledAt.getTime(),
           ),
-          /** When compilation actually starts, night window included. */
           compileStartsAt: start.startAt.toISOString(),
           remainingUntilCompileMs: Math.max(
             0,
@@ -925,13 +921,6 @@ export class KnowledgeDiagnosticsService {
     };
   }
 
-  /**
-   * Page-centric compilation log: for each source page, the most recent
-   * per-page compilation record within an optional time window. Answers
-   * "was this page compiled recently, and did it succeed?" without forcing the
-   * operator to locate the owning run first. Backed entirely by existing
-   * knowledge_space_compile_run_pages rows (no new table).
-   */
   async listPageCompilationLog(input: {
     workspaceId: string;
     spaceIds: string[];
@@ -1089,7 +1078,6 @@ export class KnowledgeDiagnosticsService {
           queuedAt: isoDate(row.queuedAt),
           startedAt: isoDate(row.startedAt),
           finishedAt: isoDate(row.finishedAt),
-          // No per-page duration column exists; approximate from timestamps.
           durationMs:
             startedMs !== null && finishedMs !== null
               ? Math.max(0, finishedMs - startedMs)

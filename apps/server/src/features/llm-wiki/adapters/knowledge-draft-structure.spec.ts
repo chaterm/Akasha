@@ -101,7 +101,6 @@ describe('knowledge draft structure', () => {
     for (const chunk of expected.chunks) {
       expect(channelOf(chunk.stableKey!)).toBe('memory');
     }
-    // Deterministic evidence keeps whatever channel it was published with.
     expect(channelOf('table-row:0:0')).toBeUndefined();
     expect(once.parentSections!.map((parent) => parent.stableKey)).toEqual([
       ...expected.parentSections.map((parent) => parent.stableKey),

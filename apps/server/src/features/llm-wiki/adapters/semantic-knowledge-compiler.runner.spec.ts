@@ -55,11 +55,6 @@ const generation = {
 
 const ATTACHMENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
-/**
- * Adds a marker-carrying serialized text and one trusted occurrence to the
- * single compile source, mirroring what the exporter mounts for a page with a
- * real non-image File attachment node.
- */
 function withAttachmentSource(input: CompileSpaceInput): CompileSpaceInput {
   const marker = `[[AKASHA_ATTACHMENT:v1:${ATTACHMENT_ID}]]`;
   const serialized = `Event sourcing overview.\nconfig.xlsx ${marker}`;
@@ -220,10 +215,8 @@ describe('SemanticKnowledgeCompilerRunner', () => {
         text: expect.stringContaining('config.xlsx'),
       }),
     );
-    // The marker never survives into stored text or embedding input.
     expect(attachmentChunk?.text).not.toContain('AKASHA_ATTACHMENT');
     expect(attachmentChunk?.embeddingText).not.toContain('AKASHA_ATTACHMENT');
-    // Generated draft prose is memory; only deterministic evidence is evidence.
     expect(concept?.chunks?.length).toBeGreaterThan(0);
     expect(
       concept?.chunks?.every((chunk) => chunk.retrievalChannel === 'memory'),
@@ -239,8 +232,6 @@ describe('SemanticKnowledgeCompilerRunner', () => {
         attachmentUpdatedAt: '2026-01-01T00:00:00.000Z',
       }),
     );
-    // The occurrence carries its marker range so the validator can re-prove the
-    // marker is fully contained inside this chunk (§6.2).
     expect(typeof attachmentOccurrence?.startOffset).toBe('number');
     expect(typeof attachmentOccurrence?.endOffset).toBe('number');
     expect(attachmentOccurrence!.endOffset).toBeGreaterThan(
@@ -252,13 +243,11 @@ describe('SemanticKnowledgeCompilerRunner', () => {
     expect(attachmentOccurrence!.endOffset).toBeLessThanOrEqual(
       attachmentChunk!.endOffset!,
     );
-    // A parent section is preserved for the kept attachment block.
     expect(
       summary?.parentSections?.some(
         (section) => section.stableKey === attachmentChunk?.parentStableKey,
       ),
     ).toBe(true);
-    // Model-generated structural blocks never carry an attachment relation.
     expect(
       summary?.chunks?.some(
         (chunk) =>
@@ -616,9 +605,7 @@ describe('SemanticKnowledgeCompilerRunner', () => {
 
     const result = await runner.compileSpace(input);
 
-    // Relations still shape the generated wiki through the Stage 1 payload...
     expect(provider.generate.mock.calls[0][0].prompt).toContain('depends on');
-    // ...but no artifact carries a relation-derived edge or link any more.
     for (const artifact of result.artifacts) {
       expect(artifact).not.toHaveProperty('graphEdges');
       expect((artifact.links ?? []).map((link) => link.linkType)).not.toContain(

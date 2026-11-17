@@ -1,4 +1,3 @@
-/** Restore TOC entries that OpenDataLoader joined into Markdown paragraphs. */
 export function normalizePdfTableOfContents(markdown: string): string {
   const lines = markdown.split('\n');
   const output: string[] = [];
@@ -42,7 +41,6 @@ export function normalizePdfTableOfContents(markdown: string): string {
         ...paragraph.matchAll(/(.+?)[.．…·]{3,}\s*(\d+)(?=\s|$)/g),
       ];
       const lastMatch = matches[matches.length - 1];
-      // Only transform complete directory lines; leave prose untouched.
       if (
         !lastMatch ||
         lastMatch.index + lastMatch[0].length !== paragraph.length

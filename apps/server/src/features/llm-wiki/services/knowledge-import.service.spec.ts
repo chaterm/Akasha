@@ -619,8 +619,6 @@ describe('KnowledgeImportService', () => {
           isOpaque: true,
         },
       ],
-      // Contributions stored before edges were removed still carry this key;
-      // import must ignore it rather than persist it.
       graphEdges: [
         {
           toKnowledgePageId: '22222222-2222-4222-8222-222222222222',

@@ -153,9 +153,6 @@ type PromptCatalogEntry = Pick<
 function selectPromptCatalog(
   catalog?: KnowledgeArtifactCatalogEntry[],
 ): PromptCatalogEntry[] {
-  // Production callers already provide a bounded, ranked DB Top-K. Preserve
-  // that stable order so explicit-reference candidates are not discarded just
-  // because their title is absent from the extracted plain text.
   const candidates = catalog ?? [];
 
   const selected: PromptCatalogEntry[] = [];

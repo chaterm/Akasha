@@ -65,7 +65,6 @@ describe('KnowledgeArtifactMaterializerService', () => {
     const service = new KnowledgeArtifactMaterializerService(provider);
     const legacy = (sourcePageId: string, body: string) => ({
       ...artifact(sourcePageId, 'Event sourcing', `# 概述\n\n${body}`),
-      // Pre-namespace contributions: identical heading path => identical key.
       parentSections: [
         { stableKey: 'collide', headingPath: ['概述'], text: body },
       ],

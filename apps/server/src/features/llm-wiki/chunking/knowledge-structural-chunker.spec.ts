@@ -144,17 +144,14 @@ describe('chunkKnowledgeSource', () => {
     });
 
     const children = parents.flatMap((parent) => parent.children);
-    // No child text or embedding text may contain the internal marker.
     for (const child of children) {
       expect(child.text).not.toContain('AKASHA_ATTACHMENT');
       expect(child.embeddingText).not.toContain('AKASHA_ATTACHMENT');
       expect(child.quoteHash).toBe(hash(child.text));
     }
-    // The file name survives for retrieval.
     expect(children.some((child) => child.text.includes('config.xlsx'))).toBe(
       true,
     );
-    // Exactly one child carries the file name (marker not copied to neighbors).
     expect(
       children.filter((child) => child.text.includes('config.xlsx')),
     ).toHaveLength(1);
@@ -163,7 +160,6 @@ describe('chunkKnowledgeSource', () => {
   it('does not cut inside a marker when it straddles a length boundary', () => {
     const marker =
       '[[AKASHA_ATTACHMENT:v1:550e8400-e29b-41d4-a716-446655440000]]';
-    // Force the raw split near the middle of the marker.
     const head = 'x'.repeat(60);
     const text = `${head} report.pdf ${marker} tail`;
     const markerStart = text.indexOf('report.pdf');
@@ -179,8 +175,6 @@ describe('chunkKnowledgeSource', () => {
     });
 
     const children = parents.flatMap((parent) => parent.children);
-    // The raw source between offsets must never bisect the marker: any child
-    // whose raw range overlaps the marker must contain it entirely.
     for (const child of children) {
       const overlaps =
         child.startOffset < markerEnd && child.endOffset > markerStart;
@@ -231,7 +225,6 @@ describe('chunkKnowledgeSource', () => {
 
     expect(namespaced[0].stableKey).toHaveLength(64);
     expect(namespaced[0].children[0].stableKey).toHaveLength(64);
-    // Namespacing changes keys deterministically.
     expect(namespaced[0].stableKey).not.toBe(plain[0].stableKey);
     expect(namespaced[0].stableKey).toBe(again[0].stableKey);
     expect(namespaced[0].children[0].stableKey).toBe(

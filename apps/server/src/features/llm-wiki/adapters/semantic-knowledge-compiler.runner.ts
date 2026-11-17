@@ -65,9 +65,6 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
         'semantic compilation cannot compile an empty source page',
       );
     }
-    // Enforce the table budget before any LLM call or row serialization. The
-    // importer validates the generated/materialized output again, but waiting
-    // until import would still let a 10k-row page consume compiler memory/time.
     operationBudget.assertTableRowCount(
       countKnowledgeTableRows(source.content),
     );
@@ -160,8 +157,6 @@ export class SemanticKnowledgeCompilerRunner implements LlmWikiCompilerRunner {
     for (const entry of generationCatalog.entries) {
       if (!entry.artifactId) continue;
       const normalizedKey = normalizeCanonicalKey(entry.canonicalKey);
-      // Artifacts without a canonical key (for example source_summary) cannot
-      // be resolved as link targets, and would otherwise collide on "kind:".
       if (!normalizedKey) continue;
       idByKey.set(
         artifactLookupKey(entry.artifactKind, normalizedKey),
@@ -397,8 +392,6 @@ function toCompiledArtifact(input: {
   const isSourceSummary = input.artifact.kind === 'source_summary';
   let tableRowChunks: ReturnType<typeof tableRowEvidenceChunks> = [];
   if (isSourceSummary) {
-    // Reject before extractKnowledgeTableRows serializes every row. Import
-    // repeats the check after validation/materialization as defense in depth.
     input.input.operationBudget!.assertTableRowCount(
       countKnowledgeTableRows(input.source.content),
     );
@@ -408,10 +401,6 @@ function toCompiledArtifact(input: {
       sourceRef,
     );
   }
-  // Attachment evidence attaches only to the source-page artifact (§5.3): the
-  // deterministic original-content blocks belong to the page itself, not to the
-  // derived concept/entity artifacts. Covers semantic, raw_fallback, retry and
-  // merge paths because every artifact flows through this single builder.
   const attachmentEvidence = isSourceSummary
     ? buildAttachmentEvidenceContent({
         source: input.source,
@@ -690,8 +679,6 @@ function toSourceRef(source: KnowledgeSourceSnapshot): KnowledgeSourceRef {
 }
 
 function normalizeCanonicalKey(value: string | null | undefined): string {
-  // Stored source_summary artifacts legitimately have a null
-  // canonicalKey, so guard against it rather than assuming a string.
   return (value ?? '').trim().toLocaleLowerCase('en-US');
 }
 

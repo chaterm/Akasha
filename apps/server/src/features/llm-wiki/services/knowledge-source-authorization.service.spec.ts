@@ -174,7 +174,6 @@ describe('KnowledgeSourceAuthorizationService', () => {
 
       expect(first).toEqual(['page-1']);
       expect(second).toEqual(['page-1']);
-      // Fully cached second pass hits no repository at all.
       expect(pageRepo.findExistingPageRefs).toHaveBeenCalledTimes(1);
       expect(userRepo.findById).toHaveBeenCalledTimes(1);
       expect(pagePermissionRepo.filterAccessiblePageIds).toHaveBeenCalledTimes(
@@ -216,7 +215,6 @@ describe('KnowledgeSourceAuthorizationService', () => {
       await expect(service.filterReadableSources(args)).resolves.toEqual([
         'page-1',
       ]);
-      // page-2 (deleted) stays unreadable, page-1 stays readable — from cache.
       await expect(service.filterReadableSources(args)).resolves.toEqual([
         'page-1',
       ]);
@@ -250,9 +248,7 @@ describe('KnowledgeSourceAuthorizationService', () => {
         cache,
       };
 
-      // First call fails closed (dependency threw) and writes nothing.
       await expect(service.filterReadableSources(args)).resolves.toEqual([]);
-      // Retry recomputes rather than serving a poisoned decision.
       await expect(service.filterReadableSources(args)).resolves.toEqual([
         'page-1',
       ]);
@@ -277,7 +273,6 @@ describe('KnowledgeSourceAuthorizationService', () => {
           cache,
         }),
       ).resolves.toEqual([]);
-      // Scope guard trips before any repository access.
       expect(findExistingPageRefs).not.toHaveBeenCalled();
     });
 
@@ -312,8 +307,8 @@ describe('KnowledgeSourceAuthorizationService', () => {
     it('accepts single-request snapshot semantics: one cache freezes a decision, a new cache reflects changes', async () => {
       const filterAccessiblePageIds = jest
         .fn()
-        .mockResolvedValueOnce(['page-1']) // initially readable
-        .mockResolvedValueOnce([]); // permission later revoked
+        .mockResolvedValueOnce(['page-1'])
+        .mockResolvedValueOnce([]);
       const service = createService({
         pages: [pageRef('page-1', 'space-1')],
         pagePermissionRepo: { filterAccessiblePageIds },
@@ -339,13 +334,11 @@ describe('KnowledgeSourceAuthorizationService', () => {
       await expect(
         service.filterReadableSources({ ...args, cache: firstCache }),
       ).resolves.toEqual(['page-1']);
-      // Same cache: decision is frozen for the request, permission repo not re-hit.
       await expect(
         service.filterReadableSources({ ...args, cache: firstCache }),
       ).resolves.toEqual(['page-1']);
       expect(filterAccessiblePageIds).toHaveBeenCalledTimes(1);
 
-      // A new request (new cache) observes the revoked permission.
       const secondCache = new KnowledgeAuthorizationCache({
         workspaceId: 'workspace-1',
         userId: 'user-1',

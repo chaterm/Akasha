@@ -9,12 +9,6 @@ import { isImageAttachment } from './knowledge-attachment-image';
 import { jsonToText } from '../../../collaboration/collaboration.util';
 import { randomUUID } from 'node:crypto';
 
-/**
- * Compile-time attachment marker. It only lives in the internal serialized
- * representation consumed by the structural chunker; it is never written into
- * page-visible text, final knowledge chunks, embedding text, model output or
- * attachment URLs. The random UUID is not treated as retrievable content.
- */
 export const ATTACHMENT_MARKER_PREFIX = '[[AKASHA_ATTACHMENT:v1:';
 export const ATTACHMENT_MARKER_SUFFIX = ']]';
 
@@ -29,11 +23,6 @@ type SerializerPage = {
   content: unknown;
 };
 
-/**
- * Attachment node types that may carry a real page attachment. The final
- * decision always relies on the DB record being an AttachmentType.File that is
- * not an image; the node type only narrows the candidate set.
- */
 const ATTACHMENT_NODE_TYPES = new Set([
   'attachment',
   'pdf',
@@ -43,12 +32,6 @@ const ATTACHMENT_NODE_TYPES = new Set([
   'excalidraw',
 ]);
 
-/**
- * Serializes a page for Knowledge compilation, emitting an attachment marker at
- * the in-document position of every real, page-owned, non-image File
- * attachment node. Only `attrs.attachmentId` is trusted: URLs, file names and
- * user-typed marker text never establish an occurrence.
- */
 export function serializeKnowledgeSource(input: {
   page: SerializerPage;
   attachmentsByPage: Attachment[];
@@ -60,11 +43,6 @@ export function serializeKnowledgeSource(input: {
 
   const pendingOccurrences: PendingOccurrence[] = [];
 
-  /**
-   * Replaces trusted attachment nodes in place before the existing schema-aware
-   * text conversion. Tables and lists drill fully into their descendants
-   * (table → tableRow → tableCell → content and any nesting).
-   */
   const transform = (node: unknown): unknown => {
     if (!isRecord(node)) return node;
     const type = typeof node.type === 'string' ? node.type : '';
@@ -73,9 +51,6 @@ export function serializeKnowledgeSource(input: {
       const attachment = resolveAttachment(node, attachmentById, page);
       if (attachment) {
         const ordinal = pendingOccurrences.length;
-        // Runtime-only nonce prevents user-authored text from colliding with
-        // the sentinel and being mistaken for the real node position. It is
-        // removed before hashing/chunking, so final output stays deterministic.
         const token = `AKASHA_SOURCE_ATTACHMENT_${ordinal}_${randomUUID()}`;
         const occurrence = {
           attachment,
@@ -88,9 +63,6 @@ export function serializeKnowledgeSource(input: {
         );
       }
 
-      // Historical nodes without attachmentId and nodes that do not resolve to
-      // a trusted page-owned file remain ordinary visible text. Their attrs are
-      // never used to establish an attachment relationship.
       const attrs = isRecord(node.attrs) ? node.attrs : undefined;
       return typeof attrs?.name === 'string' ? textBlock(attrs.name) : node;
     }
@@ -103,10 +75,6 @@ export function serializeKnowledgeSource(input: {
     return { text: '', attachmentOccurrences: [], blocks: [] };
   }
 
-  // Reuse the same schema-aware text conversion as every existing Knowledge
-  // source. Only attachment nodes are replaced; mention renderText behavior,
-  // table formatting, list separators and future node serializers therefore
-  // cannot drift between attachment and attachment-free pages.
   const transformedNodes = page.content.content.map(transform);
   const rawText = jsonToText({ type: 'doc', content: transformedNodes });
   const materialized = materializeOccurrences(
@@ -193,9 +161,6 @@ function sourceBlocks(input: {
     ).text;
     if (!blockText) continue;
     const startOffset = input.text.indexOf(blockText, searchOffset);
-    // Never return a partial structural map: the chunker would trust it and
-    // silently omit an unlocated block. An empty map makes it fall back to the
-    // complete serialized text instead.
     if (startOffset < 0) {
       return [];
     }

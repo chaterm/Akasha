@@ -15,12 +15,6 @@ export type KnowledgeSpaceFinalizationResult =
       resolvedCanonicalLinkCount: 0;
     };
 
-/**
- * Performs the single, bounded Space-level convergence step after all page and
- * image work reaches a terminal state. The Run state machine owns the barrier
- * and terminal outcome; this service deliberately performs no LLM, embedding,
- * Catalog, or artifact synthesis work.
- */
 @Injectable()
 export class KnowledgeSpaceFinalizerService {
   constructor(
@@ -42,9 +36,6 @@ export class KnowledgeSpaceFinalizerService {
 
     const { resolvedLinkCount } = await this.linkResolver.resolveSpace(input);
 
-    // Link resolution is idempotent. If the lease was superseded while the
-    // scoped UPDATE ran, the new owner may safely repeat finalization, while
-    // this worker must not complete the Run.
     if (!(await this.executionRepo.isLeaseActive(lease))) {
       return supersededResult();
     }

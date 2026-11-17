@@ -218,8 +218,6 @@ describe('ConfiguredKnowledgeCompilerLlmProvider', () => {
       { system: 'system', prompt: 'prompt' },
       { abortSignal: parent.signal },
     );
-    // Flush enough microtasks to advance through config resolution, the
-    // initial request, and into the repair request.
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();

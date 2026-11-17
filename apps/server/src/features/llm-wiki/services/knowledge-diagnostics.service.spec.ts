@@ -18,7 +18,6 @@ describe('scalable Knowledge Run diagnostics', () => {
             state === 'waiting'
               ? QueueJob.KNOWLEDGE_FINALIZE_SPACE
               : QueueJob.KNOWLEDGE_COMPILE_SPACE_TEXT,
-          // Deliberately not used: the Run may have advanced before the Text ACK.
           data: { phase: 'finalize' },
           timestamp: 100,
           processedOn: state === 'waiting' ? undefined : 200,

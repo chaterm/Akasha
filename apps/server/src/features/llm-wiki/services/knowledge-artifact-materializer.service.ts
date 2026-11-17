@@ -33,7 +33,6 @@ export class KnowledgeArtifactMaterializerService {
     previousSourceContributions: KnowledgeArtifactContribution[];
     affectedContributions: KnowledgeArtifactContribution[];
     incomingArtifacts: CompiledKnowledgeArtifact[];
-    /** Withdrawal during original publication must not require a compiler LLM. */
     mergeMode?: 'deterministic';
     operationBudget?: KnowledgeOperationBudget;
   }): Promise<{

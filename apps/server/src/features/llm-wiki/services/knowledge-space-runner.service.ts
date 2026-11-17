@@ -221,8 +221,6 @@ export class KnowledgeSpaceRunnerService {
         if (barrier.imagesRequired || barrier.mergeRequired) {
           return { outcome: 'waiting_images', completedPages };
         }
-        // The barrier has consumed the Text lease and created a Finalize
-        // outbox. Finalization must never run inside this Text activation.
         return {
           outcome: 'completed',
           completedPages,
@@ -279,8 +277,6 @@ export class KnowledgeSpaceRunnerService {
       });
       if (finalized.outcome === 'superseded')
         return { outcome: 'superseded' as const, completedPages: 0 };
-      // The repository checks all child states and derives partial atomically
-      // under the Run lock; Text counters alone cannot determine the outcome.
       const finished = await this.executionRepo.finishRun(lease, 'succeeded');
       return {
         outcome: finished ? ('completed' as const) : ('superseded' as const),

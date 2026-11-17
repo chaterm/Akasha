@@ -69,8 +69,6 @@ export class PdfImportService {
     const tableArtifact = /^(?:\|\s*|\|\s*:?-+:?\s*\|\s*)$/;
 
     for (let i = 0; i < lines.length; i++) {
-      // OpenDataLoader can emit an empty leading cell when a PDF table has
-      // merged cells. Remove it when the following separator has fewer cells.
       if (
         lines[i].startsWith('||') &&
         tableSeparator.test(lines[i + 1] ?? '')
@@ -78,7 +76,6 @@ export class PdfImportService {
         lines[i] = lines[i].slice(1);
       }
 
-      // A trailing one-column separator is a layout marker, not a data row.
       if (tableArtifact.test(lines[i])) {
         lines[i] = '';
       }
@@ -180,8 +177,6 @@ export class PdfImportService {
   }
 
   private getImageSource(destination: string): string {
-    // OpenDataLoader uses CommonMark's <...> destination form, including for
-    // paths with spaces or parentheses. The brackets are not part of the file.
     return destination.startsWith('<') ? destination.slice(1, -1) : destination;
   }
 }

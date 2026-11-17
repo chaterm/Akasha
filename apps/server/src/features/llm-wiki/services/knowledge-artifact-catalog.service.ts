@@ -111,8 +111,6 @@ function selectionFromRows(
       skipped.push(row);
     }
   }
-  // Unused reservations are returned to globally ranked candidates. Summary
-  // retains a hard cap so one-per-page summaries cannot crowd out concepts.
   for (const row of skipped) {
     if (selected.length >= limit) break;
     if (row.artifactKind === 'source_summary') continue;

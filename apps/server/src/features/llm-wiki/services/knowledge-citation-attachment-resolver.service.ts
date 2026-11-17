@@ -10,7 +10,6 @@ import { TokenService } from '../../../core/auth/services/token.service';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import { isImageAttachment } from './knowledge-attachment-image';
 
-/** Top-level attachments only ever return the final direct-hit block files. */
 export const MAX_KNOWLEDGE_QUERY_ATTACHMENTS = 5;
 
 export type KnowledgeQueryAttachment = {
@@ -22,12 +21,6 @@ export type KnowledgeQueryAttachment = {
   url: string;
 };
 
-/**
- * Resolves downloadable, non-image attachments that live inside the final
- * direct-hit blocks of a knowledge retrieval (§7.2). Page-level ACLs are already
- * enforced during retrieval, so this service only validates block ownership,
- * version freshness and file type before signing download URLs.
- */
 @Injectable()
 export class KnowledgeCitationAttachmentResolverService {
   private readonly logger = new Logger(
@@ -46,15 +39,11 @@ export class KnowledgeCitationAttachmentResolverService {
     directHitChunkIds: string[];
   }): Promise<KnowledgeQueryAttachment[]> {
     if (input.directHitChunkIds.length === 0) return [];
-    // Fail-safe: without the relation repo there is no trusted block->attachment
-    // mapping, so contribute nothing rather than falling back to page scans.
     if (!this.capsuleRepo) return [];
 
     try {
       return await this.resolveFromHitChunks(input);
     } catch (error) {
-      // Batch failure degrades to an empty attachment list; the answer is
-      // unaffected (§7.2 fail-safe).
       this.logger.warn({
         event: 'knowledge_attachment_resolution_failed',
         reason: 'batch_query_failed',
@@ -82,12 +71,8 @@ export class KnowledgeCitationAttachmentResolverService {
         chunkIds: input.directHitChunkIds,
       }),
     ]);
-    // §11.4 counts. Nothing here records signed tokens, URLs or file bytes.
     const metrics = {
       directHitChunkCount: input.directHitChunkIds.length,
-      // A relation row is only ever written for a deterministic source block
-      // (§5.3.7), never a model summary block, so this doubles as the
-      // `source:`-prefixed hit-block count for diagnostics.
       chunksWithRelationCount: relationRows.filter(
         (row) => row.attachments.length > 0,
       ).length,
@@ -129,9 +114,6 @@ export class KnowledgeCitationAttachmentResolverService {
 
     const resolved: KnowledgeQueryAttachment[] = [];
     const seenAttachmentIds = new Set<string>();
-    // relationRows preserve directHitChunkIds order and each chunk's
-    // occurrences are ordered by occurrence_order, so this expands candidates
-    // by block rank then in-block position (§7.2.3).
     for (const row of relationRows) {
       for (const occurrence of row.attachments) {
         if (resolved.length >= MAX_KNOWLEDGE_QUERY_ATTACHMENTS) {
@@ -153,8 +135,6 @@ export class KnowledgeCitationAttachmentResolverService {
           else metrics.ownershipFailureCount += 1;
           continue;
         }
-        // First-wins dedup (§7.2.6): once a valid occurrence is chosen, later
-        // occurrences of the same attachment are ignored even if signing fails.
         seenAttachmentIds.add(occurrence.attachmentId);
         const built = await this.buildAttachment(
           attachment!,
@@ -195,12 +175,6 @@ export class KnowledgeCitationAttachmentResolverService {
     });
   }
 
-  /**
-   * Validates a single occurrence against ownership, file type and the §7.2.5
-   * version snapshot. Page ACLs were already enforced during retrieval. Returns
-   * `null` when the occurrence is valid, otherwise a coarse reject reason used
-   * for §11.4 counts (never any signed material).
-   */
   private attachmentRejectReason(params: {
     attachment: Attachment | undefined;
     occurrence: {
@@ -227,16 +201,12 @@ export class KnowledgeCitationAttachmentResolverService {
     if (attachment.workspaceId !== workspaceId) return 'ownership';
     if (attachment.pageId !== occurrence.sourcePageId) return 'ownership';
     if (isImageAttachment(attachment)) return 'image';
-    // §7.2.5: attachment_updated_at must still match the live attachment. This
-    // is the check that catches a replaced file before its page recompiles.
     if (
       new Date(attachment.updatedAt).getTime() !==
       occurrence.attachmentUpdatedAt.getTime()
     ) {
       return 'updated_at';
     }
-    // §7.2.5: source_version/source_content_hash must match the chunk's current
-    // published source record for the same page.
     const matchingSource = (sourceRefsByChunkId.get(chunkId) ?? []).find(
       (source) => source.sourcePageId === occurrence.sourcePageId,
     );

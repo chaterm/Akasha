@@ -1,18 +1,7 @@
-/**
- * Shared lexical matching helpers for image citation weak-association scoring.
- * Kept separate so tokenization/normalization stays consistent and testable.
- */
-
 export function normalizeSearchText(value: string): string {
   return value.normalize('NFKC').toLocaleLowerCase('en-US');
 }
 
-/**
- * Extract informative terms from a piece of text:
- * - ASCII runs `[a-z0-9_./:-]{2,}` (preserves UUIDs, identifiers, API paths),
- *   minus common English stop words.
- * - Chinese 2-grams over Han runs, minus common Chinese stop words.
- */
 export function informativeTerms(value: string): string[] {
   const normalized = normalizeSearchText(value);
   const asciiStopWords = new Set([
@@ -47,4 +36,3 @@ export function informativeTerms(value: string): string[] {
   );
   return [...new Set([...ascii, ...han])];
 }
-

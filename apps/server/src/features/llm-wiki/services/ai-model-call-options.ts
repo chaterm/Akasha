@@ -32,8 +32,6 @@ export function resolveModelCallOptions(
   input: ResolveModelCallOptionsInput,
 ): ModelCallOptions {
   const parameters = readParameters(config);
-  // Every generation feature defaults to thinking off, regardless of model name.
-  // Both modes send reasoning_effort: 'none' when thinking is off.
   const thinkingEnabled = parameters.thinkingEnabled ?? false;
   const thinkingMode =
     parameters.thinkingMode ?? input.defaultThinkingMode ?? 'qwen';

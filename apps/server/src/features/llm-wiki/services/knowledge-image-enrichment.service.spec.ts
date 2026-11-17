@@ -85,7 +85,6 @@ describe('KnowledgeImageEnrichmentService', () => {
     expect(result.source.text).toContain('frozen OCR');
     expect(result.readyExtractionIds).toEqual(['extraction-1']);
     expect(result.missingExtractionIds).toEqual([]);
-    // Reads by frozen id, never the live "currently ready" lookup.
     expect(
       fixture.extractionRepo.findCurrentReadyForSnapshotImages,
     ).not.toHaveBeenCalled();
@@ -96,8 +95,6 @@ describe('KnowledgeImageEnrichmentService', () => {
 
   it('reports a missing id when a frozen extraction can no longer be reproduced', async () => {
     const fixture = createFixture();
-    // The frozen extraction id resolves to nothing (deleted, identity changed,
-    // or re-extracted): findReadyByIds returns no matching row.
     fixture.extractionRepo.findReadyByIds.mockResolvedValue([]);
 
     const result = await fixture.service.readFrozenSource(source('正文'), [

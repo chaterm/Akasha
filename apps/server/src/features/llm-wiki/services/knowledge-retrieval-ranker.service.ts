@@ -4,10 +4,6 @@ import {
   KnowledgeRetrievalSignal,
 } from '@akasha/db/repos/llm-wiki/knowledge-capsule.repo';
 
-/**
- * 只表达匹配方式。检索路径走 KnowledgeRetrievalOrigin，
- * 授权路径走 KnowledgeRetrievalAuthorizationMode。
- */
 export type KnowledgeRetrievalRankReason =
   | 'semantic'
   | 'lexical'
@@ -90,7 +86,6 @@ export class KnowledgeRetrievalRankerService {
 
   isCandidateRelevant(input: {
     candidate: KnowledgeRankedChunkCandidate;
-    /** Maximum semantic cosine distance; defaults to the built-in threshold. */
     maxCosineDistance?: number;
   }): boolean {
     const { candidate } = input;
@@ -102,11 +97,6 @@ export class KnowledgeRetrievalRankerService {
       return true;
     }
     if (!candidate.signals.includes('semantic')) return false;
-    // The semantic distance gate is authoritative: a chunk recalled only by
-    // vector similarity must clear maxCosineDistance on its own. Incidental
-    // query/text term overlap must not rescue a semantically distant chunk,
-    // otherwise an unrelated question that happens to share one token (e.g. a
-    // Chinese 2-gram) pulls in off-topic knowledge regardless of the threshold.
     const semanticDistance = candidate.signalScores.semantic;
     const maxCosineDistance =
       input.maxCosineDistance ?? DEFAULT_MAX_RELEVANT_COSINE_DISTANCE;

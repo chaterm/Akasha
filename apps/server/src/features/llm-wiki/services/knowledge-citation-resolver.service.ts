@@ -306,14 +306,6 @@ export class KnowledgeCitationResolverService {
     );
   }
 
-  /**
-   * Loads source page rows (optionally with full text) by id. This does NOT
-   * perform any access-control filtering: callers MUST pass source page ids
-   * that have already been authorized upstream (e.g. via
-   * KnowledgeSourceAuthorizationService.filterReadableSources in the retrieval
-   * pipeline). The returned text/content is fed into LLM context, so never call
-   * this with unfiltered ids.
-   */
   private async findSourcePages(
     sourcePageIds: string[],
     workspaceId: string,

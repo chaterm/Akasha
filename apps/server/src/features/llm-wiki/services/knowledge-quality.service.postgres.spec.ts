@@ -75,7 +75,6 @@ describePostgres('KnowledgeQualityService PostgreSQL aggregates', () => {
       spaceIds: ['space-c'],
     });
 
-    // superseded 100, stale 70, retired 100, stale-chunks 65, stale-embedding 100
     expect(report.summary).toEqual({
       pageCount: 5,
       compiledPageCount: 3,
@@ -89,8 +88,6 @@ describePostgres('KnowledgeQualityService PostgreSQL aggregates', () => {
       'missing_chunks',
       'stale_sources',
     ]);
-    // Only the genuinely stale page contributes the oldest stale age (~3h),
-    // not the superseded (2d) or retired (1d) rows.
     expect(report.spaces[0].oldestStaleSourceAgeHours).toBe(3);
   });
 
@@ -105,7 +102,6 @@ describePostgres('KnowledgeQualityService PostgreSQL aggregates', () => {
         pageCount: 1,
         stalePageCount: 0,
         missingSourcePageCount: 1,
-        // -35 missing source, -35 missing chunks; no -30 stale penalty
         healthScore: 30,
       }),
     );

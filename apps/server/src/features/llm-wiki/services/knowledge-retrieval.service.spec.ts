@@ -31,7 +31,6 @@ describe('KnowledgeRetrievalService', () => {
       groupUserRepo,
       capsuleRepo,
     });
-    // Cache bound to a different user than the retrieval request.
     const mismatchedCache = new KnowledgeAuthorizationCache({
       workspaceId: 'workspace-1',
       userId: 'other-user',
@@ -102,15 +101,13 @@ describe('KnowledgeRetrievalService', () => {
         .mockResolvedValue(new Map([['kp-concept', ['source-a', 'source-b']]])),
     };
     const contributionRepo = {
-      findContributionTitles: jest
-        .fn()
-        .mockResolvedValue([
-          {
-            artifactId: 'kp-concept',
-            sourcePageId: 'source-a',
-            title: 'A title',
-          },
-        ]),
+      findContributionTitles: jest.fn().mockResolvedValue([
+        {
+          artifactId: 'kp-concept',
+          sourcePageId: 'source-a',
+          title: 'A title',
+        },
+      ]),
     };
     const service = createService({
       capsuleRepo,
@@ -1182,7 +1179,6 @@ describe('KnowledgeRetrievalService', () => {
       { id: 'chunk-seed', origin: 'direct' },
       { id: 'chunk-neighbor', origin: 'graph' },
     ]);
-    // Graph-only chunks never contribute attachments (§7.1 / §1.2).
     expect(result.directHitChunkIds).toEqual(['chunk-seed']);
   });
 
@@ -1228,7 +1224,6 @@ describe('KnowledgeRetrievalService', () => {
     });
 
     expect(result.chunks[0].origin).toBe('direct');
-    // 路径和授权都走独立字段，rankReasons 只剩匹配方式。
     expect(result.chunks[0].rankReasons).toEqual(['semantic']);
     expect(result.chunks[0].authorizationMode).toBe(
       'final-authorization-fallback',
@@ -1245,8 +1240,6 @@ describe('KnowledgeRetrievalService', () => {
       null,
       'Shared result',
     );
-    // Graph expansion rediscovers the same chunk id (e.g. reached via a
-    // neighbor page); blend must keep the direct copy.
     const graphView = chunkCandidate(
       'chunk-shared',
       'kp-other',
@@ -1300,23 +1293,14 @@ describe('KnowledgeRetrievalService', () => {
       candidateLimit: 4,
     });
 
-    // The direct copy is ordered first (blend keeps direct priority), so the
-    // first occurrence of the shared id carries origin='direct'.
     expect(
       result.chunks.find((c) => c.chunk.id === 'chunk-shared')?.origin,
     ).toBe('direct');
-    // Only the direct-origin entry feeds attachment resolution, so the shared
-    // id appears exactly once in directHitChunkIds even though graph expansion
-    // also surfaced it (§1.2: "既 direct 又 graph 按 direct").
     expect(result.directHitChunkIds).toEqual(['chunk-shared']);
-    // The shared chunk must appear exactly once in the blended result: blend
-    // dedups on its own, so a duplicate can never occupy two slots (which would
-    // otherwise burn a graph slot and drop a real direct hit).
     const sharedOccurrences = result.chunks.filter(
       (c) => c.chunk.id === 'chunk-shared',
     );
     expect(sharedOccurrences).toHaveLength(1);
-    // No chunk id is duplicated anywhere in the blended result.
     const chunkIds = result.chunks.map((c) => c.chunk.id);
     expect(new Set(chunkIds).size).toBe(chunkIds.length);
   });

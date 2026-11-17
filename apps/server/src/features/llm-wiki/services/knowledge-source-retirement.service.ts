@@ -18,12 +18,6 @@ export type KnowledgeSourceRetirementResult = {
   affectedSpaceCount: number;
 };
 
-/**
- * Removes deleted or moved page contributions without invalidating surviving
- * canonical artifacts. Materialization and embedding happen outside the
- * publication transaction; the contribution snapshot is checked again by the
- * import publication guard before any source is retired.
- */
 @Injectable()
 export class KnowledgeSourceRetirementService {
   constructor(
@@ -64,8 +58,6 @@ export class KnowledgeSourceRetirementService {
         .where('id', 'in', sourcePageIds)
         .execute(),
     ]);
-    // Original indexes have no semantic contributions, so discover their
-    // persisted Space ownership from the source artifacts themselves.
     const scopes = new Map(
       [...contributionScopes, ...artifactScopes].map((scope) => [
         `${scope.spaceId}:${scope.sourcePageId}`,

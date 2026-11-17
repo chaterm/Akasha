@@ -9,14 +9,6 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { FastifyRequest } from 'fastify';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
 
-/**
- * Authenticates platform-to-platform calls to the iself agent API-key
- * provisioning endpoint. The caller sends the shared secret in the
- * `x-iself-secret` header; it is compared against ISELF_API_KEY_SECRET with a
- * constant-time hash comparison. This mirrors the SsoArchAuthGuard convention
- * but uses a dedicated header instead of Authorization so it never collides
- * with a user/agent bearer token.
- */
 @Injectable()
 export class IselfPlatformAuthGuard implements CanActivate {
   constructor(private readonly environmentService: EnvironmentService) {}

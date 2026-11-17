@@ -129,9 +129,6 @@ const generatedLinkSchema = z
   })
   .strict();
 
-// Models trained on the previous contract may still emit these per-artifact
-// fields. They carry no downstream value, so they are dropped before the
-// strict parse instead of turning an otherwise valid answer into a repair.
 const RETIRED_GENERATED_ARTIFACT_KEYS = ['claims', 'tags'] as const;
 
 const strictGeneratedArtifactSchema = z
@@ -210,12 +207,6 @@ export function parseSemanticGenerationJson(text: string): SemanticGeneration {
   return parseStrictJson(text, semanticGenerationSchema, 'generation');
 }
 
-/**
- * Normalizes common JSON-mode variations without weakening the persisted
- * compiler schemas. Unknown fields are discarded, aliases are folded into the
- * canonical contract, and malformed optional collection entries are skipped.
- * The returned value must still pass the strict Zod schema before publication.
- */
 export function repairSemanticCompilerOutput(
   stage: SemanticCompilerStage,
   value: unknown,

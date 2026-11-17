@@ -167,11 +167,6 @@ export class KnowledgeSourceExporterService {
         },
         attachmentsByPage: attachmentsByPageId.get(page.id) ?? [],
       });
-      // §9.1: fingerprint the page-owned, non-image File attachments that the
-      // serializer resolved to real nodes so their add/remove/move/replace and
-      // file-name/updated_at changes fail source reuse. Pages without such
-      // attachments keep an empty fingerprint and a byte-identical contentHash
-      // (§9.2.5), so this never triggers a needless rebuild.
       const attachmentFingerprint = attachmentOccurrences.map(
         (occurrence, order) => ({
           attachmentId: occurrence.attachmentId,
@@ -276,10 +271,6 @@ function hashSource(
         })),
       ),
     );
-  // Only mix the attachment fingerprint in when the page actually has trusted,
-  // page-owned non-image File occurrences. An empty list leaves the digest
-  // byte-identical to the previous behavior so attachment-free pages never lose
-  // reuse from this change (§9.2.5).
   if (attachmentFingerprint.length > 0) {
     hash.update('\n').update(JSON.stringify(attachmentFingerprint));
   }
@@ -295,13 +286,6 @@ const IGNORED_ATTACHMENT_NODE_TYPES = new Set([
   'excalidraw',
 ]);
 
-/**
- * Keeps document structure in the source fingerprint while excluding file
- * attachment metadata that Knowledge compilation deliberately does not
- * consume. Image nodes participate only when their attachment resolved to a
- * supported, page-owned raster image; their version and size are fingerprinted
- * separately below.
- */
 function canonicalKnowledgeContent(
   value: unknown,
   supportedImageIds: Set<string>,
@@ -404,9 +388,6 @@ function supportedPageImageMimeType(
     const normalizedMimeType = SAFE_RASTER_MIME_ALIASES.get(mimeType);
     if (normalizedMimeType) return normalizedMimeType;
 
-    // Never reinterpret an explicitly declared, unsupported image format from
-    // its extension. In particular, this prevents SVG from entering the
-    // raster pipeline merely because it has a misleading filename.
     if (mimeType.startsWith('image/')) return undefined;
     if (mimeType !== 'application/octet-stream') return undefined;
   }

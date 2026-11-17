@@ -15,12 +15,6 @@ const EXECUTABLE_JOB_STATES = new Set([
   'waiting-children',
 ]);
 
-/**
- * Recovers Page Merge jobs whose BullMQ transport was lost: a `queued` job that
- * was dispatched but never picked up, or a `running` job whose processing lease
- * expired. Redis job state is inspected outside any DB transaction; recovery
- * re-validates run generation + job identity under the canonical lock order.
- */
 @Injectable()
 export class KnowledgePageMergeReaperService {
   private readonly logger = new Logger(KnowledgePageMergeReaperService.name);

@@ -61,9 +61,6 @@ export class KnowledgeSpaceProcessor
         { workerId: this.workerId },
       );
     } catch (error) {
-      // Deterministic failures (constraint violations, programming errors,
-      // explicitly non-retryable errors) fail on the first attempt; anything
-      // else may be a transient DB/Redis fault and keeps the retry budget.
       if (isDeterministicJobFailure(error))
         throw toUnrecoverableJobError(error);
       throw error;
@@ -157,8 +154,6 @@ export class KnowledgeSpaceProcessor
 async function isTerminalFailure(job: Job): Promise<boolean> {
   const attempts = Math.max(Number(job.opts?.attempts ?? 1), 1);
   if (Number(job.attemptsMade ?? 0) >= attempts) return true;
-  // UnrecoverableError skips the remaining attempts budget, so the queue state
-  // is the only authoritative signal that no retry was scheduled.
   return job.isFailed();
 }
 

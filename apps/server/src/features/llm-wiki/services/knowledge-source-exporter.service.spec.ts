@@ -513,7 +513,6 @@ describe('KnowledgeSourceExporterService', () => {
       type: 'paragraph',
       content: [{ type: 'text', text }],
     });
-    // Each variant is a distinct page-content/attachment arrangement.
     const noAttachment = { type: 'doc', content: [para('A'), para('B')] };
     const withAttachment = {
       type: 'doc',
@@ -585,7 +584,6 @@ describe('KnowledgeSourceExporterService', () => {
       fileAttachment({ updatedAt: new Date('2026-07-27T09:00:00.000Z') }),
     ]);
 
-    // Add/remove, move, rename and replace each change the fingerprint.
     expect(added).not.toBe(baseline);
     expect(moved).not.toBe(baseline);
     expect(renamed).not.toBe(baseline);
@@ -712,10 +710,6 @@ describe('KnowledgeSourceExporterService', () => {
       return snapshot.contentHash;
     };
 
-    // This digest is the pre-WP4 hashSource output for this exact page (title +
-    // text + canonical content + empty image list, with no attachment segment).
-    // It is pinned so a regression that folds an attachment segment into
-    // attachment-free pages — forcing a needless full rebuild — fails loudly.
     const expected =
       'sha256:' +
       createHash('sha256')
@@ -789,14 +783,14 @@ describe('KnowledgeSourceExporterService', () => {
     });
     const attachmentRepo = {
       findByPageIds: jest.fn().mockResolvedValue([]),
-      findByIds: jest.fn().mockResolvedValue([
-        ...formats.map(([id, mimeType, fileExt]) =>
-          attachment(id, mimeType, fileExt),
-        ),
-        // An active format must not enter the raster conversion boundary even
-        // when the extension is deliberately misleading.
-        attachment('svg-as-png', 'image/svg+xml', '.png'),
-      ]),
+      findByIds: jest
+        .fn()
+        .mockResolvedValue([
+          ...formats.map(([id, mimeType, fileExt]) =>
+            attachment(id, mimeType, fileExt),
+          ),
+          attachment('svg-as-png', 'image/svg+xml', '.png'),
+        ]),
     };
     const service = new KnowledgeSourceExporterService(
       pageRepo as unknown as PageRepo,

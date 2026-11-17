@@ -14,16 +14,12 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-// Feature-specific tuning persisted as JSON. Kept intentionally small: only the
-// knobs the admin UI exposes for OpenAI-compatible providers.
 export class AiModelConfigParametersDto {
-  // Embedding: vector dimensions.
   @IsOptional()
   @IsInt()
   @Min(1)
   dimension?: number;
 
-  // Embedding: Matryoshka representation support.
   @IsOptional()
   @IsBoolean()
   supportsMrl?: boolean;
@@ -71,8 +67,6 @@ export class UpdateAiModelConfigDto {
   @MaxLength(2000)
   baseUrl?: string;
 
-  // Omit to keep the stored key unchanged. Empty string clears it. Any other
-  // value replaces it (encrypted before storage).
   @IsOptional()
   @IsString()
   @MaxLength(500)
@@ -84,9 +78,6 @@ export class UpdateAiModelConfigDto {
   parameters?: AiModelConfigParametersDto | null;
 }
 
-// Payload for a connectivity test. Mirrors UpdateAiModelConfigDto: the admin
-// tests the values currently in the form. apiKey follows the same write-only
-// rule as saving — omit/blank falls back to the stored key on the server.
 export class TestAiModelConfigDto {
   @IsIn(['openai-compatible'])
   provider: string;

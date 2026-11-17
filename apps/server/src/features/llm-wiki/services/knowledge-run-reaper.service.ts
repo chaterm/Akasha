@@ -70,9 +70,6 @@ export class KnowledgeRunReaperService {
           executionLeaseExpiresAt: new Date(
             Date.now() + KNOWLEDGE_WORKER_SETTINGS.executionLeaseTtlMs,
           ),
-          // A queued reservation has no execution lease. The repository still
-          // re-checks the current status under lock: if a Worker claimed it
-          // during Redis inspection, recovery falls back to the expiry fence.
           recoveryKind:
             candidate.status === 'queued' ? 'queued_reservation' : 'expired',
         });

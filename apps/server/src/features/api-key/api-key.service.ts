@@ -148,12 +148,6 @@ export class ApiKeyService {
     });
   }
 
-  /**
-   * Platform-to-platform agent API-key provisioning. There is no logged-in
-   * user, so the created key is attributed to the workspace owner. `agentId` is
-   * supplied by the calling platform and forms the stable email identifier of
-   * the agent user.
-   */
   async createAgentApiKeyForPlatform(opts: {
     agentId: string;
     name: string;
@@ -260,12 +254,6 @@ export class ApiKeyService {
     return this.apiKeyRepo.findBindableSpaces(workspaceId);
   }
 
-  /**
-   * Owner-facing space rebinding from the workspace settings page. Authorized
-   * by workspace ownership over a normal login session; the target agent key is
-   * named explicitly via `apiKeyId`. The business-facing agent-self flow lives
-   * in AgentSpaceBindingService.replaceBindings and is unaffected.
-   */
   async updateAgentSpaces(opts: {
     apiKeyId: string;
     userId: string;

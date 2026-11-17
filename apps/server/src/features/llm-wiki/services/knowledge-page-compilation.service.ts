@@ -230,13 +230,6 @@ export class KnowledgePageCompilationService {
         return { outcome: 'noop', result: noOpPageResult(data, startedAt) };
       }
 
-      // Pages that carry images are compiled exactly once, in the image_merge
-      // phase, after every image reaches a terminal state. The text phase only
-      // defers them here (no compile, no publish) so we never pay for a full
-      // text-only round and then recompile+republish the same page once images
-      // finish. The single merge-phase build uses the page text plus whatever
-      // image extractions succeeded (and falls back to text-only if they all
-      // fail). Pages without images keep compiling inline below.
       if (data.indexMode !== 'original' && exportedSource.images?.length) {
         await this.compilationRepo.skipAttempt({
           workspaceId: data.workspaceId,
@@ -325,11 +318,6 @@ export class KnowledgePageCompilationService {
       }
 
       const bypassCache = (await input.execution.bypassCache?.()) ?? false;
-      // Prepared-import reuse is deliberately disabled. Its historical key did
-      // not include the DB Top-K candidate set, so it could replay generation
-      // produced from stale Catalog identities. Analysis has a complete cache
-      // identity; generation is recomputed until a candidate-aware prepared
-      // import key exists.
       const catalogEntries = await input.execution.catalog();
       if (!(await input.execution.isActive())) {
         await this.skipCancelledAttempt({ data, sourcePageId, compileTaskId });
@@ -513,23 +501,10 @@ export class KnowledgePageCompilationService {
 
     try {
       const frozenSource = { ...exportedSource, images: data.images };
-      // Read the exact extractions this run froze into its plan, not "whatever
-      // is currently ready" for these attachments. Reading by frozen id makes
-      // the merge build deterministic w.r.t. the plan: a re-extraction that
-      // reused the same attachment version but produced different content, a
-      // provider/prompt identity change, or a deleted extraction can no longer
-      // silently change the published snapshot. Any frozen extraction that can
-      // no longer be reproduced comes back as a missing id.
       const ready = await this.imageEnrichment.readFrozenSource(
         frozenSource,
         data.expectedExtractionIds ?? [],
       );
-      // Drift: the run planned to compile these extractions, but one or more can
-      // no longer be reproduced (changed content, changed identity, or removed).
-      // Re-plan via a rerun-triggering error code instead of publishing a
-      // snapshot the run never froze. We must not fall back to text-only here:
-      // a page whose images were planned but drifted needs a fresh plan, not a
-      // silently image-less publish.
       if (ready.missingExtractionIds.length > 0) {
         const errorMessage =
           'Page image extractions changed after the run plan was frozen.';
@@ -554,9 +529,6 @@ export class KnowledgePageCompilationService {
         promptVersion: DEFAULT_KNOWLEDGE_PROMPT_VERSION,
         readyImages: ready.readyImages,
       });
-      // The effective hash is only meaningful once the exact frozen
-      // extractions have been reconstructed. Start the observable attempt with
-      // that final input identity, never with the binding-time cache hint.
       await this.compilationRepo.startAttempt({
         workspaceId: data.workspaceId,
         spaceId: data.spaceId,
@@ -569,16 +541,6 @@ export class KnowledgePageCompilationService {
         compilerRunId: data.spaceRunId ?? compileTaskId,
         compileTaskId,
       });
-      // Reaching here with no ready images means the run froze no successful
-      // extractions for this page (every image failed). Because image pages no
-      // longer compile in the text phase, this is the single build point, so we
-      // must not silently drop the page:
-      //   - with page text, fall through and compile a text-only version so the
-      //     page still yields knowledge (a failed VLM must not erase a
-      //     text-bearing page);
-      //   - with no text either, skip without touching prior knowledge and mark
-      //     the run partial. We use a non-rerun error code so a permanent image
-      //     failure does not spin a pointless follow-up run.
       if (ready.readyImages.length === 0 && !ready.source.text.trim()) {
         await this.compilationRepo.skipAttempt({
           workspaceId: data.workspaceId,
@@ -822,12 +784,6 @@ export class KnowledgePageCompilationService {
     });
   }
 
-  /**
-   * Vector reuse and shared-artifact size per publication. The SPACE runner and
-   * MERGE worker do not persist page results, so this log line is where the
-   * reuse rate and the largest merged artifact are observed before the
-   * transitional shared-artifact cap is tuned. Counts and ids only.
-   */
   private logPublicationSizing(input: {
     workspaceId: string;
     spaceId: string;

@@ -5,15 +5,9 @@ import { WithJobContext } from '../../../common/logger/with-job-context.decorato
 
 const RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 const MAX_BATCHES_PER_SCHEDULE = 20;
-// Soft budget: checked before starting a batch. The database statement timeout
-// remains the hard bound for an individual batch already in progress.
 const SCHEDULE_TIME_BUDGET_MS = 30_000;
-// Stale-artifact purge has its own budget so a slow cascade never starves run
-// history retention (and vice versa). 20 x 200 pages clears ~4k pages a day.
 const MAX_STALE_ARTIFACT_BATCHES_PER_SCHEDULE = 20;
 const STALE_ARTIFACT_TIME_BUDGET_MS = 60_000;
-// Failed batches are skipped individually; this many in a row means the
-// database is unhealthy and the rest of the day's purge is abandoned.
 const MAX_CONSECUTIVE_STALE_ARTIFACT_FAILURES = 3;
 const STALE_ARTIFACT_LOCKED_BACKOFF_MS = 1_000;
 
@@ -76,15 +70,9 @@ export class KnowledgeRunRetentionScheduler {
         totals.deletedKnowledgePages += result.deletedKnowledgePages;
         totals.danglingLinks += result.danglingLinks;
         if (result.deletedKnowledgePages > 0) continue;
-        // Empty claim: stop only when the backlog is really empty. If another
-        // instance holds the remaining rows, back off and try again so a
-        // rollback on its side (e.g. deadlock) does not strand the backlog.
         if (!result.remainingLocked) break;
         await this.delay(STALE_ARTIFACT_LOCKED_BACKOFF_MS);
       } catch (error) {
-        // A single batch can be aborted (deadlock with a concurrent publish,
-        // statement timeout). Skip it and keep going; only a run of failures
-        // suggests an outage worth giving up on until tomorrow.
         totals.failedBatches += 1;
         consecutiveFailures += 1;
         this.logger.warn(

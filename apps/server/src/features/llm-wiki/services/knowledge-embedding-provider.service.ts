@@ -5,17 +5,6 @@ import { createBoundedAbortSignal } from './knowledge-operation-budget';
 import { AiModelConfigService } from './ai-model-config.service';
 import { createEmbeddingModelFromConfig } from './ai-model-factory';
 
-/**
- * Bailian text-embedding-v4 provider limits:
- * - at most 10 input strings in one request;
- * - at most 8,192 tokens for EACH input string, not for the batch as a whole.
- *
- * Only the item count can be enforced locally. Bailian does not expose the
- * model's tokenizer through its OpenAI-compatible endpoint, so character or
- * byte counts must not be presented as the 8,192-token limit. The provider is
- * authoritative for that per-input token check; its rejection is normalized
- * below to `embedding_input_too_large`.
- */
 export const BAILIAN_TEXT_EMBEDDING_V4_MAX_INPUTS_PER_REQUEST = 10;
 
 export const EMBEDDING_PROVIDER_NAME = 'akashaEmbedding';
@@ -98,8 +87,6 @@ export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingP
   ): Promise<KnowledgeEmbedding> {
     const result = await this.embedValue(text, true, options);
     if (!result) {
-      // The required path always throws instead of returning null. This guard
-      // keeps the contract explicit if embedValue is changed later.
       throw new KnowledgeEmbeddingError(
         'embedding_provider_error',
         'Knowledge embedding generation failed.',
@@ -149,10 +136,6 @@ export class ConfiguredKnowledgeEmbeddingProvider implements KnowledgeEmbeddingP
     );
     const startedAt = Date.now();
     try {
-      // This is provider-level batching, not merely a local concurrency loop.
-      // `texts` has already been capped at Bailian's 10-item request limit;
-      // embedMany preserves item boundaries and result order, so batching also
-      // leaves non-table embedding semantics unchanged.
       const result = await embedMany({
         model,
         values: texts,

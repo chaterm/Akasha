@@ -310,7 +310,6 @@ describe('ConfluenceImportService extractAndClean script/style removal', () => {
 
     const out = clean(raw);
 
-    // 标题内的自引用锚点被拆掉,只留纯文本
     expect(out).toContain('<h1 id="fdfadf">fdfadf</h1>');
     expect(out).toContain('<h2 id="sec">章节</h2>');
     expect(out).not.toContain('href="#fdfadf"');
@@ -326,7 +325,6 @@ describe('ConfluenceImportService extractAndClean script/style removal', () => {
 
     const out = clean(raw);
 
-    // 指向外部的真实链接保留,不误伤
     expect(out).toContain('href="https://example.com"');
     expect(out).toContain('外链标题');
   });
@@ -347,24 +345,23 @@ describe('ConfluenceImportService extractAndClean script/style removal', () => {
 
     const out = clean(raw);
 
-    // script/style 被清掉
     expect(out).not.toContain('<script');
     expect(out).not.toContain('<style');
     expect(out).not.toContain('hljs.highlightBlock');
     expect(out).not.toContain('display: inline');
-    // markdown 渲染出的正文内容保留
     expect(out).toContain('adfafa');
     expect(out).toContain('<p>正文内容</p>');
   });
 });
 
 describe('ConfluenceImportService materializeDataUriImages', () => {
-  // 1x1 透明 PNG 的 base64
   const PNG_1X1 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
   it('writes a data-uri image to disk and rewrites src to a relative path', async () => {
-    const extractDir = await mkdtemp(path.join(tmpdir(), 'confluence-datauri-'));
+    const extractDir = await mkdtemp(
+      path.join(tmpdir(), 'confluence-datauri-'),
+    );
     try {
       const candidates = new Map<string, string>();
       const input = `<p><img src="data:image/png;base64,${PNG_1X1}"/></p>`;
@@ -389,7 +386,9 @@ describe('ConfluenceImportService materializeDataUriImages', () => {
   });
 
   it('unwraps the roadmap-macro-view container around the image', async () => {
-    const extractDir = await mkdtemp(path.join(tmpdir(), 'confluence-datauri-'));
+    const extractDir = await mkdtemp(
+      path.join(tmpdir(), 'confluence-datauri-'),
+    );
     try {
       const candidates = new Map<string, string>();
       const input = `<div class="roadmap-macro-view"><img src="data:image/png;base64,${PNG_1X1}"/></div>`;
@@ -409,7 +408,9 @@ describe('ConfluenceImportService materializeDataUriImages', () => {
   });
 
   it('leaves html without data-uri images untouched', async () => {
-    const extractDir = await mkdtemp(path.join(tmpdir(), 'confluence-datauri-'));
+    const extractDir = await mkdtemp(
+      path.join(tmpdir(), 'confluence-datauri-'),
+    );
     try {
       const candidates = new Map<string, string>();
       const input = '<p>普通段落</p><img src="attachments/x.png"/>';
@@ -446,13 +447,11 @@ describe('ConfluenceImportService stripDynamicMacros', () => {
     expect(out).not.toContain('popularlabels-list');
     expect(out).not.toContain('heatmap');
     expect(out).not.toContain('viewlabel.action');
-    // 周围正文保留
     expect(out).toContain('<p>正文前</p>');
     expect(out).toContain('<p>正文后</p>');
   });
 
   it('removes the toc-macro container but keeps sibling body content', () => {
-    // 真实结构:toc 目录是自闭合容器,正文是它【外部】的兄弟节点
     const input = [
       '<div class="toc-macro rbtoc123"><ul class="toc-indentation"></ul></div>',
       '<p>大方阿凡达发</p>',
@@ -463,7 +462,6 @@ describe('ConfluenceImportService stripDynamicMacros', () => {
 
     expect(out).not.toContain('toc-macro');
     expect(out).not.toContain('toc-indentation');
-    // 目录外部的正文必须完整保留
     expect(out).toContain('<p>大方阿凡达发</p>');
     expect(out).toContain('<p>adfaf</p>');
   });
@@ -484,7 +482,6 @@ describe('ConfluenceImportService stripDynamicMacros', () => {
     expect(out).not.toContain('search-macro');
     expect(out).not.toContain('livesearchForm');
     expect(out).not.toContain('dosearchsite.action');
-    // 周围正文保留
     expect(out).toContain('<p>前</p>');
     expect(out).toContain('<p>后</p>');
   });
@@ -525,7 +522,6 @@ describe('ConfluenceImportService transformSectionMacros', () => {
     expect(out).toContain('<p>右栏</p>');
     expect(out).not.toContain('sectionMacro');
     expect(out).not.toContain('columnMacro');
-    // 顺序:左栏在右栏之前
     expect(out.indexOf('左栏')).toBeLessThan(out.indexOf('右栏'));
   });
 
@@ -548,19 +544,16 @@ describe('ConfluenceImportService transformMermaidMacros', () => {
 
     expect(out).toContain('<code class="language-mermaid">');
     expect(out).toContain('flowchart TD');
-    // cheerio 序列化时 > 会转义成 &gt;(下游解析会还原),故匹配转义形式
     expect(out).toContain('A[开始] --&gt; B[结束]');
-    // 原始 mermaid div 已被替换掉
     expect(out).not.toContain('class="mermaid"');
   });
 
   it('preserves multi-line mermaid source and strips leading newline', () => {
     const input =
-      '<div class="mermaid">\n%%{init: {\'theme\':\'default\'}}%%\nflowchart TD\n    A --> B\n    B --> C\n</div>';
+      "<div class=\"mermaid\">\n%%{init: {'theme':'default'}}%%\nflowchart TD\n    A --> B\n    B --> C\n</div>";
 
     const out = transform(input);
 
-    // 首行 init 指令保留,且不以换行开头(> 被转义为 &gt;,下游解析还原)
     expect(out).toContain("%%{init: {'theme':'default'}}%%");
     expect(out).toContain('A --&gt; B');
     expect(out).toContain('B --&gt; C');
@@ -596,10 +589,8 @@ describe('ConfluenceImportService transformNoformatMacros', () => {
 
     const out = transform(input);
 
-    // 标注 language-plaintext:避免 codeBlock 自动语法高亮把纯文本误着色
     expect(out).toContain('<code class="language-plaintext">');
     expect(out).toContain('line1\nline2');
-    // 面板容器已被替换掉
     expect(out).not.toContain('preformatted');
     expect(out).not.toContain('panelContent');
   });
@@ -618,10 +609,8 @@ describe('ConfluenceImportService transformNoformatMacros', () => {
 
     const out = transform(input);
 
-    // 语言标识必须保留,不能被剥成无语言代码块
     expect(out).toContain('language-java');
     expect(out).toContain('int a = 1;');
-    // 只有一个 code 元素,没有被重复包裹
     expect(out.match(/<code/g)).toHaveLength(1);
   });
 
@@ -666,7 +655,6 @@ describe('ConfluenceImportService transformExpandMacros', () => {
     expect(out).toContain('<summary>点击展开</summary>');
     expect(out).toContain('<div data-type="detailsContent">');
     expect(out).toContain('<p>隐藏正文</p>');
-    // 原始 Confluence 容器结构已被替换掉
     expect(out).not.toContain('expand-container');
     expect(out).not.toContain('expand-content');
   });
@@ -701,7 +689,6 @@ describe('ConfluenceImportService transformExpandMacros', () => {
 
     const out = transform(input);
 
-    // 两个 expand 都转成了 details,且内层正文保留
     expect(out.match(/<details/g)).toHaveLength(2);
     expect(out).toContain('<summary>外层</summary>');
     expect(out).toContain('<summary>内层</summary>');
@@ -742,7 +729,6 @@ describe('ConfluenceImportService transformInfoMacros', () => {
       expect(out).toContain('data-type="callout"');
       expect(out).toContain(`data-callout-type="${type}"`);
       expect(out).toContain('<p>正文内容</p>');
-      // 原始 Confluence 结构与图标已被替换掉
       expect(out).not.toContain('confluence-information-macro');
       expect(out).not.toContain('aui-icon');
     },
@@ -775,9 +761,7 @@ describe('ConfluenceImportService transformInfoMacros', () => {
     expect(out).toContain('data-callout-type="warning"');
     expect(out).toContain('<strong>重要提醒</strong>');
     expect(out).toContain('<p>正文</p>');
-    // 加粗标题排在正文前面
     expect(out.indexOf('重要提醒')).toBeLessThan(out.indexOf('正文'));
-    // title 元素本身不残留(已转成 strong)
     expect(out).not.toContain('class="title"');
   });
 
@@ -822,7 +806,6 @@ describe('ConfluenceImportService transformStatusMacros', () => {
     expect(out).toContain('data-type="status"');
     expect(out).toContain(`data-color="${color}"`);
     expect(out).toContain('>已完成</span>');
-    // 原始 AUI lozenge class 已被替换掉
     expect(out).not.toContain('aui-lozenge');
     expect(out).not.toContain('status-macro');
   });

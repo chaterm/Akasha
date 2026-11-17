@@ -39,7 +39,6 @@ import { buildKnowledgeQueryAuditMetadata } from './services/knowledge-query-aud
 import { AgentAccessService } from '../../core/page/page-access/agent-access.service';
 import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 
-/** HTTP boundary for iself agents, with the same knowledge-chat behavior as the regular API. */
 @UseGuards(JwtAuthGuard)
 @Controller('iself/llm-wiki')
 export class IsElfLlmWikiController {
@@ -101,9 +100,6 @@ export class IsElfLlmWikiController {
       ...(dto.labels?.length ? { labelNames: dto.labels } : {}),
       chatContext: dto.chatContext,
       workspace,
-      // iself is intentionally fail-closed for general knowledge. The caller
-      // must opt in per request; the user's UI preference does not override
-      // this agent-facing default.
       generalKnowledgeEnabled: dto.generalKnowledgeEnabled === true,
       ...(dto.scoreThreshold !== undefined
         ? { scoreThreshold: dto.scoreThreshold }
@@ -114,7 +110,6 @@ export class IsElfLlmWikiController {
         : {}),
     });
     const queryHash = hashQuery(dto.query);
-    // Strip internal-only fields so they never leak through `...response`.
     const {
       retrievalDiagnostics,
       retrievalScope,
@@ -177,8 +172,6 @@ export class IsElfLlmWikiController {
       citations: response.citations,
       citationEvidence: response.citationEvidence,
     });
-    // Top-level attachments are gated strictly by `attachments: true`;
-    // `includeCitations` only controls citations (§8.1).
     const attachments =
       dto.attachments === true
         ? await this.resolveAttachments({
