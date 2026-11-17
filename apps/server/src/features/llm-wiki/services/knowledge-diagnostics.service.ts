@@ -727,14 +727,7 @@ export class KnowledgeDiagnosticsService {
         skippedImageCount: row.skippedImageCount,
         expectedSourceVersion: row.expectedSourceVersion,
         expectedSourceContentHash: row.expectedSourceContentHash,
-        errorCode: row.errorCode,
-        errorCategory: classifyRunPageError(row.errorCode),
-        errorSummary: row.errorCode
-          ? safeCompilationErrorMessage(row.errorCode)
-          : null,
-        ...(input.includeSensitiveErrors && row.errorMessage
-          ? { errorDetail: sanitizeRunPageErrorDetail(row.errorMessage) }
-          : {}),
+        ...buildRunPageErrorFields(row, input.includeSensitiveErrors),
         queuedAt: isoDate(row.queuedAt),
         startedAt: isoDate(row.startedAt),
         finishedAt: isoDate(row.finishedAt),
@@ -1067,14 +1060,7 @@ export class KnowledgeDiagnosticsService {
           succeededImageCount: row.succeededImageCount,
           failedImageCount: row.failedImageCount,
           skippedImageCount: row.skippedImageCount,
-          errorCode: row.errorCode,
-          errorCategory: classifyRunPageError(row.errorCode),
-          errorSummary: row.errorCode
-            ? safeCompilationErrorMessage(row.errorCode)
-            : null,
-          ...(input.includeSensitiveErrors && row.errorMessage
-            ? { errorDetail: sanitizeRunPageErrorDetail(row.errorMessage) }
-            : {}),
+          ...buildRunPageErrorFields(row, input.includeSensitiveErrors),
           queuedAt: isoDate(row.queuedAt),
           startedAt: isoDate(row.startedAt),
           finishedAt: isoDate(row.finishedAt),
@@ -1290,6 +1276,44 @@ function parseTimestamp(value: string | undefined): Date | null {
   if (!value) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+const SETTLED_IMAGE_STATUSES = ['succeeded', 'not_required'];
+const SETTLED_MERGE_STATUSES = ['succeeded', 'not_required'];
+
+function buildRunPageErrorFields(
+  row: {
+    status: string;
+    imageStatus: string;
+    mergeStatus: string;
+    errorCode: string | null;
+    errorMessage: string | null;
+  },
+  includeSensitiveErrors?: boolean,
+) {
+  const errorCode = visibleRunPageErrorCode(row);
+  return {
+    errorCode,
+    errorCategory: classifyRunPageError(errorCode),
+    errorSummary: errorCode ? safeCompilationErrorMessage(errorCode) : null,
+    ...(includeSensitiveErrors && errorCode && row.errorMessage
+      ? { errorDetail: sanitizeRunPageErrorDetail(row.errorMessage) }
+      : {}),
+  };
+}
+
+export function visibleRunPageErrorCode(row: {
+  status: string;
+  imageStatus: string;
+  mergeStatus: string;
+  errorCode: string | null;
+}): string | null {
+  if (!row.errorCode) return null;
+  const settled =
+    row.status === 'succeeded' &&
+    SETTLED_IMAGE_STATUSES.includes(row.imageStatus) &&
+    SETTLED_MERGE_STATUSES.includes(row.mergeStatus);
+  return settled ? null : row.errorCode;
 }
 
 export function classifyRunPageError(
