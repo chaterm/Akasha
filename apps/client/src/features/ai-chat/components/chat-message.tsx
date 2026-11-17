@@ -39,8 +39,6 @@ const DIRECT_PAGE_HREF_RE =
 function normalizeInternalPageHref(href: string): string | null {
   if (DIRECT_PAGE_HREF_RE.test(href)) return href;
 
-  // Models occasionally wrap an internal path in a fabricated host. Recover
-  // the app-local route without dropping a query string or section anchor.
   if (/^(?:https?:)?\/\//i.test(href)) {
     try {
       const url = new URL(href, "https://akasha.invalid");
@@ -50,8 +48,6 @@ function normalizeInternalPageHref(href: string): string | null {
       return null;
     }
 
-    // Also recover the common malformed form `https://s/{slug}/p/{page}`,
-    // where `s` was interpreted as a host instead of the first path segment.
     const hostless = `/${href.replace(/^(?:https?:)?\/\//i, "")}`;
     if (DIRECT_PAGE_HREF_RE.test(hostless)) return hostless;
   }
@@ -264,8 +260,6 @@ export default function ChatMessage({
     );
   }
 
-  // Only label the article when there's something meaningful to announce.
-  // Tool-only assistant turns (no text) shouldn't announce "Assistant said:" with empty content.
   const hasAnnouncableContent = Boolean(content);
 
   return (

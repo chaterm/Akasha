@@ -73,7 +73,6 @@ export default function CompileWindowSettings() {
     }
   };
 
-  // Clickable hour/minute lists; typing is still allowed.
   const timePickerProps = {
     withDropdown: true,
     format: "24h" as const,

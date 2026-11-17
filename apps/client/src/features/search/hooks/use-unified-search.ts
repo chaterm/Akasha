@@ -30,7 +30,6 @@ export function useUnifiedSearch(
   return useQuery({
     queryKey: ["unified-search", "attachment", params],
     queryFn: async () => {
-      // Remove contentType from backend params since it's only used for frontend routing
       const { contentType, ...backendParams } = params;
       return await searchAttachments(backendParams);
     },
@@ -38,7 +37,6 @@ export function useUnifiedSearch(
   });
 }
 
-// 页面搜索分页加载：每页 50 条，首次请求即返回权限过滤后的总数
 export function usePageSearchInfinite(
   params: UseUnifiedSearchParams,
   enabled: boolean = true,

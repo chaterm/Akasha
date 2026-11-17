@@ -50,7 +50,6 @@ export interface SpaceRunRequest {
 }
 
 export const KNOWLEDGE_MANUAL_PAGE_PUBLISH_TRIGGER = 'manual_page_publish';
-/** Force rebuild; exempt from the night compile window like page publish. */
 export const KNOWLEDGE_MANUAL_RUN_TRIGGER = 'manual_run';
 
 export type KnowledgePageCompileScheduleTrigger =
@@ -327,13 +326,6 @@ export class KnowledgeSpaceCompilationRepo {
     return results;
   }
 
-  /**
-   * Records Space-level compilation requested outside the night compile
-   * window. One durable intent per Space absorbs repeated clicks; it never
-   * becomes a Run here, so the single-active-Run invariant is untouched.
-   * The Space row is read without a lock: promotion locks intent -> schedule
-   * -> Space, and taking the Space lock first here could deadlock with it.
-   */
   async deferSpaceCompiles(input: {
     requests: Array<{
       workspaceId: string;
@@ -427,13 +419,6 @@ export class KnowledgeSpaceCompilationRepo {
     return results;
   }
 
-  /**
-   * Turns deferred Space intents of open workspaces into ordinary
-   * manual_compile Run requests. Each intent is promoted and deleted in its
-   * own transaction (a full-Space request may scan removed sources). The
-   * request covers the whole Space, so requestRunInTx also clears that
-   * Space's delayed page schedules: the Run compiles every page anyway.
-   */
   async promoteDeferredSpaceCompiles(input: {
     compilerVersion: string;
     promptVersion: string;
@@ -478,7 +463,6 @@ export class KnowledgeSpaceCompilationRepo {
           },
           input,
         );
-        // A deleted Space rejects the request; its intent is dropped too.
         await trx
           .deleteFrom('knowledgeSpaceDeferredCompiles')
           .where('id', '=', intent.id)
@@ -490,11 +474,6 @@ export class KnowledgeSpaceCompilationRepo {
     return { selectedCount: rows.length, runRequestCount };
   }
 
-  /**
-   * Adds or postpones page-level automatic compilation. The unique page row
-   * is the durable trailing-debounce state, so every later edit moves the
-   * eligibility time forward without creating a Space Run or Redis job.
-   */
   async scheduleIncrementalCompileForPages(
     input: {
       workspaceId: string;
@@ -508,8 +487,6 @@ export class KnowledgeSpaceCompilationRepo {
     const sourcePageIds = [...new Set(input.sourcePageIds)];
     if (sourcePageIds.length === 0) return 0;
     const quietPeriodMs = Math.max(0, input.quietPeriodMs);
-    // Production scheduling uses the database clock so application-instance
-    // clock skew cannot shorten a quiet period. Tests may inject changedAt.
     const changedAt = input.changedAt
       ? sql<Date>`${input.changedAt}`
       : sql<Date>`clock_timestamp()`;
@@ -569,7 +546,6 @@ export class KnowledgeSpaceCompilationRepo {
     return scheduled.rows.length;
   }
 
-  /** Sets one confirmed delayed page due now; later edits can postpone it. */
   async markDelayedPageForImmediateCompilation(input: {
     workspaceId: string;
     scheduleId: string;
@@ -615,7 +591,6 @@ export class KnowledgeSpaceCompilationRepo {
     return updated.rows[0] ?? null;
   }
 
-  /** Removes one confirmed page from the delayed compilation queue. */
   async removeDelayedPageCompilation(input: {
     workspaceId: string;
     scheduleId: string;
@@ -659,21 +634,11 @@ export class KnowledgeSpaceCompilationRepo {
     return deleted.rows[0] ?? null;
   }
 
-  /**
-   * Atomically promotes due page schedules into page-scoped Space Runs. The
-   * schedule rows and Run request share one PostgreSQL transaction, while
-   * SKIP LOCKED lets multiple application instances drain disjoint batches.
-   */
   async promoteDuePageCompileSchedules(input: {
     compilerVersion: string;
     promptVersion: string;
     limit?: number;
     now?: Date;
-    /**
-     * Workspaces outside their night compile window. Filtered in SQL: the
-     * batch is LIMITed with SKIP LOCKED, so skipping gated rows afterwards
-     * would let them fill every batch and starve open workspaces.
-     */
     excludedWorkspaceIds?: string[];
   }): Promise<{
     selectedPageCount: number;
@@ -728,8 +693,6 @@ export class KnowledgeSpaceCompilationRepo {
         pagesByScope.set(key, pages);
       }
 
-      // Lock Spaces in a deterministic order to avoid cross-instance
-      // deadlocks when a large due batch spans several Spaces.
       const scopes = [...pagesByScope.values()].sort((left, right) => {
         const a = `${left[0].workspaceId}:${left[0].spaceId}`;
         const b = `${right[0].workspaceId}:${right[0].spaceId}`;
@@ -751,9 +714,6 @@ export class KnowledgeSpaceCompilationRepo {
         if (result.disposition !== 'rejected') runRequestCount += 1;
       }
 
-      // Invalid/deleted pages are discarded too. Valid rows have normally
-      // already been removed by requestRunInTx; the exact-ID delete is
-      // intentionally idempotent.
       await trx
         .deleteFrom('knowledgePageCompileSchedules')
         .where(
@@ -836,9 +796,6 @@ export class KnowledgeSpaceCompilationRepo {
     const requestTargetSourcePageIds = normalizeTargetSourcePageIds(
       request.targetSourcePageIds,
     );
-    // Delayed schedule rows are always locked before the Space row. Force
-    // rebuild follows the same order, preventing a promotion/manual-request
-    // deadlock across application instances.
     await this.lockScheduledPagesCoveredByRequest(
       trx,
       request,
@@ -920,9 +877,6 @@ export class KnowledgeSpaceCompilationRepo {
       .forUpdate()
       .executeTakeFirst();
 
-    // A page-scoped Run must not scan the whole Space for removed sources: it
-    // only knows about its target pages, and a Space-wide scan would wrongly
-    // retire every page it did not export.
     const removedSourcePageIds = pageScoped
       ? []
       : await this.resolveRemovedSourcePageIds(trx, request);
@@ -975,10 +929,6 @@ export class KnowledgeSpaceCompilationRepo {
       return { disposition, run };
     }
     if (disposition === 'rerun_requested') {
-      // The active Run has already frozen its RunPages, so newly changed
-      // pages belong to the follow-up. Persist the union separately from the
-      // current Run's immutable discovery scope and let finishRun() carry it
-      // forward.
       const scope = reconcileFollowUpTargetScope({
         followUpTargetSourcePageIds: parseTargetSourcePageIds(
           activeRun!.followUpTargetSourcePageIds,
@@ -1038,7 +988,6 @@ export class KnowledgeSpaceCompilationRepo {
     return { disposition, run };
   }
 
-  /** Immediate/manual work supersedes delayed page rows it already covers. */
   private async lockScheduledPagesCoveredByRequest(
     trx: KyselyTransaction,
     request: SpaceRunRequest,
@@ -1059,7 +1008,6 @@ export class KnowledgeSpaceCompilationRepo {
       .execute();
   }
 
-  /** Immediate/manual work supersedes delayed page rows it already covers. */
   private async clearScheduledPagesCoveredByRequest(
     trx: KyselyTransaction,
     request: SpaceRunRequest,
@@ -1238,7 +1186,6 @@ export class KnowledgeSpaceCompilationRepo {
   }) {
     return executeTx(this.db, async (trx) => {
       const now = new Date();
-      // Match deferred promotion's lock order: intent -> schedules -> Space.
       const deferredCompile = await trx
         .selectFrom('knowledgeSpaceDeferredCompiles')
         .select('id')
@@ -1273,8 +1220,6 @@ export class KnowledgeSpaceCompilationRepo {
         };
       }
 
-      // The rebuild supersedes the intent locked above. Clear only that ID so
-      // requests inserted concurrently after the lookup remain queued.
       if (deferredCompile) {
         await trx
           .deleteFrom('knowledgeSpaceDeferredCompiles')
@@ -1282,8 +1227,6 @@ export class KnowledgeSpaceCompilationRepo {
           .execute();
       }
 
-      // The immediate rebuild covers the latest version of every page in the
-      // Space, so any delayed automatic work is redundant.
       await trx
         .deleteFrom('knowledgePageCompileSchedules')
         .where('workspaceId', '=', input.workspaceId)
@@ -1311,10 +1254,6 @@ export class KnowledgeSpaceCompilationRepo {
         errorMessage: supersededMessage,
         now,
       });
-      // All old runs belong to the same locked Space. Update them in one
-      // statement so a force rebuild does not hold the transaction open for
-      // one round trip per stale Run when recovery has left multiple active
-      // generations behind.
       if (oldRuns.length > 0) {
         await sql`
         UPDATE knowledge_space_compile_runs AS run
@@ -1363,8 +1302,6 @@ export class KnowledgeSpaceCompilationRepo {
         .where('workspaceId', '=', input.workspaceId)
         .execute();
 
-      // These statements deliberately share this transaction and both scope
-      // columns. History tables (attempts/runs/audits/reviews) are retained.
       await sql`
         DELETE FROM knowledge_source_access_principals
         WHERE workspace_id = ${input.workspaceId}
@@ -1867,13 +1804,6 @@ export class KnowledgeSpaceCompilationRepo {
           ...(['partial', 'failed'].includes(imageStatus)
             ? { qualityStatus: 'partial_image' as const }
             : {}),
-          // Once every image is terminal we always hand the page to the merge
-          // phase, even when all extractions failed. The merge build is the
-          // single compile point for image pages: with no ready images it
-          // falls back to text-only (so a page with text still yields
-          // knowledge) or skips an empty page without replacing prior
-          // knowledge. Gating on succeeded > 0 here would strand text-bearing
-          // pages whose images all failed.
           ...(nonterminal === 0 ? { mergeStatus: 'pending' as const } : {}),
           updatedAt: now,
         })
@@ -2060,13 +1990,6 @@ export class KnowledgeSpaceCompilationRepo {
     return image ? { run, page, image } : undefined;
   }
 
-  /**
-   * Closes every unfinished child dimension for Runs that are being stopped
-   * by an explicit control-plane transaction. Callers must already hold the
-   * Space and Run locks; this method completes the global lock order with
-   * RunPage -> RunImage and returns every exact child Job ID for post-commit
-   * Redis cleanup.
-   */
   private async terminalizeInterruptedRunChildren(
     trx: KyselyTransaction,
     input: {
@@ -2166,8 +2089,6 @@ export class KnowledgeSpaceCompilationRepo {
         AND page.image_status IN ('pending', 'queued', 'processing')
     `.execute(trx);
 
-    // RunPages may exist before the RunImage snapshot is inserted. They are
-    // absent from image_counts but still must become terminal.
     await trx
       .updateTable('knowledgeSpaceCompileRunPages')
       .set({
@@ -2189,8 +2110,6 @@ export class KnowledgeSpaceCompilationRepo {
       .updateTable('knowledgeSpaceCompileRunPages')
       .set({
         mergeStatus: 'skipped',
-        // Clear the page merge execution fence so any stale merge worker that
-        // returns after cancellation fails its publication guard.
         mergeExecutionToken: null,
         mergeProcessingExpiresAt: null,
         mergeWorkerId: null,
@@ -2220,20 +2139,12 @@ export class KnowledgeSpaceCompilationRepo {
     return { pages, images, countsByRun };
   }
 
-  /**
-   * Administratively stops one exact Run. The database transaction is the
-   * authoritative cancellation boundary; callers may remove the returned
-   * exact BullMQ jobs only after it commits. Already published knowledge is
-   * intentionally retained.
-   */
   async cancelRun(input: {
     workspaceId: string;
     runId: string;
     reason?: string;
   }) {
     return executeTx(this.db, async (trx) => {
-      // The identity read takes no lock. Every multi-table lock that follows
-      // obeys the global spaces -> Run -> RunPage -> RunImage order.
       const identity = await trx
         .selectFrom('knowledgeSpaceCompileRuns')
         .select(['spaceId'])
@@ -2340,7 +2251,6 @@ export class KnowledgeSpaceCompilationRepo {
       .executeTakeFirst();
   }
 
-  /** Returns the most recent compilation RunPage for a source page. */
   async findLatestPageCompileStatus(input: {
     workspaceId: string;
     sourcePageId: string;
@@ -2366,7 +2276,6 @@ export class KnowledgeSpaceCompilationRepo {
       .executeTakeFirst();
   }
 
-  /** Finds an active page-scoped Run even before its RunPage rows are bound. */
   async findActiveRunForPage(input: {
     workspaceId: string;
     spaceId: string;

@@ -79,9 +79,7 @@ export function SpaceTreeRow({
   };
 
   const handleUpdateNodeIcon = (nodeId: string, newIcon: string | null) => {
-    setTreeData((prev) =>
-      updateTreeNodeIcon(prev, nodeId, newIcon),
-    );
+    setTreeData((prev) => updateTreeNodeIcon(prev, nodeId, newIcon));
   };
 
   const handleEmojiIconClick = (e: React.MouseEvent) => {
@@ -160,9 +158,7 @@ export function SpaceTreeRow({
       <div onClick={handleEmojiIconClick} style={{ marginRight: "4px" }}>
         <EmojiPicker
           onEmojiSelect={handleEmojiSelect}
-          icon={
-            node.icon ? node.icon : <IconFileDescription size="18" />
-          }
+          icon={node.icon ? node.icon : <IconFileDescription size="18" />}
           readOnly={!canEdit}
           removeEmojiAction={handleRemoveEmoji}
           actionIconProps={{ tabIndex: -1 }}
@@ -259,9 +255,6 @@ function CreateNode({
 
   async function handleClickCreate() {
     if (node.hasChildren && !hasChildren) {
-      // Expand and lazy-load before creating a child. handleCreate reads the
-      // latest tree imperatively (via useStore) so we no longer need a
-      // setTimeout to wait for React to rerun the closure with fresh data.
       if (!isOpen) onToggle();
       await onExpandTree();
     } else if (!isOpen) {
@@ -274,7 +267,9 @@ function CreateNode({
     <ActionIcon
       variant="transparent"
       c="gray"
-      aria-label={t("Create subpage of {{name}}", { name: node.name || t("untitled") })}
+      aria-label={t("Create subpage of {{name}}", {
+        name: node.name || t("untitled"),
+      })}
       tabIndex={-1}
       onClick={(e) => {
         e.preventDefault();

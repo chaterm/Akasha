@@ -21,7 +21,9 @@ const renderMultiSelectOption: MultiSelectProps["renderOption"] = ({
       size={36}
     />
     <div>
-      <Text size="sm" lineClamp={1}>{option.label}</Text>
+      <Text size="sm" lineClamp={1}>
+        {option.label}
+      </Text>
       <Text size="xs" opacity={0.5}>
         {option?.["email"]}
       </Text>
@@ -50,13 +52,11 @@ export function MultiUserSelect({ onChange, label }: MultiUserSelectProps) {
         };
       });
 
-      // Filter out existing users by their ids
       const filteredUsersData = usersData.filter(
         (user) =>
           !data.find((existingUser) => existingUser.value === user.value),
       );
 
-      // Combine existing data with new search data
       setData((prevData) => [...prevData, ...filteredUsersData]);
     }
   }, [users]);

@@ -10,7 +10,6 @@ import {
   parseRedisUrl,
   RedisConfig,
 } from '../common/helpers';
-import { LoggerExtension } from './extensions/logger.extension';
 import {
   RedisSyncExtension,
   SerializedHTTPRequest,
@@ -25,10 +24,7 @@ import {
   CollaborationHandler,
   CollabEventHandlers,
 } from './collaboration.handler';
-import type {
-  PageEditOp,
-  PageEditOutcome,
-} from './page-edit/page-edit.types';
+import type { PageEditOp, PageEditOutcome } from './page-edit/page-edit.types';
 import { User } from '@akasha/db/types/entity.types';
 
 @Injectable()
@@ -44,7 +40,6 @@ export class CollaborationGateway {
   constructor(
     private authenticationExtension: AuthenticationExtension,
     private persistenceExtension: PersistenceExtension,
-    private loggerExtension: LoggerExtension,
     private environmentService: EnvironmentService,
     private collabEventsService: CollaborationHandler,
   ) {
@@ -55,11 +50,7 @@ export class CollaborationGateway {
       debounce: 10000,
       maxDebounce: 45000,
       unloadImmediately: false,
-      extensions: [
-        this.authenticationExtension,
-        this.persistenceExtension,
-        this.loggerExtension,
-      ],
+      extensions: [this.authenticationExtension, this.persistenceExtension],
     });
 
     if (this.withRedis) {
@@ -100,14 +91,10 @@ export class CollaborationGateway {
       const serializedHTTPRequest = this.serializeRequest(request);
       const socketId = serializedHTTPRequest.headers['sec-websocket-key'];
 
-      // Create wrapper socket that only receives events via emit()
-      // This prevents double-handling since Hocuspocus won't listen to raw WebSocket events
       const wrappedSocket = new WsSocketWrapper(client);
 
-      // Route through RedisSync extension (this calls handleConnection internally)
       this.redisSync.onSocketOpen(wrappedSocket as any, serializedHTTPRequest);
 
-      // Forward raw WebSocket messages to the extension
       client.on('message', (data: ArrayBuffer) => {
         this.redisSync!.onSocketMessage(
           wrappedSocket as any,
@@ -116,7 +103,6 @@ export class CollaborationGateway {
         );
       });
 
-      // Forward close events
       client.on('close', (code: number, reason: Buffer) => {
         this.redisSync!.onSocketClose(
           socketId,
@@ -125,12 +111,10 @@ export class CollaborationGateway {
         );
       });
 
-      // Forward pong events for keepalive
       client.on('pong', (data: Buffer) => {
         wrappedSocket.emit('pong', data);
       });
     } else {
-      // Fallback to direct Hocuspocus connection
       this.hocuspocus.handleConnection(client, request);
     }
   }
@@ -182,16 +166,10 @@ export class CollaborationGateway {
     return this.hocuspocus.openDirectConnection(documentName, context);
   }
 
-  /*
-   *Can be used before calling openDirectConnection directly
-   */
   async lockDocument(documentName: string) {
     return this.redisSync.lockDocument(documentName);
   }
 
-  /*
-   *Releases a document lock and stops the interval that maintains it.
-   */
   async releaseLock(documentName: string) {
     return this.redisSync.releaseLock(documentName);
   }
@@ -200,7 +178,6 @@ export class CollaborationGateway {
     // eslint-disable-next-line no-async-promise-executor
     await new Promise(async (resolve) => {
       try {
-        // Wait for all documents to unload
         this.hocuspocus.configuration.extensions.push({
           async afterUnloadDocument({ instance }) {
             if (instance.getDocumentsCount() === 0) resolve('');

@@ -39,10 +39,6 @@ import { TagSelect } from "./tag-select";
 import { parseDateKey } from "./database-utils";
 import classes from "./database.module.css";
 
-/**
- * How an editor finished, so the table can move the selection like a spreadsheet.
- * "done": a choice was made in a popover editor; the selection stays on the cell.
- */
 export type EditDoneReason =
   | "enter"
   | "tab"
@@ -68,7 +64,6 @@ export function formatDateValue(value: string, locale: string): string {
   });
 }
 
-/** Bar color by how far along: red → orange → yellow → blue, green when done. */
 export function progressColor(value: number): string {
   if (value >= 100) return "green";
   if (value >= 70) return "blue";
@@ -96,7 +91,6 @@ function ProgressBar({ value }: { value: number }) {
   );
 }
 
-/** Read-only rendering; returns null for empty values so callers can show a placeholder. */
 export function CellDisplay({
   db,
   column,
@@ -218,7 +212,6 @@ interface EditorProps {
   db: DatabaseContext;
   row: DatabaseRowData;
   column: DatabaseColumn;
-  /** A typed character that started editing; replaces the current text. */
   initialText?: string;
   onDone: (reason: EditDoneReason) => void;
 }
@@ -245,7 +238,6 @@ function TextEditor({
     if (draft === original) return;
     if (numeric) {
       const number = parseDatabaseNumber(draft, db.locale);
-      // Invalid input keeps the old value instead of clearing the cell.
       if (number === null && draft.trim()) return;
       writeCell(db, row.id, column.id, number);
     } else {
@@ -281,7 +273,6 @@ function TextEditor({
 }
 
 interface PopoverEditorProps extends EditorProps {
-  /** What the popover is anchored to (the cell's display content). */
   anchor: ReactNode;
 }
 
@@ -374,7 +365,6 @@ function DateEditor({ db, row, column, onDone, anchor }: PopoverEditorProps) {
   );
 }
 
-/** Slider and number box share one draft, written when the popover closes. */
 function ProgressEditor({
   db,
   row,
@@ -393,7 +383,6 @@ function ProgressEditor({
       ? undefined
       : (normalizeDatabaseCellValue("progress", initialText) as number | null);
   const [draft, setDraft] = useState<number>(typed ?? original ?? 0);
-  // Raw box text; may be empty while typing.
   const [text, setText] = useState<string | number>(
     initialText ?? original ?? 0,
   );
@@ -419,7 +408,6 @@ function ProgressEditor({
       width={260}
       shadow="md"
       trapFocus
-      // Mantine's Escape would close and save; ours discards the draft.
       closeOnEscape={false}
       withinPortal
     >
@@ -494,11 +482,7 @@ function ProgressEditor({
               {step}%
             </Button>
           ))}
-          <Button
-            size="compact-xs"
-            ml="auto"
-            onClick={() => finish("done")}
-          >
+          <Button size="compact-xs" ml="auto" onClick={() => finish("done")}>
             {t("Confirm")}
           </Button>
         </Group>
@@ -507,7 +491,6 @@ function ProgressEditor({
   );
 }
 
-/** The editor for one cell. Checkbox has none: callers toggle it directly. */
 export function CellEditor(props: PopoverEditorProps) {
   switch (props.column.type) {
     case "select":
@@ -537,10 +520,6 @@ export function toggleCheckbox(
   writeCell(db, row.id, column.id, row.values[column.id] !== true);
 }
 
-/**
- * Click-to-edit value used outside the table (row detail, kanban cards).
- * `onEditingChange` lets a parent modal disable its own Escape handling.
- */
 export function FieldValue({
   db,
   row,
@@ -554,7 +533,6 @@ export function FieldValue({
   column: DatabaseColumn;
   placeholder?: string;
   onEditingChange?: (editing: boolean) => void;
-  /** On draggable cards a single click must stay free for dragging. */
   editOnDoubleClick?: boolean;
 }) {
   const { t } = useTranslation();
@@ -566,7 +544,6 @@ export function FieldValue({
     setEditingState(next);
     onEditingChange?.(next);
   };
-  // Unmounting mid-edit (row deleted, modal closed) must still release the parent's count.
   useEffect(
     () => () => {
       if (editingRef.current) onEditingChange?.(false);
@@ -588,7 +565,6 @@ export function FieldValue({
     );
   }
 
-  // CellDisplay has no hooks, so it can be called to learn whether the value is empty.
   const shown = CellDisplay({ db, column, row, wrap: true });
   const anchor = (
     <div className={classes.fieldDisplay}>

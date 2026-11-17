@@ -60,9 +60,6 @@ export class LabelRepo {
     const db = dbOrTx(this.db, trx);
     const normalizedName = normalizeLabelName(name);
 
-    // DO UPDATE (rather than DO NOTHING) so RETURNING always emits a row,
-    // even on conflict. Avoids a race where a follow-up SELECT could miss a
-    // row inserted by a concurrent transaction. The set is a no-op write.
     return db
       .insertInto('labels')
       .values({ name: normalizedName, type, workspaceId })
@@ -103,7 +100,6 @@ export class LabelRepo {
       }),
     });
 
-    // joinId is an internal pagination cursor; don't leak it to callers.
     return {
       ...result,
       items: result.items.map(({ joinId: _joinId, ...rest }) => rest),
@@ -116,10 +112,6 @@ export class LabelRepo {
     type: LabelType,
     pagination: PaginationOptions,
   ) {
-    // Label visibility is scoped to space membership: a label surfaces if it
-    // is attached to any non-deleted page in a space the user belongs to.
-    // Per-page permission restrictions intentionally do not narrow this
-    // further — labels are a space-level concept, not a page-level one.
     let query = this.db
       .selectFrom('labels')
       .select(['id', 'name', 'type', 'createdAt', 'updatedAt', 'workspaceId'])

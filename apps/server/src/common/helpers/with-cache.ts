@@ -1,12 +1,13 @@
 import { Cache } from 'cache-manager';
-import { Logger, LoggerService } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
+
+const logger = new Logger('withCache');
 
 export async function withCache<T>(
   cacheManager: Cache,
   key: string,
   ttlMs: number,
   fn: () => Promise<T>,
-  logger: LoggerService = new Logger('withCache'),
 ): Promise<T> {
   try {
     const cached = await cacheManager.get<{ v: T }>(key);

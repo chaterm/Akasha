@@ -50,7 +50,6 @@ describe('KnowledgeAuthorizationCache', () => {
       .mockResolvedValueOnce({ id: 'user-1' } as User);
 
     await expect(cache.getUser(loader)).rejects.toThrow('db down');
-    // Retry must actually re-invoke the loader (no poisoned rejected promise).
     await expect(cache.getUser(loader)).resolves.toEqual({ id: 'user-1' });
     expect(loader).toHaveBeenCalledTimes(2);
   });

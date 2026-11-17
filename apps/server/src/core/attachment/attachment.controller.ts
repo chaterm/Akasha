@@ -215,9 +215,6 @@ export class AttachmentController {
     }
 
     if (attachment.aiChatId) {
-      // Chat-owned attachment: only the user who uploaded (and therefore
-      // owns the chat, per AttachmentRepo.claimAttachmentsForChat) can
-      // read it back.
       if (attachment.creatorId !== user.id) {
         throw new NotFoundException();
       }
@@ -421,7 +418,6 @@ export class AttachmentController {
       });
       return res.send(fileStream);
     } catch (err) {
-      // this.logger.error(err);
       throw new NotFoundException('File not found');
     }
   }
@@ -546,13 +542,11 @@ export class AttachmentController {
   ) {
     const { type, spaceId } = dto;
 
-    // remove current user avatar
     if (type === AttachmentType.Avatar) {
       await this.attachmentService.removeUserAvatar(user);
       return;
     }
 
-    // remove space icon
     if (type === AttachmentType.SpaceIcon) {
       if (!spaceId) {
         throw new BadRequestException(
@@ -571,7 +565,6 @@ export class AttachmentController {
       return;
     }
 
-    // remove workspace icon
     if (type === AttachmentType.WorkspaceIcon) {
       const ability = this.workspaceAbility.createForUser(user, workspace);
       if (

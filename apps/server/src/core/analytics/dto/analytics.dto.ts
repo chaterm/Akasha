@@ -42,8 +42,6 @@ export const ANALYTICS_RANGES = [
 export type AnalyticsRangeKey = (typeof ANALYTICS_RANGES)[number];
 
 export class TrackPageViewDto {
-  // Unknown routes are coerced to 'other' instead of rejected, so an older
-  // client never fails tracking after a route is added.
   @IsString()
   @MaxLength(64)
   route: string;

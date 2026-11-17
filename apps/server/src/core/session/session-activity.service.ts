@@ -4,7 +4,7 @@ import type { Redis } from 'ioredis';
 import { UserSessionRepo } from '@akasha/db/repos/session/user-session.repo';
 import { UserRepo } from '@akasha/db/repos/user/user.repo';
 
-const THROTTLE_SECONDS = 15 * 60; // 15 minutes
+const THROTTLE_SECONDS = 15 * 60;
 
 @Injectable()
 export class SessionActivityService {
@@ -24,7 +24,7 @@ export class SessionActivityService {
     this.redis
       .set(key, '1', 'EX', THROTTLE_SECONDS, 'NX')
       .then((result) => {
-        if (result === null) return; // key already exists, throttled
+        if (result === null) return;
 
         this.userSessionRepo.updateLastActiveAt(sessionId).catch(() => {});
         this.userRepo

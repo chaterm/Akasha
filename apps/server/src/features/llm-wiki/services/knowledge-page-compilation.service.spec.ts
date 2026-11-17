@@ -449,8 +449,6 @@ describe('KnowledgePageCompilationService contract', () => {
       ),
     ).resolves.toMatchObject({ outcome: 'noop' });
 
-    // The text phase must never compile or publish an image page; that happens
-    // exactly once in the merge phase after images reach a terminal state.
     expect(compiler.compileSpace).not.toHaveBeenCalled();
     expect(compilationRepo.skipAttempt).toHaveBeenCalledWith(
       expect.objectContaining({ reasonCode: 'awaiting_images' }),
@@ -517,8 +515,6 @@ describe('KnowledgePageCompilationService contract', () => {
     };
     const accessIndexer = { reindexSourcePages: jest.fn() };
     const imageEnrichment = {
-      // All extractions failed: no frozen extractions to resolve, no missing
-      // ids, but the page text survives.
       readFrozenSource: jest.fn().mockResolvedValue({
         source,
         readyImages: [],
@@ -564,8 +560,6 @@ describe('KnowledgePageCompilationService contract', () => {
       ),
     ).resolves.toMatchObject({ outcome: 'succeeded' });
 
-    // Text-only fallback: a transient VLM failure must not strand a
-    // text-bearing page without knowledge.
     expect(compiler.compileSpace).toHaveBeenCalled();
     expect(importService.importCompileResult).toHaveBeenCalled();
     expect(compilationRepo.skipAttempt).not.toHaveBeenCalled();
@@ -597,9 +591,6 @@ describe('KnowledgePageCompilationService contract', () => {
       skipAttempt: jest.fn(),
     };
     const imageEnrichment = {
-      // The frozen extraction can no longer be reproduced (re-extraction,
-      // identity change, or deletion), so it comes back as a missing id — even
-      // though a text-only fallback would otherwise be possible.
       readFrozenSource: jest.fn().mockResolvedValue({
         source,
         readyImages: [],
@@ -645,8 +636,6 @@ describe('KnowledgePageCompilationService contract', () => {
       ),
     ).resolves.toMatchObject({ outcome: 'noop' });
 
-    // A drifted extraction must never be published; the page re-plans via a
-    // rerun-triggering error code instead.
     expect(compiler.compileSpace).not.toHaveBeenCalled();
     expect(compilationRepo.skipAttempt).toHaveBeenCalledWith(
       expect.objectContaining({ reasonCode: 'image_snapshot_changed' }),
@@ -731,8 +720,6 @@ describe('KnowledgePageCompilationService contract', () => {
       ),
     ).resolves.toMatchObject({ outcome: 'noop' });
 
-    // No text and no usable image knowledge: skip without touching prior
-    // knowledge, using a non-rerun error code.
     expect(compiler.compileSpace).not.toHaveBeenCalled();
     expect(compilationRepo.skipAttempt).toHaveBeenCalledWith(
       expect.objectContaining({ reasonCode: 'image_extraction_failed' }),

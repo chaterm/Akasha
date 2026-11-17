@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 
-/** Content must be schema-normalized before fingerprinting. Access scopes are not generation metadata. */
 export function fingerprintTemplate(template: {
   id: string;
   title?: string | null;

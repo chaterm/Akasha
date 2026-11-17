@@ -21,10 +21,6 @@ declare module '@tiptap/core' {
   }
 }
 
-// Containers whose descendants must never carry an `indent` attribute. These
-// nodes own their own Tab semantics (list nesting, cell navigation, literal
-// tab) and visually conflict with our indent padding, so paragraphs and
-// headings inside them stay flat
 const NON_INDENTABLE_ANCESTORS = new Set([
   'listItem',
   'taskItem',
@@ -120,10 +116,6 @@ export const Indent = Extension.create<IndentOptions>({
     };
 
     return {
-      // Return the command's result so Tab falls through to the browser
-      // (moving focus out of the editor) once the user has reached max
-      // indent. Without this Tab stays trapped at max depth, failing
-      // WCAG 2.1.2.
       Tab: () => {
         if (!isInIndentableBlock()) return false;
         return this.editor.commands.indent();
@@ -158,7 +150,6 @@ export const Indent = Extension.create<IndentOptions>({
           let modified = false;
 
           newState.doc.descendants((node, pos) => {
-            // Containers: descend so we can find paragraph/heading children.
             if (!types.has(node.type.name)) return true;
 
             if (node.attrs.indent <= min) return false;
@@ -173,14 +164,10 @@ export const Indent = Extension.create<IndentOptions>({
               modified = true;
             }
 
-            // paragraph/heading don't contain other paragraphs/headings —
-            // never descend into their inline content.
             return false;
           });
 
           if (!modified) return null;
-          // Normalisation must not show up as a separate undo step;
-          // otherwise undo would re-introduce the illegal indent.
           return tr.setMeta('addToHistory', false);
         },
       }),
@@ -201,11 +188,8 @@ function updateIndent(
   let updated = false;
 
   state.doc.nodesBetween(from, to, (node, pos) => {
-    // Skip non-block nodes (text, inline atoms) up front.
     if (!node.type.isBlock) return false;
 
-    // Don't descend into containers whose children must stay flat — handles
-    // multi-block selections that span across e.g. a list-item or table-cell.
     if (NON_INDENTABLE_ANCESTORS.has(node.type.name)) return false;
 
     if (!types.has(node.type.name)) return true;

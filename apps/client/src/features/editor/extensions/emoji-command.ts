@@ -17,7 +17,6 @@ const Command = Extension.create({
         },
         allow: ({ state, range }) => {
           const $from = state.doc.resolve(range.from);
-          // Disable emoji menu inside code blocks
           if ($from.parent.type.name === "codeBlock") {
             return false;
           }

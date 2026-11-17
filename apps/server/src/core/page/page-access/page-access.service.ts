@@ -17,21 +17,13 @@ export class PageAccessService {
     private readonly spaceRepo: SpaceRepo,
   ) {}
 
-  /**
-   * Validate user can view page, throws ForbiddenException if not.
-   * If page has restrictions: page-level permission determines access.
-   * If no restrictions: space-level permission determines access.
-   */
   async validateCanView(page: Page, user: User): Promise<void> {
-    // Workspace owner bypasses all page-level restrictions
     if (user.role === UserRole.OWNER) {
       return;
     }
 
-    // TODO: cache by pageId and userId.
     const ability = await this.spaceAbility.createForUser(user, page.spaceId);
 
-    // User must be at least a space member
     if (ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page)) {
       throw new ForbiddenException();
     }
@@ -45,15 +37,10 @@ export class PageAccessService {
     }
   }
 
-  /**
-   * Validate user can view page AND return effective canEdit permission.
-   * Combines access check + edit permission in a single query pass.
-   */
   async validateCanViewWithPermissions(
     page: Page,
     user: User,
   ): Promise<{ canEdit: boolean; hasRestriction: boolean }> {
-    // Workspace owner has full edit access, bypassing page-level restrictions
     if (user.role === UserRole.OWNER) {
       return { canEdit: true, hasRestriction: false };
     }
@@ -79,11 +66,6 @@ export class PageAccessService {
     };
   }
 
-  /**
-   * Validate source reads through the same Page visibility policy used by the
-   * editor. API-key based Skills are allowed to read public/shared spaces when
-   * the key owner has ordinary Page access there.
-   */
   async validateCanReadSourceWithPermissions(
     page: Page,
     user: User,
@@ -91,11 +73,6 @@ export class PageAccessService {
     return this.validateCanViewWithPermissions(page, user);
   }
 
-  /**
-   * Shared Page reads are an explicit read-only exception for API keys.
-   * The caller must first validate the internal Page URL contract;
-   * ordinary space and Page ACLs still apply here.
-   */
   async validateCanReadCitationSourceWithPermissions(
     page: Page,
     user: User,
@@ -103,23 +80,16 @@ export class PageAccessService {
     return this.validateCanViewWithPermissions(page, user);
   }
 
-  /**
-   * Validate user can edit page, throws ForbiddenException if not.
-   * If page has restrictions: page-level writer permission determines access.
-   * If no restrictions: space-level edit permission determines access.
-   */
   async validateCanEdit(
     page: Page,
     user: User,
   ): Promise<{ hasRestriction: boolean }> {
-    // Workspace owner bypasses all page-level restrictions
     if (user.role === UserRole.OWNER) {
       return { hasRestriction: false };
     }
 
     const ability = await this.spaceAbility.createForUser(user, page.spaceId);
 
-    // User must be at least a space member
     if (ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page)) {
       throw new ForbiddenException();
     }
@@ -128,12 +98,10 @@ export class PageAccessService {
       await this.pagePermissionRepo.canUserEditPage(user.id, page.id);
 
     if (hasAnyRestriction) {
-      // Page has restrictions - use page-level permission
       if (!canEdit) {
         throw new ForbiddenException();
       }
     } else {
-      // No restrictions - use space-level permission
       if (ability.cannot(SpaceCaslAction.Edit, SpaceCaslSubject.Page)) {
         throw new ForbiddenException();
       }
@@ -147,7 +115,6 @@ export class PageAccessService {
     user: User,
     workspaceId: string,
   ): Promise<void> {
-    // Workspace owner can always comment
     if (user.role === UserRole.OWNER) {
       return;
     }

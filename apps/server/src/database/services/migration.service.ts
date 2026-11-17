@@ -25,7 +25,8 @@ export class MigrationService {
     });
     if (!cleared) return;
     this.logger.log(
-      `Cleared ${deleted} pre-baseline migration row(s); the v1.0 baseline will replay over the existing schema`,
+      { deleted },
+      'Cleared pre-baseline migration rows; baseline will replay over existing schema',
     );
   }
 
@@ -124,10 +125,14 @@ export class MigrationService {
     results?.forEach((it) => {
       if (it.status === 'Success') {
         this.logger.log(
-          `Migration "${it.migrationName}" executed successfully`,
+          { migrationName: it.migrationName },
+          'Migration executed successfully',
         );
       } else if (it.status === 'Error') {
-        this.logger.error(`Failed to execute migration "${it.migrationName}"`);
+        this.logger.error(
+          { migrationName: it.migrationName },
+          'Failed to execute migration',
+        );
       }
     });
 

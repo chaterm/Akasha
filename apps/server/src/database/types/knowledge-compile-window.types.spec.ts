@@ -13,8 +13,6 @@ const night: KnowledgeCompileWindowConfig = {
   endTime: '07:00',
 };
 
-// The gate follows the server's local time; tests pin the zone explicitly.
-// Asia/Shanghai is UTC+8 with no DST.
 const TZ = 'Asia/Shanghai';
 const shanghai = (hhmm: string, day = '2026-10-28') =>
   new Date(`${day}T${hhmm}:00+08:00`);
@@ -58,7 +56,6 @@ describe('knowledge compile window', () => {
     expect(nextCompileWindowStartAt(night, now)).toEqual(
       nextCompileWindowStartAt(night, now, serverTimezone()),
     );
-    // 15:30 UTC is 23:30 in Shanghai but still daytime in UTC.
     expect(isCompileWindowOpen(night, now, TZ)).toBe(true);
     expect(isCompileWindowOpen(night, now, 'UTC')).toBe(false);
   });
@@ -75,8 +72,6 @@ describe('knowledge compile window', () => {
   });
 
   it('follows DST transitions of the local timezone', () => {
-    // Europe/Berlin leaves DST on 2026-10-25: 02:00 local = 00:00 UTC before,
-    // 01:00 UTC after.
     const berlin = { ...night, startTime: '02:00', endTime: '04:00' };
     const tz = 'Europe/Berlin';
     expect(
@@ -91,19 +86,15 @@ describe('knowledge compile window', () => {
   });
 
   it('starts a delayed page at the later of its quiet period and the window', () => {
-    // Edited in the morning: quiet period ends 11:00, window opens 23:00.
     expect(
       effectiveCompileStartAt(night, shanghai('11:00'), shanghai('10:00'), TZ),
     ).toEqual({ startAt: shanghai('23:00'), windowDeferred: true });
-    // Already due at noon, still waits for the window.
     expect(
       effectiveCompileStartAt(night, shanghai('11:00'), shanghai('12:00'), TZ),
     ).toEqual({ startAt: shanghai('23:00'), windowDeferred: true });
-    // Quiet period ends inside the window: the quiet period decides.
     expect(
       effectiveCompileStartAt(night, shanghai('23:40'), shanghai('22:40'), TZ),
     ).toEqual({ startAt: shanghai('23:40'), windowDeferred: false });
-    // Window off: unchanged behaviour.
     expect(
       effectiveCompileStartAt(
         { ...night, enabled: false },

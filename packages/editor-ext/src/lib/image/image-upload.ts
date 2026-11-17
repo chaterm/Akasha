@@ -28,7 +28,6 @@ const findImageNodeByPlaceholderId = (
 const handleImageUpload =
   ({ validateFn, onUpload }: MediaUploadOptions): UploadFn =>
   async (file, editor, pos, pageId) => {
-    // check if the file is an image
     const validated = validateFn?.(file);
     // @ts-ignore
     if (!validated) return;
@@ -70,7 +69,6 @@ const handleImageUpload =
         const isEmptyTextBlock = parent.isTextblock && !parent.childCount;
 
         if (isEmptyTextBlock) {
-          // Replace e.g. empty paragraph with the image
           tr.replaceRangeWith(pos - 1, pos + 1, initialPlaceholderNode);
         } else {
           tr.insert(pos, initialPlaceholderNode);
@@ -84,10 +82,8 @@ const handleImageUpload =
         const { pos: currentPos = null } =
           findImageNodeByPlaceholderId(tr.doc, placeholderId) || {};
 
-        //  If the placeholder is not found or attachment is missing, abort the process
         if (currentPos === null || !attachment) return false;
 
-        // Update the placeholder node with the actual image data
         tr.setNodeMarkup(currentPos, undefined, {
           src: `/api/files/${attachment.id}/${attachment.fileName}`,
           attachmentId: attachment.id,
@@ -107,13 +103,11 @@ const handleImageUpload =
 
         if (currentPos === null) return false;
 
-        // Remove the placeholder node
         tr.delete(currentPos, currentPos + 2);
 
         return true;
       };
     };
-    // Only show the placeholder if the upload takes more than 250ms
     const insertPlaceholderTimeout = setTimeout(() => {
       editor.commands.command(insertPlaceholder());
       placeholderInserted = true;

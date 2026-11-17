@@ -60,8 +60,6 @@ describe('IsElfLlmWikiController', () => {
           requestedSpaceIds: ['space-1'],
           effectiveSpaceIds: ['space-1'],
         },
-        // Internal-only context the controller must strip and use to resolve
-        // hit-chunk attachments; it must never leak into the response.
         attachmentHitContext: { directHitChunkIds: ['chunk-1'] },
         queryObservation: {
           decisionReason: 'knowledge',
@@ -121,7 +119,6 @@ describe('IsElfLlmWikiController', () => {
       id: 'user-1',
       workspaceId: 'workspace-1',
       role: UserRole.MEMBER,
-      // iself must remain fail-closed even if the user's UI preference is on.
       settings: { preferences: { generalKnowledge: true } },
     } as any;
     const workspace = {
@@ -245,12 +242,10 @@ describe('IsElfLlmWikiController', () => {
         fileName: 'design.pdf',
       }),
     ]);
-    // Internal-only fields must not leak into the response.
     expect(withAttachments).not.toHaveProperty('attachmentHitContext');
     expect(withAttachments).not.toHaveProperty('retrievalDiagnostics');
     expect(withAttachments).not.toHaveProperty('retrievalScope');
     expect(withAttachments).not.toHaveProperty('queryObservation');
-    // The resolver receives the direct-hit chunk ids, never citations.
     expect(attachmentResolver.resolveAttachments).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       directHitChunkIds: ['chunk-1'],
@@ -262,7 +257,6 @@ describe('IsElfLlmWikiController', () => {
       }),
     );
 
-    // rawResultsOnly and queryRewriteEnabled pass through to the service.
     await controller.queryKnowledge(
       {
         query: 'How do we use Kafka?',
@@ -281,7 +275,6 @@ describe('IsElfLlmWikiController', () => {
       }),
     );
 
-    // includeCitations must not open top-level attachments (§8.1).
     attachmentResolver.resolveAttachments.mockClear();
     const withCitationsOnly = await controller.queryKnowledge(
       {
@@ -297,10 +290,6 @@ describe('IsElfLlmWikiController', () => {
     expect(attachmentResolver.resolveAttachments).not.toHaveBeenCalled();
   });
 
-  // Full chain: real retrieval -> real chat -> real controller -> real
-  // attachment resolver. Only leaf collaborators (repos, providers, token,
-  // env) are stubbed, so directHitChunkIds actually flows end to end and the
-  // resolver validates + signs real relation rows (§11.3).
   it('resolves hit-chunk attachments across the full iself request chain', async () => {
     const updatedAt = new Date('2026-02-01T00:00:00.000Z');
     const hitChunk = {
@@ -332,7 +321,6 @@ describe('IsElfLlmWikiController', () => {
       signals: ['lexical'],
       lexicalScore: 1,
     };
-    // Shared repo mock: retrieval recall methods + resolver relation lookups.
     const capsuleRepo = {
       findDenseChunkCandidates: jest.fn().mockResolvedValue([]),
       findLexicalChunkCandidates: jest.fn().mockResolvedValue([hitChunk]),
@@ -393,8 +381,6 @@ describe('IsElfLlmWikiController', () => {
       { embedQuery: jest.fn().mockResolvedValue(null) } as any,
       new KnowledgeRetrievalRankerService(),
     );
-    // No source windows -> no knowledge evidence -> no_match branch, which
-    // still carries attachmentHitContext (§1.2).
     const answerProvider = {
       answer: jest.fn().mockResolvedValue('irrelevant'),
     };
@@ -430,7 +416,9 @@ describe('IsElfLlmWikiController', () => {
       {
         generateAttachmentToken: jest
           .fn()
-          .mockImplementation(async ({ attachmentId }: any) => `jwt-${attachmentId}`),
+          .mockImplementation(
+            async ({ attachmentId }: any) => `jwt-${attachmentId}`,
+          ),
       } as any,
       { getAppUrl: () => 'https://akasha.example.com' } as any,
       capsuleRepo as any,
@@ -479,12 +467,10 @@ describe('IsElfLlmWikiController', () => {
         url: 'https://akasha.example.com/api/files/public/att-1/setup.pdf?jwt=jwt-att-1',
       },
     ]);
-    // The resolver was driven by the real direct-hit chunk ids, never citations.
     expect(capsuleRepo.findChunkAttachmentsByChunkIds).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       chunkIds: ['chunk-hit'],
     });
-    // Internal context never leaks to the wire.
     expect(response).not.toHaveProperty('attachmentHitContext');
   });
 });

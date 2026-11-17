@@ -30,20 +30,10 @@ import {
 export const KNOWLEDGE_COMPLETENESS_NOTICE =
   'Some knowledge may be unavailable because access is permission-scoped.';
 
-/** Whether a chunk entered the result via direct recall or graph expansion. */
 export type KnowledgeRetrievalOrigin = 'direct' | 'graph';
 
-/**
- * How graph neighbors turn into chunk candidates.
- * - window_recall: re-recall neighbor chunks by query similarity and fuse them
- *   with direct hits under the same relevance gate (legacy behavior).
- * - edge_anchored: the traversed edge vouches for the neighbor page; pick its
- *   best chunk under a looser gate and rank it by edge strength in a reserved
- *   slice, so graph hits no longer compete with direct hits on similarity.
- */
 export type KnowledgeGraphExpansionMode = 'window_recall' | 'edge_anchored';
 
-/** Which authorization path admitted the chunk. */
 export type KnowledgeRetrievalAuthorizationMode =
   | 'policy'
   | 'final-authorization-fallback';
@@ -79,8 +69,6 @@ export type KnowledgeRetrievalResult = {
     page: KnowledgePage;
     sourcePageIds: string[];
     rankReasons: KnowledgeRetrievalRankReason[];
-    // Recorded before direct/graph merge so downstream consumers never have to
-    // infer the source from rankReasons text (§7.1).
     origin: KnowledgeRetrievalOrigin;
     authorizationMode: KnowledgeRetrievalAuthorizationMode;
     parentSection?: KnowledgeParentSection;
@@ -89,9 +77,6 @@ export type KnowledgeRetrievalResult = {
   completenessNotice: typeof KNOWLEDGE_COMPLETENESS_NOTICE;
   scope: KnowledgeRetrievalScope;
   diagnostics: KnowledgeRetrievalDiagnostics;
-  // Direct-hit chunk ids that survived final selection, in retrieval-rank
-  // order. Populated before citation resolution rewrites parent bodies or the
-  // context budget truncates chunks (§7.1).
   directHitChunkIds: string[];
   retrievalObservation: KnowledgeRetrievalObservation;
 };
@@ -150,12 +135,10 @@ export class KnowledgeRetrievalService {
     spaceIds: string[];
     labelNames?: string[];
     candidateLimit?: number;
-    /** Maximum semantic cosine distance accepted during recall. */
     maxCosineDistance?: number;
     abortSignal?: AbortSignal;
     authCache?: KnowledgeAuthorizationCache;
     debugTiming?: AiChatDebugTiming;
-    /** Defaults to edge_anchored; window_recall is kept for A/B evaluation. */
     graphExpansionMode?: KnowledgeGraphExpansionMode;
   }): Promise<KnowledgeRetrievalResult> {
     const candidateLimit = input.candidateLimit ?? 20;
@@ -181,8 +164,6 @@ export class KnowledgeRetrievalService {
         workspaceId: input.workspaceId,
         userId: input.userId,
       });
-    // Fail closed before reading anything from the cache: a cache bound to a
-    // different (workspace, user) must never drive this user's retrieval.
     try {
       authCache.assertScope(input.workspaceId, input.userId);
     } catch {
@@ -221,8 +202,6 @@ export class KnowledgeRetrievalService {
         readableSpaceCount: result.length,
       }),
     );
-    // Reuse this space-readability decision for the source authorization passes
-    // later in this request instead of re-querying the same spaces.
     authCache.recordSpaces(requestedSpaceIds, new Set(readableSpaceIds));
     if (readableSpaceIds.length === 0) {
       return emptyResult({
@@ -719,8 +698,6 @@ export class KnowledgeRetrievalService {
     const finalAuthorizedSourceCount = unique(
       selectedChunks.flatMap((candidate) => candidate.sourcePageIds),
     ).length;
-    // Direct hits that survived blending, in their final rank order. Graph-only
-    // chunks never contribute attachments (§7.1 / §1.2).
     const directHitChunkIds = selectedChunks
       .filter((candidate) => candidate.origin === 'direct')
       .map((candidate) => candidate.chunk.id);
@@ -813,14 +790,6 @@ export class KnowledgeRetrievalService {
     };
   }
 
-  /**
-   * A chunk is authorized by its own sources, but its knowledge page's title,
-   * canonicalKey, summary and body are merged from every source of the page.
-   * When the reader cannot read all page sources, return a page copy with that
-   * concept-level metadata removed: the title becomes the title the chunk's own
-   * (authorized) source gave its contribution, and canonicalKey/summary/body
-   * are cleared. The artifact id stays as a non-semantic identifier.
-   */
   private async redactUnreadablePageMetadata(input: {
     workspaceId: string;
     userId: string;
@@ -829,8 +798,6 @@ export class KnowledgeRetrievalService {
     authCache: KnowledgeAuthorizationCache;
   }): Promise<KnowledgeRetrievalResult['chunks']> {
     if (input.chunks.length === 0) return input.chunks;
-    // Compatibility for injected test repos that predate page-level metadata
-    // authorization. The production repo always implements it.
     if (typeof this.capsuleRepo.findPageSourcePageIdsByPageIds !== 'function') {
       return input.chunks;
     }
@@ -916,10 +883,6 @@ export class KnowledgeRetrievalService {
     authorizationMode: 'policy' | 'final-authorization-fallback';
     authCache: KnowledgeAuthorizationCache;
     mode?: KnowledgeGraphExpansionMode;
-    /**
-     * When set, only these seed pages may be expanded. All seeds still count as
-     * visited so a weak direct page is never re-added as its own neighbor.
-     */
     expandablePageIds?: Set<string>;
     labelNames?: string[];
   }): Promise<GraphExpansionResult> {
@@ -953,8 +916,6 @@ export class KnowledgeRetrievalService {
     const visited = new Set(input.seeds.map((seed) => seed.knowledgePageId));
     const hopByPageId = new Map<string, number>();
     const typeWeightByPageId = new Map<string, number>();
-    // Strongest (relative seed weight × edge type weight) path into a neighbor;
-    // edge_anchored mode ranks graph candidates by it instead of similarity.
     const anchorScoreByPageId = new Map<string, number>();
     const seedWeightById = new Map(
       eligibleSeeds.map((seed) => [seed.knowledgePageId, seed.weight]),
@@ -1066,8 +1027,6 @@ export class KnowledgeRetrievalService {
       principals: input.principals,
       knowledgePageIds: windowPageIds,
       authorizationMode: input.authorizationMode,
-      // edge_anchored needs a best chunk per neighbor page, not just the
-      // globally nearest few, so the window recall must cover every page.
       limit:
         input.mode === 'edge_anchored'
           ? Math.max(
@@ -1133,20 +1092,8 @@ function graphWindowPageLimit(candidateLimit: number): number {
   return Math.max(candidateLimit * 4, 32);
 }
 
-/**
- * edge_anchored relaxes the semantic gate for graph neighbors by this much:
- * the edge already establishes that the page is related, so the gate only has
- * to reject chunks that are plainly off-topic. Real audits show neighbor chunks
- * sit at a median cosine distance of ~0.62 vs ~0.55 for direct candidates.
- */
 const EDGE_ANCHORED_DISTANCE_SLACK = 0.1;
 const EDGE_ANCHORED_CHUNKS_PER_PAGE = 1;
-/**
- * A seed page is only expanded when one of its authorized direct hits is
- * strong on its own: an exact-title match or a close semantic match. Seed
- * weights are relative (RRF), so without this floor a barely relevant top hit
- * still expands at full strength and drags in its neighborhood.
- */
 const EDGE_ANCHORED_STRONG_SEED_MAX_DISTANCE = 0.4;
 
 function strongSeedPageIds(
@@ -1169,12 +1116,6 @@ function strongSeedPageIds(
 }
 const EDGE_ANCHORED_CHUNKS_PER_PAGE_RECALL = 2;
 
-/**
- * Turns graph window recall into edge-anchored candidates: chunks already
- * selected as direct hits are skipped, each neighbor keeps only its best
- * chunk(s) that clear the relaxed gate, and pages are ordered by the edge
- * anchor score (seed strength × edge type weight) before query similarity.
- */
 function selectEdgeAnchoredCandidates(input: {
   ranker: KnowledgeRetrievalRankerService;
   graph: GraphExpansionResult;
@@ -1218,11 +1159,6 @@ function selectEdgeAnchoredCandidates(input: {
   );
 }
 
-/**
- * Direct hits keep their rank and fill the head of the result; graph hits take
- * a reserved tail slice instead of competing with direct hits on similarity.
- * When direct recall is sparse, graph hits may fill the remaining slots.
- */
 function mergeAnchoredGraphCandidates(input: {
   directBaseline: KnowledgeRetrievalResult['chunks'];
   graph: KnowledgeRetrievalResult['chunks'];
@@ -1417,7 +1353,6 @@ function buildRetrievalDrops(input: {
   relevantChunkIds: Set<string>;
   authorizedChunkIds: Set<string>;
   threshold: number;
-  /** Semantic gate applied to graph-stage candidates; defaults to threshold. */
   graphThreshold?: number;
 }): KnowledgeRetrievalDrop[] {
   const drops = new Map<string, KnowledgeRetrievalDrop>();

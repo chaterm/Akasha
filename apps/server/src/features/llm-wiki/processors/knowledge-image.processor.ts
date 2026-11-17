@@ -1,5 +1,6 @@
 import { Logger, OnModuleDestroy } from '@nestjs/common';
-import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
+import { OnWorkerEvent, Processor } from '@nestjs/bullmq';
+import { ContextualWorkerHost } from '../../../common/logger/contextual-worker.host';
 import { Job, UnrecoverableError } from 'bullmq';
 import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import { IKnowledgeCompileImageJob } from '../../../integrations/queue/constants/queue.interface';
@@ -12,7 +13,7 @@ import { recordKnowledgeWorkerEvent } from '../services/knowledge-worker-observa
 
 @Processor(QueueName.KNOWLEDGE_IMAGE_QUEUE, KNOWLEDGE_IMAGE_WORKER_OPTIONS)
 export class KnowledgeImageProcessor
-  extends WorkerHost
+  extends ContextualWorkerHost
   implements OnModuleDestroy
 {
   private readonly logger = new Logger(KnowledgeImageProcessor.name);
@@ -25,7 +26,7 @@ export class KnowledgeImageProcessor
     super();
   }
 
-  async process(job: Job) {
+  async handle(job: Job) {
     if (job.name === QueueJob.KNOWLEDGE_COMPILE_IMAGE) {
       return this.processRunImage(job);
     }

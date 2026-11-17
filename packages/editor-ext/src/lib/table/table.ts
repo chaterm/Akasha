@@ -1,9 +1,9 @@
-import { Table } from "@tiptap/extension-table";
-import { Editor } from "@tiptap/core";
-import { DOMOutputSpec } from "@tiptap/pm/model";
-import { TextSelection } from "@tiptap/pm/state";
-import { cellAround } from "@tiptap/pm/tables";
-import { closestListItem } from "../list-item";
+import { Table } from '@tiptap/extension-table';
+import { Editor } from '@tiptap/core';
+import { DOMOutputSpec } from '@tiptap/pm/model';
+import { TextSelection } from '@tiptap/pm/state';
+import { cellAround } from '@tiptap/pm/tables';
+import { closestListItem } from '../list-item';
 
 function handleListIndent(editor: Editor): boolean {
   const listItem = closestListItem(editor.state);
@@ -16,11 +16,10 @@ function handleListOutdent(editor: Editor): boolean {
 }
 
 export const CustomTable = Table.extend({
-
   addKeyboardShortcuts() {
     return {
       ...this.parent?.(),
-      "Mod-a": () => {
+      'Mod-a': () => {
         const { state, view } = this.editor;
         const { selection, doc } = state;
 
@@ -28,8 +27,6 @@ export const CustomTable = Table.extend({
         if (!$cellPos) return false;
 
         const cellNode = doc.nodeAt($cellPos.pos);
-        // Empty cells have nothing useful to scope to — let the default
-        // Mod-a fall through and select the whole doc.
         if (!cellNode || !cellNode.textContent) return false;
 
         const from = $cellPos.pos + 1;
@@ -47,14 +44,12 @@ export const CustomTable = Table.extend({
         return true;
       },
       Tab: () => {
-        // If we're in a list within a table, handle list indentation
-        if (this.editor.isActive("table")) {
+        if (this.editor.isActive('table')) {
           if (handleListIndent(this.editor)) {
             return true;
           }
         }
 
-        // Otherwise, use default table navigation
         if (this.editor.commands.goToNextCell()) {
           return true;
         }
@@ -65,26 +60,23 @@ export const CustomTable = Table.extend({
 
         return this.editor.chain().addRowAfter().goToNextCell().run();
       },
-      "Shift-Tab": () => {
-        // If we're in a list within a table, handle list outdentation
-        if (this.editor.isActive("table")) {
+      'Shift-Tab': () => {
+        if (this.editor.isActive('table')) {
           if (handleListOutdent(this.editor)) {
             return true;
           }
         }
 
-        // Otherwise, use default table navigation
         return this.editor.commands.goToPreviousCell();
       },
     };
   },
 
   renderHTML({ node, HTMLAttributes }) {
-    // https://github.com/ueberdosis/tiptap/issues/4872#issuecomment-2717554498
     const originalRender = this.parent?.({ node, HTMLAttributes });
     const wrapper: DOMOutputSpec = [
-      "div",
-      { class: "tableWrapper" },
+      'div',
+      { class: 'tableWrapper' },
       originalRender,
     ];
     return wrapper;

@@ -155,9 +155,6 @@ describe('serializeKnowledgeSource', () => {
       mimeType: 'image/svg+xml',
       fileExt: '.svg',
     });
-    // Generic/missing MIME falls back to the extension check. This must cover
-    // every raster extension the exporter recognizes (jpe/apng/tif/dib
-    // included), otherwise an image leaks into the top-level attachments.
     const octetImages = [
       '.png',
       '.apng',

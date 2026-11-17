@@ -14,7 +14,6 @@ export async function up(db: Kysely<unknown>): Promise<void> {
         (workspace_id, user_id, space_id, parent_page_id, period_start, period_end)
     )
   `.execute(db);
-  // Retain identities after a source Page is deleted; never recreate on replay.
   await sql`
     CREATE TABLE weekly_report_save_receipts (
       save_id uuid NOT NULL, workspace_id uuid NOT NULL, user_id uuid NOT NULL,

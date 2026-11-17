@@ -1,11 +1,3 @@
-/**
- * Database block data shapes and their normalizers.
- *
- * Every attr read from the document goes through a normalizer, so old
- * documents, concurrent edits and hand-written HTML all collapse into one
- * valid shape. Normalizers are deterministic: they never generate ids.
- */
-
 export type DatabaseColumnType =
   | 'text'
   | 'number'
@@ -56,7 +48,6 @@ export const DATABASE_COLORS: readonly DatabaseColor[] = [
   'purple',
 ];
 
-/** Order in which new options pick colors; gray is the last resort. */
 const OPTION_COLOR_PREFERENCE: readonly DatabaseColor[] = [
   'blue',
   'green',
@@ -70,13 +61,6 @@ const OPTION_COLOR_PREFERENCE: readonly DatabaseColor[] = [
   'gray',
 ];
 
-/**
- * A select option. For reference columns it is the referenced item: person =
- * a member (id = user id) with cached name and avatar; page = a document,
- * stored as its page id only. The client fills in a page's title, icon and
- * link from a permission-checked lookup and marks it `unavailable` when the
- * viewer cannot see it; those fields are never written back.
- */
 export interface DatabaseSelectOption {
   id: string;
   name: string;
@@ -88,17 +72,14 @@ export interface DatabaseSelectOption {
   unavailable?: boolean;
 }
 
-/** Columns that reference members or documents instead of their own options. */
 export function isDatabaseReference(type: DatabaseColumnType): boolean {
   return type === 'person' || type === 'page';
 }
 
-/** Column types whose value is a list of option ids. */
 export function isDatabaseMultiValue(type: DatabaseColumnType): boolean {
   return type === 'multiSelect' || isDatabaseReference(type);
 }
 
-/** Column types whose values reference `column.options`. */
 export function hasDatabaseOptions(type: DatabaseColumnType): boolean {
   return type === 'select' || isDatabaseMultiValue(type);
 }
@@ -128,20 +109,11 @@ export interface DatabaseColumn {
   id: string;
   name: string;
   type: DatabaseColumnType;
-  /** select / multiSelect */
   options?: DatabaseSelectOption[];
-  /** number */
   format?: DatabaseNumberFormat;
-  /** number: fixed fraction digits, null = as entered */
   decimals?: number | null;
 }
 
-/**
- * Value stored per type:
- * text/url: string, number: number,
- * select: option id, multiSelect: option ids, person: user ids, date: YYYY-MM-DD, checkbox: boolean,
- * progress: integer 0–100.
- */
 export type DatabaseCellValue = string | number | boolean | string[] | null;
 
 export interface DatabaseRowData {
@@ -149,10 +121,6 @@ export interface DatabaseRowData {
   values: Record<string, DatabaseCellValue>;
 }
 
-/**
- * `mine` is a table of the rows that reference the viewer in a member column.
- * `timeline` is a horizontal Gantt chart; `agenda` is a vertical list of dates.
- */
 export type DatabaseViewType =
   | 'table'
   | 'kanban'
@@ -205,14 +173,11 @@ export function normalizeDatabaseAlign(value: unknown): DatabaseAlign | null {
     : null;
 }
 
-/** Per-view column order, width, alignment and visibility. */
 export interface DatabaseViewColumn {
   id: string;
   width: number | null;
-  /** null = the column type's default. */
   align: DatabaseAlign | null;
   hidden: boolean;
-  /** Table: show the full value on several lines instead of cutting it off. */
   wrap: boolean;
 }
 
@@ -252,7 +217,6 @@ export interface DatabaseFilterCondition {
   type: 'condition';
   columnId: string;
   op: DatabaseFilterOperator;
-  /** string for text ops, number for number ops, YYYY-MM-DD for date ops, option ids for select ops. */
   value: string | number | string[] | null;
 }
 
@@ -266,38 +230,25 @@ export interface DatabaseView {
   id: string;
   name: string;
   type: DatabaseViewType;
-  /** Table / kanban: horizontal placement of the whole view. */
   align: DatabaseAlign;
-  /** Kanban: groups as columns (vertical) or as rows of cards (horizontal). */
   orientation: 'vertical' | 'horizontal';
-  /** Table: leading row-number column, counted in the view's row order. */
   showRowNumbers: boolean;
-  /** Table: height of single-line rows. */
   rowHeight: DatabaseRowHeight;
-  /** Kanban: lane and card width. */
   cardSize: DatabaseCardSize;
   columns: DatabaseViewColumn[];
   sorts: DatabaseSort[];
   filter: DatabaseFilterGroup;
-  /** Kanban: select, multiSelect or checkbox column. */
   groupBy: string | null;
-  /** Kanban: group keys in display order; groups not listed follow in natural order. */
   groupOrder: string[];
   hiddenGroups: string[];
-  /** Kanban: lanes folded into a narrow strip. */
   collapsedGroups: string[];
   hideEmptyGroups: boolean;
-  /** Kanban: manual card order per group key, used while the view has no sorts. */
   cardOrder: Record<string, string[]>;
-  /** Calendar / timeline: start date column. */
   dateColumnId: string | null;
-  /** Calendar / timeline: optional end date column; rows with a later end render as multi-day bars. */
   endDateColumnId: string | null;
-  /** Timeline: zoom level of the time axis. */
   timelineScale: DatabaseTimelineScale;
 }
 
-/** Group key for rows without a value (select / multiSelect / person / page). */
 export const DATABASE_EMPTY_GROUP = '__empty';
 export const DATABASE_CHECKED_GROUP = 'checked';
 export const DATABASE_UNCHECKED_GROUP = 'unchecked';
@@ -310,10 +261,6 @@ export const DATABASE_GROUPABLE_TYPES: readonly DatabaseColumnType[] = [
   'checkbox',
 ];
 
-/**
- * Types with a meaningful order. Lists of tags, members, documents and urls
- * have none, so they are not offered for sorting and their sorts are dropped.
- */
 export const DATABASE_SORTABLE_TYPES: readonly DatabaseColumnType[] = [
   'text',
   'number',
@@ -347,7 +294,6 @@ function uniqueStrings(value: unknown): string[] {
   ];
 }
 
-/** Saved row order; rows not listed here follow in document order. */
 export function normalizeDatabaseRowOrder(value: unknown): string[] {
   return uniqueStrings(value);
 }
@@ -365,7 +311,6 @@ export function normalizeDatabaseColor(value: unknown): DatabaseColor {
     : 'gray';
 }
 
-/** The least used color among existing options, by preference order. */
 export function nextDatabaseOptionColor(
   options: DatabaseSelectOption[],
 ): DatabaseColor {
@@ -417,7 +362,6 @@ function normalizeColumn(item: any, type: DatabaseColumnType): DatabaseColumn {
   if (hasDatabaseOptions(type)) {
     column.options = normalizeOptions(item?.options);
   }
-  // Only the page id is stored: titles are looked up with each viewer's permissions.
   if (type === 'page') {
     column.options = column.options!.map(({ id, color }) => ({
       id,
@@ -434,12 +378,6 @@ function normalizeColumn(item: any, type: DatabaseColumnType): DatabaseColumn {
   return column;
 }
 
-/**
- * Drops malformed columns; unknown types (including the old `title`) become text.
- * The first column is always the title: the first text column moves to the
- * front, and a database without one gets a text column with a fixed id, so
- * every client derives the same schema.
- */
 export function normalizeDatabaseColumns(value: unknown): DatabaseColumn[] {
   const raw = Array.isArray(value) ? value : [];
   const seen = new Set<string>();
@@ -466,7 +404,6 @@ export function normalizeDatabaseColumns(value: unknown): DatabaseColumn[] {
   return columns;
 }
 
-/** The title column: always the first, always text, never hidden or deleted. */
 export function getDatabaseTitleColumn(
   columns: DatabaseColumn[],
 ): DatabaseColumn {
@@ -618,7 +555,6 @@ export function emptyDatabaseFilter(): DatabaseFilterGroup {
   return { type: 'group', mode: 'and', conditions: [] };
 }
 
-/** Drops conditions on missing columns or with operators the column type does not support. */
 export function normalizeDatabaseFilter(
   value: unknown,
   columns: DatabaseColumn[],
@@ -703,7 +639,6 @@ function normalizeViewColumns(
     });
   }
 
-  // The title column leads every view and cannot be hidden.
   const titleId = columns[0]?.id;
   const titleIndex = entries.findIndex((entry) => entry.id === titleId);
   if (titleIndex >= 0) {
@@ -762,7 +697,6 @@ export function normalizeDatabaseView(
     ? item.type
     : 'table';
 
-  // Kanban and calendar cannot work without their column, so they fall back to the first match.
   let groupBy = isOfTypes(item?.groupBy, DATABASE_GROUPABLE_TYPES)
     ? item.groupBy
     : null;
@@ -838,7 +772,6 @@ export function normalizeDatabaseViews(
   return views;
 }
 
-/** Visible columns of a view in its order. */
 export function getDatabaseViewColumns(
   columns: DatabaseColumn[],
   view: DatabaseView,

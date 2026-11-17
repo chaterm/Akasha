@@ -102,8 +102,6 @@ export function NotificationItem({
       component={Link}
       to={pageUrl ?? ""}
       onClick={handleClick}
-      // auxclick fires for all non-primary buttons; guard to middle-click only (button 1)
-      // so that right-click (button 2, context menu) does not mark as read
       onAuxClick={(e: React.MouseEvent) => e.button === 1 && markReadIfNeeded()}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -142,7 +140,10 @@ export function NotificationItem({
                 <IconFileDescription
                   size={14}
                   stroke={1.5}
-                  style={{ flexShrink: 0, color: "var(--mantine-color-dimmed)" }}
+                  style={{
+                    flexShrink: 0,
+                    color: "var(--mantine-color-dimmed)",
+                  }}
                 />
               )}
               <Text size="xs" c="dimmed" lineClamp={1}>
@@ -155,11 +156,7 @@ export function NotificationItem({
         <Group gap={4} wrap="nowrap" align="center" style={{ flexShrink: 0 }}>
           {hovered && isUnread ? (
             <Tooltip label={t("Mark as read")} withArrow>
-              <ActionIcon
-                variant="subtle"
-                size="sm"
-                onClick={handleMarkRead}
-              >
+              <ActionIcon variant="subtle" size="sm" onClick={handleMarkRead}>
                 <IconCheck size={14} />
               </ActionIcon>
             </Tooltip>

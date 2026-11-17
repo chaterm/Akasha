@@ -366,21 +366,11 @@ export class PagePermissionRepo {
       .executeTakeFirst();
   }
 
-  /**
-   * Check if user can access a page by verifying they have permission on ALL restricted ancestors.
-   */
   async canUserAccessPage(userId: string, pageId: string): Promise<boolean> {
     const { canAccess } = await this.canUserEditPage(userId, pageId);
     return canAccess;
   }
 
-  /**
-   * Check if user can edit a page.
-   * Single query: builds ancestor chain once, checks both traversal and nearest-restricted writer.
-   * - bool_and(pp.id IS NOT NULL): false if any restricted ancestor has no permission (traversal denied)
-   * - array_agg(role ORDER BY depth)[1]: role on the nearest restricted ancestor
-   * - Zero rows (no restricted ancestors): both NULL → defer to space permissions (true)
-   */
   async canUserEditPage(
     userId: string,
     pageId: string,
@@ -435,15 +425,6 @@ export class PagePermissionRepo {
     );
   }
 
-  /**
-   * Get user's access level for a page.
-   * Returns:
-   * - hasDirectRestriction: whether this specific page has restrictions
-   * - hasInheritedRestriction: whether any ancestor (not self) has restrictions
-   * - hasAnyRestriction: hasDirectRestriction || hasInheritedRestriction
-   * - canAccess: user has permission on all restricted ancestors (always true if no restrictions)
-   * - canEdit: user has writer on nearest restricted ancestor (always true if no restrictions)
-   */
   async getUserPageAccessLevel(
     userId: string,
     pageId: string,
@@ -477,7 +458,6 @@ export class PagePermissionRepo {
       )
       .selectFrom('pages')
       .select((eb) => [
-        // hasDirectRestriction: this page itself has page_access entry
         eb
           .case()
           .when(
@@ -492,7 +472,6 @@ export class PagePermissionRepo {
           .else(false)
           .end()
           .as('hasDirectRestriction'),
-        // hasInheritedRestriction: any ancestor (depth > 0) has page_access entry
         eb
           .case()
           .when(
@@ -512,7 +491,6 @@ export class PagePermissionRepo {
           .else(false)
           .end()
           .as('hasInheritedRestriction'),
-        // canAccess: no restricted ancestor without ANY permission
         eb
           .case()
           .when(
@@ -552,7 +530,6 @@ export class PagePermissionRepo {
           .else(false)
           .end()
           .as('canAccess'),
-        // canEdit: nearest restricted ancestor determines edit capability
         eb
           .case()
           // traversal denied: any restricted ancestor without any permission
@@ -649,11 +626,6 @@ export class PagePermissionRepo {
     };
   }
 
-  /**
-   * Filter a list of page IDs to only those the user can access.
-   * Returns page IDs with their permission level (canEdit).
-   * Single query implementation for efficiency.
-   */
   async filterAccessiblePageIds(opts: {
     pageIds: string[];
     userId: string;
@@ -786,7 +758,10 @@ export class PagePermissionRepo {
       .orderBy('allAncestors.depth', 'asc')
       .execute();
 
-    const bySource = new Map<string, SourcePageRestrictedAncestorRequirements>();
+    const bySource = new Map<
+      string,
+      SourcePageRestrictedAncestorRequirements
+    >();
     const byRequirement = new Map<
       string,
       SourcePageRestrictedAncestorRequirements['restrictedAncestors'][number]
@@ -954,10 +929,6 @@ export class PagePermissionRepo {
     return results.map((r) => ({ id: r.id, canEdit: Boolean(r.canEdit) }));
   }
 
-  /**
-   * Check if a page or any of its ancestors has restrictions.
-   * Used to determine if page-level permission checks are needed.
-   */
   async hasRestrictedAncestor(pageId: string): Promise<boolean> {
     const result = await this.db
       .withRecursive('ancestors', (qb) =>
@@ -980,10 +951,6 @@ export class PagePermissionRepo {
     return !!result;
   }
 
-  /**
-   * Check if any page in a space has restrictions.
-   * Used as a quick check to skip heavy permission filtering when no restrictions exist.
-   */
   async hasRestrictedPagesInSpace(spaceId: string): Promise<boolean> {
     const result = await this.db
       .selectNoFrom((eb) =>
@@ -1001,10 +968,6 @@ export class PagePermissionRepo {
     return Boolean(result?.exists);
   }
 
-  /**
-   * Given a list of parent page IDs, return which ones have at least one accessible child.
-   * Efficient batch query for sidebar hasChildren calculation.
-   */
   async getParentIdsWithAccessibleChildren(
     parentIds: string[],
     userId: string,
@@ -1076,11 +1039,6 @@ export class PagePermissionRepo {
     return results.map((r) => r.parentPageId);
   }
 
-  /**
-   * Get all page IDs within a subtree that are restricted OR are descendants of restricted pages.
-   * Used to filter pages from public shares - if a page is restricted, it and all its
-   * children should be hidden.
-   */
   async getRestrictedSubtreeIds(rootPageId: string): Promise<string[]> {
     const results = await this.db
       .withRecursive('descendants', (qb) =>
@@ -1137,11 +1095,6 @@ export class PagePermissionRepo {
     return results.map((r) => r.descendantId);
   }
 
-  /**
-   * Given a pageId and a set of candidate userIds, return the subset who can
-   * access the page (have permission on ALL restricted ancestors).
-   * Returns all userIds if the page has no restricted ancestors.
-   */
   async getUserIdsWithPageAccess(
     pageId: string,
     userIds: string[],

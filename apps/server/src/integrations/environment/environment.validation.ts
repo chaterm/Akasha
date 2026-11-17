@@ -267,7 +267,6 @@ export function validate(config: Record<string, any>) {
   const databaseMaxPool = validatedConfig.DATABASE_MAX_POOL ?? 40;
   const spaceConcurrency = validatedConfig.KNOWLEDGE_SPACE_CONCURRENCY ?? 10;
   const imageConcurrency = validatedConfig.KNOWLEDGE_IMAGE_CONCURRENCY ?? 8;
-  // Text and Page Merge workers each hold KNOWLEDGE_SPACE_CONCURRENCY slots.
   const mergeConcurrency = spaceConcurrency;
   if (
     databaseMaxPool <

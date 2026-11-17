@@ -6,9 +6,6 @@ import { KnowledgePageMergeProcessor } from './processors/knowledge-page-merge.p
 import { KnowledgePageMergeReaperService } from './services/knowledge-page-merge-reaper.service';
 import { KnowledgeSpaceProcessor } from './processors/knowledge-space.processor';
 
-// This metadata test does not exercise the MCP/collaboration or Space modules.
-// Isolate their infrastructure rather than importing ESM-only collaboration
-// dependencies through the CommonJS Jest runner.
 jest.mock('../../core/mcp/mcp.module', () => ({
   McpModule: class McpModule {},
 }));

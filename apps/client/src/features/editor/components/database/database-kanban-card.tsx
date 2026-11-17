@@ -22,7 +22,6 @@ import classes from "./database.module.css";
 interface KanbanCardProps {
   db: DatabaseContext;
   row: DatabaseRowData;
-  /** The group column is implied by the lane, so it is not repeated on the card. */
   groupColumnId?: string;
   dragging: boolean;
   onPointerDown?: (event: PointerEvent<HTMLDivElement>) => void;
@@ -30,7 +29,6 @@ interface KanbanCardProps {
   menuExtra?: (close: () => void) => ReactNode;
 }
 
-/** Fields edit in place; clicking blank card space opens the row. */
 export function KanbanCard({
   db,
   row,
@@ -41,7 +39,6 @@ export function KanbanCard({
   menuExtra,
 }: KanbanCardProps) {
   const { t } = useTranslation();
-  // The first visible field (other than the group) leads the card, shown like the rest.
   const [title, ...rest] = visibleColumns(db).filter(
     (column) => column.id !== groupColumnId,
   );
@@ -57,7 +54,6 @@ export function KanbanCard({
       data-dragging={dragging || undefined}
       onPointerDown={(event) => {
         const target = event.target as HTMLElement;
-        // Fields drag too: they only edit on double-click.
         if (
           !ownsEvent(event) ||
           isTextTarget(target) ||

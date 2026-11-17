@@ -1,9 +1,4 @@
-import {
-  useEffect,
-  useState,
-  type KeyboardEvent,
-  type ReactNode,
-} from "react";
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
   ActionIcon,
   Button,
@@ -83,7 +78,6 @@ export function newCondition(column: DatabaseColumn): DatabaseFilterCondition {
   };
 }
 
-/** Text/number inputs commit on blur or Enter so typing is one transaction. */
 function BufferedInput({
   type,
   value,
@@ -168,11 +162,7 @@ function OptionCheckSelect({
     );
 
   return (
-    <Combobox
-      store={combobox}
-      withinPortal={false}
-      onOptionSubmit={toggle}
-    >
+    <Combobox store={combobox} withinPortal={false} onOptionSubmit={toggle}>
       <Combobox.Target>
         <InputBase
           component="button"
@@ -330,7 +320,6 @@ interface GroupEditorProps {
   actions?: ReactNode;
 }
 
-/** Condition tree editor: and/or per group, nested groups one level deep in the UI. */
 export function FilterGroupEditor({
   db,
   group,
@@ -414,7 +403,6 @@ export function FilterGroupEditor({
                   db={db}
                   group={item}
                   depth={depth + 1}
-                  // An emptied group is removed.
                   onChange={(next) =>
                     setAt(index, next.conditions.length ? next : null)
                   }
@@ -473,7 +461,10 @@ export function FilterGroupEditor({
           </Group>
         );
       })}
-      <Group gap={4} className={depth === 1 ? classes.filterActions : undefined}>
+      <Group
+        gap={4}
+        className={depth === 1 ? classes.filterActions : undefined}
+      >
         <Button
           size="compact-xs"
           variant="subtle"

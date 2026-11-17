@@ -24,7 +24,6 @@ export const useTrialEndAction = () => {
           autoClose: false,
         });
 
-        // only admins can access the billing page
         if (isAdmin) {
           navigate(APP_ROUTE.SETTINGS.WORKSPACE.BILLING);
         } else {

@@ -24,18 +24,14 @@ export class KnowledgeSourceAuthorizationService {
     userId: string;
     supplementalUserId?: string;
     sourcePageIds: string[];
-    // Optional request-scoped cache. When provided it MUST be bound to the same
-    // (workspaceId, userId) — a mismatch fails closed. See KnowledgeAuthorizationCache.
     cache?: KnowledgeAuthorizationCache;
   }): Promise<string[]> {
     if (input.sourcePageIds.length === 0) return [];
 
     const cache = input.cache;
     try {
-      // Scope guard inside the try so a mismatch degrades to "nothing readable".
       cache?.assertScope(input.workspaceId, input.userId);
 
-      // Serve fully-cached page decisions without any query.
       const { knownReadable, unknown } = cache
         ? cache.partitionPages(input.sourcePageIds)
         : { knownReadable: new Set<string>(), unknown: input.sourcePageIds };
@@ -69,11 +65,6 @@ export class KnowledgeSourceAuthorizationService {
     }
   }
 
-  /**
-   * Resolves readability for the given (already de-duplicated, uncached) page
-   * ids. Records page-level decisions into the cache only after all dependency
-   * queries have succeeded, so a partial/failed computation never writes results.
-   */
   private async resolveReadable(input: {
     workspaceId: string;
     userId: string;
@@ -89,8 +80,6 @@ export class KnowledgeSourceAuthorizationService {
     });
     const existingPages = pages.filter((page) => page.deletedAt === null);
 
-    // Missing/deleted pages are a definitive "not readable" decision — cache it
-    // so repeated lookups within the request skip the query.
     if (existingPages.length === 0) {
       cache?.recordPages(input.pageIds, new Set());
       return new Set();
@@ -102,14 +91,12 @@ export class KnowledgeSourceAuthorizationService {
         )
       : await this.userRepo.findById(input.userId, input.workspaceId);
     if (!user) {
-      // No user: definitive not-readable for every queried id.
       cache?.recordPages(input.pageIds, new Set());
       return new Set();
     }
 
     if (user.role === UserRole.OWNER) {
       const readable = new Set(existingPages.map((page) => page.id));
-      // Owners can read every existing page; missing ids stay unreadable.
       cache?.recordPages(input.pageIds, readable);
       return readable;
     }
@@ -193,16 +180,10 @@ export class KnowledgeSourceAuthorizationService {
       allowedPageIds.forEach((pageId) => readable.add(pageId));
     }
 
-    // All queries succeeded: record a decision for every queried id (readable or
-    // not), so both hits and misses are memoized.
     cache?.recordPages(input.pageIds, readable);
     return readable;
   }
 
-  /**
-   * Resolves space readability, reusing the request-scoped cache. Only the spaces
-   * not already decided are sent to SpaceAuthorizationService.
-   */
   private async resolveReadableSpaceIds(input: {
     user: { id: string; role: string; workspaceId: string };
     spaceIds: string[];

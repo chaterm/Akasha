@@ -5,6 +5,7 @@ import { KyselyDB } from '@akasha/db/types/kysely.types';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { QueueJob, QueueName } from '../../../integrations/queue/constants';
+import { WithJobContext } from '../../../common/logger/with-job-context.decorator';
 
 const DEFAULT_RETENTION_DAYS = 30;
 
@@ -17,11 +18,10 @@ export class TrashCleanupService {
     @InjectQueue(QueueName.ATTACHMENT_QUEUE) private attachmentQueue: Queue,
   ) {}
 
-  @Interval('trash-cleanup', 24 * 60 * 60 * 1000) // every 24 hours
+  @Interval('trash-cleanup', 24 * 60 * 60 * 1000)
+  @WithJobContext('trash-cleanup')
   async cleanupOldTrash() {
     try {
-      this.logger.debug('Starting trash cleanup job');
-
       const workspaces = await this.db
         .selectFrom('workspaces')
         .select(['id', 'trashRetentionDays'])
@@ -51,8 +51,8 @@ export class TrashCleanupService {
             totalCleaned++;
           } catch (error) {
             this.logger.error(
-              `Failed to cleanup page ${page.id}: ${error instanceof Error ? error.message : 'Unknown error'}`,
-              error instanceof Error ? error.stack : undefined,
+              { pageId: page.id, err: error },
+              'Failed to cleanup page',
             );
           }
         }
@@ -72,7 +72,6 @@ export class TrashCleanupService {
   }
 
   private async cleanupPage(pageId: string) {
-    // Get all descendants using recursive CTE (including the page itself)
     const descendants = await this.db
       .withRecursive('page_descendants', (db) =>
         db
@@ -92,11 +91,6 @@ export class TrashCleanupService {
 
     const pageIds = descendants.map((d) => d.id);
 
-    this.logger.debug(
-      `Cleaning up page ${pageId} with ${pageIds.length - 1} descendants`,
-    );
-
-    // Queue attachment deletion for all pages with unique job IDs to prevent duplicates
     for (const id of pageIds) {
       await this.attachmentQueue.add(
         QueueJob.DELETE_PAGE_ATTACHMENTS,
@@ -119,9 +113,9 @@ export class TrashCleanupService {
         await this.db.deleteFrom('pages').where('id', 'in', pageIds).execute();
       }
     } catch (error) {
-      // Log but don't throw - pages might have been deleted by another node
       this.logger.warn(
-        `Error deleting pages, they may have been already deleted: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        { err: error },
+        'Pages may have already been deleted by another node',
       );
     }
   }

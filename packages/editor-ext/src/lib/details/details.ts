@@ -4,10 +4,10 @@ import {
   findParentNode,
   mergeAttributes,
   wrappingInputRule,
-} from "@tiptap/core";
-import { icon, setAttributes } from "../utils";
+} from '@tiptap/core';
+import { icon, setAttributes } from '../utils';
 
-declare module "@tiptap/core" {
+declare module '@tiptap/core' {
   interface Commands<ReturnType> {
     details: {
       setDetails: () => ReturnType;
@@ -22,9 +22,9 @@ export interface DetailsOptions {
 }
 
 export const Details = Node.create<DetailsOptions>({
-  name: "details",
-  group: "block",
-  content: "detailsSummary detailsContent",
+  name: 'details',
+  group: 'block',
+  content: 'detailsSummary detailsContent',
   defining: true,
   isolating: true,
   // @ts-ignore
@@ -39,8 +39,8 @@ export const Details = Node.create<DetailsOptions>({
     return {
       open: {
         default: false,
-        parseHTML: (e) => e.getAttribute("open"),
-        renderHTML: (a) => (a.open ? { open: "" } : {}),
+        parseHTML: (e) => e.getAttribute('open'),
+        renderHTML: (a) => (a.open ? { open: '' } : {}),
       },
     };
   },
@@ -48,14 +48,14 @@ export const Details = Node.create<DetailsOptions>({
   parseHTML() {
     return [
       {
-        tag: "details",
+        tag: 'details',
       },
     ];
   },
 
   renderHTML({ HTMLAttributes }) {
     return [
-      "details",
+      'details',
       mergeAttributes(this.options.HTMLAttributes, HTMLAttributes),
       0,
     ];
@@ -63,10 +63,10 @@ export const Details = Node.create<DetailsOptions>({
 
   addNodeView() {
     return ({ node, editor, getPos }) => {
-      const dom = document.createElement("div");
-      const btn = document.createElement("button");
-      const ico = document.createElement("div");
-      const div = document.createElement("div");
+      const dom = document.createElement('div');
+      const btn = document.createElement('button');
+      const ico = document.createElement('div');
+      const div = document.createElement('div');
 
       for (const [key, value] of Object.entries(
         mergeAttributes(this.options.HTMLAttributes),
@@ -76,28 +76,27 @@ export const Details = Node.create<DetailsOptions>({
         }
       }
 
-      dom.setAttribute("data-type", this.name);
-      btn.setAttribute("data-type", `${this.name}Button`);
-      div.setAttribute("data-type", `${this.name}Container`);
+      dom.setAttribute('data-type', this.name);
+      btn.setAttribute('data-type', `${this.name}Button`);
+      div.setAttribute('data-type', `${this.name}Container`);
 
       if (editor.isEditable) {
         if (node.attrs.open) {
-          dom.setAttribute("open", "true");
+          dom.setAttribute('open', 'true');
         } else {
-          dom.removeAttribute("open");
+          dom.removeAttribute('open');
         }
       }
 
-      ico.innerHTML = icon("right-line");
-      btn.addEventListener("click", () => {
-        const open = !dom.hasAttribute("open");
+      ico.innerHTML = icon('right-line');
+      btn.addEventListener('click', () => {
+        const open = !dom.hasAttribute('open');
 
         if (!editor.isEditable) {
-          // In readonly mode,  toggle the 'open' attribute without updating the document state.
           if (open) {
-            dom.setAttribute("open", "true");
+            dom.setAttribute('open', 'true');
           } else {
-            dom.removeAttribute("open");
+            dom.removeAttribute('open');
           }
           return;
         }
@@ -117,9 +116,9 @@ export const Details = Node.create<DetailsOptions>({
           }
           if (!editor.isEditable) return true;
           if (updatedNode.attrs.open) {
-            dom.setAttribute("open", "true");
+            dom.setAttribute('open', 'true');
           } else {
-            dom.removeAttribute("open");
+            dom.removeAttribute('open');
           }
           return true;
         },
@@ -138,7 +137,7 @@ export const Details = Node.create<DetailsOptions>({
 
           const slice = state.doc.slice(range.start, range.end);
 
-          if (slice.content.firstChild.type.name === "detailsSummary")
+          if (slice.content.firstChild.type.name === 'detailsSummary')
             return false;
 
           if (
@@ -162,10 +161,10 @@ export const Details = Node.create<DetailsOptions>({
                 },
                 content: [
                   {
-                    type: "detailsSummary",
+                    type: 'detailsSummary',
                   },
                   {
-                    type: "detailsContent",
+                    type: 'detailsContent',
                     content: slice.toJSON()?.content ?? [],
                   },
                 ],
@@ -187,11 +186,11 @@ export const Details = Node.create<DetailsOptions>({
 
           const summary = findChildren(
             parent.node,
-            (node) => node.type.name === "detailsSummary",
+            (node) => node.type.name === 'detailsSummary',
           );
           const content = findChildren(
             parent.node,
-            (node) => node.type.name === "detailsContent",
+            (node) => node.type.name === 'detailsContent',
           );
           if (!summary.length || !content.length) {
             return false;
@@ -239,7 +238,7 @@ export const Details = Node.create<DetailsOptions>({
 
   addKeyboardShortcuts() {
     return {
-      "Mod-Alt-d": () => this.editor.commands.toggleDetails(),
+      'Mod-Alt-d': () => this.editor.commands.toggleDetails(),
     };
   },
 });

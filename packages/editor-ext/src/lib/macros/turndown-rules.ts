@@ -1,16 +1,5 @@
 import * as _TurndownService from '@joplin/turndown';
 
-/**
- * Markdown-export rules for Confluence-parity macros.
- *
- * A node with no rule here is silently dropped from Markdown export (Turndown
- * falls back to text content, and block atoms have none). Adding a macro means
- * appending one plugin function to `macroTurndownRules` below.
- *
- * The only upstream touchpoint is a single `...macroTurndownRules` spread in
- * `lib/markdown/utils/turndown.utils.ts`.
- */
-
 function toc(turndownService: _TurndownService) {
   turndownService.addRule('toc', {
     filter: function (node: HTMLInputElement) {

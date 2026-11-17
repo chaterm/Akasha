@@ -166,7 +166,6 @@ export function TitleEditor({
 
   useEffect(() => {
     setTimeout(() => {
-      // guard against Cannot access view['hasFocus'] error
       if (!titleEditor?.isInitialized) return;
       titleEditor?.commands?.focus("end");
     }, 300);
@@ -174,7 +173,6 @@ export function TitleEditor({
 
   useEffect(() => {
     return () => {
-      // force-save title on navigation
       saveTitle();
     };
   }, [pageId]);
@@ -195,8 +193,6 @@ export function TitleEditor({
   function handleTitleKeyDown(event: any) {
     if (!titleEditor || !pageEditor || event.shiftKey) return;
 
-    // Prevent focus shift when IME composition is active
-    // `keyCode === 229` is added to support Safari where `isComposing` may not be reliable
     if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)
       return;
 
@@ -209,18 +205,15 @@ export function TitleEditor({
       const { $from } = titleEditor.state.selection;
       const titleText = titleEditor.getText();
 
-      // Get the text offset within the heading node (not document position)
       const textOffset = $from.parentOffset;
 
       const textAfterCursor = titleText.slice(textOffset);
 
-      // Delete text after cursor from title (this will be in undo history)
       const endPos = titleEditor.state.doc.content.size;
       if (textAfterCursor) {
         titleEditor.commands.deleteRange({ from: $from.pos, to: endPos });
       }
 
-      // Don't add to history so undo in page editor won't remove this split
       pageEditor
         .chain()
         .command(({ tr }) => {
@@ -251,10 +244,8 @@ export function TitleEditor({
       <EditorContent
         editor={titleEditor}
         onKeyDown={(event) => {
-          // First handle the search hotkey
           getHotkeyHandler([["mod+F", openSearchDialog]])(event);
 
-          // Then handle other key events
           handleTitleKeyDown(event);
         }}
       />

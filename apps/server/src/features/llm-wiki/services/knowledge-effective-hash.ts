@@ -11,7 +11,6 @@ export type ReadyKnowledgeImage = {
 
 export type EffectiveKnowledgeHashInput = {
   sourceContentHash: string;
-  /** Final source text digest used by compatibility callers without images. */
   sourceTextHash?: string;
   compilerVersion: string;
   promptVersion: string;
@@ -19,10 +18,6 @@ export type EffectiveKnowledgeHashInput = {
   indexMode?: 'compiled' | 'original';
 };
 
-/**
- * Hashes every input that can change the published page knowledge. Image order
- * is intentional because the generated Wiki preserves page traversal order.
- */
 export function buildEffectiveKnowledgeHash(
   input: EffectiveKnowledgeHashInput,
 ): string {

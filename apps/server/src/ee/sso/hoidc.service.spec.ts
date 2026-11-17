@@ -2,7 +2,6 @@ import { HoidcService } from './hoidc.service';
 import { UnauthorizedException } from '@nestjs/common';
 
 describe('HoidcService pure helpers', () => {
-  // 构造 service 时依赖全传 null（只测纯逻辑方法，不需要 DB/网络）
   const svc = new HoidcService(
     null as any,
     null as any,

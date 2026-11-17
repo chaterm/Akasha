@@ -4,7 +4,6 @@ import { extractPageSlugId } from "@/lib";
 import { trackPageView } from "../services/analytics-service";
 import { ITrackPageView } from "../types/analytics.types";
 
-// Order matters: the first matching pattern wins.
 const ROUTE_PATTERNS: { pattern: string; route: string }[] = [
   { pattern: "/home", route: "home" },
   { pattern: "/ai", route: "ai" },
@@ -39,7 +38,6 @@ export function resolveTrackedRoute(pathname: string): ITrackPageView {
   return { route: "other" };
 }
 
-/** Reports one page view per route change. Failures are ignored. */
 export function useRouteTracker() {
   const { pathname } = useLocation();
   const last = useRef<{ key: string; at: number } | null>(null);

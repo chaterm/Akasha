@@ -66,7 +66,6 @@ export default function GlobalAppShell({
   );
 
   useEffect(() => {
-    //https://codesandbox.io/p/sandbox/kz9de
     window.addEventListener("mousemove", resize);
     window.addEventListener("mouseup", stopResizing);
     return () => {

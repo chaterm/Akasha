@@ -1,4 +1,3 @@
-// Source https://github.com/ueberdosis/hocuspocus/pull/1008 - MIT
 import {
   Extension,
   Hocuspocus,
@@ -137,9 +136,6 @@ export class RedisSyncExtension<TCE extends CustomEvents> implements Extension {
       'GET',
     );
     this.lockPromises[documentName] = lockPromise;
-    // Briefly cache the serverId that claimed the doc to reduce load on redis
-    // When the claimant unloads the doc, it will send an unload message to immediately clear this
-    // a lockTTL / 2 guarantees stale reads < lockTTL upon server crash
     setTimeout(() => {
       delete this.lockPromises[documentName];
     }, this.lockTTL / 2);
@@ -200,14 +196,11 @@ export class RedisSyncExtension<TCE extends CustomEvents> implements Extension {
     const { socketId } = msg;
     const socket = this.originSockets[socketId];
     if (!socket) {
-      // origin socket already cleaned up
       return;
     }
     if (type === 'close') {
       socket.close(msg.code, msg.reason);
     } else if (type === 'ping') {
-      // Reply instantly to the proxy socket, without forwarding to client
-      // The origin socket handles heartbeat for itself
       const { replyTo, socketId } = msg;
       const reply: RSAMessagePong = {
         type: 'pong',
@@ -260,9 +253,8 @@ export class RedisSyncExtension<TCE extends CustomEvents> implements Extension {
 
     const proxyTo = await this.getOrClaimLockThrottled(documentName);
     if (proxyTo && proxyTo !== this.serverId) {
-      ++this.replyIdCounter; // bug in biome thinks this.replyIdCounter is not used if written on the line below
+      ++this.replyIdCounter;
       const replyId = this.replyIdCounter;
-      // another server owns the doc
       const proxyMessage: RSAMessageCustomEventStart = {
         eventName,
         documentName,
@@ -281,7 +273,6 @@ export class RedisSyncExtension<TCE extends CustomEvents> implements Extension {
       }, this.customEventTTL);
       return promise as Promise<ReturnType<TCE[TName]>>;
     }
-    // This server owns the document, but hocuspocus hasn't loaded it yet
     return this.handleEventLocally(eventName, documentName, payload);
   }
 
@@ -294,7 +285,6 @@ export class RedisSyncExtension<TCE extends CustomEvents> implements Extension {
     return () => this.releaseLock(documentName);
   }
 
-  /* WebSocket Server Hooks */
   onSocketOpen(
     ws: BaseWebSocket,
     serializedHTTPRequest: SerializedHTTPRequest,
@@ -326,7 +316,6 @@ export class RedisSyncExtension<TCE extends CustomEvents> implements Extension {
 
     const proxyTo = await this.getOrClaimLockThrottled(documentName);
     if (proxyTo && proxyTo !== this.serverId) {
-      // another server owns the doc
       const proxyMessage: RSAMessageProxy = {
         serializedHTTPRequest: serializedHTTPRequest,
         replyTo: `${this.msgChannel}:${this.serverId}`,
@@ -337,36 +326,30 @@ export class RedisSyncExtension<TCE extends CustomEvents> implements Extension {
       this.pub.publish(`${this.msgChannel}:${proxyTo}`, msg);
       return;
     }
-    // This server owns the document, but hocuspocus hasn't loaded it yet
     ws.emit('message', message);
   }
 
   onSocketClose(socketId: string, code?: number, reason?: ArrayBuffer) {
     const socket = this.originSockets[socketId];
     if (!socket) return;
-    // at this point the socket is considered GC'd and we cannot call close
-    // The origin socket did not set up any connections for the proxy, so none of the hooks will work if we just emit
     socket?.emit('close', code, reason);
     delete this.originSockets[socketId];
     const msg: RSAMessageCloseProxy = { type: 'closeProxy', socketId };
     this.pub.publish(this.msgChannel, this.pack(msg)).catch(() => {});
   }
 
-  /* Hocuspocus hooks */
   async onConfigure({ instance }: onConfigurePayload) {
     this.instance = instance;
   }
 
   async onLoadDocument(data: onLoadDocumentPayload) {
     const { documentName } = data;
-    // Refresh the lock TTL
     this.maintainLock(documentName);
   }
 
   async afterUnloadDocument(data: afterUnloadDocumentPayload) {
     const { documentName } = data;
     this.releaseLock(documentName);
-    // Broadcast to cluster to immediately remove the cached redis value
     const msg: RSAMessageUnload = { type: 'unload', documentName };
     this.pub.publish(this.msgChannel, this.pack(msg));
   }

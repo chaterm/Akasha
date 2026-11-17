@@ -112,7 +112,6 @@ vi.mock("../api/template-hooks", () => ({
 }));
 
 function setup(path = "/templates/new") {
-  // 与入口一致：数据路由包裹现有的后代 Routes。
   const router = createMemoryRouter(
     [
       {

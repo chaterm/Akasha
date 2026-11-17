@@ -43,12 +43,10 @@ const mentionRenderItems = (options: MentionRenderOptions = {}) => {
       clientRect: () => DOMRect;
       query: string;
     }) => {
-      // query must not start with a whitespace
       if (props.query.charAt(0) === " ") {
         return;
       }
 
-      // don't render component if space between the search query words is greater than 4
       const whitespaceCount = getWhitespaceCount(props.query);
       if (whitespaceCount > 4) {
         return;
@@ -125,13 +123,11 @@ const mentionRenderItems = (options: MentionRenderOptions = {}) => {
       clientRect: () => DOMRect;
       query: string;
     }) => {
-      // query must not start with a whitespace
       if (props.query.charAt(0) === " ") {
         destroy();
         return;
       }
 
-      // only update component if popup is not destroyed
       if (component) {
         component.updateProps(props);
       }
@@ -144,7 +140,6 @@ const mentionRenderItems = (options: MentionRenderOptions = {}) => {
 
       const whitespaceCount = getWhitespaceCount(props.query);
 
-      // destroy component if space is greater 3 without a match
       if (
         whitespaceCount > 4 &&
         //@ts-ignore
@@ -153,7 +148,6 @@ const mentionRenderItems = (options: MentionRenderOptions = {}) => {
         destroy();
         return;
       }
-      // fallback exit
       if (whitespaceCount > 7) {
         destroy();
         return;

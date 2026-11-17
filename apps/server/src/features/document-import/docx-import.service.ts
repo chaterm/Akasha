@@ -40,7 +40,8 @@ export class DocxImportService {
           try {
             const imageBuffer: Buffer = await image.read();
             const contentType = image.contentType || 'image/png';
-            const ext = MIME_TO_EXT[contentType] ?? contentType.split('/')[1] ?? 'png';
+            const ext =
+              MIME_TO_EXT[contentType] ?? contentType.split('/')[1] ?? 'png';
             const fileName = `${uuid7()}.${ext}`;
             const attachmentId = uuid7();
             const filePath = `${getAttachmentFolderPath(AttachmentType.File, workspaceId)}/${attachmentId}/${fileName}`;
@@ -63,7 +64,7 @@ export class DocxImportService {
 
             return { src: `/api/files/${attachmentId}/${fileName}` };
           } catch (err) {
-            this.logger.warn('Failed to upload image from docx', err);
+            this.logger.warn({ err }, 'Failed to upload image from docx');
             return { src: '' };
           }
         }),
@@ -73,7 +74,12 @@ export class DocxImportService {
     if (result.messages?.length) {
       result.messages
         .filter((m) => m.type === 'error')
-        .forEach((m) => this.logger.warn('mammoth warning:', m.message));
+        .forEach((m) =>
+          this.logger.warn(
+            { warning: m.message },
+            'Mammoth conversion warning',
+          ),
+        );
     }
 
     return result.value;

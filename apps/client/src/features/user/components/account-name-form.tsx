@@ -63,13 +63,3 @@ export default function AccountNameForm() {
     </form>
   );
 }
-
-/*
-<div className={classes.controls}>
-          <TextInput
-            placeholder="Your email"
-            classNames={{ input: classes.input, root: classes.inputWrapper }}
-          />
-          <Button className={classes.control}>Subscribe</Button>
-        </div>
-*/

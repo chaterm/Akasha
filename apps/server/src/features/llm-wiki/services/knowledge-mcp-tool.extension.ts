@@ -22,7 +22,6 @@ import {
 import { KnowledgeQueryAuditRepo } from '@akasha/db/repos/llm-wiki/knowledge-query-audit.repo';
 import { buildKnowledgeQueryAuditMetadata } from './knowledge-query-audit-metadata';
 
-/** Registers the EE knowledge query as an MCP tool when the EE module is loaded. */
 @Injectable()
 export class KnowledgeMcpToolExtension
   implements OnModuleInit, McpToolExtension
@@ -138,8 +137,6 @@ export class KnowledgeMcpToolExtension
       },
     });
 
-    // Keep MCP responses small and stable. Detailed retrieval diagnostics and
-    // snippets remain available through the HTTP knowledge API when needed.
     return {
       answer: result.answer,
       answerMode: result.answerMode,

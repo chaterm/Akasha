@@ -303,8 +303,6 @@ describePostgres('KnowledgeSpaceCompilationRepo PostgreSQL round trip', () => {
     expect(first.disposition).toBe('created');
     expect(first.run?.targetSourcePageIds).toEqual(['page-update-a']);
 
-    // Once initialized, a second page cannot be added to the frozen RunPage
-    // plan. It is durably unioned into the bounded follow-up scope instead.
     await sql`
       update knowledge_space_compile_runs
       set initialized_at = now(), status = 'compiling'
@@ -686,8 +684,6 @@ describePostgres('KnowledgeSpaceCompilationRepo PostgreSQL round trip', () => {
              ('page-gated-2', 'workspace-gated', 'space-gated'),
              ('page-open', 'workspace-open', 'space-open')
     `.execute(db);
-    // Gated rows are due earlier, so without SQL filtering they would fill
-    // a batch of 2 ahead of the open workspace.
     await repo.scheduleIncrementalCompileForPages({
       workspaceId: 'workspace-gated',
       sourcePageIds: ['page-gated-1', 'page-gated-2'],
@@ -780,7 +776,6 @@ describePostgres('KnowledgeSpaceCompilationRepo PostgreSQL round trip', () => {
         },
       ],
     });
-    // A delayed page in the same Space is covered by the full-Space Run.
     await repo.scheduleIncrementalCompileForPages({
       workspaceId: 'workspace-1',
       sourcePageIds: ['page-deferred'],

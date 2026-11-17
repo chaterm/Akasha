@@ -10,7 +10,6 @@ interface TemplatePreviewProps {
   content: JSONContent | undefined;
 }
 
-/** 只读渲染模板正文；不写入任何全局编辑器 atom，可同时存在多个实例。 */
 export function TemplatePreview({ content }: TemplatePreviewProps) {
   const extensions = useMemo(
     () => [

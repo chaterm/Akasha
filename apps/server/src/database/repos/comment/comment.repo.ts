@@ -17,7 +17,6 @@ import { jsonObjectFrom } from 'kysely/helpers/postgres';
 export class CommentRepo {
   constructor(@InjectKysely() private readonly db: KyselyDB) {}
 
-  // todo, add workspaceId
   async findById(
     commentId: string,
     opts?: { includeCreator: boolean; includeResolvedBy: boolean },
@@ -105,7 +104,10 @@ export class CommentRepo {
     return Number(result?.count) > 0;
   }
 
-  async hasChildrenFromOtherUsers(commentId: string, userId: string): Promise<boolean> {
+  async hasChildrenFromOtherUsers(
+    commentId: string,
+    userId: string,
+  ): Promise<boolean> {
     const result = await this.db
       .selectFrom('comments')
       .select((eb) => eb.fn.count('id').as('count'))

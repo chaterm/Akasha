@@ -1,5 +1,3 @@
-// Mantine Idle hook to support reset handle  - MIT
-//src: https://github.com/mantinedev/mantine/blob/06018d0beff22caa7b36d796e56ad597cc5c23f7/packages/%40mantine/hooks/src/use-idle/use-idle.ts
 import { useEffect, useRef, useState } from "react";
 
 const DEFAULT_EVENTS: (keyof DocumentEventMap)[] = [
@@ -42,7 +40,6 @@ export function useIdle(
 
     events.forEach((event) => document.addEventListener(event, handleEvents));
 
-    // Start the timer immediately instead of waiting for the first event to happen
     timer.current = window.setTimeout(() => {
       setIdle(true);
     }, timeout);

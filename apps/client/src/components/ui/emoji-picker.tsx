@@ -9,10 +9,6 @@ import { useClickOutside, useDisclosure, useWindowEvent } from "@mantine/hooks";
 import { Suspense } from "react";
 import { useTranslation } from "react-i18next";
 
-// Load the picker module AND the emoji data in parallel inside the lazy
-// resolution, then bind the data into the component. React.lazy only finishes
-// suspending once both are in memory, so the Suspense boundary hides the
-// Remove button until the Picker can render with real content.
 const Picker = React.lazy(async () => {
   const [pickerModule, dataModule] = await Promise.all([
     import("@slidoapp/emoji-mart-react"),
@@ -57,7 +53,6 @@ function EmojiPicker({
     [dropdown, target],
   );
 
-  // We need this because the default Mantine popover closeOnEscape does not work
   useWindowEvent("keydown", (event) => {
     if (opened && event.key === "Escape") {
       event.stopPropagation();
@@ -66,13 +61,6 @@ function EmojiPicker({
     }
   });
 
-  // emoji-mart's built-in autoFocus calls .focus() without preventScroll, which
-  // makes the browser scroll every scrollable ancestor of the search input to
-  // bring it on screen — including the page editor's scroll container, so the
-  // page jumps to the top whenever the picker is opened from a scrolled-down
-  // position. The search input lives inside the <em-emoji-picker> custom
-  // element's shadow root, so we poll for it after the dropdown mounts and
-  // focus it ourselves with preventScroll.
   useEffect(() => {
     if (!opened || !dropdown) return;
     let cancelled = false;

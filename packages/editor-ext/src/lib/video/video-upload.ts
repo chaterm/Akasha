@@ -1,8 +1,8 @@
-import { MediaUploadOptions, UploadFn } from "../media-utils";
-import { IAttachment } from "../types";
-import { generateNodeId } from "../utils";
-import { Node } from "@tiptap/pm/model";
-import { Command } from "@tiptap/core";
+import { MediaUploadOptions, UploadFn } from '../media-utils';
+import { IAttachment } from '../types';
+import { generateNodeId } from '../utils';
+import { Node } from '@tiptap/pm/model';
+import { Command } from '@tiptap/core';
 
 const findVideoNodeByPlaceholderId = (
   doc: Node,
@@ -14,7 +14,7 @@ const findVideoNodeByPlaceholderId = (
     if (result) return false;
 
     if (
-      node.type.name === "video" &&
+      node.type.name === 'video' &&
       node.attrs.placeholder?.id === placeholderId
     ) {
       result = { node, pos };
@@ -34,9 +34,9 @@ const getVideoDimensions = (
   return new Promise<
     { width: number; height: number; aspectRatio: number } | undefined
   >((resolve) => {
-    const video = document.createElement("video");
+    const video = document.createElement('video');
 
-    video.preload = "metadata";
+    video.preload = 'metadata';
     video.onloadedmetadata = () => {
       const width = video.videoWidth;
       const height = video.videoHeight;
@@ -53,7 +53,6 @@ const getVideoDimensions = (
 const handleVideoUpload =
   ({ validateFn, onUpload }: MediaUploadOptions): UploadFn =>
   async (file, editor, pos, pageId) => {
-    // check if the file is valid
     const validated = validateFn?.(file);
     // @ts-ignore
     if (!validated) return;
@@ -89,7 +88,6 @@ const handleVideoUpload =
         const isEmptyTextBlock = parent.isTextblock && !parent.childCount;
 
         if (isEmptyTextBlock) {
-          // Replace e.g. empty paragraph with the video
           tr.replaceRangeWith(pos - 1, pos + 1, initialPlaceholderNode);
         } else {
           tr.insert(pos, initialPlaceholderNode);
@@ -103,10 +101,8 @@ const handleVideoUpload =
         const { pos: currentPos = null } =
           findVideoNodeByPlaceholderId(tr.doc, placeholderId) || {};
 
-        //  If the placeholder is not found or attachment is missing, abort the process
         if (currentPos === null || !attachment) return;
 
-        // Update the placeholder node with the actual video data
         tr.setNodeMarkup(currentPos, undefined, {
           src: `/api/files/${attachment.id}/${attachment.fileName}`,
           attachmentId: attachment.id,
@@ -133,7 +129,6 @@ const handleVideoUpload =
       };
     };
 
-    // Only show the placeholder if the upload takes more than 250ms
     const insertPlaceholderTimeout = setTimeout(() => {
       editor.commands.command(insertPlaceholder());
       placeholderInserted = true;

@@ -21,13 +21,6 @@ import {
   type DatabaseView,
 } from './database-schema';
 
-/**
- * Pure view logic shared by the client views, the server (search/export) and
- * tests: formatting, sorting, filtering, grouping and type conversion.
- */
-
-// ---------------------------------------------------------------- formatting
-
 const CURRENCY_FORMATS = new Set(['CNY', 'USD', 'EUR', 'GBP', 'JPY']);
 
 export function formatDatabaseNumber(
@@ -41,7 +34,6 @@ export function formatDatabaseNumber(
   };
   let number = value;
   if (format === 'percent') {
-    // The stored value is what the user typed: 12 means 12 %.
     options.style = 'percent';
     number = value / 100;
   } else if (CURRENCY_FORMATS.has(format)) {
@@ -61,7 +53,6 @@ export function formatDatabaseNumber(
   }
 }
 
-/** Parses user input such as "1,234.5", "¥ 12", "45%". Returns null for anything else. */
 export function parseDatabaseNumber(
   input: string,
   locale?: string,
@@ -78,7 +69,6 @@ export function parseDatabaseNumber(
   return Number.isFinite(number) ? number : null;
 }
 
-/** A safe href for a url cell, or null when the text is not a link we open. */
 export function getDatabaseUrlHref(value: string): string | null {
   const text = value.trim();
   if (!text) return null;
@@ -97,7 +87,6 @@ function optionName(column: DatabaseColumn, id: string): string {
   return column.options?.find((option) => option.id === id)?.name ?? '';
 }
 
-/** Human-readable cell text, used for HTML export, search text and copy. */
 export function getDatabaseCellText(
   column: DatabaseColumn,
   value: DatabaseCellValue,
@@ -127,8 +116,6 @@ export function getDatabaseCellText(
   }
 }
 
-// ---------------------------------------------------------------- dates
-
 function dateToUTC(value: string): number {
   const [year, month, day] = value.split('-').map(Number);
   return Date.UTC(year, month - 1, day);
@@ -144,7 +131,6 @@ export function diffDatabaseDays(from: string, to: string): number {
   return Math.round((dateToUTC(to) - dateToUTC(from)) / 86_400_000);
 }
 
-/** Start/end of a row in a calendar view; end is never before start. */
 export function getDatabaseDateRange(
   row: DatabaseRowData,
   view: Pick<DatabaseView, 'dateColumnId' | 'endDateColumnId'>,
@@ -155,10 +141,6 @@ export function getDatabaseDateRange(
   return { start, end: isDatabaseDate(end) && end > start ? end : start };
 }
 
-/**
- * The normalized value with references to deleted options removed, so sort,
- * filter and grouping all treat them as empty, like the display does.
- */
 export function readDatabaseValue(
   column: DatabaseColumn,
   row: DatabaseRowData,
@@ -174,8 +156,6 @@ export function readDatabaseValue(
   return (value as string[]).filter((id) => known.has(id));
 }
 
-// ---------------------------------------------------------------- sorting
-
 function compareText(left: string, right: string): number {
   return left.localeCompare(right, undefined, {
     numeric: true,
@@ -188,7 +168,6 @@ function optionIndex(column: DatabaseColumn, id: string): number {
   return index < 0 ? Number.MAX_SAFE_INTEGER : index;
 }
 
-/** Compares two non-empty values ascending. */
 function compareValues(
   column: DatabaseColumn,
   left: DatabaseCellValue,
@@ -226,7 +205,6 @@ function compareValues(
   }
 }
 
-/** Stable multi-level sort; empty values go last in both directions. */
 export function sortDatabaseRows(
   rows: DatabaseRowData[],
   columns: DatabaseColumn[],
@@ -264,8 +242,6 @@ export function sortDatabaseRows(
     .map((item) => item.row);
 }
 
-// ---------------------------------------------------------------- filtering
-
 function matchCondition(
   condition: DatabaseFilterCondition,
   column: DatabaseColumn,
@@ -287,7 +263,6 @@ function matchCondition(
       return value !== true;
   }
 
-  // An incomplete condition is ignored rather than hiding every row.
   if (
     target === null ||
     target === '' ||
@@ -394,7 +369,6 @@ export function matchDatabaseFilter(
   return filter.mode === 'or' ? results.some(Boolean) : results.every(Boolean);
 }
 
-/** Case-insensitive search over the text of every column. */
 export function matchDatabaseSearch(
   query: string,
   columns: DatabaseColumn[],
@@ -410,10 +384,6 @@ export function matchDatabaseSearch(
   );
 }
 
-/**
- * Values for a row created inside a filtered view, so it stays visible:
- * only top-level AND conditions with an unambiguous value are used.
- */
 export function getDatabaseFilterDefaults(
   filter: DatabaseFilterGroup,
   columns: DatabaseColumn[],
@@ -478,16 +448,12 @@ export function getDatabaseFilterDefaults(
   return values;
 }
 
-// ---------------------------------------------------------------- grouping
-
 export interface DatabaseGroup {
   key: string;
-  /** Option for select/multiSelect groups; null for the empty and checkbox groups. */
   option: DatabaseSelectOption | null;
   rows: DatabaseRowData[];
 }
 
-/** Group keys a row belongs to. A multiSelect row appears in every group it has. */
 export function getDatabaseRowGroupKeys(
   column: DatabaseColumn,
   row: DatabaseRowData,
@@ -536,12 +502,6 @@ function orderByIds<T extends { id: string }>(
     .map((entry) => entry.item);
 }
 
-/**
- * Every group in display order, including hidden and empty ones (callers
- * decide what to show), except members and documents no row references.
- * Rows keep their incoming order; without sorts, the view's manual card order
- * is applied per group.
- */
 export function groupDatabaseRows(
   rows: DatabaseRowData[],
   column: DatabaseColumn,
@@ -578,7 +538,6 @@ export function groupDatabaseRows(
       group.rows = orderByIds(group.rows, view.cardOrder[group.key]);
     }
   }
-  // A member or document is only a group while some row references it.
   const result = keys.map((key) => groups.get(key)!);
   return isDatabaseReference(column.type)
     ? result.filter(
@@ -587,7 +546,6 @@ export function groupDatabaseRows(
     : result;
 }
 
-/** The cell value after moving a row from one group to another. */
 export function getDatabaseGroupMoveValue(
   column: DatabaseColumn,
   current: DatabaseCellValue,
@@ -613,8 +571,6 @@ export function getDatabaseGroupMoveValue(
   }
 }
 
-// ---------------------------------------------------------------- conversion
-
 function textToOptionNames(text: string): string[] {
   return [
     ...new Set(
@@ -626,7 +582,6 @@ function textToOptionNames(text: string): string[] {
   ];
 }
 
-/** Plain text of a value, for conversions; checkbox becomes Yes/No. */
 function valueToPlainText(
   column: DatabaseColumn,
   value: DatabaseCellValue,
@@ -643,11 +598,6 @@ function valueToPlainText(
 
 const TRUTHY = new Set(['yes', 'true', '1', 'y', '✓', 'x', '是', '对']);
 
-/**
- * The column after changing its type, and a function mapping each existing
- * value to the new type. select ↔ multiSelect keep their options; other
- * conversions into select types create options from the text values.
- */
 export function convertDatabaseColumn(
   column: DatabaseColumn,
   type: DatabaseColumnType,
@@ -659,7 +609,6 @@ export function convertDatabaseColumn(
   const next: DatabaseColumn = { id: column.id, name: column.name, type };
   const fromSelect = column.type === 'select' || column.type === 'multiSelect';
 
-  // Text cannot be matched to members or documents, so a reference column starts empty.
   if (isDatabaseReference(type)) {
     next.options = [];
     return { column: next, convert: () => [] };

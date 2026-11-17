@@ -18,7 +18,10 @@ import {
   KnowledgeAnswerProviderInput,
 } from './knowledge-answer-provider.service';
 import { KnowledgeCitationResolverService } from './knowledge-citation-resolver.service';
-import type { KnowledgeCitation, KnowledgeContextPackingItem } from './knowledge-context-pack.service';
+import type {
+  KnowledgeCitation,
+  KnowledgeContextPackingItem,
+} from './knowledge-context-pack.service';
 import {
   KnowledgeContextPackService,
   KnowledgeSourceWindow,
@@ -80,7 +83,6 @@ type AiKnowledgeChatInput = {
   debugTiming?: AiChatDebugTiming;
   collectTimings?: boolean;
 };
-
 
 type TimedChatInput = AiKnowledgeChatInput & {
   timings: AiKnowledgeChatTimingCollector;
@@ -157,10 +159,10 @@ export type AiKnowledgeChatResult = {
     mode: ReturnType<KnowledgeRetrievalService['retrieve']> extends Promise<
       infer Result
     >
-    ? Result extends { mode: infer Mode }
-    ? Mode
-    : never
-    : never;
+      ? Result extends { mode: infer Mode }
+        ? Mode
+        : never
+      : never;
   };
   retrievalScope?: KnowledgeRetrievalScope;
   timings?: AiKnowledgeChatTimings;
@@ -239,8 +241,7 @@ export class AiKnowledgeChatService {
     @Optional()
     private readonly sourceAuthorization?: KnowledgeSourceAuthorizationService,
     @Optional() private readonly attachmentRepo?: AttachmentRepo,
-  ) { }
-
+  ) {}
 
   async retrieveOnly(input: {
     workspaceId: string;
@@ -273,21 +274,19 @@ export class AiKnowledgeChatService {
     });
     const chunkCitations = retrieval.chunks.length
       ? await this.citationResolver.resolveForChunks({
-        workspaceId: input.workspaceId,
-        query: input.query,
-        chunks: retrieval.chunks,
-      })
+          workspaceId: input.workspaceId,
+          query: input.query,
+          chunks: retrieval.chunks,
+        })
       : undefined;
-    // Keep the same precedence as chat(): chunk evidence is authoritative;
-    // capsule citations are only resolved for capsule-only retrieval results.
     const capsuleCitations =
       !chunkCitations && retrieval.capsules.length
         ? await this.citationResolver.resolveForCapsules({
-          workspaceId: input.workspaceId,
-          userId: input.userId,
-          capsules: retrieval.capsules,
-          authCache,
-        })
+            workspaceId: input.workspaceId,
+            userId: input.userId,
+            capsules: retrieval.capsules,
+            authCache,
+          })
         : undefined;
     const pack = this.contextPack.buildContextPack({
       chunks: chunkCitations,
@@ -321,7 +320,6 @@ export class AiKnowledgeChatService {
       retrievalScope: retrieval.scope,
     };
   }
-
 
   private recordFirstToken(
     input: TimedChatInput,
@@ -375,7 +373,6 @@ export class AiKnowledgeChatService {
         ),
       };
     }
-
 
     const authCache = new KnowledgeAuthorizationCache({
       workspaceId: input.workspaceId,
@@ -442,35 +439,35 @@ export class AiKnowledgeChatService {
     thinking.start('analyzing');
     const chunkCitations = retrieval.chunks.length
       ? await measureAiChatPhase(
-        input.debugTiming,
-        'citations.resolve_chunks',
-        () =>
-          this.citationResolver.resolveForChunks({
-            workspaceId: input.workspaceId,
-            query: retrievalQuery,
-            chunks: retrieval.chunks,
-            ...(input.debugTiming ? { debugTiming: input.debugTiming } : {}),
-          }),
-        (citations) => ({ resolvedChunkCount: citations.length }),
-      )
+          input.debugTiming,
+          'citations.resolve_chunks',
+          () =>
+            this.citationResolver.resolveForChunks({
+              workspaceId: input.workspaceId,
+              query: retrievalQuery,
+              chunks: retrieval.chunks,
+              ...(input.debugTiming ? { debugTiming: input.debugTiming } : {}),
+            }),
+          (citations) => ({ resolvedChunkCount: citations.length }),
+        )
       : undefined;
     const capsuleCitations =
       !chunkCitations && retrieval.capsules.length
         ? await measureAiChatPhase(
-          input.debugTiming,
-          'citations.resolve_capsules',
-          () =>
-            this.citationResolver.resolveForCapsules({
-              workspaceId: input.workspaceId,
-              userId: input.userId,
-              capsules: retrieval.capsules,
-              authCache,
-              ...(input.debugTiming
-                ? { debugTiming: input.debugTiming }
-                : {}),
-            }),
-          (citations) => ({ resolvedCapsuleCount: citations.length }),
-        )
+            input.debugTiming,
+            'citations.resolve_capsules',
+            () =>
+              this.citationResolver.resolveForCapsules({
+                workspaceId: input.workspaceId,
+                userId: input.userId,
+                capsules: retrieval.capsules,
+                authCache,
+                ...(input.debugTiming
+                  ? { debugTiming: input.debugTiming }
+                  : {}),
+              }),
+            (citations) => ({ resolvedCapsuleCount: citations.length }),
+          )
         : undefined;
     const contextPackStartedAt = performance.now();
     const pack = this.contextPack.buildContextPack({
@@ -528,8 +525,6 @@ export class AiKnowledgeChatService {
       answerContextLength: null,
       answerContextHash: null,
     };
-    // Carried on every normal return path below (§1.2: retrieval hits are
-    // resolved by the hit set regardless of the answer branch).
     const attachmentHitContext = {
       directHitChunkIds: retrieval.directHitChunkIds,
     };
@@ -664,8 +659,6 @@ export class AiKnowledgeChatService {
           async () => {
             for await (const token of this.answerProvider.stream!({
               ...answerInput,
-              // Reported by the provider on its first token of any kind, so
-              // this fires during the thinking block rather than after it.
               onFirstToken: () =>
                 this.recordFirstToken(input, generationStartedAt, 'knowledge'),
             })) {
@@ -1122,15 +1115,15 @@ export class AiKnowledgeChatService {
       retrievedSources: retrievedEvidence?.retrievedSources ?? [],
       snippets: retrievedEvidence
         ? pack.primary.map((entry) => ({
-          id: entry.id,
-          knowledgePageId: entry.knowledgePageId,
-          origin: entry.origin,
-          authorizationMode: entry.authorizationMode,
-          title: entry.title,
-          text: entry.text,
-          retrievalReasons: entry.retrievalReasons,
-          sourceWindows: entry.sourceWindows,
-        }))
+            id: entry.id,
+            knowledgePageId: entry.knowledgePageId,
+            origin: entry.origin,
+            authorizationMode: entry.authorizationMode,
+            title: entry.title,
+            text: entry.text,
+            retrievalReasons: entry.retrievalReasons,
+            sourceWindows: entry.sourceWindows,
+          }))
         : [],
       warnings: pack.warnings,
       budget: pack.budget,
@@ -1387,7 +1380,7 @@ class AiChatThinkingProgress {
     AiChatThinkingStats
   >();
 
-  constructor(private readonly emit?: (event: AiChatThinkingEvent) => void) { }
+  constructor(private readonly emit?: (event: AiChatThinkingEvent) => void) {}
 
   start(step: AiChatThinkingStep, stats?: AiChatThinkingStats): void {
     this.startedAt.set(step, performance.now());
@@ -1448,10 +1441,10 @@ const ANSWER_MODE_MARKERS: Array<{
   marker: string;
   mode: GeneratedAnswerMode;
 }> = [
-    { marker: KNOWLEDGE_ANSWER_MARKER, mode: 'knowledge' },
-    { marker: GENERAL_ANSWER_MARKER, mode: 'general' },
-    { marker: KNOWLEDGE_NO_MATCH_MARKER, mode: 'no_match' },
-  ];
+  { marker: KNOWLEDGE_ANSWER_MARKER, mode: 'knowledge' },
+  { marker: GENERAL_ANSWER_MARKER, mode: 'general' },
+  { marker: KNOWLEDGE_NO_MATCH_MARKER, mode: 'no_match' },
+];
 
 function buildAnswerContext(pack: KnowledgeContextPack): string {
   if (pack.primary.length === 0) {
@@ -1715,7 +1708,7 @@ function buildCitationEvidence(
       (window) =>
         window.quoteHash === sourceWindow.quoteHash &&
         window.sourceRange.startOffset ===
-        sourceWindow.sourceRange.startOffset &&
+          sourceWindow.sourceRange.startOffset &&
         window.sourceRange.endOffset === sourceWindow.sourceRange.endOffset,
     );
     if (!isDuplicate && windows.length < 2) {
@@ -1772,7 +1765,7 @@ function buildKnowledgeNoMatchAnswer(query: string): string {
 class CitationStreamSanitizer {
   private buffer = '';
 
-  constructor(private readonly emit?: (token: string) => void) { }
+  constructor(private readonly emit?: (token: string) => void) {}
 
   push(token: string): void {
     this.buffer += token;

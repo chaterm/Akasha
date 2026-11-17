@@ -1,5 +1,4 @@
-// MIT - https://github.com/chbrown/rfc6902/blob/master/diff.ts
-import { createPatch, Operation, Pointer } from "rfc6902";
+import { createPatch, Operation, Pointer } from 'rfc6902';
 
 const EQUAL = 1;
 const REMOVE = 2;
@@ -7,9 +6,9 @@ const ADD = 3;
 const REPLACE = 4;
 
 type ArrayOperation =
-  | { op: "add"; index: number; value: any }
-  | { op: "remove"; index: number }
-  | { op: "replace"; index: number; original: any; value: any };
+  | { op: 'add'; index: number; value: any }
+  | { op: 'remove'; index: number }
+  | { op: 'replace'; index: number; original: any; value: any };
 
 export function diffJsonArrays(
   input: any,
@@ -92,15 +91,15 @@ export function diffJsonArrays(
     for (let i = n, j = m; i > 0 || j > 0; ) {
       const step = move[start(i) + j];
       if (step === REMOVE) {
-        edits.push({ op: "remove", index: i - 1 });
+        edits.push({ op: 'remove', index: i - 1 });
         i--;
       } else if (step === ADD) {
-        edits.push({ op: "add", index: i - 1, value: output[j - 1] });
+        edits.push({ op: 'add', index: i - 1, value: output[j - 1] });
         j--;
       } else {
         if (step === REPLACE) {
           edits.push({
-            op: "replace",
+            op: 'replace',
             index: i - 1,
             original: input[i - 1],
             value: output[j - 1],
@@ -116,18 +115,18 @@ export function diffJsonArrays(
   const operations: Operation[] = [];
   let padding = 0;
   for (const edit of edits.reverse()) {
-    if (edit.op === "add") {
+    if (edit.op === 'add') {
       const index = edit.index + 1 + padding;
-      const token = index < input.length + padding ? String(index) : "-";
+      const token = index < input.length + padding ? String(index) : '-';
       operations.push({
-        op: "add",
+        op: 'add',
         path: ptr.add(token).toString(),
         value: edit.value,
       });
       padding++;
-    } else if (edit.op === "remove") {
+    } else if (edit.op === 'remove') {
       operations.push({
-        op: "remove",
+        op: 'remove',
         path: ptr.add(String(edit.index + padding)).toString(),
       });
       padding--;
@@ -144,25 +143,25 @@ export function diffJsonArrays(
 }
 
 function canonicalKey(value: any): string {
-  if (typeof value === "string") return JSON.stringify(value);
-  if (typeof value !== "object" || value === null) return String(value);
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (typeof value !== 'object' || value === null) return String(value);
   if (Array.isArray(value)) {
-    let key = "[";
-    for (let i = 0; i < value.length; i++) key += canonicalKey(value[i]) + ",";
-    return key + "]";
+    let key = '[';
+    for (let i = 0; i < value.length; i++) key += canonicalKey(value[i]) + ',';
+    return key + ']';
   }
-  let key = "{";
+  let key = '{';
   for (const name of Object.keys(value).sort()) {
     if (value[name] !== undefined) {
-      key += JSON.stringify(name) + ":" + canonicalKey(value[name]) + ",";
+      key += JSON.stringify(name) + ':' + canonicalKey(value[name]) + ',';
     }
   }
-  return key + "}";
+  return key + '}';
 }
 
 function jsonEqual(a: any, b: any): boolean {
   if (a === b) return true;
-  if (typeof a !== "object" || typeof b !== "object" || !a || !b) return false;
+  if (typeof a !== 'object' || typeof b !== 'object' || !a || !b) return false;
   if (Array.isArray(a) !== Array.isArray(b)) return false;
   if (Array.isArray(a)) {
     if (a.length !== b.length) return false;
@@ -172,10 +171,7 @@ function jsonEqual(a: any, b: any): boolean {
     return true;
   }
   for (const key in a) {
-    if (
-      hasValue(a, key) &&
-      !(hasValue(b, key) && jsonEqual(a[key], b[key]))
-    ) {
+    if (hasValue(a, key) && !(hasValue(b, key) && jsonEqual(a[key], b[key]))) {
       return false;
     }
   }

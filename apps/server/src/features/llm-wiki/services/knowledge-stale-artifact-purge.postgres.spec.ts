@@ -11,13 +11,11 @@ const describePostgres = databaseUrl ? describe : describe.skip;
 const WS = '00000000-0000-0000-0000-0000000000a1';
 const SPACE = '00000000-0000-0000-0000-0000000000b1';
 const BUSY_SPACE = '00000000-0000-0000-0000-0000000000b2';
-// KnowledgePages
 const ACTIVE = '00000000-0000-0000-0000-000000000c01';
 const OLD_STALE = '00000000-0000-0000-0000-000000000c02';
 const FRESH_STALE = '00000000-0000-0000-0000-000000000c03';
 const OLD_STALE_SIBLING = '00000000-0000-0000-0000-000000000c04';
 const BUSY_OLD_STALE = '00000000-0000-0000-0000-000000000c05';
-// Links
 const ACTIVE_LINK = '00000000-0000-0000-0000-000000000d01';
 const STALE_LINK = '00000000-0000-0000-0000-000000000d02';
 const STALE_INBOUND_LINK = '00000000-0000-0000-0000-000000000d03';
@@ -89,7 +87,6 @@ describePostgres('KnowledgeRunRetentionService stale artifact purge', () => {
         WHERE knowledge_page_id IN (${OLD_STALE}, ${OLD_STALE_SIBLING})
     `.execute(db);
     expect(orphans.rows.every((row) => row.count === 0)).toBe(true);
-    // Stale outbound link of the deleted sibling went with its owner.
     await expect(linkById(db, STALE_LINK)).resolves.toBeUndefined();
   });
 
@@ -102,9 +99,6 @@ describePostgres('KnowledgeRunRetentionService stale artifact purge', () => {
       targetArtifactKind: 'concept',
       targetCanonicalKey: 'kafka',
     });
-    // A stale inbound link (owned by a kept stale page) is not rewritten: it is
-    // not counted, stays non-dangling and keeps its stale marker. Only the FK
-    // ON DELETE SET NULL touches its target column.
     const staleInbound = await sql<{
       isDangling: boolean;
       toKnowledgePageId: string | null;
@@ -120,7 +114,6 @@ describePostgres('KnowledgeRunRetentionService stale artifact purge', () => {
 
   it('re-attaches the dangling references when the concept is republished', async () => {
     await service.purgeStaleArtifactsBatch();
-    // A later compile regenerates the concept under the same stable id.
     await sql`
       INSERT INTO knowledge_pages (id, workspace_id, space_id, page_type, canonical_key, stale_at)
       VALUES (${OLD_STALE}, ${WS}, ${SPACE}, 'concept', 'kafka', NULL)
@@ -197,7 +190,6 @@ describePostgres('KnowledgeRunRetentionService stale artifact purge', () => {
   });
 });
 
-// Mirrors the baseline FK cascades that the purge relies on.
 async function createTables(db: Kysely<unknown>): Promise<void> {
   await sql`
     CREATE TABLE knowledge_space_compile_runs (
@@ -245,8 +237,6 @@ async function createTables(db: Kysely<unknown>): Promise<void> {
   `.execute(db);
 }
 
-// Parameterised statements use the extended protocol, which allows only one
-// statement per query, so each insert is executed separately.
 async function seedFixture(db: Kysely<unknown>): Promise<void> {
   await sql`
     TRUNCATE knowledge_pages, knowledge_space_compile_runs CASCADE

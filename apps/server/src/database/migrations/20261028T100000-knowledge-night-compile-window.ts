@@ -1,14 +1,5 @@
 import { Kysely, sql } from 'kysely';
 
-/**
- * Night compile window.
- * - Page restores from the trash queue through the delayed schedule table
- *   with their own trigger, so the schedule CHECK accepts page_restored.
- * - Space-level admin compilation requested outside the window is stored as
- *   one durable intent per Space and promoted into a normal Run once the
- *   window opens. Intents never enter knowledge_space_compile_runs, so the
- *   single-active-Run invariant is untouched.
- */
 export async function up(db: Kysely<unknown>): Promise<void> {
   await sql`
     ALTER TABLE knowledge_page_compile_schedules
@@ -44,8 +35,6 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 
 export async function down(db: Kysely<unknown>): Promise<void> {
   await sql`DROP TABLE IF EXISTS knowledge_space_deferred_compiles`.execute(db);
-  // Restored-page rows would violate the original CHECK; they are plain
-  // pending compiles, so dropping them only loses a not-yet-run restore pass.
   await sql`
     DELETE FROM knowledge_page_compile_schedules
     WHERE trigger = 'page_restored'

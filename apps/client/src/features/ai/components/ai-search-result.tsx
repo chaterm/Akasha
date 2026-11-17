@@ -23,12 +23,10 @@ export function AiSearchResult({
 }: AiSearchResultProps) {
   const { t } = useTranslation();
 
-  // Use streaming data if available, otherwise fall back to result
   const answer = streamingAnswer || result?.answer || "";
   const sources =
     streamingSources.length > 0 ? streamingSources : result?.sources || [];
 
-  // Deduplicate sources by pageId, keeping the one with highest similarity
   const deduplicatedSources = useMemo(() => {
     if (!sources || sources.length === 0) return [];
 

@@ -128,8 +128,8 @@ export class PageAttachmentRehomeService {
       return newAttachmentId;
     } catch (err) {
       this.logger.error(
-        `Failed to copy attachment ${attachment.id} to page ${target.pageId}`,
-        err,
+        { attachmentId: attachment.id, pageId: target.pageId, err },
+        'Failed to copy attachment to page',
       );
       return null;
     }
@@ -158,7 +158,10 @@ function remapAttributes(
   return updates;
 }
 
-export function remapAttachmentsInJson<T>(content: T, remap: AttachmentRemap): T {
+export function remapAttachmentsInJson<T>(
+  content: T,
+  remap: AttachmentRemap,
+): T {
   if (remap.size === 0) return content;
 
   const visit = (value: unknown): unknown => {

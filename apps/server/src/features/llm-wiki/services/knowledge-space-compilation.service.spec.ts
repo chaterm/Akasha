@@ -59,7 +59,6 @@ describe('KnowledgeSpaceCompilationService', () => {
     await expect(
       fixture.service.findSpaceIdsWithActiveRun({
         workspaceId: 'workspace-1',
-        // duplicate is collapsed before probing the repo.
         spaceIds: ['space-idle', 'space-busy', 'space-idle'],
       }),
     ).resolves.toEqual(['space-busy']);
@@ -550,8 +549,6 @@ describe('KnowledgeSpaceCompilationService night compile window', () => {
     expect(fixture.repo.promoteDuePageCompileSchedules).toHaveBeenCalledWith(
       expect.objectContaining({ excludedWorkspaceIds: ['workspace-gated'] }),
     );
-    // Space intents are promoted before page schedules so a full-Space Run
-    // absorbs that Space's delayed pages.
     expect(
       fixture.repo.promoteDeferredSpaceCompiles.mock.invocationCallOrder[0],
     ).toBeLessThan(

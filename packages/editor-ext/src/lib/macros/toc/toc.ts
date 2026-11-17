@@ -1,5 +1,5 @@
-import { mergeAttributes, Node } from "@tiptap/core";
-import { ReactNodeViewRenderer } from "@tiptap/react";
+import { mergeAttributes, Node } from '@tiptap/core';
+import { ReactNodeViewRenderer } from '@tiptap/react';
 
 export interface TocOptions {
   HTMLAttributes: Record<string, any>;
@@ -11,7 +11,7 @@ export interface TocAttributes {
   maxLevel?: number;
 }
 
-declare module "@tiptap/core" {
+declare module '@tiptap/core' {
   interface Commands<ReturnType> {
     toc: {
       insertToc: (attributes?: TocAttributes) => ReturnType;
@@ -21,13 +21,14 @@ declare module "@tiptap/core" {
 }
 
 const clampLevel = (value: unknown, fallback: number): number => {
-  const parsed = typeof value === "number" ? value : parseInt(String(value), 10);
+  const parsed =
+    typeof value === 'number' ? value : parseInt(String(value), 10);
   if (Number.isNaN(parsed)) return fallback;
   return Math.min(Math.max(parsed, 1), 6);
 };
 
 export const Toc = Node.create<TocOptions>({
-  name: "toc",
+  name: 'toc',
 
   addOptions() {
     return {
@@ -36,7 +37,7 @@ export const Toc = Node.create<TocOptions>({
     };
   },
 
-  group: "block",
+  group: 'block',
   atom: true,
   draggable: true,
   isolating: true,
@@ -46,17 +47,17 @@ export const Toc = Node.create<TocOptions>({
       minLevel: {
         default: 1,
         parseHTML: (element) =>
-          clampLevel(element.getAttribute("data-min-level"), 1),
+          clampLevel(element.getAttribute('data-min-level'), 1),
         renderHTML: (attributes: TocAttributes) => ({
-          "data-min-level": attributes.minLevel,
+          'data-min-level': attributes.minLevel,
         }),
       },
       maxLevel: {
         default: 3,
         parseHTML: (element) =>
-          clampLevel(element.getAttribute("data-max-level"), 3),
+          clampLevel(element.getAttribute('data-max-level'), 3),
         renderHTML: (attributes: TocAttributes) => ({
-          "data-max-level": attributes.maxLevel,
+          'data-max-level': attributes.maxLevel,
         }),
       },
     };
@@ -72,9 +73,9 @@ export const Toc = Node.create<TocOptions>({
 
   renderHTML({ HTMLAttributes }) {
     return [
-      "div",
+      'div',
       mergeAttributes(
-        { "data-type": this.name },
+        { 'data-type': this.name },
         this.options.HTMLAttributes,
         HTMLAttributes,
       ),
@@ -106,7 +107,6 @@ export const Toc = Node.create<TocOptions>({
   },
 
   addNodeView() {
-    // Force the react node view to render immediately using flush sync
     this.editor.isInitialized = true;
 
     return ReactNodeViewRenderer(this.options.view);

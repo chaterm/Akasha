@@ -78,7 +78,6 @@ function PropertiesPage({
 }) {
   const { t } = useTranslation();
   const byId = new Map(db.columns.map((column) => [column.id, column]));
-  // The title leads every view and cannot be hidden or moved.
   const [titleEntry, ...entries] = db.view.columns;
   const title = byId.get(titleEntry.id)!;
   const TitleIcon = COLUMN_TYPE_ICONS[title.type];
@@ -220,7 +219,6 @@ export function ViewOptions({ db }: { db: DatabaseContext }) {
         label: column.name || t("Untitled"),
       }));
   const shownCount = view.columns.filter((entry) => !entry.hidden).length;
-  // Alignment every visible column has, or null when they differ.
   const aligns = new Set(
     visibleColumns(db).map((column) => columnAlign(db, column)),
   );

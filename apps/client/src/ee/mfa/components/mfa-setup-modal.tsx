@@ -92,7 +92,6 @@ export function MfaSetupModal({
     },
   });
 
-  // Generate QR code when modal opens
   React.useEffect(() => {
     if (opened && !setupData && !setupMutation.isPending) {
       setupMutation.mutate();
@@ -107,13 +106,12 @@ export function MfaSetupModal({
       }),
     onSuccess: (data) => {
       setBackupCodes(data.backupCodes);
-      setActive(1); // Move to backup codes step
+      setActive(1);
     },
     onError: (error: any) => {
       notifications.show({
         title: t("Error"),
-        message:
-          getErrorMessage(error, "Invalid verification code"),
+        message: getErrorMessage(error, "Invalid verification code"),
         color: "red",
       });
       form.setFieldValue("verificationCode", "");
@@ -125,7 +123,6 @@ export function MfaSetupModal({
       onComplete();
     }
     onClose();
-    // Reset state
     setTimeout(() => {
       setActive(0);
       setSetupData(null);

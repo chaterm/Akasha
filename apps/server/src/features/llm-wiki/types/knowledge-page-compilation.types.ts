@@ -21,12 +21,6 @@ export type KnowledgeImageMergePageData = {
   spaceRunId: string;
   knowledgeGeneration: number;
   images: NonNullable<KnowledgeSourceSnapshot['images']>;
-  /**
-   * Extraction ids frozen by the run plan for this page's successfully
-   * extracted images. The merge build reads exactly these ids; a missing or
-   * invalid frozen extraction forces a re-plan instead of publishing an input
-   * the Run never planned.
-   */
   expectedExtractionIds: string[];
 };
 
@@ -39,7 +33,6 @@ export type KnowledgePageCompilationResult = {
   importedArtifactCount: number;
   quarantinedArtifactCount: number;
   durationMs: number;
-  /** Stored-vector reuse vs. newly generated embeddings for this publication. */
   embedding?: {
     reusedCount: number;
     generatedCount: number;

@@ -411,8 +411,6 @@ describe('KnowledgeCapsuleRepo', () => {
       limit: 10,
     });
 
-    // Term statistics: segmented once, document frequency bounded by the
-    // common-term threshold within the same scope.
     const stats = queries[0];
     const statsSql = stats.sql.toLowerCase().replace(/\s+/g, ' ');
     expect(statsSql).toContain('unnest(knowledge_zh_query_terms($');
@@ -467,11 +465,9 @@ describe('KnowledgeCapsuleRepo', () => {
     });
 
     const candidate = lexicalCandidateQuery(queries);
-    // Filter and coverage use rare terms; three rare terms -> floor(3*0.75)=2.
     expect(candidate.parameters).toContain("'失败' | '排查' | '连接'");
     expect(candidate.parameters).toContainEqual(["'失败'", "'排查'", "'连接'"]);
     expect(candidate.parameters).toContain(2);
-    // Ranking still sees the common term.
     expect(candidate.parameters).toContain(
       "'数据库' | '失败' | '排查' | '连接'",
     );
@@ -1167,8 +1163,6 @@ describe('KnowledgeCapsuleRepo', () => {
       result.map((entry) => [entry.chunk.id, entry.parentSection?.id ?? null]),
     ).toEqual([
       ['child-b-own-parent', 'parent-b'],
-      // Same knowledge page, but parent A carries lineage child B does not:
-      // the authorized child is returned without A's parent text.
       ['child-b-foreign-parent', null],
       ['child-no-parent-lineage', null],
     ]);
@@ -1297,8 +1291,6 @@ type LexicalTermRow = {
   threshold: number;
 };
 
-// Default term statistics: one rare term, so lexical recall reaches the main
-// candidate query. Tests that exercise term classification pass their own.
 const DEFAULT_LEXICAL_TERMS: LexicalTermRow[] = [
   { term: "'akasha'", document_frequency: 3, threshold: 20 },
 ];
@@ -1341,7 +1333,6 @@ function createSqlRepo(
   return { repo: new KnowledgeCapsuleRepo(db), queries };
 }
 
-/** The lexical candidate query, i.e. not the term-statistics query. */
 function lexicalCandidateQuery(queries: CompiledQuery[]): CompiledQuery {
   const query = queries.find(
     (item) => !item.sql.includes('knowledge_zh_query_terms('),

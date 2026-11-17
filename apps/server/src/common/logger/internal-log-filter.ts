@@ -1,45 +1,33 @@
 import { ConsoleLogger, LogLevel } from '@nestjs/common';
+import { IGNORED_LOG_CONTEXTS } from './ignored-contexts';
+import { resolveLogLevel } from './pino.config';
+
+const LEVEL_ORDER: Record<string, number> = {
+  trace: 10,
+  verbose: 10,
+  debug: 20,
+  info: 30,
+  warn: 40,
+  error: 50,
+  fatal: 60,
+};
 
 export class InternalLogFilter extends ConsoleLogger {
-  static contextsToIgnore = [
-    'NestFactory',
-    'InstanceLoader',
-    'RoutesResolver',
-    'RouterExplorer',
-    'WebSocketsController',
-  ];
-
-  private allowedLogLevels: string[];
+  private readonly threshold: number;
 
   constructor() {
-    const isProduction = process.env.NODE_ENV === 'production';
-    super({
-      json: isProduction,
-    });
-    const isDebugMode = process.env.DEBUG_MODE === 'true';
-
-    if (isProduction && !isDebugMode) {
-      this.allowedLogLevels = ['info', 'error', 'fatal'];
-    } else {
-      this.allowedLogLevels = [
-        'info',
-        'debug',
-        'verbose',
-        'warn',
-        'error',
-        'fatal',
-      ];
-    }
+    super({ json: process.env.NODE_ENV === 'production' });
+    this.threshold = LEVEL_ORDER[resolveLogLevel()] ?? LEVEL_ORDER.info;
   }
 
   private isLogLevelAllowed(level: string): boolean {
-    return this.allowedLogLevels.includes(level);
+    return (LEVEL_ORDER[level] ?? LEVEL_ORDER.info) >= this.threshold;
   }
 
   log(_: any, context?: string): void {
     if (
       this.isLogLevelAllowed('info') &&
-      !InternalLogFilter.contextsToIgnore.includes(context)
+      !IGNORED_LOG_CONTEXTS.includes(context)
     ) {
       super.log.apply(this, arguments);
     }

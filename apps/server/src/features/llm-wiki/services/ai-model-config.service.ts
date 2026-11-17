@@ -15,12 +15,9 @@ export type ResolvedAiModelConfig = {
   apiKey: string | undefined;
   baseUrl: string | undefined;
   parameters: Record<string, unknown>;
-  // True when a database row exists. False means the capability is not
-  // configured; LLM Wiki no longer synthesizes model config from .env fallback.
   fromDatabase: boolean;
 };
 
-// Feature -> masked view returned to admins (never exposes the API key value).
 export type AiModelConfigView = {
   feature: AiModelConfigFeature;
   provider: string | null;
@@ -60,7 +57,6 @@ export class AiModelConfigService {
     'embedding',
   ];
 
-  // Masked view for the admin UI: one entry per feature, API key never exposed.
   async listConfigViews(): Promise<AiModelConfigView[]> {
     const rows = await this.repo.findAll();
     const byFeature = new Map(rows.map((row) => [row.feature, row]));
@@ -83,7 +79,6 @@ export class AiModelConfigService {
       provider: string;
       model: string;
       baseUrl?: string | null;
-      // undefined => keep existing key; '' => clear; otherwise set/replace.
       apiKey?: string;
       parameters?: Record<string, unknown> | null;
     },
@@ -140,8 +135,8 @@ export class AiModelConfigService {
       row = await this.repo.findByFeature(feature);
     } catch (error) {
       this.logger.error(
-        `Failed to load AI model config for "${feature}". Returning unconfigured model config.`,
-        error instanceof Error ? error.stack : String(error),
+        { feature, err: error },
+        'Failed to load AI model config; returning unconfigured model config',
       );
     }
 
@@ -166,8 +161,8 @@ export class AiModelConfigService {
         apiKey = this.secretService.decrypt(row.apiKeyEncrypted);
       } catch (error) {
         this.logger.error(
-          `Failed to decrypt API key for "${feature}". Returning config without API key.`,
-          error instanceof Error ? error.stack : String(error),
+          { feature, err: error },
+          'Failed to decrypt API key; returning config without API key',
         );
       }
     }

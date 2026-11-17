@@ -8,7 +8,6 @@ interface CopyProps {
   text: string;
   size?: MantineSize;
   color?: MantineColor;
-  /** Override the accessible name (and tooltip) when not yet copied. Lets callers disambiguate adjacent copy buttons for screen readers. */
   label?: string;
 }
 export default function CopyTextButton({ text, size, label }: CopyProps) {

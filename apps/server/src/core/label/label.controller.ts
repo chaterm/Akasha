@@ -93,26 +93,6 @@ export class LabelController {
     });
   }
 
-  // @HttpCode(HttpStatus.OK)
-  // @Post('info')
-  // async getLabelInfo(
-  //   @Body() dto: LabelInfoDto,
-  //   @AuthUser() user: User,
-  //   @AuthWorkspace() workspace: Workspace,
-  // ) {
-  //   if (dto.spaceId) {
-  //     await this.assertCanReadSpace(user, dto.spaceId);
-  //   }
-  //
-  //   return this.labelService.getLabelInfo(
-  //     dto.name,
-  //     dto.type,
-  //     workspace.id,
-  //     user.id,
-  //     dto.spaceId,
-  //   );
-  // }
-
   private async assertCanReadSpace(user: User, spaceId: string) {
     const ability = await this.spaceAbility.createForUser(user, spaceId);
     if (ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page)) {

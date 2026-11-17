@@ -9,7 +9,13 @@ interface TrendChartsProps {
   isWorkspace: boolean;
 }
 
-function ChartCard({ title, children }: { title: string; children: ReactNode }) {
+function ChartCard({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
   return (
     <Paper withBorder radius="md" p="md">
       <Text fw={600} size="sm" mb="md">
@@ -22,7 +28,6 @@ function ChartCard({ title, children }: { title: string; children: ReactNode }) 
 
 export function TrendCharts({ daily, isWorkspace }: TrendChartsProps) {
   const { t } = useTranslation();
-  // MM-DD keeps the x axis readable at 90 days.
   const data = daily.map((row) => ({ ...row, day: row.date.slice(5) }));
   const common = { h: 240, data, dataKey: "day", withLegend: true } as const;
 
@@ -58,7 +63,8 @@ export function TrendCharts({ daily, isWorkspace }: TrendChartsProps) {
           {...common}
           data={data.map((row) => ({
             ...row,
-            stickiness: row.mau > 0 ? Math.round((row.uv / row.mau) * 1000) / 10 : 0,
+            stickiness:
+              row.mau > 0 ? Math.round((row.uv / row.mau) * 1000) / 10 : 0,
           }))}
           curveType="monotone"
           withDots={false}
@@ -76,7 +82,6 @@ export function TrendCharts({ daily, isWorkspace }: TrendChartsProps) {
             curveType="monotone"
             withDots={false}
             withRightYAxis
-            // Totals move slowly; fit the axes to the data so growth is visible.
             yAxisProps={{ domain: ["dataMin - 10", "dataMax + 10"] }}
             rightYAxisProps={{ domain: ["dataMin - 10", "dataMax + 10"] }}
             series={[
@@ -108,7 +113,11 @@ export function TrendCharts({ daily, isWorkspace }: TrendChartsProps) {
             {...common}
             series={[
               { name: "newUsers", label: t("New users"), color: "violet.5" },
-              { name: "newSpaces", label: t("New public spaces"), color: "orange.5" },
+              {
+                name: "newSpaces",
+                label: t("New public spaces"),
+                color: "orange.5",
+              },
               {
                 name: "aiQuestions",
                 label: t("AI questions"),

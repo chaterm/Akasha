@@ -80,10 +80,13 @@ export class CommentService {
     });
 
     if (createCommentDto.yjsSelection) {
-      const parsed = yjsSelectionSchema.safeParse(createCommentDto.yjsSelection);
+      const parsed = yjsSelectionSchema.safeParse(
+        createCommentDto.yjsSelection,
+      );
       if (!parsed.success) {
         this.logger.warn(
-          `Invalid yjsSelection for comment ${inserted.id}: ${parsed.error.message}`,
+          { commentId: inserted.id, err: parsed.error },
+          'Invalid yjsSelection for comment',
         );
       } else {
         const documentName = `page.${page.id}`;
@@ -100,8 +103,8 @@ export class CommentService {
           );
         } catch (error) {
           this.logger.warn(
-            `Failed to apply comment mark for comment ${inserted.id}, comment saved without inline highlight`,
-            error,
+            { commentId: inserted.id, err: error },
+            'Comment saved without inline highlight: failed to apply mark',
           );
         }
       }
@@ -120,7 +123,7 @@ export class CommentService {
         workspaceId,
       })
       .catch((err) =>
-        this.logger.warn(`Failed to queue add-page-watchers: ${err.message}`),
+        this.logger.warn({ err }, 'Failed to queue add-page-watchers'),
       );
 
     const isReply = !!createCommentDto.parentCommentId;
@@ -241,8 +244,8 @@ export class CommentService {
       );
     } catch (error) {
       this.logger.warn(
-        `Failed to update comment mark for comment ${comment.id}`,
-        error,
+        { commentId: comment.id, err: error },
+        'Failed to update comment mark',
       );
     }
 
@@ -273,7 +276,8 @@ export class CommentService {
       (id) => id !== actorId && !oldMentionIds.includes(id),
     );
 
-    if (newMentionIds.length === 0 && !notifyWatchers && !parentCommentId) return;
+    if (newMentionIds.length === 0 && !notifyWatchers && !parentCommentId)
+      return;
 
     const jobData: ICommentNotificationJob = {
       commentId,
@@ -286,9 +290,6 @@ export class CommentService {
       notifyWatchers,
     };
 
-    await this.notificationQueue.add(
-      QueueJob.COMMENT_NOTIFICATION,
-      jobData,
-    );
+    await this.notificationQueue.add(QueueJob.COMMENT_NOTIFICATION, jobData);
   }
 }

@@ -195,9 +195,6 @@ export class LlmWikiController {
           'Robot queries require a personal API key',
         );
       }
-      // Robot queries can authenticate with a single personal API key. A
-      // Public API key remains supported when supplied, in which case its
-      // Space scope is enforced as an additional restriction.
       if (publicApiKey) {
         const publicAccess = await this.apiKeyService.validatePublicApiKey(
           publicApiKey,
@@ -239,11 +236,6 @@ export class LlmWikiController {
         : {}),
     });
     const queryHash = hashQuery(dto.query);
-    // attachmentHitContext is an internal retrieval detail (§7.1): the regular
-    // query API never resolves top-level attachments, so strip it here too so it
-    // can never leak through `...response` as a public field. `timings`,
-    // `queryObservation`, `retrieval`, and `context` are likewise internal:
-    // they go to the query audit, not to the API response.
     const {
       retrievalDiagnostics,
       retrievalScope,
@@ -255,8 +247,6 @@ export class LlmWikiController {
       ...response
     } = result;
     void attachmentHitContext;
-    // The knowledge path always returns a scope. Keep audit recording
-    // defensive for the legacy pure-general path and older service mocks.
     const requestedSpaceIds = retrievalScope?.requestedSpaceIds ?? dto.spaceIds;
     const effectiveSpaceIds =
       retrievalScope?.effectiveSpaceIds ?? requestedSpaceIds;
@@ -308,10 +298,6 @@ export class LlmWikiController {
       },
     });
 
-    // Image enrichment is a non-critical add-on: it must never change the
-    // availability of the answer text or the base citations. On any resolver
-    // failure we degrade every citation to `images: []` and still return the
-    // original response (§4.3 整体 fail-open 边界).
     const citationsWithImages = await this.resolveCitationImages({
       workspaceId: workspace.id,
       answer: response.answer,
@@ -534,7 +520,6 @@ export class LlmWikiController {
     };
   }
 
-  /** Saves the page publish mode without publishing the page. */
   @HttpCode(HttpStatus.OK)
   @Post('pages/:pageId/index-mode')
   async setPageIndexMode(
@@ -605,8 +590,6 @@ export class LlmWikiController {
 
     await this.pageAccessService.validateCanEdit(page, user);
 
-    // A locked Space mode ignores the requested page mode and leaves the
-    // stored page setting untouched; `inherit` clears the page setting.
     const resolved = await this.resolvePageIndexMode(page);
     const spaceLocked = isKnowledgeIndexMode(resolved.spaceIndexMode);
     const requestedMode = dto.indexMode ?? KNOWLEDGE_PAGE_INDEX_MODE_INHERIT;
@@ -1298,10 +1281,6 @@ export class LlmWikiController {
       );
     }
 
-    // Refuse to retry while any involved Space still has a Run in flight. A
-    // retry mid-Run would coalesce into (or re-request) the live Run, and the
-    // cache reset below would null the still-published Run's extraction links.
-    // Ask the admin to wait for the current compilation to finish, then retry.
     const spacesWithActiveRun =
       await this.spaceCompilation.findSpaceIdsWithActiveRun({
         workspaceId: workspace.id,
@@ -1316,9 +1295,6 @@ export class LlmWikiController {
       );
     }
 
-    // Drop the durable image-understanding cache for these pages too. Without
-    // this, a retried Run would claim the prior `ready` extractions and skip
-    // the VLM, so images that failed or need refreshing are never recompiled.
     await this.spaceCompilation.clearImageExtractionCache({
       workspaceId: workspace.id,
       sourcePageIds: pageIds,
@@ -1328,7 +1304,6 @@ export class LlmWikiController {
         workspaceId: workspace.id,
         spaceId,
         trigger: 'page_retry',
-        // Compile only the selected failed pages, not the whole Space.
         targetSourcePageIds: spacePages.map((page) => page.id),
       })),
     );
@@ -1560,12 +1535,6 @@ function isModelConfigFeature(value: string): value is AiModelConfigFeature {
   );
 }
 
-/**
- * Citation records are also consumed by external Skills. Keep internal
- * citation construction path-relative, but expose links using the configured
- * browser-facing APP_URL at the HTTP boundary. This avoids callers resolving
- * `/p/...` against the API listener (which may be a private backend port).
- */
 function mapCitationUrls<T extends { url: string }>(
   citations: readonly T[],
   appUrl?: string,

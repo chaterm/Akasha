@@ -1,18 +1,18 @@
-import { mergeAttributes, Node } from "@tiptap/core";
-import { ReactNodeViewRenderer } from "@tiptap/react";
+import { mergeAttributes, Node } from '@tiptap/core';
+import { ReactNodeViewRenderer } from '@tiptap/react';
 
 export interface SubpagesOptions {
   HTMLAttributes: Record<string, any>;
   view: any;
 }
 
-export type SubpagesSortBy = "default" | "title-asc" | "recent";
+export type SubpagesSortBy = 'default' | 'title-asc' | 'recent';
 
 export interface SubpagesAttributes {
   sortBy?: SubpagesSortBy;
 }
 
-declare module "@tiptap/core" {
+declare module '@tiptap/core' {
   interface Commands<ReturnType> {
     subpages: {
       insertSubpages: (attributes?: SubpagesAttributes) => ReturnType;
@@ -21,7 +21,7 @@ declare module "@tiptap/core" {
 }
 
 export const Subpages = Node.create<SubpagesOptions>({
-  name: "subpages",
+  name: 'subpages',
 
   addOptions() {
     return {
@@ -33,17 +33,17 @@ export const Subpages = Node.create<SubpagesOptions>({
   addAttributes() {
     return {
       sortBy: {
-        default: "default",
+        default: 'default',
         parseHTML: (element: HTMLElement) =>
-          element.getAttribute("data-sort-by") || "default",
+          element.getAttribute('data-sort-by') || 'default',
         renderHTML: (attributes: SubpagesAttributes) => ({
-          "data-sort-by": attributes.sortBy || "default",
+          'data-sort-by': attributes.sortBy || 'default',
         }),
       },
     };
   },
 
-  group: "block",
+  group: 'block',
   atom: true,
   draggable: true,
   isolating: true,
@@ -58,11 +58,11 @@ export const Subpages = Node.create<SubpagesOptions>({
 
   renderHTML({ HTMLAttributes }) {
     return [
-      "div",
+      'div',
       mergeAttributes(
-        { "data-type": this.name },
+        { 'data-type': this.name },
         this.options.HTMLAttributes,
-        HTMLAttributes
+        HTMLAttributes,
       ),
     ];
   },
@@ -81,7 +81,6 @@ export const Subpages = Node.create<SubpagesOptions>({
   },
 
   addNodeView() {
-    // Force the react node view to render immediately using flush sync (https://github.com/ueberdosis/tiptap/blob/b4db352f839e1d82f9add6ee7fb45561336286d8/packages/react/src/ReactRenderer.tsx#L183-L191)
     this.editor.isInitialized = true;
 
     return ReactNodeViewRenderer(this.options.view);

@@ -236,8 +236,6 @@ describe('KnowledgeRetrievalRankerService', () => {
 
   it('does not let incidental query/text term overlap rescue a semantically distant chunk', () => {
     const ranker = new KnowledgeRetrievalRankerService();
-    // The query shares the term "云桌面" with the chunk text, but the chunk is
-    // semantically unrelated (distance 0.9). Overlap must not override the gate.
     const ranked = ranker.fuseRecallLists({
       recallLists: [
         {

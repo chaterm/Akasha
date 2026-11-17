@@ -161,13 +161,11 @@ async function createFixture(db: Kysely<unknown>): Promise<void> {
       values (${LINK_ID}, ${WORKSPACE}, ${SPACE_A}, ${SEED}, ${VIA_LINK}, 'reference')`,
     sql`insert into knowledge_link_sources (workspace_id, link_id, source_page_id)
       values (${WORKSPACE}, ${LINK_ID}, ${SRC_OPEN})`,
-    // Readable only when every provenance source is readable.
     sql`insert into knowledge_links
       (id, workspace_id, space_id, from_knowledge_page_id, to_knowledge_page_id, link_type)
       values (${SECRET_LINK_ID}, ${WORKSPACE}, ${SPACE_A}, ${SEED}, ${VIA_SECRET_LINK}, 'reference')`,
     sql`insert into knowledge_link_sources (workspace_id, link_id, source_page_id)
       values (${WORKSPACE}, ${SECRET_LINK_ID}, ${SRC_OPEN}), (${WORKSPACE}, ${SECRET_LINK_ID}, ${SRC_SECRET})`,
-    // Claims Space A but targets a Space B page: must never be traversed.
     sql`insert into knowledge_links
       (id, workspace_id, space_id, from_knowledge_page_id, to_knowledge_page_id, link_type)
       values (${CROSS_LINK_ID}, ${WORKSPACE}, ${SPACE_A}, ${SEED}, ${OTHER_SPACE}, 'reference')`,

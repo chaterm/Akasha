@@ -1,8 +1,5 @@
 import { containsDomain } from './no-urls.validator';
 
-// containsDomain returns true if value contains a domain-like pattern
-// The full NoUrls validator also checks for https:// URLs separately
-
 describe('containsDomain', () => {
   describe('bare domains with real TLDs — should block', () => {
     it.each([
@@ -65,9 +62,12 @@ describe('containsDomain', () => {
   });
 
   describe('case insensitive — should block', () => {
-    it.each(['EXAMPLE.COM', 'Example.Com', 'example.COM'])('blocks "%s"', (value) => {
-      expect(containsDomain(value)).toBe(true);
-    });
+    it.each(['EXAMPLE.COM', 'Example.Com', 'example.COM'])(
+      'blocks "%s"',
+      (value) => {
+        expect(containsDomain(value)).toBe(true);
+      },
+    );
   });
 
   describe('fake TLDs — should allow', () => {
@@ -98,13 +98,12 @@ describe('containsDomain', () => {
   });
 
   describe('emails — should allow', () => {
-    it.each([
-      'user@example.com',
-      'admin@company.org',
-      'test@sub.domain.co.uk',
-    ])('allows "%s"', (value) => {
-      expect(containsDomain(value)).toBe(false);
-    });
+    it.each(['user@example.com', 'admin@company.org', 'test@sub.domain.co.uk'])(
+      'allows "%s"',
+      (value) => {
+        expect(containsDomain(value)).toBe(false);
+      },
+    );
   });
 
   describe('normal names — should allow', () => {

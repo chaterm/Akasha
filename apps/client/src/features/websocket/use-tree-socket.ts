@@ -64,8 +64,6 @@ export const useTreeSocket = () => {
                 event.payload.data,
                 event.payload.index,
               );
-              // Mirror the emitter: flip new parent's hasChildren to true so
-              // the chevron renders on the receiver.
               if (newParentId) {
                 next = treeModel.update(next, newParentId, {
                   hasChildren: true,
@@ -88,10 +86,6 @@ export const useTreeSocket = () => {
                 parentId: newParentId,
                 index: event.payload.index,
               });
-              // `place` silently returns the same reference if the destination
-              // parent isn't loaded on this client. Falling back to removing the
-              // source keeps the UI consistent (the source will reappear when
-              // the user expands the new parent and lazy-load fetches it).
               if (placed === roots) {
                 return treeModel.remove(roots, event.payload.id);
               }
@@ -101,8 +95,6 @@ export const useTreeSocket = () => {
                 parentPageId: newParentId,
               } as Partial<SpaceTreeNode>);
 
-              // Mirror the emitter's hasChildren bookkeeping so both clients
-              // converge to the same chevron state.
               if (oldParentId) {
                 const oldParent = treeModel.find(next, oldParentId);
                 if (!oldParent?.children?.length) {
@@ -128,8 +120,6 @@ export const useTreeSocket = () => {
               queryKey: ["pages", event.payload.node.slugId].filter(Boolean),
             });
             let next = treeModel.remove(prev, event.payload.node.id);
-            // Mirror the emitter's hasChildren bookkeeping so both clients
-            // converge to the same chevron state when the last child is deleted.
             const parentPageId = event.payload.node.parentPageId;
             if (parentPageId) {
               const parent = treeModel.find(next, parentPageId);

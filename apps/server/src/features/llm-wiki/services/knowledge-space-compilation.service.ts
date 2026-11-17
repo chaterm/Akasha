@@ -52,6 +52,7 @@ import { KnowledgeSourceRetirementService } from './knowledge-source-retirement.
 import { KnowledgeImageUnderstandingProvider } from './knowledge-image-understanding-provider.service';
 import { KnowledgeIndexMode } from '../types/knowledge-index-mode.types';
 import { ErrorCode, errorBody } from '../../../common/errors/error-codes';
+import { WithJobContext } from '../../../common/logger/with-job-context.decorator';
 
 @Injectable()
 export class KnowledgeSpaceCompilationService implements OnModuleInit {
@@ -89,6 +90,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
   }
 
   @Interval('knowledge-space-compile-outbox', 5_000)
+  @WithJobContext('knowledge-space-compile-outbox')
   async recoverPendingDispatches(): Promise<void> {
     await this.dispatchPending();
   }
@@ -126,7 +128,6 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     return results;
   }
 
-  /** Night compile window gate for one workspace; open when unconfigured. */
   async getCompileWindowDecision(
     workspaceId: string,
   ): Promise<KnowledgeCompileWindowDecision> {
@@ -136,11 +137,6 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     return this.compileWindowRepo.decide(workspaceId);
   }
 
-  /**
-   * Stores Space-level admin compilation (update knowledge / batch compile)
-   * requested outside the night window as durable intents. Callers check
-   * getCompileWindowDecision() first and use requestRuns() when it is open.
-   */
   async deferSpaceRuns(
     workspaceId: string,
     requests: Array<{
@@ -173,10 +169,6 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     return results.map((result) => result.spaceId);
   }
 
-  /**
-   * Clears the durable image-understanding cache for the given source pages so
-   * an explicit retry re-runs the VLM instead of reusing prior extractions.
-   */
   async clearImageExtractionCache(input: {
     workspaceId: string;
     sourcePageIds: string[];
@@ -184,13 +176,6 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     return this.imageExtractionRepo.deleteByPageIds(input);
   }
 
-  /**
-   * Returns the subset of the given Spaces that currently have a non-terminal
-   * (queued/compiling/aggregating) Run. A page retry checks this first and
-   * refuses while a Run is in flight: retrying mid-Run would coalesce into or
-   * re-request the live Run and, worse, `clearImageExtractionCache` would null
-   * out the still-published Run's `extraction_id`, dropping citation captions.
-   */
   async findSpaceIdsWithActiveRun(input: {
     workspaceId: string;
     spaceIds: string[];
@@ -212,12 +197,9 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     spaceId: string;
     sourcePageId: string;
     currentSourceVersion?: string;
-    // null clears the page override; undefined leaves it untouched.
     indexMode?: KnowledgeIndexMode | null;
     updatedBy?: string;
   }) {
-    // Keep this lookup optional for lightweight callers that provide only the
-    // run-request repository contract; production repos always implement it.
     const existing = this.runRepo.findLatestPageCompileStatus
       ? await this.runRepo.findLatestPageCompileStatus({
           workspaceId: input.workspaceId,
@@ -357,8 +339,6 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       };
     }
 
-    // The PostgreSQL transaction has committed and invalidated every writer at
-    // this point. Redis cleanup is an exact-ID traffic optimization only.
     const cleanup = await this.removeCancelledJobs(result.jobIds);
     return {
       disposition: result.disposition,
@@ -394,7 +374,6 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     sourcePageIds: string[];
     trigger: KnowledgePageCompileScheduleTrigger;
   }) {
-    // No quiet period while a night window is on: the window gates the run.
     const windowEnabled = await this.compileWindowRepo?.isEnabled(
       input.workspaceId,
     );
@@ -553,9 +532,6 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
       run.mode === 'force_rebuild' ||
       run.trigger === 'page_retry' ||
       run.trigger === 'follow_up';
-    // contentHash includes normalized image attachment identity/version/size.
-    // Model and Prompt identity intentionally do not participate in automatic
-    // reuse; force rebuild is the explicit quality-upgrade mechanism.
     const reusable =
       !forcePageCompilation &&
       overflowImageCount === 0 &&
@@ -683,7 +659,6 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     if (this.dispatching) return;
     this.dispatching = true;
     try {
-      // One gate snapshot per pass so Space intents and page schedules agree.
       const gatedWorkspaceIds =
         (await this.compileWindowRepo?.findGatedWorkspaceIds()) ?? [];
       await this.promoteDeferredSpaceCompiles(gatedWorkspaceIds);
@@ -722,7 +697,8 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
         });
       } catch {
         this.logger.warn(
-          `Knowledge page merge outbox dispatch will retry RunPage ${merge.runPageId}.`,
+          { runPageId: merge.runPageId },
+          'Knowledge page merge outbox dispatch will retry',
         );
       }
     }
@@ -753,8 +729,6 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
     gatedWorkspaceIds: string[],
   ): Promise<void> {
     const batchSize = 500;
-    // Bound a single polling pass while still absorbing ordinary bulk edits
-    // without waiting for many five-second intervals.
     for (let batch = 0; batch < 20; batch += 1) {
       const result = await this.runRepo.promoteDuePageCompileSchedules({
         compilerVersion: DEFAULT_KNOWLEDGE_COMPILER_VERSION,
@@ -803,7 +777,8 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
         await this.runRepo.markSpaceJobDispatched(slice);
       } catch {
         this.logger.warn(
-          `Knowledge Space outbox dispatch will retry reservation ${slice.spaceJobId}.`,
+          { spaceJobId: slice.spaceJobId },
+          'Knowledge space outbox dispatch will retry',
         );
       }
     }
@@ -834,7 +809,8 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
         });
       } catch {
         this.logger.warn(
-          `Knowledge image outbox dispatch will retry RunImage ${image.runImageId}.`,
+          { runImageId: image.runImageId },
+          'Knowledge image outbox dispatch will retry',
         );
       }
     }
@@ -857,8 +833,6 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
           found = true;
           const state: string = await job.getState();
           if (state === 'active') {
-            // BullMQ cannot remove a locked active Job. The committed Run
-            // status/token fence makes its remaining publication a no-op.
             fencedActiveJobCount += 1;
           } else {
             await job.remove();
@@ -874,8 +848,6 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
           break;
         }
       }
-      // A missing retained Job is already clean. It is deliberately not an
-      // error because Redis retention or a prior idempotent call may remove it.
       if (!found) continue;
     }
     return {
@@ -909,10 +881,6 @@ function knowledgeSpaceJobPriority(slice: {
   return slice.jobPhase === 'finalize' ? 1 : 5;
 }
 
-/**
- * Reads a Run's persisted page scope. Returns a non-empty string[] for a
- * page-scoped Run, or null for a full-Space Run.
- */
 function parseRunTargetSourcePageIds(value: unknown): string[] | null {
   if (!Array.isArray(value)) return null;
   const ids = value.filter((id): id is string => typeof id === 'string');

@@ -75,7 +75,10 @@ export default function PdfView(props: NodeViewProps) {
   if (!src || !safeSrc) {
     return (
       <NodeViewWrapper data-drag-handle>
-        <div className={`${classes.pdfWrapper} ${placeholder ? classes.skeleton : ''}`} style={{ height: placeholder ? 600 : undefined }}>
+        <div
+          className={`${classes.pdfWrapper} ${placeholder ? classes.skeleton : ""}`}
+          style={{ height: placeholder ? 600 : undefined }}
+        >
           {placeholder && (
             <Group justify="center" wrap="nowrap" gap="xs" maw="100%" px="md">
               <Loader size={20} style={{ flexShrink: 0 }} />
@@ -96,7 +99,9 @@ export default function PdfView(props: NodeViewProps) {
       <NodeViewWrapper data-drag-handle>
         <div
           data-pdf-error
-          className={clsx(classes.pdfError, { "ProseMirror-selectednode": selected })}
+          className={clsx(classes.pdfError, {
+            "ProseMirror-selectednode": selected,
+          })}
           onClick={handleSelect}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
@@ -117,19 +122,12 @@ export default function PdfView(props: NodeViewProps) {
     );
   }
 
-  // In read (non-editable) mode, don't embed the PDF preview. Show it as a
-  // plain attachment card (icon + name + size + download) instead.
   if (!editor.isEditable) {
     const { name, size } = node.attrs;
     return (
       <NodeViewWrapper>
         <Paper withBorder p="4px">
-          <Group
-            justify="space-between"
-            gap="xl"
-            wrap="nowrap"
-            h={25}
-          >
+          <Group justify="space-between" gap="xl" wrap="nowrap" h={25}>
             <Group wrap="nowrap" gap="sm" style={{ minWidth: 0, flex: 1 }}>
               <IconPaperclip size={20} style={{ flexShrink: 0 }} />
               <Text
@@ -188,7 +186,8 @@ export default function PdfView(props: NodeViewProps) {
             onLoad={(e) => {
               try {
                 const iframe = e.currentTarget;
-                const status = iframe.contentDocument?.querySelector("pre")?.textContent;
+                const status =
+                  iframe.contentDocument?.querySelector("pre")?.textContent;
                 if (status && status.includes('"statusCode":404')) {
                   setHasError(true);
                 }
@@ -199,7 +198,11 @@ export default function PdfView(props: NodeViewProps) {
           />
           {editor.isEditable && (
             <div className={classes.hoverMenu}>
-              <Tooltip position="top" label={t("Convert to attachment")} withinPortal>
+              <Tooltip
+                position="top"
+                label={t("Convert to attachment")}
+                withinPortal
+              >
                 <ActionIcon
                   size="sm"
                   variant="filled"

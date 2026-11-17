@@ -92,7 +92,9 @@ function createService(overrides: {
     overrides.generateAttachmentToken ??
     jest
       .fn()
-      .mockImplementation(async ({ attachmentId }: any) => `jwt-${attachmentId}`);
+      .mockImplementation(
+        async ({ attachmentId }: any) => `jwt-${attachmentId}`,
+      );
 
   const service = new KnowledgeCitationAttachmentResolverService(
     { findByIds } as any,
@@ -148,7 +150,6 @@ describe('KnowledgeCitationAttachmentResolverService', () => {
   });
 
   it('does not return attachments from adjacent (non-hit) blocks', async () => {
-    // Only chunk-a is a direct hit; the repo only returns relation rows for it.
     const { service } = createService({
       relationRows: [
         { chunkId: 'chunk-a', attachments: [occurrence('att-a', 'page-a')] },
@@ -173,8 +174,14 @@ describe('KnowledgeCitationAttachmentResolverService', () => {
   it('deduplicates the same attachment across multiple hit blocks (first-wins)', async () => {
     const { service, generateAttachmentToken } = createService({
       relationRows: [
-        { chunkId: 'chunk-a', attachments: [occurrence('att-shared', 'page-a')] },
-        { chunkId: 'chunk-b', attachments: [occurrence('att-shared', 'page-a')] },
+        {
+          chunkId: 'chunk-a',
+          attachments: [occurrence('att-shared', 'page-a')],
+        },
+        {
+          chunkId: 'chunk-b',
+          attachments: [occurrence('att-shared', 'page-a')],
+        },
       ],
       sourceRefRows: [
         {
@@ -222,7 +229,6 @@ describe('KnowledgeCitationAttachmentResolverService', () => {
           ],
         },
       ],
-      // Live attachment updatedAt differs from the relation snapshot.
       attachments: [
         fileAttachment('att-stale', 'page-a', {
           updatedAt: new Date('2026-03-01T00:00:00.000Z'),
@@ -328,13 +334,14 @@ describe('KnowledgeCitationAttachmentResolverService', () => {
     const sourceRefRows = Array.from({ length: 7 }, (_, index) => ({
       chunkId: `chunk-${index}`,
       sources: [
-        sourceRef(`page-${index}`, { contentHash: `att-${index}-content-hash` }),
+        sourceRef(`page-${index}`, {
+          contentHash: `att-${index}-content-hash`,
+        }),
       ],
     }));
     const attachments = Array.from({ length: 7 }, (_, index) =>
       fileAttachment(`att-${index}`, `page-${index}`),
     );
-    // att-1 fails signing; the resolver must skip it and continue to reach 5.
     const generateAttachmentToken = jest
       .fn()
       .mockImplementation(async ({ attachmentId }: any) => {
@@ -363,12 +370,13 @@ describe('KnowledgeCitationAttachmentResolverService', () => {
   });
 
   it('returns only the recompiled page attachment in a mixed old/new space (§11.4)', async () => {
-    // chunk-old is a pre-WP4 block: it is a direct hit but has no relation row
-    // (empty attachments). chunk-new was recompiled after WP4 and carries one.
     const { service } = createService({
       relationRows: [
         { chunkId: 'chunk-old', attachments: [] },
-        { chunkId: 'chunk-new', attachments: [occurrence('att-new', 'page-new')] },
+        {
+          chunkId: 'chunk-new',
+          attachments: [occurrence('att-new', 'page-new')],
+        },
       ],
       sourceRefRows: [
         { chunkId: 'chunk-old', sources: [sourceRef('page-old')] },

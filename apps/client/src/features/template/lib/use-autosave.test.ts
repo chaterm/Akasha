@@ -12,7 +12,6 @@ const setup = (opts?: {
   const save = vi.fn((_draft: unknown) => impl());
   const draftOk = opts?.draftOk ?? (() => true);
   const hook = renderHook(
-    // 每次渲染传入新的 save/buildDraft 引用，模拟 useMutation 每次返回新对象
     ({ tick }) =>
       useAutosave(KINDS, {
         delay: 1000,
@@ -52,7 +51,6 @@ describe("useAutosave", () => {
     expect(save).toHaveBeenCalledTimes(1);
     expect(result.current.saveState).toBe("error");
 
-    // 失败引起的重新渲染不应触发新的保存
     rerender({ tick: 1 });
     await act(() => vi.advanceTimersByTimeAsync(5000));
     expect(save).toHaveBeenCalledTimes(1);
@@ -60,7 +58,6 @@ describe("useAutosave", () => {
     act(() => result.current.markDirty("meta"));
     await act(() => vi.advanceTimersByTimeAsync(1000));
     expect(save).toHaveBeenCalledTimes(2);
-    // 上次失败的 body 和这次的 meta 一起提交
     expect(save).toHaveBeenLastCalledWith({ meta: true, body: true, tick: 1 });
   });
 

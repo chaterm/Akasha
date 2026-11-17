@@ -68,7 +68,6 @@ export default function AiChatSidebarItem({
 
   useEffect(() => {
     if (renaming) {
-      // Wait for the input to be mounted before selecting.
       const id = window.setTimeout(() => inputRef.current?.select(), 0);
       return () => window.clearTimeout(id);
     }

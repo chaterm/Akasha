@@ -170,7 +170,6 @@ describePostgres('force-reset PostgreSQL scope', () => {
       order by source_page_id
     `.execute(db);
 
-    // Page-level publish modes survive the whole-Space rebuild.
     expect(settings.rows).toEqual([
       { sourcePageId: 'page-control', indexMode: 'original' },
       { sourcePageId: 'page-extra', indexMode: 'compiled' },

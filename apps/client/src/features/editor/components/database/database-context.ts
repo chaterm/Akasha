@@ -29,7 +29,6 @@ export interface DatabaseFilterDraft {
   saveAsView: () => void;
 }
 
-/** Everything a view needs: the shared data, the active view, and a way to write. */
 export interface DatabaseContext {
   columns: DatabaseColumn[];
   rows: DatabaseRowData[];
@@ -38,14 +37,10 @@ export interface DatabaseContext {
   filterDraft?: DatabaseFilterDraft;
   editable: boolean;
   locale: string;
-  /** Local search text of the active view (not stored in the document). */
   search: string;
-  /** Runs `build` against a fresh transaction at the database's current position and dispatches it. */
   apply: (build: (tr: Transaction, dbPos: number) => unknown) => void;
-  /** Opens the row detail modal. */
   openRow: (rowId: string) => void;
   setActiveView: (viewId: string) => void;
-  /** Extra values for a new row (the "mine" view assigns it to the viewer); may update columns first. */
   prepareRow?: (
     tr: Transaction,
     pos: number,
@@ -70,7 +65,6 @@ export function setColumnSort(
   patchView(db, { sorts: next });
 }
 
-/** Inserts a row pre-filled so it stays visible under the view's filter; returns its id. */
 export function createRow(
   db: DatabaseContext,
   options: {
@@ -95,7 +89,6 @@ export function createRow(
   return id;
 }
 
-/** Alignment of a column in the active view; left unless set. */
 export function columnAlign(
   db: Pick<DatabaseContext, "view">,
   column: DatabaseColumn,
@@ -109,7 +102,6 @@ export function visibleColumns(db: Pick<DatabaseContext, "columns" | "view">) {
   return getDatabaseViewColumns(db.columns, db.view);
 }
 
-/** Rows of the active view after filter, search and sorts. */
 export function useViewRows(db: DatabaseContext): DatabaseRowData[] {
   const { rows, columns, view, search, locale } = db;
   return useMemo(() => {
@@ -122,10 +114,6 @@ export function useViewRows(db: DatabaseContext): DatabaseRowData[] {
   }, [rows, columns, view.filter, view.sorts, search, locale]);
 }
 
-/**
- * React bubbles events from portals (popovers, the row modal) through the
- * component tree; handlers that act on "their" element must ignore those.
- */
 export function ownsEvent(event: {
   target: EventTarget;
   currentTarget: EventTarget;
@@ -136,12 +124,6 @@ export function ownsEvent(event: {
 const stop = (event: { stopPropagation: () => void }) =>
   event.stopPropagation();
 
-/**
- * Spread on every Popover.Dropdown / modal body: keeps their events from
- * bubbling (through the React tree) into the target button, card or cell
- * that owns them. Mantine's own outside-click and Escape handling runs in the
- * capture phase and is unaffected.
- */
 export const stopBubbling = {
   onClick: stop,
   onMouseDown: stop,
@@ -151,7 +133,6 @@ export const stopBubbling = {
   onContextMenu: stop,
 };
 
-/** Text fields where native keys (Backspace, arrows, Mod-Z) must stay native. */
 export function isTextTarget(target: EventTarget | null): boolean {
   const element = target as HTMLElement | null;
   if (!element) return false;
@@ -165,11 +146,6 @@ export function isTextTarget(target: EventTarget | null): boolean {
   );
 }
 
-/**
- * Groups of the active view in the group column's option order (ungrouped last),
- * or null when the view is not grouped. The ungrouped group only shows while it
- * has rows; hidden groups and, if set, empty groups are left out.
- */
 export function useViewGroups(
   db: DatabaseContext,
   rows: DatabaseRowData[],
@@ -189,7 +165,6 @@ export function useViewGroups(
   }, [rows, column, view]);
 }
 
-/** Cell values that put a new row into `group`. */
 export function groupValues(
   column: DatabaseColumn,
   group: DatabaseGroup,
@@ -204,7 +179,6 @@ export function groupValues(
   };
 }
 
-/** Views laid out by a start (and optional end) date column. */
 export function isDateView(view: Pick<DatabaseView, "type">) {
   return (
     view.type === "calendar" ||
@@ -213,12 +187,10 @@ export function isDateView(view: Pick<DatabaseView, "type">) {
   );
 }
 
-/** "Mine" is a table over the viewer's rows, so it takes the table's settings. */
 export function isTableView(view: Pick<DatabaseView, "type">) {
   return view.type === "table" || view.type === "mine";
 }
 
-/** The "mine" view's rows: those whose member columns include `userId`. */
 export function rowsOf(
   db: Pick<DatabaseContext, "columns" | "rows">,
   userId: string | undefined,

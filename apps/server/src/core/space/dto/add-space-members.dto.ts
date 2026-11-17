@@ -3,10 +3,6 @@ import { SpaceIdDto } from './space-id.dto';
 import { SpaceRole } from '../../../common/helpers/types/permission';
 
 export class AddSpaceMembersDto extends SpaceIdDto {
-  // @IsOptional()
-  // @IsUUID()
-  // userId: string;
-
   @IsEnum(SpaceRole)
   role: string;
 

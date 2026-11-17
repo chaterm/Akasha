@@ -1,7 +1,6 @@
 import { KyselyTransaction } from '@akasha/db/types/kysely.types';
 import { PAGE_ATTEMPT_BUDGET } from './knowledge-compilation-budgets';
 
-/** All callers must already hold Space -> Run, before any child row locks. */
 export async function readRunPipelineWork(
   trx: KyselyTransaction,
   runId: string,
@@ -72,18 +71,11 @@ export async function readRunPipelineWork(
   };
 }
 
-/**
- * The only pipeline phase writer. Reuses the caller's transaction and parent
- * locks; statistics never acquire additional child locks. Only the validated
- * Text barrier may authorize leaving text, after settling its retries.
- */
 export async function reconcileRunPipelineInTransaction(
   trx: KyselyTransaction,
   runId: string,
   options: { textBarrierSettled?: boolean } = {},
 ) {
-  // Image/Merge completions during Text must not even consider consuming the
-  // Text lease. Finalizing is also immutable to these child completion paths.
   const current = await trx
     .selectFrom('knowledgeSpaceCompileRuns')
     .select(['phase', 'status'])

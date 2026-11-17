@@ -1,14 +1,3 @@
-/**
- * Top-level block node types allowed inside a `transclusionSource`.
- * Notably excludes:
- * - `transclusionSource` — sync blocks cannot wrap other sync blocks (sources are leaves).
- * - `transclusionReference` — sync blocks cannot transclude other sync blocks,
- *   which keeps the transclusion graph acyclic and lets the renderer skip
- *   cycle-aware traversal entirely.
- *
- * Also excludes child-only nodes (`listItem`, `tableRow`, `column`, etc.)
- * — they're already constrained by their parent containers.
- */
 export const TRANSCLUSION_SOURCE_ALLOWED_NODE_TYPES = [
   'paragraph',
   'heading',

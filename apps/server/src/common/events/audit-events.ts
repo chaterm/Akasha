@@ -1,12 +1,10 @@
 export const AuditEvent = {
-  // Workspace
   WORKSPACE_CREATED: 'workspace.created',
   WORKSPACE_UPDATED: 'workspace.updated',
   WORKSPACE_INVITE_CREATED: 'workspace.invite_created',
   WORKSPACE_INVITE_RESENT: 'workspace.invite_resent',
   WORKSPACE_INVITE_REVOKED: 'workspace.invite_revoked',
 
-  // User
   USER_CREATED: 'user.created',
   USER_DELETED: 'user.deleted',
   USER_LOGIN: 'user.login',
@@ -18,17 +16,14 @@ export const AuditEvent = {
   USER_DEACTIVATED: 'user.deactivated',
   USER_ACTIVATED: 'user.activated',
 
-  // API Keys
   API_KEY_CREATED: 'api_key.created',
   API_KEY_UPDATED: 'api_key.updated',
   API_KEY_DELETED: 'api_key.deleted',
 
-  // SCIM Tokens
   SCIM_TOKEN_CREATED: 'scim_token.created',
   SCIM_TOKEN_UPDATED: 'scim_token.updated',
   SCIM_TOKEN_DELETED: 'scim_token.deleted',
 
-  // Space
   SPACE_CREATED: 'space.created',
   SPACE_UPDATED: 'space.updated',
   SPACE_DELETED: 'space.deleted',
@@ -36,35 +31,29 @@ export const AuditEvent = {
   SPACE_MEMBER_REMOVED: 'space.member_removed',
   SPACE_MEMBER_ROLE_CHANGED: 'space.member_role_changed',
 
-  // Group
   GROUP_CREATED: 'group.created',
   GROUP_UPDATED: 'group.updated',
   GROUP_DELETED: 'group.deleted',
   GROUP_MEMBER_ADDED: 'group.member_added',
   GROUP_MEMBER_REMOVED: 'group.member_removed',
 
-  // Comment
   COMMENT_CREATED: 'comment.created',
   COMMENT_DELETED: 'comment.deleted',
 
-  // Comment updates / resolve
   COMMENT_UPDATED: 'comment.updated',
   COMMENT_RESOLVED: 'comment.resolved',
   COMMENT_REOPENED: 'comment.reopened',
 
-  // Page
   PAGE_CREATED: 'page.created',
   PAGE_TRASHED: 'page.trashed',
   PAGE_DELETED: 'page.deleted',
   PAGE_RESTORED: 'page.restored',
   PAGE_MOVED_TO_SPACE: 'page.moved_to_space',
   PAGE_DUPLICATED: 'page.duplicated',
-  // Page permission
   PAGE_RESTRICTED: 'page.restricted',
   PAGE_RESTRICTION_REMOVED: 'page.restriction_removed',
   PAGE_PERMISSION_ADDED: 'page.permission_added',
   PAGE_PERMISSION_REMOVED: 'page.permission_removed',
-  // Page verification
   PAGE_VERIFICATION_CREATED: 'page.verification_created',
   PAGE_VERIFICATION_UPDATED: 'page.verification_updated',
   PAGE_VERIFICATION_REMOVED: 'page.verification_removed',
@@ -73,42 +62,34 @@ export const AuditEvent = {
   PAGE_APPROVAL_REJECTED: 'page.approval_rejected',
   PAGE_MARKED_OBSOLETE: 'page.marked_obsolete',
 
-  // Share
   SHARE_CREATED: 'share.created',
   SHARE_DELETED: 'share.deleted',
 
-  // Import / Export
   PAGE_IMPORTED: 'page.imported',
   PAGE_EXPORTED: 'page.exported',
   SPACE_EXPORTED: 'space.exported',
 
-  // SSO provider management
   SSO_PROVIDER_CREATED: 'sso.provider_created',
   SSO_PROVIDER_UPDATED: 'sso.provider_updated',
   SSO_PROVIDER_DELETED: 'sso.provider_deleted',
 
-  // MFA
   USER_MFA_ENABLED: 'user.mfa_enabled',
   USER_MFA_DISABLED: 'user.mfa_disabled',
   USER_MFA_BACKUP_CODE_GENERATED: 'user.mfa_backup_code_generated',
 
-  // License
   LICENSE_ACTIVATED: 'license.activated',
   LICENSE_REMOVED: 'license.removed',
 
-  // Knowledge
   KNOWLEDGE_QUERY: 'knowledge.query',
   KNOWLEDGE_CITATION_PAGE_READ: 'knowledge.citation_page_read',
   KNOWLEDGE_COMPILE_QUEUED: 'knowledge.compile_queued',
   KNOWLEDGE_COMPILE_CANCELLED: 'knowledge.compile_cancelled',
   KNOWLEDGE_DELAYED_PAGE_REMOVED: 'knowledge.delayed_page_removed',
 
-  // Template
   TEMPLATE_CREATED: 'template.created',
   TEMPLATE_UPDATED: 'template.updated',
   TEMPLATE_DELETED: 'template.deleted',
 
-  // Attachment
   ATTACHMENT_UPLOADED: 'attachment.uploaded',
   ATTACHMENT_DELETED: 'attachment.deleted',
 } as const;

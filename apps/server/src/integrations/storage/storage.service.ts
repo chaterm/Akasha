@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { STORAGE_DRIVER_TOKEN } from './constants/storage.constants';
 import { StorageDriver } from './interfaces';
 import { Readable } from 'stream';
@@ -6,14 +6,12 @@ import { createBoundedAbortSignal } from '../../features/llm-wiki/services/knowl
 
 @Injectable()
 export class StorageService {
-  private readonly logger = new Logger(StorageService.name);
   constructor(
     @Inject(STORAGE_DRIVER_TOKEN) private storageDriver: StorageDriver,
   ) {}
 
   async upload(filePath: string, fileContent: Buffer | Readable) {
     await this.storageDriver.upload(filePath, fileContent);
-    this.logger.debug(`File uploaded successfully. Path: ${filePath}`);
   }
 
   async uploadStream(
@@ -22,12 +20,10 @@ export class StorageService {
     options?: { recreateClient?: boolean },
   ) {
     await this.storageDriver.uploadStream(filePath, fileContent, options);
-    this.logger.debug(`File uploaded successfully. Path: ${filePath}`);
   }
 
   async copy(fromFilePath: string, toFilePath: string) {
     await this.storageDriver.copy(fromFilePath, toFilePath);
-    this.logger.debug(`File copied successfully. Path: ${toFilePath}`);
   }
 
   async read(

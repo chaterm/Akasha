@@ -1,7 +1,7 @@
-import { Node, nodeInputRule } from "@tiptap/core";
-import { ReactNodeViewRenderer } from "@tiptap/react";
+import { Node, nodeInputRule } from '@tiptap/core';
+import { ReactNodeViewRenderer } from '@tiptap/react';
 
-declare module "@tiptap/core" {
+declare module '@tiptap/core' {
   interface Commands<ReturnType> {
     mathInline: {
       setMathInline: () => ReturnType;
@@ -21,8 +21,8 @@ export interface MathInlineAttributes {
 export const inputRegex = /(?:^|\s)((?:\$\$)((?:[^$]+))(?:\$\$))$/;
 
 export const MathInline = Node.create<MathInlineOption>({
-  name: "mathInline",
-  group: "inline",
+  name: 'mathInline',
+  group: 'inline',
   inline: true,
   atom: true,
 
@@ -36,7 +36,7 @@ export const MathInline = Node.create<MathInlineOption>({
   addAttributes() {
     return {
       text: {
-        default: "",
+        default: '',
         parseHTML: (element) => {
           return element.innerHTML;
         },
@@ -49,7 +49,7 @@ export const MathInline = Node.create<MathInlineOption>({
       {
         tag: `span[data-type="${this.name}"]`,
         getAttrs: (node: HTMLElement) => {
-          return node.hasAttribute("data-katex") ? {} : false;
+          return node.hasAttribute('data-katex') ? {} : false;
         },
       },
     ];
@@ -57,14 +57,13 @@ export const MathInline = Node.create<MathInlineOption>({
 
   renderHTML({ HTMLAttributes }) {
     return [
-      "span",
-      { "data-type": this.name, "data-katex": true },
+      'span',
+      { 'data-type': this.name, 'data-katex': true },
       `${HTMLAttributes.text}`,
     ];
   },
 
   addNodeView() {
-    // Force the react node view to render immediately using flush sync (https://github.com/ueberdosis/tiptap/blob/b4db352f839e1d82f9add6ee7fb45561336286d8/packages/react/src/ReactRenderer.tsx#L183-L191)
     this.editor.isInitialized = true;
 
     return ReactNodeViewRenderer(this.options.view);
@@ -89,7 +88,7 @@ export const MathInline = Node.create<MathInlineOption>({
         find: inputRegex,
         type: this.type,
         getAttributes: (match) => ({
-          text: match[1].replaceAll("$", ""),
+          text: match[1].replaceAll('$', ''),
         }),
       }),
     ];

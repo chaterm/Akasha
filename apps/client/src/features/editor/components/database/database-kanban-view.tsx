@@ -49,7 +49,6 @@ interface CardDrag {
 
 interface CardDrop {
   key: string;
-  /** Insert index among the lane's cards without the dragged one. */
   index: number;
 }
 
@@ -58,7 +57,6 @@ export default function DatabaseKanbanView({ db }: { db: DatabaseContext }) {
   const boardRef = useRef<HTMLDivElement>(null);
   const rows = useViewRows(db);
   const column = db.columns.find((item) => item.id === db.view.groupBy);
-  // The ungrouped lane only shows while it has cards.
   const groups = useMemo(
     () =>
       column
@@ -76,7 +74,6 @@ export default function DatabaseKanbanView({ db }: { db: DatabaseContext }) {
       !(db.view.hideEmptyGroups && !group.rows.length),
   );
   const hiddenGroups = groups.filter((group) => hidden.has(group.key));
-  // Viewers may reveal cards without writing to the shared view configuration.
   const [localExpanded, setLocalExpanded] = useState<Record<string, string[]>>(
     {},
   );
@@ -100,7 +97,6 @@ export default function DatabaseKanbanView({ db }: { db: DatabaseContext }) {
   };
   const [drop, setDrop] = useState<CardDrop | null>(null);
   const [groupDrop, setGroupDrop] = useState<number | null>(null);
-  // Horizontal: each group is a row of cards; groups stack top to bottom.
   const horizontal = db.view.orientation === "horizontal";
   const laneAxis = horizontal ? "y" : "x";
   useSidewaysWheel(boardRef, horizontal);
@@ -124,7 +120,6 @@ export default function DatabaseKanbanView({ db }: { db: DatabaseContext }) {
       const target = hitCard(drag, x, y);
       const lane = target && groups.find((group) => group.key === target.key);
       if (!target || !lane) return;
-      // A sorted view has no manual order: only moves between lanes count.
       if (db.view.sorts.length && target.key === drag.fromKey) return;
       const cards = lane.rows.filter((row) => row.id !== drag.rowId);
       const beforeRowId = cards[target.index]?.id ?? null;
@@ -172,7 +167,6 @@ export default function DatabaseKanbanView({ db }: { db: DatabaseContext }) {
 
   if (!column) return <NoGroupColumn db={db} />;
 
-  /** New card in `group`, placed relative to `anchorId` in the lane's manual order, then opened. */
   const insertCard = (
     group: DatabaseGroup,
     anchorId: string | null,
@@ -303,7 +297,6 @@ export default function DatabaseKanbanView({ db }: { db: DatabaseContext }) {
               />
               <div className={classes.laneCards}>
                 {group.rows.map((row) => {
-                  // A multi-select card can sit in several lanes; hit testing skips every copy.
                   const isDragged = cardDrag.dragging?.rowId === row.id;
                   const dragged =
                     isDragged && cardDrag.dragging!.fromKey === group.key;
@@ -365,11 +358,6 @@ export default function DatabaseKanbanView({ db }: { db: DatabaseContext }) {
   );
 }
 
-/**
- * On a horizontal board, a vertical wheel over a row of cards scrolls it
- * sideways while it can still move; at either end the page scrolls as usual.
- * Native and non-passive, since React's wheel listener cannot preventDefault.
- */
 function useSidewaysWheel(
   board: RefObject<HTMLDivElement | null>,
   enabled: boolean,
@@ -393,7 +381,6 @@ function useSidewaysWheel(
   }, [board, enabled]);
 }
 
-/** A folded lane: a narrow strip with the group name and count; cards can still be dropped on it. */
 function CollapsedLane({
   column,
   group,

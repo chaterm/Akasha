@@ -48,7 +48,6 @@ const container = document.getElementById("root") as HTMLElement;
 const root = ((container as any).__reactRoot ??=
   ReactDOM.createRoot(container));
 
-// 数据路由支持 useBlocker；具体页面路由仍由 App 管理。
 const router = createBrowserRouter([{ path: "*", element: <App /> }]);
 
 root.render(

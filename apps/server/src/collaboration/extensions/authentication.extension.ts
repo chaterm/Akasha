@@ -36,9 +36,6 @@ export class AuthenticationExtension implements Extension {
     const { documentName, token, requestParameters } = data;
     const pageId = getPageId(documentName);
 
-    // The UI's read mode must also be read-only at the collaboration layer.
-    // This only narrows access; permission checks below can independently force
-    // any connection into read-only mode.
     if (requestParameters.get('readOnly') === 'true') {
       data.connectionConfig.readOnly = true;
     }
@@ -66,16 +63,13 @@ export class AuthenticationExtension implements Extension {
 
     const page = await this.pageRepo.findById(pageId);
     if (!page || page.workspaceId !== workspaceId) {
-      this.logger.debug(`Page not found: ${pageId}`);
       throw new NotFoundException('Page not found');
     }
 
-    // Workspace owner bypasses all space and page-level access checks
     if (user.role === UserRole.OWNER) {
       if (page.deletedAt) {
         data.connectionConfig.readOnly = true;
       }
-      this.logger.debug(`Owner authenticated on page ${pageId}`);
       return { user };
     }
 
@@ -86,41 +80,35 @@ export class AuthenticationExtension implements Extension {
         );
 
     if (!userSpaceRole) {
-      this.logger.warn(`User not authorized to access page: ${pageId}`);
+      this.logger.warn(
+        { userId: user.id, pageId },
+        'Collab access denied: no space role',
+      );
       throw new UnauthorizedException();
     }
 
-    // Check page-level permissions
     const { hasAnyRestriction, canAccess, canEdit } =
       await this.pagePermissionRepo.canUserEditPage(user.id, page.id);
 
     if (hasAnyRestriction) {
       if (!canAccess) {
         this.logger.warn(
-          `User ${user.id} denied page-level access to page: ${pageId}`,
+          { userId: user.id, pageId },
+          'Collab access denied: page restriction',
         );
         throw new UnauthorizedException();
       }
 
       if (!canEdit) {
         data.connectionConfig.readOnly = true;
-        this.logger.debug(
-          `User ${user.id} granted readonly access to restricted page: ${pageId}`,
-        );
       }
-    } else {
-      // No restrictions - use space-level permissions
-      if (userSpaceRole === SpaceRole.READER) {
-        data.connectionConfig.readOnly = true;
-        this.logger.debug(`User granted readonly access to page: ${pageId}`);
-      }
+    } else if (userSpaceRole === SpaceRole.READER) {
+      data.connectionConfig.readOnly = true;
     }
 
     if (page.deletedAt) {
       data.connectionConfig.readOnly = true;
     }
-
-    this.logger.debug(`Authenticated user ${user.id} on page ${pageId}`);
 
     return {
       user,

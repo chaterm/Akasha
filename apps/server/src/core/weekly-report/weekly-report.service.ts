@@ -43,7 +43,6 @@ type Target = { space: Space; parent: Page | null };
 type Report = Selectable<WeeklyReportRecords>;
 const TOKEN_TTL_SECONDS = 30 * 60;
 
-/** postgres.js parses `date` columns as UTC-midnight Dates; keep the plain calendar date. */
 const calendarDate = (value: Date | string) =>
   value instanceof Date ? value.toISOString().slice(0, 10) : value;
 
@@ -201,17 +200,19 @@ export class WeeklyReportService {
     end: string,
     trx?: KyselyTransaction,
   ) {
-    return dbOrTx(this.db, trx)
-      .selectFrom('weeklyReportRecords')
-      .selectAll()
-      .where('workspaceId', '=', ctx.workspace.id)
-      .where('userId', '=', ctx.user.id)
-      .where('spaceId', '=', spaceId)
-      .where('parentPageId', '=', parentId)
-      // Codegen types `date` as Timestamp; PostgreSQL infers this text parameter as a date.
-      .where('periodStart', '=', start as unknown as Date)
-      .where('periodEnd', '=', end as unknown as Date)
-      .executeTakeFirst();
+    return (
+      dbOrTx(this.db, trx)
+        .selectFrom('weeklyReportRecords')
+        .selectAll()
+        .where('workspaceId', '=', ctx.workspace.id)
+        .where('userId', '=', ctx.user.id)
+        .where('spaceId', '=', spaceId)
+        .where('parentPageId', '=', parentId)
+        // Codegen types `date` as Timestamp; PostgreSQL infers this text parameter as a date.
+        .where('periodStart', '=', start as unknown as Date)
+        .where('periodEnd', '=', end as unknown as Date)
+        .executeTakeFirst()
+    );
   }
 
   private formatResult(
@@ -415,9 +416,6 @@ export class WeeklyReportService {
     try {
       return await this.saveAttempt(ctx, input, claims);
     } catch (error) {
-      // Advisory locks serialize our writers. Keep a database-constraint safety
-      // net for a competing writer that does not participate in those locks.
-      // A PostgreSQL uniqueness failure aborts its transaction: retry outside it.
       const constraint =
         (error as any)?.constraint_name ?? (error as any)?.constraint;
       if (

@@ -59,7 +59,6 @@ import classes from "./template-workbench.module.css";
 
 const AUTOSAVE_DELAY = 1200;
 const DIRTY_KINDS = ["meta", "body"] as const;
-/** 新建模板的路由参数；此时模板还不存在，点"创建"才落库 */
 const NEW_ID = "new";
 
 export default function TemplateWorkbench() {
@@ -96,11 +95,9 @@ export default function TemplateWorkbench() {
     );
   }
 
-  // key：切换模板时重建编辑器与本地草稿
   return <Workbench key={template.id} template={template} />;
 }
 
-/** 新建页的初始模板：默认"所有空间"，从某个空间筛选进来时默认指定该空间 */
 function newTemplateDraft(spaceId: string | null): PageTemplate {
   const now = new Date().toISOString();
   return {
@@ -138,7 +135,6 @@ function Workbench({
   isNew = false,
 }: {
   template: PageTemplate;
-  /** 新建模式：不自动保存，点"创建"（或 Mod+S）才落库 */
   isNew?: boolean;
 }) {
   const { t } = useTranslation();
@@ -146,7 +142,6 @@ function Workbench({
   const save = useSaveTemplate(template.id);
   const createTemplate = useCreateTemplate();
   const removeTemplate = useRemoveTemplate();
-  // 新建模式下是否改过内容，用于离开时确认
   const draftDirty = useRef(false);
   const createInFlight = useRef(false);
   const isCreating = isNew && createTemplate.isPending;
@@ -157,7 +152,6 @@ function Workbench({
 
   useEffect(() => {
     if (navigationBlocker.state !== "blocked") return;
-    // 创建请求不可取消，等待完成后再跳转，避免请求回调把用户拉回编辑页。
     if (createInFlight.current) {
       navigationBlocker.reset();
       return;
@@ -210,7 +204,6 @@ function Workbench({
       delay: AUTOSAVE_DELAY,
       buildDraft: ({ meta, body }) => {
         const current = latest.current;
-        // 标题为空或没选空间时不保存，等用户填好
         if (
           meta &&
           (!current.title.trim() ||
@@ -234,7 +227,6 @@ function Workbench({
     },
   );
 
-  /** 记录改动：已有模板走自动保存，新建模板只标记为未保存 */
   const touch = (kind: (typeof DIRTY_KINDS)[number]) => {
     if (isNew) draftDirty.current = true;
     else markDirty(kind);
@@ -261,7 +253,6 @@ function Workbench({
       });
       draftDirty.current = false;
       createInFlight.current = false;
-      // 替换掉 /templates/new，返回时不会回到空白新建页
       navigate(`/templates/${tpl.id}`, { replace: true });
     } finally {
       createInFlight.current = false;
@@ -285,7 +276,6 @@ function Workbench({
   });
   editorRef.current = editor;
 
-  // 快捷键只注册一次，通过 ref 调到最新的 create（闭包里有当前标题等状态）
   const createRef = useRef(create);
   createRef.current = create;
   useHotkeys(
@@ -528,7 +518,6 @@ function SaveIndicator({
   blocker,
 }: {
   state: SaveState;
-  /** 阻止保存的原因（如缺标题） */
   blocker: string | null;
 }) {
   const { t } = useTranslation();

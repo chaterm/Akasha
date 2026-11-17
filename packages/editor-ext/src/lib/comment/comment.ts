@@ -1,6 +1,6 @@
-import { Mark, mergeAttributes } from "@tiptap/core";
-import { commentDecoration } from "./comment-decoration";
-import { Plugin } from "@tiptap/pm/state";
+import { Mark, mergeAttributes } from '@tiptap/core';
+import { commentDecoration } from './comment-decoration';
+import { Plugin } from '@tiptap/pm/state';
 
 export interface ICommentOptions {
   HTMLAttributes: Record<string, any>;
@@ -10,10 +10,10 @@ export interface ICommentStorage {
   activeCommentId: string | null;
 }
 
-export const commentMarkClass = "comment-mark";
-export const commentDecorationMetaKey = "decorateComment";
+export const commentMarkClass = 'comment-mark';
+export const commentDecorationMetaKey = 'decorateComment';
 
-declare module "@tiptap/core" {
+declare module '@tiptap/core' {
   interface Commands<ReturnType> {
     comment: {
       setCommentDecoration: () => ReturnType;
@@ -26,7 +26,7 @@ declare module "@tiptap/core" {
 }
 
 export const Comment = Mark.create<ICommentOptions, ICommentStorage>({
-  name: "comment",
+  name: 'comment',
   exitable: true,
   inclusive: false,
 
@@ -46,23 +46,23 @@ export const Comment = Mark.create<ICommentOptions, ICommentStorage>({
     return {
       commentId: {
         default: null,
-        parseHTML: (element) => element.getAttribute("data-comment-id"),
+        parseHTML: (element) => element.getAttribute('data-comment-id'),
         renderHTML: (attributes) => {
           if (!attributes.commentId) return;
 
           return {
-            "data-comment-id": attributes.commentId,
+            'data-comment-id': attributes.commentId,
           };
         },
       },
       resolved: {
         default: false,
-        parseHTML: (element) => element.hasAttribute("data-resolved"),
+        parseHTML: (element) => element.hasAttribute('data-resolved'),
         renderHTML: (attributes) => {
           if (!attributes.resolved) return {};
 
           return {
-            "data-resolved": "true",
+            'data-resolved': 'true',
           };
         },
       },
@@ -72,11 +72,11 @@ export const Comment = Mark.create<ICommentOptions, ICommentStorage>({
   parseHTML() {
     return [
       {
-        tag: "span[data-comment-id]",
+        tag: 'span[data-comment-id]',
         getAttrs: (el) => {
           const element = el as HTMLSpanElement;
-          const commentId = element.getAttribute("data-comment-id")?.trim();
-          const resolved = element.hasAttribute("data-resolved");
+          const commentId = element.getAttribute('data-comment-id')?.trim();
+          const resolved = element.hasAttribute('data-resolved');
 
           if (!commentId) return false;
 
@@ -109,7 +109,6 @@ export const Comment = Mark.create<ICommentOptions, ICommentStorage>({
         (commentId) =>
         ({ commands }) => {
           if (!commentId) return false;
-          // Just add the new mark, do not remove existing ones
           return commands.setMark(this.name, { commentId, resolved: false });
         },
       unsetComment:
@@ -124,7 +123,7 @@ export const Comment = Mark.create<ICommentOptions, ICommentStorage>({
             const commentMark = node.marks.find(
               (mark) =>
                 mark.type.name === this.name &&
-                mark.attrs.commentId === commentId
+                mark.attrs.commentId === commentId,
             );
 
             if (commentMark) {
@@ -146,11 +145,10 @@ export const Comment = Mark.create<ICommentOptions, ICommentStorage>({
             const commentMark = node.marks.find(
               (mark) =>
                 mark.type.name === this.name &&
-                mark.attrs.commentId === commentId
+                mark.attrs.commentId === commentId,
             );
 
             if (commentMark) {
-              // Remove the existing mark and add a new one with updated resolved state
               tr = tr.removeMark(from, to, commentMark);
               tr = tr.addMark(
                 from,
@@ -158,7 +156,7 @@ export const Comment = Mark.create<ICommentOptions, ICommentStorage>({
                 this.type.create({
                   commentId: commentMark.attrs.commentId,
                   resolved: resolved,
-                })
+                }),
               );
             }
           });
@@ -169,38 +167,37 @@ export const Comment = Mark.create<ICommentOptions, ICommentStorage>({
   },
 
   renderHTML({ HTMLAttributes }) {
-    const commentId = HTMLAttributes?.["data-comment-id"] || null;
-    const resolved = HTMLAttributes?.["data-resolved"] || false;
+    const commentId = HTMLAttributes?.['data-comment-id'] || null;
+    const resolved = HTMLAttributes?.['data-resolved'] || false;
 
-    if (typeof window === "undefined" || typeof document === "undefined") {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
       return [
-        "span",
+        'span',
         mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
-          class: resolved ? "comment-mark resolved" : "comment-mark",
-          "data-comment-id": commentId,
-          ...(resolved && { "data-resolved": "true" }),
+          class: resolved ? 'comment-mark resolved' : 'comment-mark',
+          'data-comment-id': commentId,
+          ...(resolved && { 'data-resolved': 'true' }),
         }),
         0,
       ];
     }
 
-    const elem = document.createElement("span");
+    const elem = document.createElement('span');
 
     Object.entries(
-      mergeAttributes(this.options.HTMLAttributes, HTMLAttributes)
+      mergeAttributes(this.options.HTMLAttributes, HTMLAttributes),
     ).forEach(([attr, val]) => elem.setAttribute(attr, val));
 
-    // Add resolved class if the comment is resolved
     if (resolved) {
-      elem.classList.add("resolved");
+      elem.classList.add('resolved');
     }
 
-    elem.addEventListener("click", (e) => {
+    elem.addEventListener('click', (e) => {
       const selection = document.getSelection();
-      if (selection.type === "Range") return;
+      if (selection.type === 'Range') return;
 
       this.storage.activeCommentId = commentId;
-      const commentEventClick = new CustomEvent("ACTIVE_COMMENT_EVENT", {
+      const commentEventClick = new CustomEvent('ACTIVE_COMMENT_EVENT', {
         bubbles: true,
         detail: { commentId, resolved },
       });

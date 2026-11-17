@@ -88,10 +88,6 @@ export class ConfiguredKnowledgeImageUnderstandingProvider implements KnowledgeI
     }
   }
 
-  /**
-   * A non-secret identity used to invalidate extraction caches when the model
-   * route changes. API keys are deliberately excluded.
-   */
   async getCacheIdentity(): Promise<string> {
     const config = await this.configService.getResolvedConfig('image');
     const driver = config.driver?.trim().toLowerCase();
@@ -190,7 +186,6 @@ export class ConfiguredKnowledgeImageUnderstandingProvider implements KnowledgeI
     return { model, config };
   }
 }
-
 
 function validateInput(input: KnowledgeImageUnderstandingInput): void {
   if (

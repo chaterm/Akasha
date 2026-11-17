@@ -39,7 +39,6 @@ export function SearchSpotlight({ spaceId }: SearchSpotlightProps) {
     contentType: "page",
   });
 
-  // Build unified search params
   const searchParams = useMemo(() => {
     const params: any = {
       query: debouncedSearchQuery,
@@ -68,7 +67,6 @@ export function SearchSpotlight({ spaceId }: SearchSpotlightProps) {
     return params;
   }, [debouncedSearchQuery, filters]);
 
-  // Determine result type for rendering
   const isAttachmentSearch = filters.contentType === "attachment";
 
   const attachmentQuery = useUnifiedSearch(searchParams);
@@ -96,7 +94,6 @@ export function SearchSpotlight({ spaceId }: SearchSpotlightProps) {
   const recentVisits =
     recentVisitPages?.pages.flatMap((page) => page.items) ?? [];
 
-  // 滚动到列表底部时，按当前模式加载下一页。
   const handleBottomReached = () => {
     if (isRecentMode) {
       if (hasMoreRecentVisits && !isFetchingMoreRecentVisits) {
@@ -189,7 +186,6 @@ export function SearchSpotlight({ spaceId }: SearchSpotlightProps) {
             列表底部会被外层 overflow:hidden 裁掉，导致滚不到底；改为占满剩余空间 */}
         <Spotlight.ActionsList
           style={{ maxHeight: "none", minHeight: 0 }}
-          // 运行时会透传给内部的 ScrollArea.Autosize，类型定义未声明
           {...({ onBottomReached: handleBottomReached } as object)}
         >
           {isRecentMode ? (

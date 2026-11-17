@@ -31,15 +31,12 @@ export const handlePaste = (
   const clipboardData = event.clipboardData.getData("text/plain");
 
   if (INTERNAL_LINK_REGEX.test(clipboardData)) {
-    // we have to do this validation here to allow the default link extension to takeover if needs be
     event.preventDefault();
     const url = clipboardData.trim();
     const { from: pos, empty } = editor.state.selection;
     const match = INTERNAL_LINK_REGEX.exec(url);
 
-    // pasted link must be from the same workspace/domain and must not be on a selection
     if (!empty || match[2] !== window.location.host) {
-      // allow the default link extension to handle this
       return false;
     }
 
@@ -111,8 +108,7 @@ async function reuploadPastedAttachments(
     const match = ATTACHMENT_URL_RE.exec(src);
     if (!match) return;
 
-    const fileName =
-      node.attrs.name || src.split("/").pop() || "file";
+    const fileName = node.attrs.name || src.split("/").pop() || "file";
 
     pastedNodes.push({
       pos,
@@ -183,37 +179,40 @@ async function reuploadPastedAttachments(
 
   if (reuploadResults.size === 0) return;
 
-  editor.chain().command(({ tr }) => {
-    const sorted = [...nodesToReupload].sort((a, b) => b.pos - a.pos);
+  editor
+    .chain()
+    .command(({ tr }) => {
+      const sorted = [...nodesToReupload].sort((a, b) => b.pos - a.pos);
 
-    for (const pastedNode of sorted) {
-      const result = reuploadResults.get(pastedNode.attachmentId);
-      if (!result) continue;
+      for (const pastedNode of sorted) {
+        const result = reuploadResults.get(pastedNode.attachmentId);
+        if (!result) continue;
 
-      const node = tr.doc.nodeAt(pastedNode.pos);
-      if (!node || node.attrs.attachmentId !== pastedNode.attachmentId)
-        continue;
+        const node = tr.doc.nodeAt(pastedNode.pos);
+        if (!node || node.attrs.attachmentId !== pastedNode.attachmentId)
+          continue;
 
-      const newAttrs = { ...node.attrs };
-      newAttrs.attachmentId = result.id;
+        const newAttrs = { ...node.attrs };
+        newAttrs.attachmentId = result.id;
 
-      if (newAttrs.src) {
-        newAttrs.src = `/api/files/${result.id}/${result.fileName}`;
+        if (newAttrs.src) {
+          newAttrs.src = `/api/files/${result.id}/${result.fileName}`;
+        }
+        if (newAttrs.url) {
+          newAttrs.url = `/api/files/${result.id}/${result.fileName}`;
+        }
+        if (pastedNode.nodeTypeName === "attachment") {
+          newAttrs.name = result.fileName;
+          newAttrs.mime = result.mimeType;
+          newAttrs.size = result.fileSize;
+        }
+
+        tr.setNodeMarkup(pastedNode.pos, undefined, newAttrs);
       }
-      if (newAttrs.url) {
-        newAttrs.url = `/api/files/${result.id}/${result.fileName}`;
-      }
-      if (pastedNode.nodeTypeName === "attachment") {
-        newAttrs.name = result.fileName;
-        newAttrs.mime = result.mimeType;
-        newAttrs.size = result.fileSize;
-      }
 
-      tr.setNodeMarkup(pastedNode.pos, undefined, newAttrs);
-    }
-
-    return true;
-  }).run();
+      return true;
+    })
+    .run();
 }
 
 export const handleFileDrop = (

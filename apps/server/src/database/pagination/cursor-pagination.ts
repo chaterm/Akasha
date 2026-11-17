@@ -1,4 +1,3 @@
-// adapted from https://github.com/charlie-hadden/kysely-paginate/blob/main/src/cursor.ts - MIT
 import {
   OrderByDirection,
   OrderByModifiers,
@@ -241,8 +240,6 @@ export async function executeWithCursorPagination<
 
   const hasNextPage = rows.length > opts.perPage;
 
-  // If we fetched an extra row to determine if we have a next page, that
-  // shouldn't be in the returned results
   if (rows.length > opts.perPage) rows.pop();
 
   if (reversed) rows.reverse();

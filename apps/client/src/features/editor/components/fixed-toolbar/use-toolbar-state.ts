@@ -16,10 +16,6 @@ export interface ToolbarState {
   canRedo: boolean;
 }
 
-// Undo/redo come from either StarterKit's history or the Yjs collaboration
-// history extension. During the brief moment a page is rendered with the
-// static editor (mainExtensions only, undoRedo disabled), neither is loaded
-// and editor.can().undo/redo is undefined.
 function safeCan(editor: Editor, command: "undo" | "redo"): boolean {
   const can = editor.can() as Record<string, unknown>;
   const fn = can[command];

@@ -115,16 +115,15 @@ export class TransclusionService {
     trx?: KyselyTransaction,
   ): Promise<{ inserted: number; deleted: number }> {
     const desired = collectReferencesFromPmJson(pmJson);
-    const keyOf = (s: {
-      sourcePageId: string;
-      transclusionId: string;
-    }) => `${s.sourcePageId}::${s.transclusionId}`;
+    const keyOf = (s: { sourcePageId: string; transclusionId: string }) =>
+      `${s.sourcePageId}::${s.transclusionId}`;
     const desiredKeys = new Set(desired.map(keyOf));
 
-    const existing = await this.pageTransclusionReferencesRepo.findByReferencePageId(
-      referencePageId,
-      trx,
-    );
+    const existing =
+      await this.pageTransclusionReferencesRepo.findByReferencePageId(
+        referencePageId,
+        trx,
+      );
     const existingKeys = new Set(existing.map(keyOf));
 
     const toInsert = desired
@@ -160,11 +159,6 @@ export class TransclusionService {
     };
   }
 
-  /**
-   * Extract transclusions from each page's PM JSON and bulk-insert into
-   * `page_transclusions` in a single statement. Intended for brand-new pages
-   * (e.g. duplication, import) where there is nothing to diff against.
-   */
   async insertTransclusionsForPages(
     pages: Array<{ id: string; workspaceId: string; content: unknown }>,
     trx?: KyselyTransaction,
@@ -186,11 +180,6 @@ export class TransclusionService {
     return { inserted: rows.length };
   }
 
-  /**
-   * Walk each page's PM JSON for `transclusionReference` nodes and bulk-insert
-   * one row per `(referencePage, source, target)`. For brand-new pages
-   * (duplication, import) where there is nothing to diff against.
-   */
   async insertReferencesForPages(
     pages: Array<{ id: string; workspaceId: string; content: unknown }>,
     trx?: KyselyTransaction,
@@ -217,13 +206,6 @@ export class TransclusionService {
     return { inserted: rows.length };
   }
 
-  /**
-   * Resolve viewer access for source page IDs supplied by an authenticated
-   * caller. Restricts candidates to pages the viewer can see at the space
-   * level before applying page-level restrictions, so a workspace member
-   * cannot read a sync block from a private space they don't belong to via
-   * an unrestricted source page.
-   */
   private async filterViewerAccessiblePageIds(
     pageIds: string[],
     viewerUserId: string,
@@ -272,12 +254,6 @@ export class TransclusionService {
     return this.lookupWithAccessSet(references, accessibleSet, workspaceId);
   }
 
-  /**
-   * Resolve transclusion content for the given references using a caller-supplied
-   * `accessibleSet` of source page ids. Source pages absent from the set return
-   * `no_access`. Used by the share-scoped lookup path, where access is gated by
-   * the share graph rather than the viewer's personal permissions.
-   */
   async lookupWithAccessSet(
     references: Array<{ sourcePageId: string; transclusionId: string }>,
     accessibleSet: Set<string>,
@@ -416,16 +392,6 @@ export class TransclusionService {
     return { source, references };
   }
 
-  /**
-   * Convert a `transclusionReference` into a self-contained copy on the
-   * reference page: load source content, generate fresh attachment ids, copy storage
-   * files, insert new attachment rows, return rewritten content. The caller
-   * (controller) returns the content blob to the client which then performs
-   * `editor.commands.insertContentAt(range, content)` to replace the
-   * reference node. The next Yjs save naturally cleans up the
-   * page_transclusion_references row, but we also delete it eagerly here so a
-   * crash between server response and client save doesn't leave a stale row.
-   */
   async unsyncReference(
     referencePageId: string,
     sourcePageId: string,
@@ -470,9 +436,7 @@ export class TransclusionService {
       const oldIds = copies.map((c) => c.oldAttachmentId);
       const oldRows = await this.attachmentRepo.findByIds(oldIds);
       const byOldId = new Map(
-        oldRows
-          .filter((a) => a.pageId === sourcePageId)
-          .map((a) => [a.id, a]),
+        oldRows.filter((a) => a.pageId === sourcePageId).map((a) => [a.id, a]),
       );
 
       for (const plan of copies) {
@@ -486,8 +450,8 @@ export class TransclusionService {
           await this.storageService.copy(old.filePath, newFilePath);
         } catch (err) {
           this.logger.error(
-            `unsync: failed to copy attachment ${old.id}`,
-            err as Error,
+            { attachmentId: old.id, err },
+            'Unsync: failed to copy attachment',
           );
           continue;
         }

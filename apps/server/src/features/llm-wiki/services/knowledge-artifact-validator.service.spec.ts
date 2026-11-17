@@ -393,9 +393,6 @@ describe('KnowledgeArtifactValidatorService', () => {
   });
 
   it('quarantines a fabricated chunk that wraps a real occurrence in a huge self-declared range', () => {
-    // The architect's core adversarial case: a real occurrence copied verbatim
-    // onto an unrelated chunk with a giant range that "covers" the marker. It
-    // matches no reconstructed deterministic block, so it must be rejected.
     const { input, chunk } = legitAttachmentFixture();
     const artifact = {
       ...validArtifact(),
@@ -423,8 +420,6 @@ describe('KnowledgeArtifactValidatorService', () => {
   });
 
   it('quarantines an attachment relation when the source omits serialized text (fail-closed)', () => {
-    // Without attachmentSerializedText there is no verifiable block set, so any
-    // relation riding on the source must be rejected rather than trusted.
     const { input, chunk } = legitAttachmentFixture();
     const strippedInput: CompileSpaceInput = {
       ...input,
@@ -450,14 +445,6 @@ describe('KnowledgeArtifactValidatorService', () => {
 const ATTACHMENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const ATTACHMENT_UPDATED_AT = '2026-01-01T00:00:00.000Z';
 
-/**
- * Builds a real serialized source (marker + occurrence) and runs it through the
- * production attachment-evidence builder, so the returned chunk is exactly what
- * a legitimate compile would emit. Tests then either use it as-is (accept) or
- * tamper with a single field (reject), which mirrors how the validator now
- * re-derives trust from `attachmentSerializedText` rather than trusting the
- * artifact's self-declared range.
- */
 function legitAttachmentFixture(): {
   input: CompileSpaceInput;
   chunk: NonNullable<CompiledKnowledgeArtifact['chunks']>[number];

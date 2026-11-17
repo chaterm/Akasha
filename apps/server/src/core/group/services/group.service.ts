@@ -209,14 +209,18 @@ export class GroupService {
       }
       membersByGroup
         .get(row.groupId)
-        .push({ id: row.id, name: row.name, email: row.email, avatarUrl: row.avatarUrl });
+        .push({
+          id: row.id,
+          name: row.name,
+          email: row.email,
+          avatarUrl: row.avatarUrl,
+        });
     }
 
     const SEPARATOR = '｜';
 
     groups.sort(
-      (a, b) =>
-        a.name.split(SEPARATOR).length - b.name.split(SEPARATOR).length,
+      (a, b) => a.name.split(SEPARATOR).length - b.name.split(SEPARATOR).length,
     );
 
     const nodeMap = new Map<string, any>();
@@ -226,9 +230,7 @@ export class GroupService {
       const segments = group.name.split(SEPARATOR);
       const displayName = segments[segments.length - 1];
       const parentKey =
-        segments.length > 1
-          ? segments.slice(0, -1).join(SEPARATOR)
-          : '';
+        segments.length > 1 ? segments.slice(0, -1).join(SEPARATOR) : '';
 
       const node = {
         id: group.id,
@@ -306,7 +308,6 @@ export class GroupService {
       this.spaceMemberRepo.getSpaceIdsByGroupId(groupId),
     ]);
 
-    // TODO: use queue instead
     await executeTx(this.db, async (trx) => {
       await this.groupRepo.delete(groupId, workspaceId, { trx });
 

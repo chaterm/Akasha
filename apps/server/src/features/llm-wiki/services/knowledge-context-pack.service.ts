@@ -16,11 +16,6 @@ export type KnowledgeCitation = {
   url: string;
 };
 
-/**
- * Image attached to a query-API citation. Only produced at the
- * `/api/llm-wiki/query` response boundary; never part of the shared
- * `KnowledgeCitation` / `KnowledgeSourceWindow` / evidence types.
- */
 export type KnowledgeQueryCitationImage = {
   attachmentId: string;
   fileName: string;
@@ -29,12 +24,6 @@ export type KnowledgeQueryCitationImage = {
   description: string;
 };
 
-/**
- * Citation shape returned exclusively by `/api/llm-wiki/query`. Derives from
- * the base `KnowledgeCitation` and always carries an `images` array (possibly
- * empty). Kept separate so adding images never leaks into `sourceWindows`,
- * `retrievedSources` or `citationEvidence`.
- */
 export type KnowledgeQueryCitation = KnowledgeCitation & {
   images: KnowledgeQueryCitationImage[];
 };
@@ -48,11 +37,8 @@ export type KnowledgeSourceWindow = KnowledgeCitation & {
 export type KnowledgeContextPrimary = {
   id: string;
   kind: 'capsule' | 'chunk';
-  /** chunk 所属的 knowledge page；capsule 本身就是 page，取自身 id。 */
   knowledgePageId: string;
-  /** 检索路径：直接召回还是图扩展。与 retrievalReasons 的匹配方式正交。 */
   origin: KnowledgeRetrievalOrigin;
-  /** 授权路径：策略放行还是最终兜底。同样与匹配方式正交。 */
   authorizationMode: KnowledgeRetrievalAuthorizationMode;
   title: string;
   text: string;

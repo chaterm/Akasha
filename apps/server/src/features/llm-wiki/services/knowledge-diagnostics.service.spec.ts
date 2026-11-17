@@ -4,6 +4,7 @@ import {
   classifyRunPageError,
   classifyRunQueueState,
   sanitizeRunPageErrorDetail,
+  visibleRunPageErrorCode,
 } from './knowledge-diagnostics.service';
 import { QueueJob } from '../../../integrations/queue/constants';
 
@@ -18,7 +19,6 @@ describe('scalable Knowledge Run diagnostics', () => {
             state === 'waiting'
               ? QueueJob.KNOWLEDGE_FINALIZE_SPACE
               : QueueJob.KNOWLEDGE_COMPILE_SPACE_TEXT,
-          // Deliberately not used: the Run may have advanced before the Text ACK.
           data: { phase: 'finalize' },
           timestamp: 100,
           processedOn: state === 'waiting' ? undefined : 200,
@@ -160,6 +160,91 @@ describe('scalable Knowledge Run diagnostics', () => {
     expect(sanitizeRunPageErrorDetail('provider\u0000error\u001f detail')).toBe(
       'provider error detail',
     );
+  });
+
+  describe('stale error suppression on a fully settled page', () => {
+    const settled = {
+      status: 'succeeded',
+      imageStatus: 'not_required',
+      mergeStatus: 'succeeded',
+    };
+
+    it('hides an error left behind by a merge that later succeeded', () => {
+      expect(
+        visibleRunPageErrorCode({ ...settled, errorCode: 'merge_timeout' }),
+      ).toBeNull();
+    });
+
+    it('hides the informational unchanged marker a reused page carries', () => {
+      expect(
+        visibleRunPageErrorCode({ ...settled, errorCode: 'unchanged' }),
+      ).toBeNull();
+    });
+
+    it('keeps the error while the merge is still retrying', () => {
+      expect(
+        visibleRunPageErrorCode({
+          status: 'running',
+          imageStatus: 'not_required',
+          mergeStatus: 'queued',
+          errorCode: 'merge_timeout',
+        }),
+      ).toBe('merge_timeout');
+    });
+
+    it('keeps the error of a terminally failed merge under a succeeded page', () => {
+      expect(
+        visibleRunPageErrorCode({
+          status: 'succeeded',
+          imageStatus: 'succeeded',
+          mergeStatus: 'failed',
+          errorCode: 'merge_job_attempts_exhausted',
+        }),
+      ).toBe('merge_job_attempts_exhausted');
+    });
+
+    it('keeps the error when a merge was skipped, which degrades quality', () => {
+      expect(
+        visibleRunPageErrorCode({
+          status: 'succeeded',
+          imageStatus: 'succeeded',
+          mergeStatus: 'skipped',
+          errorCode: 'merge_snapshot_read_failed',
+        }),
+      ).toBe('merge_snapshot_read_failed');
+    });
+
+    it('keeps the error when images failed or only partly succeeded', () => {
+      for (const imageStatus of ['failed', 'partial']) {
+        expect(
+          visibleRunPageErrorCode({
+            status: 'succeeded',
+            imageStatus,
+            mergeStatus: 'succeeded',
+            errorCode: 'image_extraction_failed',
+          }),
+        ).toBe('image_extraction_failed');
+      }
+    });
+
+    it('keeps the error of a failed or skipped page', () => {
+      for (const status of ['failed', 'skipped']) {
+        expect(
+          visibleRunPageErrorCode({
+            status,
+            imageStatus: 'not_required',
+            mergeStatus: 'not_required',
+            errorCode: 'page_timeout',
+          }),
+        ).toBe('page_timeout');
+      }
+    });
+
+    it('returns null when there was never an error', () => {
+      expect(
+        visibleRunPageErrorCode({ ...settled, errorCode: null }),
+      ).toBeNull();
+    });
   });
 
   it('reports configured worker options without treating CLIENT LIST as scheduling authority', async () => {

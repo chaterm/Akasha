@@ -73,8 +73,6 @@ export class SpaceController {
   ) {
     const useAdminView = isWorkspaceAdmin(user.role);
 
-    // Filter by effective access: workspace administrators manage every space,
-    // regardless of direct or group membership.
     if (
       useAdminView &&
       pagination.role &&
@@ -213,8 +211,6 @@ export class SpaceController {
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
   ) {
-    // The knowledge publish mode is a workspace-admin setting (like the
-    // knowledge diagnostics page), independent of the user's space role.
     const { spaceId, knowledgeIndexMode, ...otherFields } = updateSpaceDto;
     const updatesKnowledge = knowledgeIndexMode !== undefined;
     if (updatesKnowledge && !isWorkspaceAdmin(user.role)) {

@@ -64,7 +64,6 @@ export class ImportService {
     let prosemirrorState = null;
     let createdPage = null;
 
-    // For DOCX, we need the page ID upfront so images can reference it
     const pageId =
       fileExtension === '.docx' || fileExtension === '.pdf'
         ? uuid7()
@@ -130,10 +129,6 @@ export class ImportService {
           workspaceId: workspaceId,
           lastUpdatedById: userId,
         });
-
-        this.logger.debug(
-          `Successfully imported "${title}${fileExtension}. ID: ${createdPage.id} - SlugId: ${createdPage.slugId}"`,
-        );
       } catch (err) {
         const message = 'Failed to create imported page';
         this.logger.error(message, err);
@@ -243,8 +238,6 @@ export class ImportService {
 
   async createYdoc(prosemirrorJson: any): Promise<Buffer | null> {
     if (prosemirrorJson) {
-      // this.logger.debug(`Converting prosemirror json state to ydoc`);
-
       const ydoc = TiptapTransformer.toYdoc(
         prosemirrorJson,
         'default',
@@ -279,7 +272,6 @@ export class ImportService {
       if (title) content.shift();
     }
 
-    // ensure at least one paragraph
     if (content.length === 0) {
       content.push({
         type: 'paragraph',
@@ -340,7 +332,6 @@ export class ImportService {
     const fileTaskId = uuid7();
     const filePath = `${getFileTaskFolderPath(FileTaskType.Import, workspaceId)}/${fileTaskId}/${fileNameWithExt}`;
 
-    // upload file
     const { stream, getBytesRead } = createByteCountingStream(file.file);
 
     await this.storageService.upload(filePath, stream);

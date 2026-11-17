@@ -1,25 +1,13 @@
 import { useCallback, useRef, useState, type PointerEvent } from "react";
 
-/**
- * Pointer-event drag with a floating preview. Native HTML5 drag and drop is
- * avoided on purpose: ProseMirror listens to it (dropcursor, drop handling)
- * and its drag image cannot be styled.
- *
- * `onMove` / `onDrop` get the pointer position; callers hit-test with
- * `document.elementsFromPoint` (the preview has `pointer-events: none`).
- * A press that moves less than `threshold` px stays a normal click.
- */
 export interface PointerDragOptions<T> {
   onStart?: (data: T) => void;
   onMove: (data: T, x: number, y: number) => void;
   onDrop: (data: T, x: number, y: number) => void;
   onCancel?: (data: T) => void;
-  /** Container scrolled when the pointer nears its edges. */
   scrollContainer?: () => HTMLElement | null;
   threshold?: number;
-  /** Preview rotation in degrees. */
   tilt?: number;
-  /** Page cursor while dragging. */
   cursor?: string;
 }
 
@@ -39,7 +27,6 @@ function createPreview(source: HTMLElement, tilt: number): HTMLElement {
   const rect = source.getBoundingClientRect();
   let preview = source.cloneNode(true) as HTMLElement;
   if (source.tagName === "TR") {
-    // A bare <tr> loses its cell layout outside a table.
     const table = document.createElement("table");
     table.className = source.closest("table")?.className ?? "";
     table.style.tableLayout = "fixed";
@@ -73,7 +60,6 @@ function createPreview(source: HTMLElement, tilt: number): HTMLElement {
   return preview;
 }
 
-/** Forces one cursor on the whole page; remove the returned element to undo. */
 function lockCursor(cursor?: string): HTMLStyleElement | null {
   if (!cursor) return null;
   const style = document.createElement("style");
@@ -129,7 +115,6 @@ export function usePointerDrag<T>(options: PointerDragOptions<T>) {
           )
             return;
           preview = createPreview(element, optionsRef.current.tilt ?? 0);
-          // No text selection while dragging across the page.
           document.body.style.userSelect = "none";
           cursorStyle = lockCursor(optionsRef.current.cursor);
           setDragging(data);
@@ -149,7 +134,6 @@ export function usePointerDrag<T>(options: PointerDragOptions<T>) {
         const wasDragging = !!preview;
         cleanup();
         if (!wasDragging) return;
-        // The click that follows a drag must not open or select anything.
         window.addEventListener(
           "click",
           (click) => {
@@ -178,7 +162,6 @@ export function usePointerDrag<T>(options: PointerDragOptions<T>) {
   return { onPointerDown, dragging };
 }
 
-/** Index of the list item under the pointer, split at each item's midpoint ("insert before" index). */
 export function hitTestList(
   container: HTMLElement | null,
   selector: string,
@@ -197,7 +180,6 @@ export function hitTestList(
   return index < 0 ? items.length : index;
 }
 
-/** The closest ancestor (under the pointer) matching `selector`. */
 export function elementAt(
   x: number,
   y: number,

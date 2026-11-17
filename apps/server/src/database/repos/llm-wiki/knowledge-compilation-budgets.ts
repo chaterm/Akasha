@@ -1,4 +1,3 @@
 export const PAGE_ATTEMPT_BUDGET = 2;
-// Total attempts, including the initial execution.
 export const MERGE_ATTEMPT_BUDGET = 3;
 export const MERGE_TRANSPORT_RECOVERY_BUDGET = 3;

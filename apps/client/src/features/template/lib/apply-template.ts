@@ -1,10 +1,5 @@
 import { Editor, JSONContent } from "@tiptap/core";
 
-/**
- * 把模板正文放进当前页面编辑器：
- * - 页面为空：整体替换，并在标题为空时带上模板标题；
- * - 页面非空：在光标处插入模板正文。
- */
 export function applyTemplateToEditor(
   editor: Editor,
   titleEditor: Editor | null,

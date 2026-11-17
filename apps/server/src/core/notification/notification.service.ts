@@ -6,7 +6,11 @@ import { InsertableNotification } from '@akasha/db/types/entity.types';
 import { PaginationOptions } from '@akasha/db/pagination/pagination-options';
 import { WsGateway } from '../../ws/ws.gateway';
 import { MailService } from '../../integrations/mail/mail.service';
-import { NotificationTab, NotificationType, NotificationTypeToSettingKey } from './notification.constants';
+import {
+  NotificationTab,
+  NotificationType,
+  NotificationTypeToSettingKey,
+} from './notification.constants';
 import { PagePermissionRepo } from '@akasha/db/repos/page/page-permission.repo';
 
 @Injectable()
@@ -52,9 +56,7 @@ export class NotificationService {
       type,
     );
 
-    const pageIds = result.items
-      .map((n: any) => n.pageId)
-      .filter(Boolean);
+    const pageIds = result.items.map((n: any) => n.pageId).filter(Boolean);
 
     if (pageIds.length > 0) {
       const accessiblePageIds =
@@ -134,9 +136,9 @@ export class NotificationService {
         notificationId,
       });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
       this.logger.error(
-        `Failed to queue email for notification ${notificationId}: ${message}`,
+        { notificationId, err },
+        'Failed to queue email for notification',
       );
     }
   }

@@ -14,8 +14,8 @@ import {
   IAuditService,
 } from '../../integrations/audit/audit.service';
 import { AuditEvent, AuditResource } from '../../common/events/audit-events';
+import { WithJobContext } from '../../common/logger/with-job-context.decorator';
 
-/** Each effect has an independent durable checkpoint; the producer never emits early. */
 @Injectable()
 export class WeeklyReportOutboxService {
   private readonly logger = new Logger(WeeklyReportOutboxService.name);
@@ -34,6 +34,7 @@ export class WeeklyReportOutboxService {
   ) {}
 
   @Interval('weekly-report-outbox', 5000)
+  @WithJobContext('weekly-report-outbox')
   async drain() {
     if (this.running) return;
     this.running = true;
@@ -140,8 +141,6 @@ export class WeeklyReportOutboxService {
               .where('id', '=', entry.id)
               .execute();
           } catch (error) {
-            // SQL failures abort the transaction. Let the outer handler roll it back;
-            // queue/service failures can safely checkpoint a delayed retry here.
             if ((error as any)?.code?.match?.(/^[0-9A-Z]{5}$/)) throw error;
             await trx
               .updateTable('weeklyReportOutbox')
@@ -155,7 +154,8 @@ export class WeeklyReportOutboxService {
               .where('id', '=', entry.id)
               .execute();
             this.logger.warn(
-              `Weekly report ${entry.effect} delivery will retry (${entry.id})`,
+              { entryId: entry.id, effect: entry.effect },
+              'Weekly report delivery will retry',
             );
           }
           return true;

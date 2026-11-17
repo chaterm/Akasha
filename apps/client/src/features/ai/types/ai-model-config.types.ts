@@ -11,7 +11,6 @@ export type ThinkingMode = "qwen" | "openai";
 export type ReasoningEffort = "low" | "medium" | "high";
 
 export interface AiModelConfigParameters {
-  // Embedding tuning.
   dimension?: number;
   supportsMrl?: boolean;
   temperature?: number;
@@ -36,7 +35,6 @@ export interface UpdateAiModelConfigInput {
   provider: AiModelProvider;
   model: string;
   baseUrl?: string;
-  // Omit to keep the stored key; any provided value replaces it.
   apiKey?: string;
   parameters?: AiModelConfigParameters;
 }

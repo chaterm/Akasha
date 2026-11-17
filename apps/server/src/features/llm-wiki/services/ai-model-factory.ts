@@ -2,12 +2,6 @@ import { EmbeddingModel, LanguageModel } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { ResolvedAiModelConfig } from './ai-model-config.service';
 
-/**
- * Builds a Vercel AI SDK language model from a resolved config. Centralizes the
- * driver switch that was previously duplicated across every provider service.
- * Returns undefined when the config is incomplete or the driver is unknown, so
- * each caller can raise its own feature-specific error.
- */
 export function createLanguageModelFromConfig(
   config: ResolvedAiModelConfig,
   name: string,

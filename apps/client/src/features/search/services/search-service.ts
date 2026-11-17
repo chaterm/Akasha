@@ -30,7 +30,6 @@ export async function searchSuggestions(
   return req.data;
 }
 
-/** Title, icon and link of the pages the current user can read; others are left out. */
 export async function resolvePages(pageIds: string[]): Promise<IPage[]> {
   const req = await api.post<{ pages: IPage[] }>("/search/resolve-pages", {
     pageIds,

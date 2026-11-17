@@ -46,7 +46,6 @@ export const formatBytes = (bytes: number): string => {
   const adjustedUnitIndex = Math.max(unitIndex, 0);
   const adjustedSize = kilobytes / Math.pow(unitSize, adjustedUnitIndex);
 
-  // Use one decimal for KB and no decimals for MB or higher
   const precision = adjustedUnitIndex === 0 ? 1 : 0;
 
   return `${adjustedSize.toFixed(precision)} ${units[adjustedUnitIndex]}`;
@@ -60,13 +59,8 @@ export async function svgStringToFile(
   return new File([blob], fileName, { type: "image/svg+xml" });
 }
 
-// Convert a string holding Base64 encoded UTF-8 data into a proper UTF-8 encoded string
-// as a replacement for `atob`.
-// based on: https://developer.mozilla.org/en-US/docs/Glossary/Base64
 function decodeBase64(base64: string): string {
-  // convert string to bytes
   const bytes = Uint8Array.from(atob(base64), (m) => m.codePointAt(0));
-  // properly decode bytes to UTF-8 encoded string
   return new TextDecoder().decode(bytes);
 }
 
@@ -103,7 +97,6 @@ export const normalizeUrl = (url: string): string => {
 
 const _isApple = /mac|iphone|ipad|ipod/i.test(navigator.platform ?? "");
 
-/// Cmd key on Apple devices, Ctrl key everywhere else
 export function platformModifierKey(event: KeyboardEvent): boolean {
   return _isApple ? event.metaKey : event.ctrlKey;
 }

@@ -57,17 +57,8 @@ export class PageListener {
 
     await this.searchQueue.add(QueueJob.PAGE_UPDATED, { pageIds });
 
-    // A collaboration content save carries skipKnowledgeCompile and enqueues
-    // PAGE_CONTENT_UPDATED only after its transaction commits. That post-commit
-    // handler owns ACL reindex and compile scheduling, so running either here
-    // would observe caller-owned, potentially uncommitted state and duplicate
-    // the ACL work. A content-only save cannot move a page between Spaces, so
-    // source retirement is intentionally unnecessary on this branch.
     if (!event.skipKnowledgeCompile) {
       await this.enqueueKnowledgeAccessReindex(workspaceId, pageIds);
-      // A regular edit is a cheap no-op here. A cross-Space move is detected by
-      // comparing current page ownership with persisted contribution scopes and
-      // retires only the old-Space contributions.
       await this.enqueueKnowledgeSourceRetirement(workspaceId, pageIds);
       await this.scheduleKnowledgeRuns(workspaceId, pageIds, 'page_updated');
     }
@@ -108,8 +99,6 @@ export class PageListener {
     );
     await this.enqueueKnowledgeAccessReindex(workspaceId, pageIds);
     if (await this.compileWindowRepo?.isEnabled(workspaceId)) {
-      // With the night window on, a restore queues like an edit and the
-      // promotion gate decides when it runs.
       await this.scheduleKnowledgeRuns(workspaceId, pageIds, 'page_restored');
       return;
     }
@@ -158,8 +147,6 @@ export class PageListener {
         sourcePageIds: [...new Set(pageIds)],
       },
       {
-        // PageRepo can emit from a caller-owned transaction. A small delay
-        // makes the worker observe the committed delete/move state.
         delay: 1_000,
         attempts: 5,
         backoff: { type: 'exponential', delay: 2_000 },
@@ -192,8 +179,6 @@ export class PageListener {
   ): Promise<void> {
     if (!workspaceId || pageIds.length === 0) return;
 
-    // The one-hour quiet period only applies without a night window; with
-    // one, the window alone decides when queued pages compile.
     const quietPeriodMs = (await this.compileWindowRepo?.isEnabled(workspaceId))
       ? 0
       : KNOWLEDGE_PAGE_COMPILE_QUIET_PERIOD_MS;

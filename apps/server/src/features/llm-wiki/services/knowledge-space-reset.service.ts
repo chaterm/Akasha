@@ -58,8 +58,6 @@ export class KnowledgeSpaceResetService {
       throw new NotFoundException('Space not found.');
     }
 
-    // PostgreSQL has committed at this point. Redis cleanup is exact-ID only;
-    // active jobs remain and are stopped by the publication fence.
     await this.removeSupersededJobs(result.supersededJobIds);
     await this.compilation.dispatchPending();
     return {
@@ -75,16 +73,13 @@ export class KnowledgeSpaceResetService {
           const job = await queue.getJob(jobId);
           if (!job) continue;
           const state: string = await job.getState();
-          // Priority Space jobs live in BullMQ's prioritized set rather than
-          // wait. Every non-active exact job is safe to remove after the DB
-          // fence commits; a locked active job must finish and observe the
-          // superseded generation/token fence.
           if (state !== 'active') await job.remove();
           break;
         }
       } catch {
         this.logger.warn(
-          `Unable to cancel superseded knowledge job ${jobId}; publication fencing remains authoritative.`,
+          { jobId },
+          'Unable to cancel superseded knowledge job; fencing remains authoritative',
         );
       }
     }

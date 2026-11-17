@@ -118,7 +118,6 @@ const MentionList = forwardRef<any, MentionListProps>((props, ref) => {
       }
 
       setRenderItems(items);
-      // update editor storage
       //@ts-ignore
       props.editor.storage.mentionItems = items;
     }
@@ -238,7 +237,6 @@ const MentionList = forwardRef<any, MentionListProps>((props, ref) => {
       }
 
       if (event.key === "Enter") {
-        // don't trap the enter button if there are no items to render
         if (renderItems.length === 0) {
           return false;
         }

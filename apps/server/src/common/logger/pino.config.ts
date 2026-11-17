@@ -4,27 +4,9 @@ import { Options } from 'pino-http';
 import { DestinationStream, stdSerializers, stdTimeFunctions } from 'pino';
 import { redactSensitiveUrl } from '../helpers/utils';
 import { resolveRequestId } from './request-id';
+import { getJobContext } from './job-context';
+import { IGNORED_LOG_CONTEXTS } from './ignored-contexts';
 
-const CONTEXTS_TO_IGNORE = [
-  'InstanceLoader',
-  'RoutesResolver',
-  'RouterExplorer',
-  'LegacyRouteConverter',
-  'WebSocketsController',
-];
-
-/**
- * Backstop for business code that explicitly logs a sensitive value
- * (`logger.info({ token })`) — *not* HTTP header/body masking.
- *
- * `redact` runs on the final log object, after serializers. The `req` serializer
- * below only emits method/url/ip/userAgent, and pino-http does not record request
- * bodies, so `req.headers.*` / `req.body.*` paths could never match and are
- * deliberately omitted rather than kept as dead config.
- *
- * `*` is a single-level wildcard: these paths cover depth 1 (`{ token }`) and
- * depth 2 (`{ user: { token } }`) only, not `{ req: { body: { password } } }`.
- */
 const REDACT_PATHS = [
   'password',
   'token',
@@ -56,13 +38,17 @@ const REDACT_PATHS = [
   'err.details.*.cookie',
 ];
 
-/**
- * @param serviceName value of the `service` base field, used to tell the main API
- *   and the collaboration server apart in aggregated logs.
- * @param destination test-only stream for capturing output. pino rejects
- *   `transport` and a destination stream together, so passing one disables
- *   `transport`.
- */
+const LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal'];
+
+export function resolveLogLevel(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = env.LOG_LEVEL?.trim().toLowerCase();
+  if (explicit && LOG_LEVELS.includes(explicit)) return explicit;
+
+  const isProduction = env.NODE_ENV?.toLowerCase() === 'production';
+  const isDebugMode = env.DEBUG_MODE?.toLowerCase() === 'true';
+  return isProduction && !isDebugMode ? 'info' : 'debug';
+}
+
 export function createPinoConfig(
   serviceName: string,
   destination?: DestinationStream,
@@ -71,16 +57,7 @@ export function createPinoConfig(
   const isDebugMode = process.env.DEBUG_MODE?.toLowerCase() === 'true';
   const logHttp = process.env.LOG_HTTP?.toLowerCase() === 'true';
 
-  const level = isProduction && !isDebugMode ? 'info' : 'debug';
-
   const autoLogging = {
-    // Reads `originalUrl`, not `url`: Nest mounts middleware through
-    // @fastify/middie, which strips the mount prefix from `req.url` for the
-    // duration of the middleware, so `ignore` would only ever see `/` or
-    // `/live` and never match. middie sets `originalUrl` to the untouched path
-    // before running middlewares, and Nest's own adapter routes on it the same
-    // way. (The `req` serializer runs later, at onResFinished, once `req.url`
-    // has been restored — which is why logged URLs still look complete.)
     ignore: (req) => {
       const originalUrl: string = req.originalUrl ?? req.url ?? '';
       const path = originalUrl.split('?')[0];
@@ -89,10 +66,8 @@ export function createPinoConfig(
   };
 
   const options: Options = {
-    level,
+    level: resolveLogLevel(),
     timestamp: stdTimeFunctions.isoTime,
-    // An explicit `base` replaces pino's default bindings, so pid/hostname have
-    // to be restated here to keep them in production output.
     base: {
       service: serviceName,
       env: process.env.NODE_ENV ?? '',
@@ -100,16 +75,12 @@ export function createPinoConfig(
       hostname: hostname(),
     },
     redact: { paths: REDACT_PATHS, censor: '[REDACTED]' },
-    // Resolved from the request (cached on it), never from `cls.getId()`:
-    // pino-http calls customProps twice — once in `loggingMiddleware` for
-    // request-scoped business logs, once in `onResFinished` for the access log.
-    // The second call runs on the `finish` event, where the CLS
-    // AsyncLocalStorage context is not guaranteed to still be live. Reading the
-    // id off the request makes both evaluations agree and removes any dependency
-    // on the CLS middleware being registered before the pino middleware.
     customProps: (req) => ({ requestId: resolveRequestId(req) }),
-    // Keeps pino's own `req.id` identical to the `requestId` field.
     genReqId: (req) => resolveRequestId(req),
+    mixin: () => {
+      const job = getJobContext();
+      return job ? { ...job } : {};
+    },
     transport:
       !isProduction && !destination
         ? {
@@ -131,7 +102,10 @@ export function createPinoConfig(
           for (const arg of inputArgs) {
             if (typeof arg === 'object' && arg !== null && 'context' in arg) {
               const context = (arg as Record<string, unknown>)['context'];
-              if (typeof context === 'string' && CONTEXTS_TO_IGNORE.includes(context)) {
+              if (
+                typeof context === 'string' &&
+                IGNORED_LOG_CONTEXTS.includes(context)
+              ) {
                 return;
               }
             }
@@ -150,28 +124,6 @@ export function createPinoConfig(
       res: (res) => ({
         statusCode: res.statusCode,
       }),
-      // Real Errors keep pino's standard {type,message,stack} treatment; objects
-      // we shaped ourselves (AllExceptionsFilter's 4xx payload) pass through
-      // untouched, so a deliberately stack-free err stays stack-free.
-      //
-      // Two call paths reach this, and they hand over different things:
-      //
-      //  - Out of request, via PinoLogger's own pino instance: the raw value.
-      //  - In request, via pino-http: pino-http *wraps* rather than replaces a
-      //    custom err serializer (`pino-http/logger.js:35` ->
-      //    `wrapErrorSerializer`, i.e. `ours(stdErrSerializer(err))`), so the
-      //    standard serializer has already run. Because `isErrorLike` is only
-      //    `typeof err.message === 'string'`, it rebuilds our plain object on
-      //    pinoErrProto — overwriting `type` with `'Object'` and adding
-      //    `stack: ''`. It also stashes the untouched original on a
-      //    non-enumerable `raw`, which is the only way back to it.
-      //
-      // Hence: recover `raw` when it is not an Error, else defer to the standard
-      // shape. Note `wrapSerializers: false` would also stop the rewriting, but
-      // it unwraps the req serializer too — that one currently receives the
-      // std-serialized request (`ip` undefined, `remoteAddress` set), and
-      // unwrapping would flip the logged IP to `req.ip`, i.e. the
-      // X-Forwarded-For client address under `trustProxy`. Out of scope here.
       err: (err) => {
         if (err instanceof Error) return stdSerializers.err(err);
         const raw = (err as { raw?: unknown })?.raw;
@@ -184,13 +136,10 @@ export function createPinoConfig(
       if (res.statusCode >= 400) return 'warn';
       return 'info';
     },
-    // Access logs are always on in production; other environments opt in via LOG_HTTP.
     autoLogging: isProduction || logHttp ? autoLogging : false,
   };
 
   return {
-    // `Params`-level flag (not a pinoHttp option): without it PinoLogger.assign()
-    // skips the response logger and the access log loses workspaceId/userId.
     assignResponse: true,
     pinoHttp: destination ? [options, destination] : options,
   };

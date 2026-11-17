@@ -101,8 +101,6 @@ export function useChatStream(
     setIsRetryable(session.isRetryable);
   }, []);
 
-  // Switch the visible transcript without cancelling streams belonging to
-  // other chats. Each session keeps its own optimistic and streaming state.
   useEffect(() => {
     const key = chatSessionKey(chatId);
     let session = sessionsRef.current.get(key);
@@ -115,15 +113,18 @@ export function useChatStream(
     syncActiveSession(session);
   }, [chatId, syncActiveSession]);
 
-  const hydrateFromServer = useCallback((msgs: AiChatMessage[]) => {
-    const forId = currentChatIdRef.current;
-    if (!forId) return;
-    const session = sessionsRef.current.get(chatSessionKey(forId));
-    if (!session || session.hydrated || session.isStreaming) return;
-    session.hydrated = true;
-    session.messages = msgs;
-    syncActiveSession(session);
-  }, [syncActiveSession]);
+  const hydrateFromServer = useCallback(
+    (msgs: AiChatMessage[]) => {
+      const forId = currentChatIdRef.current;
+      if (!forId) return;
+      const session = sessionsRef.current.get(chatSessionKey(forId));
+      if (!session || session.hydrated || session.isStreaming) return;
+      session.hydrated = true;
+      session.messages = msgs;
+      syncActiveSession(session);
+    },
+    [syncActiveSession],
+  );
 
   const reconcileFromServer = useCallback(
     async (targetChatId: string) => {

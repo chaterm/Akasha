@@ -8,11 +8,7 @@ const RUN_RETENTION_DAYS = 30;
 const RUN_IMAGE_BATCH_SIZE = 1_000;
 const RUN_PAGE_BATCH_SIZE = 1_000;
 const RUN_BATCH_SIZE = 100;
-// Stale KnowledgePages keep their stable id so a later compile can revive them
-// in place. After this grace period revival is unlikely and the rows (plus
-// their cascaded chunks/sections/links) are only dead weight.
 const STALE_ARTIFACT_RETENTION_DAYS = 30;
-// Each KnowledgePage cascades to roughly ten child rows; keep transactions short.
 const STALE_ARTIFACT_BATCH_SIZE = 200;
 
 export type KnowledgeRunRetentionBatchResult = {
@@ -25,11 +21,6 @@ export type KnowledgeRunRetentionBatchResult = {
 export type KnowledgeStaleArtifactPurgeResult = {
   deletedKnowledgePages: number;
   danglingLinks: number;
-  /**
-   * True when this batch claimed nothing but eligible pages still exist, i.e.
-   * they are locked by a concurrent purger. Callers should not treat the batch
-   * as "backlog empty".
-   */
   remainingLocked: boolean;
   durationMs: number;
 };
@@ -121,14 +112,6 @@ export class KnowledgeRunRetentionService {
     };
   }
 
-  /**
-   * Hard-deletes KnowledgePages that have been stale for longer than the grace
-   * period. Child rows go through FK cascades. Active inbound links are first
-   * turned back into dangling canonical references: otherwise the link FK
-   * would null the target while leaving is_dangling=false, so
-   * resolveCanonicalReferences could never re-attach them when the concept is
-   * regenerated.
-   */
   async purgeStaleArtifactsBatch(): Promise<KnowledgeStaleArtifactPurgeResult> {
     const startedAt = Date.now();
     const cutoff = new Date(
@@ -145,9 +128,6 @@ export class KnowledgeRunRetentionService {
         FOR UPDATE OF kp SKIP LOCKED
       `.execute(trx);
       if (candidates.rows.length === 0) {
-        // SKIP LOCKED cannot tell "nothing eligible" from "every eligible row
-        // is held by another purger". Check without locking so callers only
-        // stop when the backlog is actually empty.
         const remaining = await sql<{ exists: boolean }>`
           SELECT EXISTS (
             SELECT 1 FROM knowledge_pages AS kp
@@ -163,8 +143,6 @@ export class KnowledgeRunRetentionService {
       }
       const ids = sql.join(candidates.rows.map((row) => sql`${row.id}`));
 
-      // Stale inbound rows are left alone: they are purged with their own
-      // stale owner page or rewritten when that page is republished.
       const danglingLinks = await sql<{ id: string }>`
         UPDATE knowledge_links
         SET is_dangling = true, to_knowledge_page_id = NULL
@@ -173,8 +151,6 @@ export class KnowledgeRunRetentionService {
         RETURNING id
       `.execute(trx);
 
-      // Re-check staleness: the rows are locked, but keep the delete predicate
-      // self-contained so it can never remove a revived page.
       const deleted = await sql<{ id: string }>`
         DELETE FROM knowledge_pages
         WHERE id IN (${ids})
@@ -193,8 +169,6 @@ export class KnowledgeRunRetentionService {
   }
 }
 
-// Spaces with a live Run are skipped: only Runs publish (and therefore revive)
-// KnowledgePages, so this avoids racing a concurrent publish.
 function eligibleStalePage(cutoff: Date) {
   return sql<boolean>`
     kp.stale_at IS NOT NULL

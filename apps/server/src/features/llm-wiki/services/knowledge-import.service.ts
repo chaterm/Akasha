@@ -35,16 +35,12 @@ import {
 import { stableKnowledgeUuid } from './knowledge-stable-id';
 import { runKnowledgeCompilationOperation } from '../../../common/helpers/knowledge-compilation-error';
 
-// This slices every content type, not only table rows. Batching does not alter
-// individual embedding inputs, so prose/attachment vector quality is unchanged.
-// The constant is the Bailian text-embedding-v4 per-request item limit.
 const KNOWLEDGE_EMBEDDING_BATCH_SIZE =
   BAILIAN_TEXT_EMBEDDING_V4_MAX_INPUTS_PER_REQUEST;
 
 export interface KnowledgeEmbeddingReuseStats {
   reusedCount: number;
   generatedCount: number;
-  /** Stored candidates re-embedded because their profile did not match. */
   profileMismatchCount: number;
 }
 
@@ -54,7 +50,6 @@ export interface KnowledgeImportResult {
   degradedRetrievalProfiles?: string[];
   skippedReason?: 'run_superseded';
   embedding?: KnowledgeEmbeddingReuseStats;
-  /** Largest merged shared artifact in this publication, for sizing the cap. */
   largestSharedArtifact?: {
     artifactId: string;
     canonicalKey: string | null;
@@ -204,10 +199,6 @@ export class KnowledgeImportService {
       artifactsToPublish = isOriginalPagePublication
         ? [...materialized.artifacts, ...validation.accepted]
         : materialized.artifacts;
-      // Materialized artifacts union chunks from every source contribution, so
-      // they are checked one artifact at a time against the shared limit. The
-      // source-page budget above already covered this page's own output; the
-      // history of other sources must not be charged to this page.
       largestSharedArtifact = assertSharedArtifactChunkBudgets(
         operationBudget,
         materialized.artifacts,
@@ -345,9 +336,6 @@ export class KnowledgeImportService {
           provenanceKind: 'synthesis_lineage',
         })),
       );
-      // Chunk id reuses the same deterministic key as the chunk row so the
-      // relation rows publish in the same transaction; occurrence_order keeps
-      // the in-block order for repeated attachments (§6.1 / §6.2).
       const chunkAttachments = chunks.flatMap((chunk, index) =>
         (artifact.chunks?.[index]?.attachmentOccurrences ?? []).map(
           (occurrence, occurrenceOrder) => ({
@@ -560,10 +548,6 @@ export class KnowledgeImportService {
           }
 
           if (contributionPublication) {
-            // Semantic artifacts use canonical IDs, so rollout from the older
-            // deterministic compiler can otherwise leave two active summaries
-            // for one source. Stale source-owned summaries and publish the new
-            // canonical summary in the same transaction.
             await runKnowledgeCompilationOperation(
               'import.retire_source_artifacts',
               () =>
@@ -678,19 +662,6 @@ export class KnowledgeImportService {
     };
   }
 
-  /**
-   * Embeds the chunks about to be published, reusing stored vectors whose
-   * chunk id (which hashes the exact embedding input) is unchanged.
-   *
-   * The current embedding profile includes the output dimensions, which only a
-   * real provider response reveals, so it is never derived from configuration.
-   * Chunks without a stored candidate are embedded first; when every chunk has
-   * a candidate, the first one is re-embedded to learn the profile and its
-   * vector is used as its result. Only candidates whose profile equals that
-   * response profile are reused; the rest are embedded in a second pass. All
-   * responses in one publication must share a profile, otherwise the whole
-   * publication fails retryably instead of storing mixed profiles.
-   */
   private async embedArtifactChunks(
     artifacts: CompiledKnowledgeArtifact[],
     identitiesByArtifactId: Map<string, ChunkIdentity[]>,
@@ -867,8 +838,6 @@ export class KnowledgeImportService {
         : this.embeddingProvider.embedManyRequired(texts);
     }
 
-    // Compatibility for tests/custom providers during rollout. Production has
-    // embedManyRequired and therefore sends a real multi-value provider call.
     return mapKnowledgeOperations(
       texts,
       (text) => this.embedRequired(text, abortSignal),
@@ -886,8 +855,6 @@ export class KnowledgeImportService {
         : this.embeddingProvider.embedRequired(text);
     }
 
-    // Compatibility for injected test/dummy providers that implement the
-    // original best-effort interface. Production always uses embedRequired.
     const result = abortSignal
       ? await this.embeddingProvider.embedQuery(text, { abortSignal })
       : await this.embeddingProvider.embedQuery(text);
@@ -916,24 +883,10 @@ function assertPublicationChunkBudgets(
     }
   }
 
-  // Row-level table chunks are intentional: whole-table embeddings had poor
-  // recall. They receive a larger but still hard budget instead of allowing a
-  // table node to disable the ordinary 200-chunk guard for the entire page.
   budget.assertChunkCount(regularChunkCount);
   budget.assertTableRowCount(tableRowCount);
 }
 
-/**
- * Content identity for each chunk row. The id hashes the stable key together
- * with the exact embedding input, so reordering chunks keeps their ids, while
- * any change to text, table-row values, title or heading breadcrumb yields a
- * new id. Because the id pins the embedding input, a stored row with the same
- * id is a valid vector-reuse candidate (subject to a profile match).
- *
- * Legacy chunks without a stable key get one from their source lineage and
- * text instead of their array position; repeated identical legacy chunks are
- * told apart by occurrence order.
- */
 function buildChunkIdentities(
   artifact: CompiledKnowledgeArtifact,
 ): ChunkIdentity[] {

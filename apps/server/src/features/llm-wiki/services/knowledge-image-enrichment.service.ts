@@ -244,16 +244,6 @@ export class KnowledgeImageEnrichmentService {
     };
   }
 
-  /**
-   * Reconstructs the merge input from the exact extraction ids a run froze into
-   * its plan, instead of re-querying "whatever is currently ready" by
-   * attachment identity. Reading by frozen id is immune to spurious provider or
-   * prompt identity drift (it returns the planned extraction's content
-   * regardless of the current identity), while a genuinely changed image
-   * (attachment re-upload) or a cleared/deleted extraction surfaces as a
-   * missing id. Callers must treat any `missingExtractionIds` as drift and
-   * re-plan rather than publish an input the run never froze.
-   */
   async readFrozenSource(
     source: KnowledgeSourceSnapshot,
     expectedExtractionIds: string[],
@@ -281,9 +271,6 @@ export class KnowledgeImageEnrichmentService {
       extractionIds: expected,
     });
     const rowById = new Map(rows.map((row) => [row.id, row] as const));
-    // Only accept a frozen extraction whose attachment identity still matches
-    // the plan's image (same attachment, same frozen version). Anything else is
-    // treated as unresolved so it counts as drift below.
     const rowByAttachmentId = new Map(
       rows
         .filter((row) =>
@@ -410,11 +397,8 @@ export class KnowledgeImageEnrichmentService {
     );
     const extracted: ExtractedImageText[] = [];
     let cacheHitCount = 0;
-    // Resolved once per run: the identity is stable across all images here.
     const providerCacheIdentity = await this.imageProvider.getCacheIdentity();
 
-    // Keep the first release sequential inside the page worker. Atomic cache
-    // leases prevent duplicate VLM calls across multiple server instances.
     for (const image of sourceImages) {
       const attachment = attachmentById.get(image.attachmentId);
       if (
@@ -501,7 +485,7 @@ export class KnowledgeImageEnrichmentService {
         claim = await this.extractionRepo.claim(
           cacheKey,
           this.environmentService.getKnowledgeImageTimeoutMs() +
-          CLAIM_LEASE_GRACE_MS,
+            CLAIM_LEASE_GRACE_MS,
         );
       } catch {
         warnings.push(warning(image.attachmentId, 'image_cache_unavailable'));
@@ -646,7 +630,8 @@ export class KnowledgeImageEnrichmentService {
           });
         } catch {
           this.logger.warn(
-            `Failed to persist image extraction failure for attachment ${image.attachmentId}.`,
+            { attachmentId: image.attachmentId },
+            'Failed to persist image extraction failure',
           );
         }
       }

@@ -57,11 +57,8 @@ export interface IWorkspaceSkillSettings {
 
 export interface IWorkspaceCompileWindowSettings {
   enabled: boolean;
-  /** HH:mm, inclusive */
   startTime: string;
-  /** HH:mm, exclusive; earlier than startTime crosses midnight */
   endTime: string;
-  /** Read-only: the server timezone the window follows */
   serverTimezone?: string;
 }
 

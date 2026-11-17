@@ -1,22 +1,7 @@
 export const MAX_KNOWLEDGE_ARTIFACTS_PER_PAGE = 20;
 export const MAX_KNOWLEDGE_MATERIALIZATIONS_PER_PAGE = 16;
-/**
- * Prose/derived chunks stay deliberately small. Table rows are accounted for
- * separately because row-level retrieval fixed the poor recall produced by
- * embedding a whole table as one document. A table must never grant unrelated
- * chunks an exemption from this limit.
- */
 export const MAX_KNOWLEDGE_CHUNKS_PER_PAGE = 200;
 export const MAX_KNOWLEDGE_TABLE_ROWS_PER_PAGE = 2_000;
-/**
- * Transitional guard for one shared artifact after merging every source
- * contribution. It is checked per artifact, never summed across the artifacts
- * a source page happens to touch, and is deliberately separate from the
- * source-page limit above. Sized at roughly 4x the largest shared artifact
- * measured in production on 2026-11-09 (130 chunks, 91 sources), leaving room
- * for chunks restored by the source-namespace fix. Revisit with the
- * `largestSharedArtifactChunks` publication log (see minimal-fix plan §3.2).
- */
 export const MAX_SHARED_ARTIFACT_CHUNKS = 500;
 export const DEFAULT_KNOWLEDGE_SPACE_SLOT_WORST_CASE_MS =
   300_000 + 900_000 + 300_000 + 5_000;
@@ -41,10 +26,6 @@ export class KnowledgeComplexityLimitError extends Error {
   }
 }
 
-/**
- * A single shared artifact (after merging all contributions) is too large.
- * Attributed to the artifact, not to the source page that triggered it.
- */
 export class KnowledgeSharedArtifactLimitError extends Error {
   readonly code = 'shared_artifact_complexity_limit';
   readonly retryable = false;

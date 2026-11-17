@@ -10,11 +10,6 @@ import { isUserDisabled } from '../../../common/helpers';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import { HoidcService } from '../../../ee/sso/hoidc.service';
 
-/**
- * Authenticates the digital employee token injected by iself's agent proxy.
- * The verified SSO email is mapped to the local workspace user so all normal
- * knowledge ACL checks continue to run under the real user's identity.
- */
 @Injectable()
 export class IsElfAgentAuthGuard implements CanActivate {
   constructor(
@@ -45,9 +40,6 @@ export class IsElfAgentAuthGuard implements CanActivate {
       );
     }
 
-    // Accept a regular SSO access token on the iself endpoint as well. The
-    // endpoint historically accepted only digital-employee tokens verified by
-    // verify-agent-token; keeping that path below preserves existing callers.
     try {
       const ssoInfo = await this.hoidcService.verifyToken(
         {

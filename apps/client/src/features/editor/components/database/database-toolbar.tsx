@@ -340,7 +340,6 @@ function SortButton({ db }: { db: DatabaseContext }) {
           </Text>
         )}
         {available.length > 0 && (
-          // Insets match the sort rows: grip on the left, delete button on the right.
           <div
             className={classes.sortAdd}
             data-indented={sorts.length > 0 || undefined}
@@ -366,7 +365,6 @@ function SortButton({ db }: { db: DatabaseContext }) {
   );
 }
 
-/** Search, filter, sort and view options. Hidden controls in read-only mode. */
 export function DatabaseToolbar({
   db,
   onSearch,

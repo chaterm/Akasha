@@ -4,7 +4,7 @@ import type { Redis } from 'ioredis';
 
 const KEY_PREFIX = 'page-update:emails:';
 const DIGEST_PREFIX = 'page-update:digest:';
-const TTL_SECONDS = 86400; // 24 hours
+const TTL_SECONDS = 86400;
 const MAX_IMMEDIATE_EMAILS = 4;
 
 @Injectable()
@@ -31,13 +31,8 @@ export class PageUpdateEmailRateLimiter {
 
   async popDigest(userId: string): Promise<string[]> {
     const key = DIGEST_PREFIX + userId;
-    const [ids] = await this.redis
-      .multi()
-      .lrange(key, 0, -1)
-      .del(key)
-      .exec();
+    const [ids] = await this.redis.multi().lrange(key, 0, -1).del(key).exec();
 
     return (ids?.[1] as string[]) ?? [];
   }
-
 }

@@ -49,13 +49,9 @@ import {
 } from '@docmost/editor-ext';
 import { generateText, getSchema, JSONContent } from '@tiptap/core';
 import { generateHTML, generateJSON } from '../common/helpers/prosemirror/html';
-// @tiptap/html library works best for generating prosemirror json state but not HTML
-// see: https://github.com/ueberdosis/tiptap/issues/5352
-// see:https://github.com/ueberdosis/tiptap/issues/4089
-//import { generateJSON } from '@tiptap/html';
 import { Node, Schema } from '@tiptap/pm/model';
 import * as Y from 'yjs';
-import { Logger, LoggerService } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import {
   hasTableNode,
   serializeTableNode,
@@ -115,8 +111,6 @@ export const tiptapExtensions = [
   Status,
   TransclusionSource,
   TransclusionReference,
-  // Akasha-local Confluence-parity macros. Single touchpoint — see
-  // packages/editor-ext/src/lib/macros/index.ts
   ...macroNodes,
 ] as any;
 
@@ -124,10 +118,9 @@ export function jsonToHtml(tiptapJson: any) {
   return generateHTML(tiptapJson, tiptapExtensions);
 }
 
-export function htmlToJson(
-  html: string,
-  logger: LoggerService = new Logger('CollaborationUtil'),
-) {
+const logger = new Logger('CollaborationUtil');
+
+export function htmlToJson(html: string) {
   const pmJson = generateJSON(html, tiptapExtensions);
 
   try {
@@ -168,7 +161,7 @@ export function jsonToNode(tiptapJson: JSONContent) {
       error instanceof RangeError &&
       error.message.includes('Unknown node type')
     ) {
-      Logger.warn('Stripping unknown node types from document:', error.message);
+      logger.warn({ err: error }, 'Stripping unknown node types from document');
       const cleanedJson = stripUnknownNodes(tiptapJson, schema);
       return Node.fromJSON(schema, cleanedJson);
     }
@@ -198,7 +191,6 @@ function stripUnknownNodes(
 ): JSONContent | null {
   if (!json || typeof json !== 'object') return json;
 
-  // Recursively clean children first, flattening any unwrapped content
   if (json.content && Array.isArray(json.content)) {
     const newContent: JSONContent[] = [];
     for (const child of json.content) {
@@ -212,9 +204,7 @@ function stripUnknownNodes(
     json.content = newContent;
   }
 
-  // Check if this node is unknown AFTER processing children
   if (json.type && !schema.nodes[json.type]) {
-    // Unwrap: return cleaned children directly instead of wrapping
     return (
       json.content && json.content.length > 0 ? json.content : null
     ) as any;

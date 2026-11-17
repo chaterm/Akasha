@@ -9,13 +9,12 @@ export const ANALYTICS_EVENT = {
   AGENT_OP: 'agent_op',
 } as const;
 
-// Days are bucketed in this timezone so charts line up with the team's day.
 export const ANALYTICS_TIMEZONE = 'Asia/Shanghai';
 
 export interface AnalyticsRange {
   workspaceId: string;
-  from: Date; // inclusive, start of first local day
-  to: Date; // exclusive, start of the day after the last local day
+  from: Date;
+  to: Date;
   spaceId?: string;
 }
 
@@ -25,7 +24,6 @@ export interface DailyRow {
   uv: number;
   newPages: number;
   pageEdits: number;
-  // Distinct active users in the 7 / 30 local days ending on `date`.
   wau: number;
   mau: number;
   newUsers?: number;
@@ -83,18 +81,12 @@ export class AnalyticsEventRepo {
       .execute();
   }
 
-  /**
-   * One call made with an agent API key. `op` is the endpoint capability
-   * (e.g. 'page.read') or 'mcp:<tool>' for MCP tool calls.
-   */
   async insertAgentOp(input: {
     workspaceId: string;
     agentUserId: string;
     op: string;
     channel: 'api' | 'mcp';
-    /** Null for SSO-token MCP calls. */
     apiKeyId: string | null;
-    /** Credential behind the call; absent on rows written before it existed. */
     keyType?: 'agent' | 'personal' | 'sso';
     delegatedUserId?: string | null;
     outcome: 'ok' | 'error' | 'called';
@@ -117,7 +109,6 @@ export class AnalyticsEventRepo {
       .execute();
   }
 
-  /** Expires high-volume events; space_deleted is kept for history. */
   async deleteExpiredEventsBefore(cutoff: Date): Promise<number> {
     const result = await this.db
       .deleteFrom('analyticsEvents')
@@ -140,10 +131,6 @@ export class AnalyticsEventRepo {
     return row?.first ? new Date(row.first as any) : null;
   }
 
-  /**
-   * Headline numbers for the range. Workspace-only metrics are omitted when
-   * scoped to a space because they have no reliable space attribution.
-   */
   async summarize(range: AnalyticsRange) {
     const { workspaceId, from, to, spaceId } = range;
     const spaceFilter = spaceId ? sql`AND space_id = ${spaceId}` : sql``;
@@ -214,12 +201,6 @@ export class AnalyticsEventRepo {
     };
   }
 
-  /**
-   * One row per local day in [from, to), zero-filled. Stock counts (users,
-   * public spaces) are reconstructed per day; deleted spaces are added back
-   * from space_deleted events so the curve does not drop retroactively.
-   * Personal spaces cannot be deleted, so every space_deleted is public.
-   */
   async dailySeries(range: AnalyticsRange): Promise<DailyRow[]> {
     const { workspaceId, from, to, spaceId } = range;
     const tz = ANALYTICS_TIMEZONE;
@@ -419,7 +400,6 @@ export class AnalyticsEventRepo {
     }));
   }
 
-  /** Most active users by page views, with page edits alongside. */
   async topUsers(range: AnalyticsRange, limit = 10) {
     const { workspaceId, from, to, spaceId } = range;
     const viewSpace = spaceId ? sql`AND space_id = ${spaceId}` : sql``;
@@ -456,10 +436,6 @@ export class AnalyticsEventRepo {
     }));
   }
 
-  /**
-   * Agent (API key) usage. Agent counts come from users; operation counts
-   * come from agent_op events and so start when tracking was deployed.
-   */
   async agentSummary(range: AnalyticsRange) {
     const { workspaceId, from, to } = range;
     const tz = ANALYTICS_TIMEZONE;
@@ -521,7 +497,6 @@ export class AnalyticsEventRepo {
       GROUP BY route ORDER BY n DESC
     `.execute(this.db);
 
-    // Every live agent is listed, so idle agents show up with zero ops.
     const topAgents = await sql<Record<string, unknown>>`
       WITH o AS (
         SELECT user_id, count(*) AS ops, max(created_at) AS last_op_at

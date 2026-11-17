@@ -136,7 +136,6 @@ const PAGE_LOG_MERGE_STATUS_OPTIONS = [
   "failed",
 ].map((value) => ({ value, label: humanizeState(value) }));
 
-// Quick relative time windows for the compilation log, in hours.
 const PAGE_LOG_RANGE_HOURS: Record<string, number> = {
   "1h": 1,
   "24h": 24,
@@ -402,7 +401,9 @@ export default function KnowledgeAdminPage() {
     },
     onError: (error) =>
       setConfirmationError(
-        getErrorMessage(error, "Failed to queue knowledge update", { withDetail: true }),
+        getErrorMessage(error, "Failed to queue knowledge update", {
+          withDetail: true,
+        }),
       ),
   });
   const immediateDelayedPageMutation = useMutation({
@@ -428,7 +429,9 @@ export default function KnowledgeAdminPage() {
       refreshRunViews();
     },
     onError: (error) =>
-      notifyError(error, "Failed to remove page from queue", { withDetail: true }),
+      notifyError(error, "Failed to remove page from queue", {
+        withDetail: true,
+      }),
   });
   const actionMutation = useMutation({
     mutationFn: runKnowledgeAdminAction,
@@ -442,7 +445,9 @@ export default function KnowledgeAdminPage() {
       refreshRunViews();
     },
     onError: (error) =>
-      notifyError(error, "Failed to queue knowledge action", { withDetail: true }),
+      notifyError(error, "Failed to queue knowledge action", {
+        withDetail: true,
+      }),
   });
   const retryPagesMutation = useMutation({
     mutationFn: retryKnowledgePages,
@@ -487,7 +492,9 @@ export default function KnowledgeAdminPage() {
       refreshRunViews();
     },
     onError: (error) =>
-      notifyError(error, "Failed to cancel compilation run", { withDetail: true }),
+      notifyError(error, "Failed to cancel compilation run", {
+        withDetail: true,
+      }),
   });
 
   const runSummary = runSummaryQuery.data;
@@ -1477,7 +1484,9 @@ function DelayedCompilationQueue({
 
       {query.isError && (
         <Alert color="red" icon={<IconAlertTriangle size={18} />}>
-          {getErrorMessage(query.error, "Failed to load data", { withDetail: true })}
+          {getErrorMessage(query.error, "Failed to load data", {
+            withDetail: true,
+          })}
         </Alert>
       )}
       {query.isLoading ? (
@@ -1716,7 +1725,9 @@ function PageCompilationLog({
       </Group>
       {query.isError && (
         <Alert color="red" icon={<IconAlertTriangle size={18} />}>
-          {getErrorMessage(query.error, "Failed to load data", { withDetail: true })}
+          {getErrorMessage(query.error, "Failed to load data", {
+            withDetail: true,
+          })}
         </Alert>
       )}
       {query.isLoading ? (

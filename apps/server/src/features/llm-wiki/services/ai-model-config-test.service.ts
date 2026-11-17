@@ -11,8 +11,6 @@ import {
 } from './ai-model-factory';
 import { resolveModelCallOptions } from './ai-model-call-options';
 
-// Values the admin currently has in the form. apiKey omitted/blank means "reuse
-// the stored key" — the same write-only rule as saving.
 export type TestAiModelConfigInput = {
   provider: string;
   model: string;
@@ -73,9 +71,6 @@ export class AiModelConfigTestService {
     }
   }
 
-  // Merge the form values with the stored config. When the admin leaves the
-  // apiKey blank we fall back to the stored (decrypted) key so tests work for
-  // configs where only the model or base URL changed.
   private async buildConfig(
     feature: AiModelConfigFeature,
     input: TestAiModelConfigInput,
@@ -104,8 +99,6 @@ function notConfigured(): TestAiModelConfigResult {
   };
 }
 
-// Distinguish transport/quota failures (network, 429, timeout) from credential
-// and other provider errors, mirroring classifyRequiredEmbeddingError.
 function classifyTestError(
   error: unknown,
   signal: AbortSignal,

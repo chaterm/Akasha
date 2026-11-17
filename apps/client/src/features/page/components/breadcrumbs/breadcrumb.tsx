@@ -109,7 +109,6 @@ export default function Breadcrumb() {
 
     if (breadcrumbNodes.length > 3) {
       const firstNode = breadcrumbNodes[0];
-      //const secondLastNode = breadcrumbNodes[breadcrumbNodes.length - 2];
       const lastNode = breadcrumbNodes[breadcrumbNodes.length - 1];
 
       return [
@@ -134,7 +133,6 @@ export default function Breadcrumb() {
             <HiddenNodesTooltipContent />
           </Popover.Dropdown>
         </Popover>,
-        //renderAnchor(secondLastNode),
         renderAnchor(lastNode, true),
       ];
     }

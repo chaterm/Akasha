@@ -13,7 +13,11 @@ import {
 import { CommentService } from './comment.service';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
-import { PageIdDto, CommentIdDto, ResolveCommentDto } from './dto/comments.input';
+import {
+  PageIdDto,
+  CommentIdDto,
+  ResolveCommentDto,
+} from './dto/comments.input';
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
 import { AuthWorkspace } from '../../common/decorators/auth-workspace.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -122,7 +126,11 @@ export class CommentController {
 
   @HttpCode(HttpStatus.OK)
   @Post('update')
-  async update(@Body() dto: UpdateCommentDto, @AuthUser() user: User, @AuthWorkspace() workspace: Workspace) {
+  async update(
+    @Body() dto: UpdateCommentDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
     const comment = await this.commentRepo.findById(dto.commentId, {
       includeCreator: true,
       includeResolvedBy: true,
@@ -190,7 +198,11 @@ export class CommentController {
 
   @HttpCode(HttpStatus.OK)
   @Post('delete')
-  async delete(@Body() input: CommentIdDto, @AuthUser() user: User, @AuthWorkspace() workspace: Workspace) {
+  async delete(
+    @Body() input: CommentIdDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
     const comment = await this.commentRepo.findById(input.commentId);
     if (!comment) {
       throw new NotFoundException('Comment not found');
@@ -203,7 +215,6 @@ export class CommentController {
 
     await this.pageAccessService.validateCanComment(page, user, workspace.id);
 
-    // Check if user is the comment owner
     const isOwner = comment.creatorId === user.id;
 
     if (isOwner) {
@@ -214,7 +225,6 @@ export class CommentController {
         comment.spaceId,
       );
 
-      // Space admin can delete any comment
       if (ability.cannot(SpaceCaslAction.Manage, SpaceCaslSubject.Settings)) {
         throw new ForbiddenException(
           errorBody(

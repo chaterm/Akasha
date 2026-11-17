@@ -57,12 +57,10 @@ describePostgres('KnowledgeSpaceExecutionRepo page merge fencing', () => {
       }),
     );
     expect(await mergeStatusOf(db, 'page-a')).toBe('queued');
-    // A second sweep must find no slot while page-a occupies queued.
     expect(await repo.reservePageMergesFairly()).toHaveLength(0);
   });
 
   it('does not reserve pages still waiting on images', async () => {
-    // Occupy nothing; force only page-c ready-but-waiting.
     await sql`
       update knowledge_space_compile_run_pages set merge_status = 'succeeded'
         where id in ('page-a', 'page-b')
@@ -132,8 +130,6 @@ describePostgres('KnowledgeSpaceExecutionRepo page merge fencing', () => {
   });
 
   it('publishes a successful merge, clears the fence, and advances the barrier', async () => {
-    // Only page-a is ready; make page-b/page-c already terminal so the merge
-    // barrier closes when page-a succeeds and the run reaches finalizing.
     await sql`
       update knowledge_space_compile_run_pages set merge_status = 'succeeded'
         where id = 'page-b';
@@ -182,9 +178,7 @@ describePostgres('KnowledgeSpaceExecutionRepo page merge fencing', () => {
     });
     expect(retry).toEqual({ terminal: false });
     expect(await mergeStatusOf(db, 'page-a')).toBe('queued');
-    // Slot still held: no other page can reserve.
     expect(await repo.reservePageMergesFairly()).toHaveLength(0);
-    // Re-claim (BullMQ retry) and exhaust the budget → terminal failure.
     const reclaimed = await repo.claimPageMerge({
       runId: 'run-1',
       runPageId: reservation.runPageId,
@@ -215,7 +209,6 @@ describePostgres('KnowledgeSpaceExecutionRepo page merge fencing', () => {
     });
     expect(terminal).toEqual({ terminal: true });
     expect(await mergeStatusOf(db, 'page-a')).toBe('failed');
-    // Slot released: page-b can now reserve.
     const next = await repo.reservePageMergesFairly();
     expect(next).toHaveLength(1);
     expect(next[0].runPageId).toBe('page-b');
@@ -409,8 +402,6 @@ describePostgres('KnowledgeSpaceExecutionRepo page merge fencing', () => {
       });
       expect(fence!.mergeAttemptCount).toBe(attempt);
       lastFence = fence;
-      // Lose the transport at every attempt: recovery has its own counter,
-      // but it must not restore the execution budget.
       const observation = await recoveryObservation();
       expect(await repo.requeueMissingPageMerge(observation)).toBe(true);
       expect(await repo.requeueMissingPageMerge(observation)).toBe(false);
@@ -445,7 +436,6 @@ describePostgres('KnowledgeSpaceExecutionRepo page merge fencing', () => {
       mergeExecutionToken: null,
       errorCode: 'merge_job_attempts_exhausted',
     });
-    // Failure frees the Run slot so another page can still finish.
     expect((await repo.reservePageMergesFairly())[0].runPageId).toBe('page-b');
   });
 
@@ -699,8 +689,6 @@ async function mergeStatusOf(
   db: Kysely<unknown>,
   runPageId: string,
 ): Promise<string> {
-  // The Kysely instance uses CamelCasePlugin, which camelCases result keys even
-  // for raw sql, so merge_status is returned as mergeStatus.
   const row = await sql<{ mergeStatus: string }>`
     select merge_status from knowledge_space_compile_run_pages
       where id = ${runPageId}

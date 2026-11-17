@@ -70,13 +70,11 @@ export class PersistenceExtension implements Extension {
     });
 
     if (!page) {
-      this.logger.warn('page not found');
+      this.logger.warn({ pageId }, 'Page not found on document load');
       return;
     }
 
     if (page.ydoc) {
-      this.logger.debug(`ydoc loaded from db: ${pageId}`);
-
       const doc = new Y.Doc();
       const dbState = new Uint8Array(page.ydoc);
 
@@ -84,10 +82,7 @@ export class PersistenceExtension implements Extension {
       return doc;
     }
 
-    // if no ydoc state in db convert json in page.content to Ydoc.
     if (page.content) {
-      this.logger.debug(`converting json to ydoc: ${pageId}`);
-
       const ydoc = TiptapTransformer.toYdoc(
         page.content,
         'default',
@@ -98,7 +93,6 @@ export class PersistenceExtension implements Extension {
       return ydoc;
     }
 
-    this.logger.debug(`creating fresh ydoc: ${pageId}`);
     return new Y.Doc();
   }
 
@@ -125,7 +119,7 @@ export class PersistenceExtension implements Extension {
     try {
       textContent = jsonToText(tiptapJson);
     } catch (err) {
-      this.logger.warn('jsonToText' + err?.['message']);
+      this.logger.warn({ pageId, err }, 'Failed to extract page text content');
     }
 
     let page: Page = null;
@@ -140,7 +134,7 @@ export class PersistenceExtension implements Extension {
         });
 
         if (!page) {
-          this.logger.error(`Page with id ${pageId} not found`);
+          this.logger.error({ pageId }, 'Page not found on document store');
           return;
         }
 
@@ -159,8 +153,8 @@ export class PersistenceExtension implements Extension {
               page.creatorId,
             ]),
           );
-        } catch (err) {
-          //this.logger.debug('Contributors error:' + err?.['message']);
+        } catch {
+          void 0;
         }
 
         await this.pageRepo.updatePage(
@@ -175,17 +169,13 @@ export class PersistenceExtension implements Extension {
           pageId,
           trx,
         );
-
-        this.logger.debug(`Page updated: ${pageId} - SlugId: ${page.slugId}`);
       });
     } catch (err) {
       page = null;
-      this.logger.error(`Failed to update page ${pageId}`, err);
+      this.logger.error({ pageId, err }, 'Failed to update page');
     }
 
     if (page) {
-      // Schedule knowledge maintenance immediately after the page transaction
-      // commits, before ancillary post-save work can fail.
       await this.knowledgeQueue.add(QueueJob.PAGE_CONTENT_UPDATED, {
         pageIds: [pageId],
         workspaceId: page.workspaceId,
@@ -307,12 +297,6 @@ export class PersistenceExtension implements Extension {
     );
   }
 
-  /**
-   * Refresh `page_transclusions` and `page_transclusion_references` to match
-   * the page's current content. Runs outside the page-write transaction and
-   * isolates each call so a failure here cannot affect the page save itself.
-   * The diff is idempotent — the next save converges if a round drops anything.
-   */
   private async syncTransclusion(
     pageId: string,
     workspaceId: string,

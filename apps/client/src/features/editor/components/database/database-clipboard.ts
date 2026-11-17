@@ -18,12 +18,6 @@ import {
 import type { DatabaseContext } from "./database-context";
 import { toDateKey } from "./database-utils";
 
-/**
- * Spreadsheet-style copy and paste: cells travel as tab-separated text, so a
- * range copied here pastes into Excel, Feishu or Google Sheets and back.
- */
-
-/** Plain text of one cell, in a form `parseClipboardCell` reads back. */
 export function cellToClipboard(
   column: DatabaseColumn,
   row: DatabaseRowData,
@@ -33,8 +27,6 @@ export function cellToClipboard(
   switch (column.type) {
     case "number":
     case "progress":
-      // Match the paste parser's decimal separator without copying display
-      // rounding, currency symbols or grouping separators.
       return typeof value === "number"
         ? value.toLocaleString(locale, {
             useGrouping: false,
@@ -61,7 +53,6 @@ export function toTSV(matrix: string[][]): string {
   return matrix.map((row) => row.map(quote).join("\t")).join("\n");
 }
 
-/** Parses tab-separated text, honoring Excel's quoting (fields with tabs, newlines or quotes). */
 export function parseTSV(text: string): string[][] {
   const source = text.replace(/\r\n?/g, "\n").replace(/\n$/, "");
   const rows: string[][] = [];
@@ -120,12 +111,6 @@ function parseDate(text: string): string | null {
   return Number.isNaN(time) ? null : toDateKey(new Date(time));
 }
 
-/**
- * Converts pasted text to a value for `column`. Select options are matched by
- * name and created in `options` (mutated, shared across one paste) when
- * missing; members and documents are only matched. Returns undefined to leave
- * the cell unchanged.
- */
 export function parseClipboardCell(
   column: DatabaseColumn,
   text: string,
@@ -181,7 +166,6 @@ export function parseClipboardCell(
   }
 }
 
-/** Pasting more rows than this is cut off; each row is a node in the document. */
 const MAX_PASTE_ROWS = 1000;
 
 export function rangeToTSV(
@@ -196,12 +180,6 @@ export function rangeToTSV(
   );
 }
 
-/**
- * Writes pasted text into the table starting at `range.top` / `range.left`
- * (indexes into `rows` / `columns`, the view's order) in one transaction. A
- * single value fills the whole selected range; rows past the end are created.
- * Returns the cells written, for selecting them.
- */
 export function pasteIntoTable(
   db: DatabaseContext,
   text: string,
@@ -220,7 +198,6 @@ export function pasteIntoTable(
   const targets = columns.slice(range.left, range.left + width);
   if (!targets.length) return null;
 
-  // Copies, so options created while parsing are written once per column.
   const created = new Map(
     targets
       .filter(

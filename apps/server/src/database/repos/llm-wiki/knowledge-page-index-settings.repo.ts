@@ -10,7 +10,6 @@ import {
 } from '../../types/knowledge-index-mode.types';
 
 export interface ResolvedKnowledgeIndexMode {
-  /** Stored page setting; ignored while the Space mode is locked. */
   pageIndexMode: KnowledgeIndexMode | null;
   spaceIndexMode: KnowledgeSpaceIndexMode;
   effectiveIndexMode: KnowledgeIndexMode;
@@ -20,7 +19,6 @@ export interface ResolvedKnowledgeIndexMode {
 export class KnowledgePageIndexSettingsRepo {
   constructor(@InjectKysely() private readonly db: KyselyDB) {}
 
-  /** Saves the page override; null clears it so the page follows the Space. */
   async setMode(input: {
     workspaceId: string;
     sourcePageId: string;

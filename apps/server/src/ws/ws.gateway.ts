@@ -68,19 +68,6 @@ export class WsGateway
     }
   }
 
-  /*
-  @SubscribeMessage('join-room')
-  handleJoinRoom(client: Socket, @MessageBody() roomName: string): void {
-    // if room is a space, check if user has permissions
-    //client.join(roomName);
-  }
-
-  @SubscribeMessage('leave-room')
-  handleLeaveRoom(client: Socket, @MessageBody() roomName: string): void {
-    client.leave(roomName);
-  }
- */
-
   onModuleDestroy() {
     if (this.server) {
       this.server.close();

@@ -21,12 +21,6 @@ export default function TransclusionContent({ content }: Props) {
     ];
   }, []);
 
-  // Isolate the nested read-only editor's events from the host editor:
-  // - mousedown/click would otherwise make the host node-select the atom
-  //   wrapper, blocking native text selection inside.
-  // - dragstart/dragover/drop would otherwise let the host treat events
-  //   inside the nested view as drops on the host, duplicating dropped
-  //   files at the transclusion's position.
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
 
   return (

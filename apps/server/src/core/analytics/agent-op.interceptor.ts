@@ -12,11 +12,6 @@ import { getAgentAccessContext } from '../../common/auth/agent-access-context';
 import { AGENT_CAPABILITY } from '../../common/decorators/agent-callable.decorator';
 import { getApiKeyAccess } from '../../common/auth/api-key-access';
 
-/**
- * Records one operation per REST call authenticated with an API key.
- * MCP tool calls are recorded separately by McpController. Recording never affects the
- * response.
- */
 @Injectable()
 export class AgentOpInterceptor implements NestInterceptor {
   private readonly logger = new Logger(AgentOpInterceptor.name);
@@ -59,7 +54,7 @@ export class AgentOpInterceptor implements NestInterceptor {
           outcome,
         })
         .catch((error) =>
-          this.logger.warn(`Failed to record agent_op event: ${error}`),
+          this.logger.warn({ err: error }, 'Failed to record agent_op event'),
         );
     };
 

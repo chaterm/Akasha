@@ -14,6 +14,7 @@ import {
   SpaceCaslAction,
   SpaceCaslSubject,
 } from '../casl/interfaces/space-ability.type';
+import { WithJobContext } from '../../common/logger/with-job-context.decorator';
 
 const RETENTION_DAYS = 30;
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -66,7 +67,6 @@ export class PageVisitService {
     const readable: (RecentPageVisitRow & { $cursor: string })[] = [];
     let cursor = input.cursor;
 
-    // Find one extra readable visit so denied history cannot end pagination early.
     while (readable.length <= input.limit) {
       const batch = await this.pageVisitRepo.findRecent({
         workspaceId: input.workspace.id,
@@ -96,7 +96,6 @@ export class PageVisitService {
                 !ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page),
               );
             } catch (error) {
-              // Visit history can outlive the user's space membership.
               if (!(error instanceof NotFoundException)) throw error;
               spaceAccess.set(spaceId, false);
             }
@@ -156,15 +155,19 @@ export class PageVisitService {
   }
 
   @Interval('page-visit-cleanup', CLEANUP_INTERVAL_MS)
+  @WithJobContext('page-visit-cleanup')
   async cleanupExpiredVisits(): Promise<void> {
     try {
       const deleted =
         await this.pageVisitRepo.deleteOlderThan(retentionCutoff());
       if (deleted > 0) {
-        this.logger.log(`Deleted ${deleted} expired page visit records`);
+        this.logger.log({ deleted }, 'Deleted expired page visit records');
       }
     } catch (error) {
-      this.logger.error('Failed to clean up expired page visits', error);
+      this.logger.error(
+        { err: error },
+        'Failed to clean up expired page visits',
+      );
     }
   }
 }

@@ -144,7 +144,6 @@ function ImportFormatSelection({ spaceId, onClose }: ImportFormatSelection) {
 
       setFileTaskId(importTask.id);
 
-      // Reset file input after successful upload
       if (source === "notion" && notionFileRef.current) {
         notionFileRef.current();
       } else if (source === "confluence" && confluenceFileRef.current) {
@@ -288,7 +287,6 @@ function ImportFormatSelection({ spaceId, onClose }: ImportFormatSelection) {
         setTreeData(fullTree);
       }
 
-      // Reset file inputs after successful upload
       if (markdownFileRef.current) markdownFileRef.current();
       if (htmlFileRef.current) htmlFileRef.current();
       if (docxFileRef.current) docxFileRef.current();
@@ -371,14 +369,13 @@ function ImportFormatSelection({ spaceId, onClose }: ImportFormatSelection) {
           multiple
           resetRef={docxFileRef}
           inputProps={{
-            "aria-label": t("Choose {{format}} file", { format: "Word (DOCX)" }),
+            "aria-label": t("Choose {{format}} file", {
+              format: "Word (DOCX)",
+            }),
           }}
         >
           {(props) => (
-            <Tooltip
-              label={upgradeLabel}
-              disabled={canUseDocx}
-            >
+            <Tooltip label={upgradeLabel} disabled={canUseDocx}>
               <Button
                 disabled={!canUseDocx}
                 justify="start"
@@ -402,10 +399,7 @@ function ImportFormatSelection({ spaceId, onClose }: ImportFormatSelection) {
           }}
         >
           {(props) => (
-            <Tooltip
-              label={upgradeLabel}
-              disabled={canUsePdf}
-            >
+            <Tooltip label={upgradeLabel} disabled={canUsePdf}>
               <Button
                 disabled={!canUsePdf}
                 justify="start"
@@ -447,10 +441,7 @@ function ImportFormatSelection({ spaceId, onClose }: ImportFormatSelection) {
           }}
         >
           {(props) => (
-            <Tooltip
-              label={upgradeLabel}
-              disabled={canUseConfluence}
-            >
+            <Tooltip label={upgradeLabel} disabled={canUseConfluence}>
               <Button
                 disabled={!canUseConfluence}
                 justify="start"

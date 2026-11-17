@@ -16,13 +16,6 @@ interface CustomAvatarProps {
   mt?: string | number;
 }
 
-// `color.shade` pairs whose contrast meets WCAG AA (4.5:1) in BOTH variants:
-//   - filled: white text on the shade as bg
-//   - light:  shade as text on the color's light-bg (10% color.6 over white)
-// Avoids lime/yellow/green/orange — even their dark shades have weak
-// contrast. grape and indigo were bumped from .7 to darker shades because
-// the original picks failed: grape.7 was 4.02/3.61 (both fail) and
-// indigo.7 was 4.98/4.39 (light fails by a hair).
 const SAFE_INITIALS_COLORS: MantineColor[] = [
   "blue.8",
   "cyan.9",

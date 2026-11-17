@@ -137,7 +137,15 @@ export class WorkspaceService {
   async getWorkspacePublicData(workspaceId: string) {
     const workspace = await this.db
       .selectFrom('workspaces')
-      .select(['id', 'name', 'logo', 'hostname', 'enforceSso', 'licenseKey', 'plan'])
+      .select([
+        'id',
+        'name',
+        'logo',
+        'hostname',
+        'enforceSso',
+        'licenseKey',
+        'plan',
+      ])
       .select((eb) =>
         jsonArrayFrom(
           eb
@@ -160,8 +168,6 @@ export class WorkspaceService {
 
     const { licenseKey, plan, ...rest } = workspace;
 
-    // If HOIDC is configured, inject a virtual provider into the first
-    // workspace so the login page shows the SSO button without a DB record.
     const hoidcWorkspace = await this.workspaceRepo.findFirst();
     const hoidcSsoApi = this.environmentService.getHoidcSsoApi();
     const hoidcPlatformId = this.environmentService.getHoidcPlatformId();
@@ -198,7 +204,6 @@ export class WorkspaceService {
         let settings = undefined;
 
         if (this.environmentService.isCloud()) {
-          // generate unique hostname
           hostname = await this.generateHostname(
             createWorkspaceDto.hostname ?? createWorkspaceDto.name,
           );
@@ -212,7 +217,6 @@ export class WorkspaceService {
           settings = { ai: { generative: true, chat: true } };
         }
 
-        // create workspace
         const workspace = await this.workspaceRepo.insertWorkspace(
           {
             name: createWorkspaceDto.name,
@@ -227,13 +231,11 @@ export class WorkspaceService {
           trx,
         );
 
-        // create default group
         const group = await this.groupRepo.createDefaultGroup(workspace.id, {
           userId: user.id,
           trx: trx,
         });
 
-        // add user to workspace
         await trx
           .updateTable('users')
           .set({
@@ -243,7 +245,6 @@ export class WorkspaceService {
           .where('users.id', '=', user.id)
           .execute();
 
-        // add user to default group created above
         await this.groupUserRepo.insertGroupUser(
           {
             userId: user.id,
@@ -252,7 +253,6 @@ export class WorkspaceService {
           trx,
         );
 
-        // create default space
         const spaceInfo: CreateSpaceDto = {
           name: 'General',
           slug: 'general',
@@ -265,7 +265,6 @@ export class WorkspaceService {
           trx,
         );
 
-        // and add user to space as owner
         await this.spaceMemberService.addUserToSpace(
           user.id,
           createdSpace.id,
@@ -274,7 +273,6 @@ export class WorkspaceService {
           trx,
         );
 
-        // add default group to space as writer
         await this.spaceMemberService.addGroupToSpace(
           group.id,
           createdSpace.id,
@@ -283,7 +281,6 @@ export class WorkspaceService {
           trx,
         );
 
-        // update default spaceId
         workspace.defaultSpaceId = createdSpace.id;
         await this.workspaceRepo.updateWorkspace(
           {
@@ -412,7 +409,13 @@ export class WorkspaceService {
       }
 
       if (typeof updateWorkspaceDto.isScimEnabled !== 'undefined') {
-        if (!this.licenseCheckService.hasFeature(ws.licenseKey, Feature.SCIM, ws.plan)) {
+        if (
+          !this.licenseCheckService.hasFeature(
+            ws.licenseKey,
+            Feature.SCIM,
+            ws.plan,
+          )
+        ) {
           throw new ForbiddenException(
             errorBody(
               ErrorCode.LICENSE_REQUIRED,
@@ -427,7 +430,13 @@ export class WorkspaceService {
         typeof updateWorkspaceDto.trashRetentionDays !== 'undefined' ||
         typeof updateWorkspaceDto.restrictApiToAdmins !== 'undefined'
       ) {
-        if (!this.licenseCheckService.hasFeature(ws.licenseKey, Feature.SECURITY_SETTINGS, ws.plan)) {
+        if (
+          !this.licenseCheckService.hasFeature(
+            ws.licenseKey,
+            Feature.SECURITY_SETTINGS,
+            ws.plan,
+          )
+        ) {
           throw new ForbiddenException(
             errorBody(
               ErrorCode.LICENSE_REQUIRED,
@@ -439,8 +448,7 @@ export class WorkspaceService {
 
       if (
         typeof updateWorkspaceDto.trashRetentionDays !== 'undefined' &&
-        updateWorkspaceDto.trashRetentionDays !==
-          Number(ws.trashRetentionDays)
+        updateWorkspaceDto.trashRetentionDays !== Number(ws.trashRetentionDays)
       ) {
         before.trashRetentionDays = Number(ws.trashRetentionDays);
         after.trashRetentionDays = updateWorkspaceDto.trashRetentionDays;
@@ -665,7 +673,6 @@ export class WorkspaceService {
     }
     this.assertNormalUser(user);
 
-    // prevent ADMIN from managing OWNER role
     if (
       isAdminActingOnOwner(authUser.role, newRole) ||
       isAdminActingOnOwner(authUser.role, user.role)
@@ -718,8 +725,7 @@ export class WorkspaceService {
       .toLowerCase()
       .replace(/[^a-z0-9-]/g, '')
       .substring(0, 20)
-      .replace(/^-+|-+$/g, ''); //remove any hyphen at the start or end
-    // Ensure we leave room for a random suffix.
+      .replace(/^-+|-+$/g, '');
     const maxSuffixLength = 6;
 
     if (subdomain.length < 4) {
@@ -740,7 +746,6 @@ export class WorkspaceService {
       if (!exists) {
         break;
       }
-      // Append a random suffix and retry.
       const randomSuffix = generateRandomSuffixNumbers(maxSuffixLength);
       uniqueHostname = `${subdomain}-${randomSuffix}`.substring(0, 25);
     }

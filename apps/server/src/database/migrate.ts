@@ -11,6 +11,7 @@ import {
   clearPreBaselineMigrationHistory,
   readMigrationNamesOnDisk,
 } from './prune-migration-history';
+import { bootstrapLogger } from '../common/logger/bootstrap-logger';
 
 dotenv.config({ path: envPath });
 
@@ -35,7 +36,6 @@ const migrator = new Migrator({
   }),
 });
 
-
 const FORWARD_COMMANDS = new Set(['up', 'latest', 'redo']);
 
 async function preview(): Promise<void> {
@@ -53,7 +53,9 @@ async function preview(): Promise<void> {
     return;
   }
 
-  const pending = (await migrator.getMigrations()).filter((it) => !it.executedAt);
+  const pending = (await migrator.getMigrations()).filter(
+    (it) => !it.executedAt,
+  );
   if (pending.length === 0) {
     console.info('No pending database migrations');
     return;
@@ -95,6 +97,10 @@ async function main(): Promise<void> {
 }
 
 void main().catch((error) => {
-  console.error(error);
+  bootstrapLogger.error({
+    context: 'DatabaseMigrate',
+    msg: 'Migration command failed',
+    err: error,
+  });
   process.exitCode = 1;
 });

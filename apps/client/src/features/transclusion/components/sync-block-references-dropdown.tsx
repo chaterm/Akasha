@@ -16,14 +16,8 @@ import classes from "./sync-block-references-dropdown.module.css";
 type Props = {
   sourcePageId: string | null;
   transclusionId: string | null;
-  /** The page currently being viewed - used to mark the "THIS PAGE" badge. */
   currentPageId: string;
-  /**
-   * Source: trigger reads "Editing original".
-   * Reference: trigger reads "Synced to N other pages".
-   */
   mode: "source" | "reference";
-  /** Notified whenever the dropdown opens/closes (for keep-chrome-visible). */
   onOpenChange?: (open: boolean) => void;
 };
 
@@ -42,9 +36,6 @@ export default function SyncBlockReferencesDropdown({
     onOpenChange?.(next);
   };
 
-  // Fetch eagerly so the "Synced to N other pages" count is correct even
-  // before the dropdown is opened. The cache is keyed on (sourcePageId,
-  // transclusionId), so two views (source + reference) share one fetch.
   const enabled = !!sourcePageId && !!transclusionId;
   const { data, isLoading } = useReferencesQuery(
     sourcePageId,

@@ -1,10 +1,6 @@
 import { EventEmitter } from 'events';
 import type WebSocket from 'ws';
 
-/**
- * Wrapper around ws WebSocket that only receives events via emit().
- * This prevents double-handling when used with RedisSyncExtension.
- */
 export class WsSocketWrapper extends EventEmitter {
   private ws: WebSocket;
   readyState = 1;

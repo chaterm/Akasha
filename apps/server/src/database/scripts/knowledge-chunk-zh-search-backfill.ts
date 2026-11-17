@@ -27,9 +27,6 @@ export async function countPendingZhSearchRows(
   return Number(result.rows[0]?.count ?? 0);
 }
 
-// Each batch is its own short statement, so the script can be interrupted
-// and re-run; it only touches rows that are still missing search_tsv_zh.
-// The UPDATE does not modify `text`, so the refresh trigger does not fire.
 export async function backfillKnowledgeChunkZhSearch(
   db: Kysely<any>,
   options: ZhSearchBackfillOptions,

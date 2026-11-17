@@ -1,8 +1,8 @@
-import { Node } from "@tiptap/pm/model";
-import { MediaUploadOptions, UploadFn } from "../media-utils";
-import { IAttachment } from "../types";
-import { generateNodeId } from "../utils";
-import { Command } from "@tiptap/core";
+import { Node } from '@tiptap/pm/model';
+import { MediaUploadOptions, UploadFn } from '../media-utils';
+import { IAttachment } from '../types';
+import { generateNodeId } from '../utils';
+import { Command } from '@tiptap/core';
 
 const findAttachmentNodeByPlaceholderId = (
   doc: Node,
@@ -13,7 +13,7 @@ const findAttachmentNodeByPlaceholderId = (
   doc.descendants((node, pos) => {
     if (result) return false;
     if (
-      node.type.name === "attachment" &&
+      node.type.name === 'attachment' &&
       node.attrs.placeholder?.id === placeholderId
     ) {
       result = { node, pos };
@@ -66,10 +66,8 @@ const handleAttachmentUpload =
         const { pos: currentPos = null } =
           findAttachmentNodeByPlaceholderId(tr.doc, placeholderId) || {};
 
-        //  If the placeholder is not found or attachment is missing, abort the process
         if (currentPos === null || !attachment) return false;
 
-        // Update the placeholder node with the actual attachment data
         tr.setNodeMarkup(currentPos, undefined, {
           url: `/api/files/${attachment.id}/${attachment.fileName}`,
           name: attachment.fileName,
@@ -93,7 +91,6 @@ const handleAttachmentUpload =
         return true;
       };
     };
-    // Only show the placeholder if the upload takes more than 250ms
     const insertPlaceholderTimeout = setTimeout(() => {
       editor.commands.command(insertPlaceholder());
       placeholderInserted = true;

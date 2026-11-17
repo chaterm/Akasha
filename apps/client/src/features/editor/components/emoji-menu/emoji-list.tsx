@@ -14,14 +14,14 @@ import classes from "./emoji-menu.module.css";
 const COLS = 8;
 
 const CAT_ICONS: Record<string, string> = {
-  people:   "😀",
-  nature:   "🌿",
-  foods:    "🍕",
+  people: "😀",
+  nature: "🌿",
+  foods: "🍕",
   activity: "🎮",
-  places:   "🗺️",
-  objects:  "🔧",
-  symbols:  "💯",
-  flags:    "🚩",
+  places: "🗺️",
+  objects: "🔧",
+  symbols: "💯",
+  flags: "🚩",
 };
 
 function EmojiList({
@@ -61,27 +61,29 @@ function EmojiList({
     });
   }, []);
 
-  useEffect(() => { setIdx(0); }, [query, activeCat]);
+  useEffect(() => {
+    setIdx(0);
+  }, [query, activeCat]);
 
-  useEffect(() => { if (searching) setFocusZone("grid"); }, [searching]);
+  useEffect(() => {
+    if (searching) setFocusZone("grid");
+  }, [searching]);
 
   useEffect(() => {
     if (focusZone !== "tabs") return;
-    catBar.current?.querySelector<HTMLElement>(`[data-cat="${activeCat}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    catBar.current
+      ?.querySelector<HTMLElement>(`[data-cat="${activeCat}"]`)
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [activeCat, focusZone]);
 
   useEffect(() => {
     if (focusZone === "tabs") return;
     const vp = searching ? listViewport.current : gridViewport.current;
-    vp?.querySelector<HTMLElement>(`[data-i="${idx}"]`)?.scrollIntoView({ block: "nearest" });
+    vp?.querySelector<HTMLElement>(`[data-i="${idx}"]`)?.scrollIntoView({
+      block: "nearest",
+    });
   }, [idx, searching, focusZone]);
 
-  // Announce picker open and selection changes via a live region. Focus
-  // stays in the editor, so without this the screen reader has no way to
-  // know the picker exists or that arrow keys are changing the selection.
-  // The setTimeout defers the open message past the initial render so the
-  // live region is in the DOM before its content changes (screen readers
-  // ignore content that's present at mount time).
   useEffect(() => {
     const timer = setTimeout(() => {
       setAnnounce(
@@ -92,8 +94,6 @@ function EmojiList({
   }, [t]);
 
   useEffect(() => {
-    // Skip data-driven updates (idx reset, async cat load); only announce
-    // selection changes that come from real user navigation.
     if (!userInteractedRef.current) return;
 
     if (focusZone === "tabs") {
@@ -135,7 +135,12 @@ function EmojiList({
 
   const pickGridItem = useCallback(
     (entry: EmojiIndexEntry) => {
-      editor.chain().focus().deleteRange(range).insertContent(entry.native + " ").run();
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .insertContent(entry.native + " ")
+        .run();
       incrementEmojiUsage(entry.id);
     },
     [editor, range],
@@ -151,31 +156,66 @@ function EmojiList({
         userInteractedRef.current = true;
       }
       if (searching) {
-        if      (e.key === "ArrowDown") { e.preventDefault(); setIdx((i) => Math.min(i + 1, items.length - 1)); }
-        else if (e.key === "ArrowUp")   { e.preventDefault(); setIdx((i) => Math.max(i - 1, 0)); }
-        else if (e.key === "Enter")     { e.preventDefault(); pickSearchItem(idx); }
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setIdx((i) => Math.min(i + 1, items.length - 1));
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setIdx((i) => Math.max(i - 1, 0));
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          pickSearchItem(idx);
+        }
       } else if (focusZone === "tabs") {
         const catIdx = cats.findIndex((c) => c.id === activeCat);
-        if      (e.key === "ArrowRight") { e.preventDefault(); const next = cats[Math.min(catIdx + 1, cats.length - 1)]; if (next) setActiveCat(next.id); }
-        else if (e.key === "ArrowLeft")  { e.preventDefault(); const prev = cats[Math.max(catIdx - 1, 0)]; if (prev) setActiveCat(prev.id); }
-        else if (e.key === "ArrowDown" || e.key === "Enter") { e.preventDefault(); setFocusZone("grid"); }
-        else if (e.key === "ArrowUp")    { e.preventDefault(); }
+        if (e.key === "ArrowRight") {
+          e.preventDefault();
+          const next = cats[Math.min(catIdx + 1, cats.length - 1)];
+          if (next) setActiveCat(next.id);
+        } else if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          const prev = cats[Math.max(catIdx - 1, 0)];
+          if (prev) setActiveCat(prev.id);
+        } else if (e.key === "ArrowDown" || e.key === "Enter") {
+          e.preventDefault();
+          setFocusZone("grid");
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+        }
       } else {
         const total = gridItems.length;
-        if      (e.key === "ArrowRight") { e.preventDefault(); setIdx((i) => Math.min(i + 1, total - 1)); }
-        else if (e.key === "ArrowLeft")  { e.preventDefault(); setIdx((i) => Math.max(i - 1, 0)); }
-        else if (e.key === "ArrowDown")  { e.preventDefault(); setIdx((i) => Math.min(i + COLS, total - 1)); }
-        else if (e.key === "ArrowUp")    {
+        if (e.key === "ArrowRight") {
+          e.preventDefault();
+          setIdx((i) => Math.min(i + 1, total - 1));
+        } else if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          setIdx((i) => Math.max(i - 1, 0));
+        } else if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setIdx((i) => Math.min(i + COLS, total - 1));
+        } else if (e.key === "ArrowUp") {
           e.preventDefault();
           if (idx < COLS) setFocusZone("tabs");
-          else            setIdx((i) => Math.max(i - COLS, 0));
+          else setIdx((i) => Math.max(i - COLS, 0));
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          if (gridItems[idx]) pickGridItem(gridItems[idx]);
         }
-        else if (e.key === "Enter")      { e.preventDefault(); if (gridItems[idx]) pickGridItem(gridItems[idx]); }
       }
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [searching, items, idx, gridItems, pickSearchItem, pickGridItem, focusZone, cats, activeCat]);
+  }, [
+    searching,
+    items,
+    idx,
+    gridItems,
+    pickSearchItem,
+    pickGridItem,
+    focusZone,
+    cats,
+    activeCat,
+  ]);
 
   return (
     <Paper
@@ -208,25 +248,39 @@ function EmojiList({
       {searching ? (
         <>
           {isLoading && <Loader m="xs" size="xs" color="blue" type="dots" />}
-          <ScrollArea.Autosize mah={260} scrollbarSize={6} viewportRef={listViewport}>
+          <ScrollArea.Autosize
+            mah={260}
+            scrollbarSize={6}
+            viewportRef={listViewport}
+          >
             <div style={{ padding: 4 }}>
               {items.length === 0 && !isLoading ? (
-                <Text size="sm" c="dimmed" p="xs">{t("No results")}</Text>
-              ) : items.map((item, i) => (
-                <UnstyledButton
-                  key={item.id}
-                  data-i={i}
-                  w="100%"
-                  className={clsx(classes.row, { [classes.active]: i === idx })}
-                  onClick={() => pickSearchItem(i)}
-                  onMouseEnter={() => setIdx(i)}
-                  role="option"
-                  aria-selected={i === idx}
-                >
-                  <span style={{ fontSize: 20, lineHeight: 1, minWidth: 26 }}>{item.emoji}</span>
-                  <Text size="sm" c="dimmed" ff="monospace" span>:{item.id}:</Text>
-                </UnstyledButton>
-              ))}
+                <Text size="sm" c="dimmed" p="xs">
+                  {t("No results")}
+                </Text>
+              ) : (
+                items.map((item, i) => (
+                  <UnstyledButton
+                    key={item.id}
+                    data-i={i}
+                    w="100%"
+                    className={clsx(classes.row, {
+                      [classes.active]: i === idx,
+                    })}
+                    onClick={() => pickSearchItem(i)}
+                    onMouseEnter={() => setIdx(i)}
+                    role="option"
+                    aria-selected={i === idx}
+                  >
+                    <span style={{ fontSize: 20, lineHeight: 1, minWidth: 26 }}>
+                      {item.emoji}
+                    </span>
+                    <Text size="sm" c="dimmed" ff="monospace" span>
+                      :{item.id}:
+                    </Text>
+                  </UnstyledButton>
+                ))
+              )}
             </div>
           </ScrollArea.Autosize>
         </>
@@ -250,7 +304,10 @@ function EmojiList({
                     [classes.catTabActive]: isActive,
                     [classes.catTabFocused]: isFocused,
                   })}
-                  onClick={() => { setActiveCat(c.id); setFocusZone("grid"); }}
+                  onClick={() => {
+                    setActiveCat(c.id);
+                    setFocusZone("grid");
+                  }}
                   onMouseEnter={() => setFocusZone("grid")}
                 >
                   {CAT_ICONS[c.id] ?? "🔣"}
@@ -258,8 +315,15 @@ function EmojiList({
               );
             })}
           </div>
-          <ScrollArea.Autosize mah={220} scrollbarSize={6} viewportRef={gridViewport}>
-            <div className={classes.grid} style={{ gridTemplateColumns: `repeat(${COLS}, 1fr)` }}>
+          <ScrollArea.Autosize
+            mah={220}
+            scrollbarSize={6}
+            viewportRef={gridViewport}
+          >
+            <div
+              className={classes.grid}
+              style={{ gridTemplateColumns: `repeat(${COLS}, 1fr)` }}
+            >
               {gridItems.map((entry, i) => (
                 <button
                   key={entry.id}
@@ -268,7 +332,9 @@ function EmojiList({
                   role="option"
                   aria-selected={i === idx}
                   aria-label={entry.id}
-                  className={clsx(classes.emojiBtn, { [classes.active]: i === idx })}
+                  className={clsx(classes.emojiBtn, {
+                    [classes.active]: i === idx,
+                  })}
                   onClick={() => pickGridItem(entry)}
                   onMouseEnter={() => setIdx(i)}
                 >

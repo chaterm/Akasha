@@ -367,7 +367,6 @@ export function UsagePanel({
     filters,
   ]);
   const [previousScope, setPreviousScope] = useState(scope);
-  // Reset before the query renders, so a changed filter never requests an old page.
   if (previousScope !== scope) {
     setPreviousScope(scope);
     setPage(1);

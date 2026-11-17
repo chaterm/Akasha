@@ -18,9 +18,6 @@ export default function AiChatLayout() {
   const chatInfoQuery = useChatInfoQuery(chatId);
   const [isEditingHistory, setIsEditingHistory] = useState(false);
 
-  // If the URL points at a chat the user does not own, the info fetch 404s.
-  // Bounce them back to /ai so they cannot interact with any chat UI (including
-  // kicking off orphan uploads) tied to a chat they have no access to.
   useEffect(() => {
     if (chatId && chatInfoQuery.isError) {
       navigate("/ai", { replace: true });
@@ -86,8 +83,6 @@ export default function AiChatLayout() {
 
   const hasMessages = messages.length > 0 || isStreaming || !!chatId;
 
-  // While the redirect effect is running (or if the user is still on this
-  // component for any reason) never render the chat UI for a forbidden chat.
   if (chatId && chatInfoQuery.isError) {
     return null;
   }

@@ -533,8 +533,6 @@ export class KnowledgeDiagnosticsService {
               sql<number>`count(*) filter (where rp.merge_status = 'skipped')`.as(
                 'skippedMergeCount',
               ),
-              // Page merge pipeline visibility: pages ready to merge but not yet
-              // dispatched vs. an actively running per-run merge slot.
               sql<number>`count(*) filter (where rp.merge_status = 'pending')`.as(
                 'readyMergeCount',
               ),
@@ -729,14 +727,7 @@ export class KnowledgeDiagnosticsService {
         skippedImageCount: row.skippedImageCount,
         expectedSourceVersion: row.expectedSourceVersion,
         expectedSourceContentHash: row.expectedSourceContentHash,
-        errorCode: row.errorCode,
-        errorCategory: classifyRunPageError(row.errorCode),
-        errorSummary: row.errorCode
-          ? safeCompilationErrorMessage(row.errorCode)
-          : null,
-        ...(input.includeSensitiveErrors && row.errorMessage
-          ? { errorDetail: sanitizeRunPageErrorDetail(row.errorMessage) }
-          : {}),
+        ...buildRunPageErrorFields(row, input.includeSensitiveErrors),
         queuedAt: isoDate(row.queuedAt),
         startedAt: isoDate(row.startedAt),
         finishedAt: isoDate(row.finishedAt),
@@ -767,7 +758,6 @@ export class KnowledgeDiagnosticsService {
       SELECT clock_timestamp() AS "sampledAt"
     `.execute(this.db);
     const sampledAt = sampledAtResult.rows[0].sampledAt;
-    // The night window holds due pages back; expose when they really start.
     const windowConfig =
       (await this.compileWindowRepo?.getConfig(input.workspaceId)) ??
       KNOWLEDGE_COMPILE_WINDOW_DISABLED;
@@ -908,7 +898,6 @@ export class KnowledgeDiagnosticsService {
             0,
             row.eligibleAt.getTime() - sampledAt.getTime(),
           ),
-          /** When compilation actually starts, night window included. */
           compileStartsAt: start.startAt.toISOString(),
           remainingUntilCompileMs: Math.max(
             0,
@@ -925,13 +914,6 @@ export class KnowledgeDiagnosticsService {
     };
   }
 
-  /**
-   * Page-centric compilation log: for each source page, the most recent
-   * per-page compilation record within an optional time window. Answers
-   * "was this page compiled recently, and did it succeed?" without forcing the
-   * operator to locate the owning run first. Backed entirely by existing
-   * knowledge_space_compile_run_pages rows (no new table).
-   */
   async listPageCompilationLog(input: {
     workspaceId: string;
     spaceIds: string[];
@@ -1078,18 +1060,10 @@ export class KnowledgeDiagnosticsService {
           succeededImageCount: row.succeededImageCount,
           failedImageCount: row.failedImageCount,
           skippedImageCount: row.skippedImageCount,
-          errorCode: row.errorCode,
-          errorCategory: classifyRunPageError(row.errorCode),
-          errorSummary: row.errorCode
-            ? safeCompilationErrorMessage(row.errorCode)
-            : null,
-          ...(input.includeSensitiveErrors && row.errorMessage
-            ? { errorDetail: sanitizeRunPageErrorDetail(row.errorMessage) }
-            : {}),
+          ...buildRunPageErrorFields(row, input.includeSensitiveErrors),
           queuedAt: isoDate(row.queuedAt),
           startedAt: isoDate(row.startedAt),
           finishedAt: isoDate(row.finishedAt),
-          // No per-page duration column exists; approximate from timestamps.
           durationMs:
             startedMs !== null && finishedMs !== null
               ? Math.max(0, finishedMs - startedMs)
@@ -1302,6 +1276,44 @@ function parseTimestamp(value: string | undefined): Date | null {
   if (!value) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+const SETTLED_IMAGE_STATUSES = ['succeeded', 'not_required'];
+const SETTLED_MERGE_STATUSES = ['succeeded', 'not_required'];
+
+function buildRunPageErrorFields(
+  row: {
+    status: string;
+    imageStatus: string;
+    mergeStatus: string;
+    errorCode: string | null;
+    errorMessage: string | null;
+  },
+  includeSensitiveErrors?: boolean,
+) {
+  const errorCode = visibleRunPageErrorCode(row);
+  return {
+    errorCode,
+    errorCategory: classifyRunPageError(errorCode),
+    errorSummary: errorCode ? safeCompilationErrorMessage(errorCode) : null,
+    ...(includeSensitiveErrors && errorCode && row.errorMessage
+      ? { errorDetail: sanitizeRunPageErrorDetail(row.errorMessage) }
+      : {}),
+  };
+}
+
+export function visibleRunPageErrorCode(row: {
+  status: string;
+  imageStatus: string;
+  mergeStatus: string;
+  errorCode: string | null;
+}): string | null {
+  if (!row.errorCode) return null;
+  const settled =
+    row.status === 'succeeded' &&
+    SETTLED_IMAGE_STATUSES.includes(row.imageStatus) &&
+    SETTLED_MERGE_STATUSES.includes(row.mergeStatus);
+  return settled ? null : row.errorCode;
 }
 
 export function classifyRunPageError(

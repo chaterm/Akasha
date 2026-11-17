@@ -44,7 +44,6 @@ export function buildSsoLoginUrl(opts: {
 }
 
 export function getGoogleSignupUrl(): string {
-  // Google login is instance-wide. Use the env APP_URL instead
   return `${getServerAppUrl()}/api/sso/${SSO_PROVIDER.GOOGLE}/signup`;
 }
 
@@ -52,4 +51,3 @@ export function buildSamlEntityId(providerId: string): string {
   const domain = getAppUrl();
   return `${domain}/api/sso/${SSO_PROVIDER.SAML}/${providerId}/login`;
 }
-

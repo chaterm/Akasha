@@ -76,12 +76,7 @@ describe('LlmWikiController', () => {
           requestedSpaceIds: ['space-1'],
           effectiveSpaceIds: ['space-1'],
         },
-        // Internal retrieval detail the shared chat service attaches on every
-        // branch; the regular query API must strip it, never expose it (§7.1).
         attachmentHitContext: { directHitChunkIds: ['chunk-1'] },
-        // Phase timings are audit-only: stripped from the response below, and
-        // recorded under metadata.timings. ttftMs is measured from the
-        // generation request, so it is not bounded by the phases before it.
         timings: {
           rewriteMs: 310.2,
           retrievalMs: 412.3,
@@ -145,8 +140,6 @@ describe('LlmWikiController', () => {
       queryAuditRepo,
     });
 
-    // Exact match: proves attachmentHitContext/retrievalDiagnostics/retrievalScope
-    // are all stripped, not just absent from the mock.
     await expect(
       controller.queryKnowledge(
         { query: 'How do we use Kafka?', spaceIds: ['space-1'] },
@@ -173,8 +166,6 @@ describe('LlmWikiController', () => {
       query: 'How do we use Kafka?',
       spaceIds: ['space-1'],
       workspace: workspace(),
-      // Opt-in: without this the service does not return `timings`, so the
-      // audit row below would silently lose its phase breakdown.
       collectTimings: true,
     });
     expect(auditService.log).toHaveBeenCalledWith({
@@ -201,8 +192,6 @@ describe('LlmWikiController', () => {
       authorizedCapsuleCount: 1,
       metadata: {
         origin: 'knowledge_query',
-        // Recorded so the knowledge/general split is queryable from the audit
-        // alone, matching what ai-chat and the MCP tool already store.
         answerMode: 'knowledge',
         spaceIds: ['space-1'],
         requestedSpaceIds: ['space-1'],
@@ -877,7 +866,6 @@ describe('LlmWikiController', () => {
       }),
       user(),
     );
-    // No explicit mode: clear the page override and follow the Space.
     expect(spaceCompilation.requestImmediatePagePublish).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
@@ -902,10 +890,8 @@ describe('LlmWikiController', () => {
   });
 
   it.each([
-    // [requested, Space mode, stored page setting, saved, effective, reported]
     ['inherit', 'default', 'original', null, 'compiled', null],
     ['original', 'default', null, 'original', 'original', 'original'],
-    // A locked Space ignores the request and leaves the page setting alone.
     ['compiled', 'original', 'compiled', undefined, 'original', 'compiled'],
     ['inherit', 'compiled', null, undefined, 'compiled', null],
   ] as const)(
@@ -993,7 +979,6 @@ describe('LlmWikiController', () => {
         pageIndexSettingsRepo,
       });
 
-      // Returns the full compile status so the client skips a refetch.
       await expect(
         controller.setPageIndexMode(
           page.id,
@@ -1083,7 +1068,6 @@ describe('LlmWikiController', () => {
       ),
     ).resolves.toEqual(
       expect.objectContaining({
-        // The Space mode changed after publishing, so the page is stale.
         status: 'outdated',
         configuredIndexMode: 'original',
         pageIndexMode: null,
@@ -1704,7 +1688,6 @@ describe('LlmWikiController', () => {
     const spaceCompilation = {
       requestRuns: jest.fn(),
       clearImageExtractionCache: jest.fn(),
-      // space-2 still has a live Run; the whole retry must be refused.
       findSpaceIdsWithActiveRun: jest.fn().mockResolvedValue(['space-2']),
     };
     const controller = createController({
@@ -1726,7 +1709,6 @@ describe('LlmWikiController', () => {
       workspaceId: 'workspace-1',
       spaceIds: ['space-1', 'space-2'],
     });
-    // No mutation may run once the guard trips.
     expect(spaceCompilation.clearImageExtractionCache).not.toHaveBeenCalled();
     expect(spaceCompilation.requestRuns).not.toHaveBeenCalled();
     expect(sourceExporter.exportPageSources).not.toHaveBeenCalled();

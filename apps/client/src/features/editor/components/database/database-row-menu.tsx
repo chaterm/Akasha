@@ -18,14 +18,11 @@ interface RowMenuProps {
   db: DatabaseContext;
   rowId: string;
   onInsert: (side: "above" | "below") => void;
-  /** Extra rows, e.g. kanban "Move to". */
   extra?: (close: () => void) => ReactNode;
   insertLabels?: { above: string; below: string };
-  /** Off where the row already has its own expand button (row number cell, card). */
   showExpand?: boolean;
 }
 
-/** "…" menu of a row or card: open, insert above/below, delete. */
 export function RowMenu({
   db,
   rowId,
@@ -121,7 +118,6 @@ export function RowMenu({
             db.apply((tr, pos) => deleteDatabaseRow(tr, pos, rowId));
           }}
         />
-
       </Popover.Dropdown>
     </Popover>
   );

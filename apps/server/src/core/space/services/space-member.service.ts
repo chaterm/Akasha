@@ -47,9 +47,6 @@ export class SpaceMemberService {
     workspaceId: string,
     trx?: KyselyTransaction,
   ): Promise<void> {
-    //if (existingSpaceUser) {
-    //           throw new BadRequestException('User already added to this space');
-    //         }
     await this.spaceMemberRepo.insertSpaceMember(
       {
         userId: userId,
@@ -89,10 +86,6 @@ export class SpaceMemberService {
     );
   }
 
-  /*
-   * get members of a space.
-   * can be a group or user
-   */
   async getSpaceMembers(
     spaceId: string,
     workspaceId: string,
@@ -119,7 +112,6 @@ export class SpaceMemberService {
       throw new NotFoundException('Space not found');
     }
 
-    // make sure we have valid workspace users
     const validUsersQuery = this.db
       .selectFrom('users')
       .select(['id', 'name'])
@@ -188,7 +180,6 @@ export class SpaceMemberService {
     if (membersToAdd.length > 0) {
       await this.spaceMemberRepo.insertSpaceMember(membersToAdd);
 
-      // Audit log for each member added
       for (const user of validUsers) {
         this.auditService.log({
           event: AuditEvent.SPACE_MEMBER_ADDED,

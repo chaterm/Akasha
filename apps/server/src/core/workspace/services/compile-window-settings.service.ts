@@ -11,12 +11,10 @@ import {
 } from '../../../integrations/audit/audit.service';
 import { UpdateCompileWindowSettingsDto } from '../dto/compile-window-settings.dto';
 
-/** Responses carry the server timezone so the UI can name the clock used. */
 export type CompileWindowSettingsResponse = KnowledgeCompileWindowConfig & {
   serverTimezone: string;
 };
 
-/** Admin settings for the knowledge night compile window. */
 @Injectable()
 export class CompileWindowSettingsService {
   constructor(

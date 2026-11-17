@@ -5,6 +5,7 @@ import { Queue } from 'bullmq';
 import { KnowledgeSpaceExecutionRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-execution.repo';
 import { QueueName } from '../../../integrations/queue/constants';
 import { KNOWLEDGE_WORKER_SETTINGS } from './knowledge-worker-settings';
+import { WithJobContext } from '../../../common/logger/with-job-context.decorator';
 
 const EXECUTABLE_JOB_STATES = new Set([
   'active',
@@ -26,6 +27,7 @@ export class KnowledgeRunReaperService {
   ) {}
 
   @Interval('knowledge-space-run-reaper', 30_000)
+  @WithJobContext('knowledge-space-run-reaper')
   async reap(): Promise<void> {
     if (this.reaping) return;
     this.reaping = true;
@@ -43,7 +45,8 @@ export class KnowledgeRunReaperService {
           state = job ? await job.getState() : 'missing';
         } catch {
           this.logger.warn(
-            `Unable to inspect Knowledge Space job ${candidate.spaceJobId}; recovery deferred.`,
+            { spaceJobId: candidate.spaceJobId },
+            'Unable to inspect knowledge space job; recovery deferred',
           );
           continue;
         }
@@ -67,13 +70,8 @@ export class KnowledgeRunReaperService {
           executionLeaseExpiresAt: new Date(
             Date.now() + KNOWLEDGE_WORKER_SETTINGS.executionLeaseTtlMs,
           ),
-          // A queued reservation has no execution lease. The repository still
-          // re-checks the current status under lock: if a Worker claimed it
-          // during Redis inspection, recovery falls back to the expiry fence.
           recoveryKind:
-            candidate.status === 'queued'
-              ? 'queued_reservation'
-              : 'expired',
+            candidate.status === 'queued' ? 'queued_reservation' : 'expired',
         });
         if (!recoveryLease) continue;
 

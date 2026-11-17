@@ -1,4 +1,4 @@
-import type { TreeNode, SiblingsInfo } from './tree-model.types';
+import type { TreeNode, SiblingsInfo } from "./tree-model.types";
 
 function findInternal<T extends object>(
   nodes: TreeNode<T>[],
@@ -19,7 +19,10 @@ export const treeModel = {
     return findInternal(tree, id)?.node ?? null;
   },
 
-  path<T extends object>(tree: TreeNode<T>[], id: string): TreeNode<T>[] | null {
+  path<T extends object>(
+    tree: TreeNode<T>[],
+    id: string,
+  ): TreeNode<T>[] | null {
     const found = findInternal(tree, id);
     if (!found) return null;
     return [...found.parents, found.node];
@@ -120,9 +123,6 @@ export const treeModel = {
     return touched ? out : tree;
   },
 
-  // `patch` excludes `id` (immutable) and `children` (use insert / remove /
-  // appendChildren for structural changes — otherwise referential identity of
-  // unrelated subtrees gets blown away).
   update<T extends object>(
     tree: TreeNode<T>[],
     id: string,
@@ -155,9 +155,6 @@ export const treeModel = {
       nodes.map((n) => {
         if (n.id === parentId) {
           const existing = n.children ?? [];
-          // Dedup against existing ids — auto-expand + manual toggle can race
-          // and produce overlapping fetches; we don't want React to see two
-          // children with the same key.
           const existingIds = new Set(existing.map((c) => c.id));
           const fresh = children.filter((c) => !existingIds.has(c.id));
           if (fresh.length === 0) return n;
@@ -189,9 +186,10 @@ export const treeModel = {
   move<T extends object>(
     tree: TreeNode<T>[],
     sourceId: string,
-    op: import('./tree-model.types').DropOp,
-  ): { tree: TreeNode<T>[]; result: import('./tree-model.types').DropResult } {
-    if (sourceId === op.targetId) return { tree, result: { parentId: null, index: 0 } };
+    op: import("./tree-model.types").DropOp,
+  ): { tree: TreeNode<T>[]; result: import("./tree-model.types").DropResult } {
+    if (sourceId === op.targetId)
+      return { tree, result: { parentId: null, index: 0 } };
     if (!treeModel.find(tree, sourceId) || !treeModel.find(tree, op.targetId)) {
       return { tree, result: { parentId: null, index: 0 } };
     }
@@ -202,7 +200,7 @@ export const treeModel = {
     let parentId: string | null;
     let index: number;
 
-    if (op.kind === 'make-child') {
+    if (op.kind === "make-child") {
       parentId = op.targetId;
       const target = treeModel.find(tree, op.targetId)!;
       index = target.children?.length ?? 0;
@@ -211,9 +209,8 @@ export const treeModel = {
       parentId = info.parentId;
       const sourceInfo = treeModel.siblingsOf(tree, sourceId)!;
       const sameParent = sourceInfo.parentId === parentId;
-      const adjust =
-        sameParent && sourceInfo.index < info.index ? -1 : 0;
-      index = info.index + adjust + (op.kind === 'reorder-after' ? 1 : 0);
+      const adjust = sameParent && sourceInfo.index < info.index ? -1 : 0;
+      index = info.index + adjust + (op.kind === "reorder-after" ? 1 : 0);
     }
 
     const next = treeModel.place(tree, sourceId, { parentId, index });

@@ -337,9 +337,6 @@ export class PageRepo {
       pageIdsByWorkspace.set(page.workspaceId, workspacePageIds);
     }
 
-    // Collaboration persistence publishes PAGE_CONTENT_UPDATED only after its
-    // transaction succeeds. Let that durable queue job schedule compilation so
-    // one content save is not counted twice and a rolled-back save is not queued.
     const skipKnowledgeCompile =
       options?.skipKnowledgeCompile ||
       ['content', 'textContent', 'ydoc'].some((field) =>
@@ -440,7 +437,6 @@ export class PageRepo {
   }
 
   async restorePage(pageId: string, workspaceId: string): Promise<void> {
-    // First, check if the page being restored has a deleted parent
     const pageToRestore = await this.db
       .selectFrom('pages')
       .select(['id', 'parentPageId'])
@@ -451,7 +447,6 @@ export class PageRepo {
       return;
     }
 
-    // Check if the parent is also deleted
     let shouldDetachFromParent = false;
     if (pageToRestore.parentPageId) {
       const parent = await this.db
@@ -460,11 +455,9 @@ export class PageRepo {
         .where('id', '=', pageToRestore.parentPageId)
         .executeTakeFirst();
 
-      // If parent is deleted, we should detach this page from it
       shouldDetachFromParent = parent?.deletedAt !== null;
     }
 
-    // Find all descendants to restore
     const pages = await this.db
       .withRecursive('page_descendants', (db) =>
         db
@@ -484,14 +477,12 @@ export class PageRepo {
 
     const pageIds = pages.map((p) => p.id);
 
-    // Restore all pages, but only detach the root page if its parent is deleted
     await this.db
       .updateTable('pages')
       .set({ deletedById: null, deletedAt: null })
       .where('id', 'in', pageIds)
       .execute();
 
-    // If we need to detach the restored page from its deleted parent
     if (shouldDetachFromParent) {
       await this.db
         .updateTable('pages')
@@ -763,13 +754,6 @@ export class PageRepo {
       .execute();
   }
 
-  /**
-   * Get page and all descendants, excluding restricted pages and their subtrees.
-   * More efficient than getPageAndDescendants + filtering because:
-   * 1. Single DB query (no separate restricted IDs query)
-   * 2. Stops traversing at restricted pages (doesn't fetch data to discard)
-   * 3. No in-memory filtering needed
-   */
   async getPageAndDescendantsExcludingRestricted(
     parentPageId: string,
     opts: { includeContent: boolean },

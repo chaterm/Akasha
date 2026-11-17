@@ -45,15 +45,11 @@ export interface CellPosition {
   columnId: string;
 }
 
-/** Grip, row menu and checkbox, outside the table frame. */
 const GUTTER_WIDTH = 72;
-/** Rows shown at first and added by each "Load more". */
 const PAGE_SIZE = 50;
-/** `rowId` of a selection on the header row. */
 const HEADER_ROW = "__header";
 const ADD_COLUMN_WIDTH = 40;
 
-/** Moves a column before another in the active view's column order; null = to the end. */
 function moveColumnBefore(
   db: DatabaseContext,
   columnId: string,
@@ -80,31 +76,22 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
   const viewRows = useViewRows(db);
   const [selection, setSelection] = useState<CellPosition | null>(null);
   const [editing, setEditing] = useState<{ initialText?: string } | null>(null);
-  // While editing (or right after creating a row) the order is frozen so a
-  // sort or filter on the edited column does not make the row jump away.
   const [frozen, setFrozen] = useState<string[] | null>(null);
   const [menuColumnId, setMenuColumnId] = useState<string | null>(null);
   const [liveWidths, setLiveWidths] = useState<Record<string, number>>({});
-  // Visible index the dragged row would be inserted at (for the indicator).
   const [dropIndex, setDropIndex] = useState<number | null>(null);
-  // Visible column index the dragged column would be inserted before.
   const [columnDrop, setColumnDrop] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  // Far corner of a multi-cell range; `selection` is the other corner.
   const [rangeEnd, setRangeEnd] = useState<CellPosition | null>(null);
-  /** Moves the selection to one cell (or none), dropping any range. */
   const select = (position: CellPosition | null) => {
     setSelection(position);
     setRangeEnd(null);
   };
-  // Rows checked for a bulk action; shift-click extends from the last one.
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const lastChecked = useRef<string | null>(null);
-  // Rows shown before "Load more", per group key ("" when not grouped).
   const [limits, setLimits] = useState<Record<string, number>>({});
   const limitOf = (key: string) => limits[key] ?? PAGE_SIZE;
   const [scrolledX, setScrolledX] = useState(false);
-  // Focused for Mod-C / X / V so the browser's own clipboard events can be used.
   const sinkRef = useRef<HTMLTextAreaElement>(null);
   useStickyHeader(tableRef);
 
@@ -118,8 +105,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
     return [...kept, ...viewRows.filter((row) => !keptIds.has(row.id))];
   }, [frozen, viewRows, db.rows]);
   const grouping = useViewGroups(db, ordered);
-  // Rows on screen in display order: expanded groups only, up to each "Load
-  // more" limit; a multi-select row in several groups counts once.
   const rows = useMemo(() => {
     const seen = new Set<string>();
     const shown = grouping
@@ -129,10 +114,8 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
       : ordered.slice(0, limitOf(""));
     return shown.filter((row) => !seen.has(row.id) && !!seen.add(row.id));
   }, [grouping, ordered, collapsed, limits]);
-  // Pasting continues past the loaded rows (ungrouped) instead of creating new ones.
   const pasteRows = grouping ? rows : ordered;
 
-  // Checked rows that left the view (filtered out or deleted) are unchecked.
   useEffect(() => {
     if (!checked.size) return;
     const ids = new Set(viewRows.map((row) => row.id));
@@ -140,7 +123,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
       setChecked(new Set([...checked].filter((id) => ids.has(id))));
   }, [viewRows, checked]);
 
-  // Drop a selection whose row or column no longer exists (deleted, possibly remotely).
   useEffect(() => {
     if (!selection) return;
     if (
@@ -154,7 +136,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
   }, [rows, columns, selection]);
 
   const focusGrid = () => containerRef.current?.focus({ preventScroll: true });
-  /** `afterId`: undefined = append, null = first. */
   const freeze = (extra?: {
     id: string;
     afterId: string | null | undefined;
@@ -189,7 +170,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
     setEditing({ initialText });
   };
 
-  /** Moves the selection; row index -1 is the header row. */
   const move = (rowDelta: number, columnDelta: number, wrap = false) => {
     if (!columns.length) return;
     if (!selection) {
@@ -216,7 +196,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
     });
   };
 
-  /** Index bounds of the selected range (a single cell without one), or null on the header row. */
   const selectedRange = () => {
     if (!selection || selection.rowId === HEADER_ROW) return null;
     const end = rangeEnd ?? selection;
@@ -241,7 +220,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
   const rangeRowIds = new Set(multiCell ? rangeRows.map((row) => row.id) : []);
   const rangeColumnIds = new Set(rangeColumns.map((column) => column.id));
 
-  /** Shift + arrow / click: moves the range's far corner. */
   const extend = (rowDelta: number, columnDelta: number) => {
     if (!selection || selection.rowId === HEADER_ROW) return;
     const end = rangeEnd ?? selection;
@@ -270,7 +248,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
           setDatabaseCellValue(tr, pos, row.id, column.id, null);
     });
 
-  /** Lets the browser copy / paste through a focused hidden textarea, then returns focus. */
   const clipboard = (kind: "copy" | "cut" | "paste") => {
     const sink = sinkRef.current;
     if (!sink || !range) return false;
@@ -317,11 +294,9 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
     if (reason !== "blur") focusGrid();
   };
 
-  /** Creates a row next to another (or at the end) and starts editing its first cell. */
   const addRow = (
     side: { afterRowId?: string; beforeRowId?: string } = {},
     values?: Record<string, DatabaseCellValue>,
-    /** Group the row lands in, so its "Load more" limit makes room for it. */
     groupKey = "",
   ) => {
     const id = createRow(db, { ...side, values });
@@ -366,7 +341,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
     }
     const key = event.key.toLowerCase();
     if (mod && !event.altKey && ["c", "x", "v"].includes(key)) {
-      // Copy works read-only; the native event follows on the focused sink.
       if (key !== "c" && !db.editable) return;
       if (clipboard(key === "c" ? "copy" : key === "x" ? "cut" : "paste"))
         event.stopPropagation();
@@ -414,7 +388,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
       clearRange();
     } else if (event.key.length === 1 && !mod && !event.altKey) {
       const column = columns.find((item) => item.id === selection.columnId);
-      // Typing starts editing text-like cells with the typed character; progress takes digits.
       if (
         column &&
         (["text", "number", "url"].includes(column.type) ||
@@ -449,7 +422,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
     cursor: "grabbing",
   });
 
-  // Nothing can be dropped before the title column.
   const columnDropIndex = (x: number, y: number) =>
     Math.max(
       hitTestList(containerRef.current, "th[data-column-id]", "x", x, y),
@@ -470,7 +442,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
     cursor: "grabbing",
   });
 
-  /** Left offset of the column drop line inside the scroll container. */
   function columnDropLeft(index: number): number {
     return (
       GUTTER_WIDTH +
@@ -489,10 +460,8 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
     return index < 0 ? null : index + (y > rect.top + rect.height / 2 ? 1 : 0);
   }
 
-  /** The visible slot mapped to document order: insert before this row id, null = at the end. */
   function beforeRowIdAt(index: number): string | null {
     if (index < rows.length) return rows[index].id;
-    // After the last visible row: before the next row in document order, if any.
     const docIndex = db.rows.findIndex(
       (row) => row.id === rows[rows.length - 1]?.id,
     );
@@ -500,7 +469,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
   }
 
   const rowNumberWidth = db.view.showRowNumbers ? ROW_NUMBER_WIDTH : 0;
-  // Everything inside the table frame: row numbers plus the data columns.
   const dataWidth =
     rowNumberWidth +
     columns.reduce(
@@ -517,7 +485,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
       return next;
     });
 
-  /** `index` is the row's slot for drop indicators; -1 in grouped tables, where rows cannot be dragged. */
   const renderRow = (
     row: DatabaseRowData,
     number: number,
@@ -560,7 +527,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
     />
   );
 
-  /** Dragging from a cell selects the cells it passes over. */
   const startRangeDrag = (anchor: CellPosition) => {
     const onMove = (event: globalThis.MouseEvent) => {
       const cell = elementAt(
@@ -586,7 +552,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
     window.addEventListener("mouseup", onUp);
   };
 
-  /** Shift-click checks every row between the last checked one and this one. */
   const toggleCheck = (rowId: string, shiftKey: boolean) => {
     const next = new Set(checked);
     const anchor = lastChecked.current;
@@ -620,7 +585,6 @@ export default function DatabaseTableView({ db }: { db: DatabaseContext }) {
     db.view.columns.filter((entry) => entry.wrap).map((entry) => entry.id),
   );
 
-  /** "Load more" under the rows of a group ("" when not grouped). */
   const loadMore = (key: string, total: number) => {
     const limit = limitOf(key);
     if (total <= limit) return null;

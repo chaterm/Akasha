@@ -17,23 +17,6 @@ import {
   type DatabaseView,
 } from './database-schema';
 
-/**
- * Database block: one data source (columns + rows), many views.
- *
- *   database      attrs: id, title, columns, views, rowOrder
- *     databaseRow   attrs: id
- *       databaseCell  attrs: columnId, value
- *
- * Every cell is its own node so y-prosemirror merges concurrent edits per
- * cell; a row-level JSON attr would let one user's edit overwrite another's
- * in a different column. `columns`/`views`/`rowOrder` are JSON attrs on the
- * database node and are last-writer-wins as a whole.
- *
- * Views only store configuration (see database-schema.ts). Moving a card in
- * a kanban or calendar view writes the cell value; sorting never reorders
- * the document.
- */
-
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
@@ -47,11 +30,6 @@ function parseJSON(value: string | null): unknown {
   }
 }
 
-/**
- * Reads rows in saved order, falling back to document order for unlisted rows
- * and old documents. If a column has duplicate cells (concurrent first writes),
- * the first wins. Deleted ids in the saved order are ignored.
- */
 export function readDatabaseRows(node: PMNode): DatabaseRowData[] {
   const rows: DatabaseRowData[] = [];
   node.forEach((row) => {
@@ -150,12 +128,9 @@ export function buildDatabaseJSON(input: DatabaseInput): JSONContent {
 
 export interface DefaultDatabaseLabels {
   title: string;
-  /** Name of the first column. */
   task: string;
-  /** Title of the n-th sample row. */
   taskItem: (n: number) => string;
   member: string;
-  /** Set on every sample row when known (the user inserting the database). */
   me?: { id: string; name: string; avatarUrl?: string };
   status: string;
   date: string;
@@ -169,11 +144,6 @@ export interface DefaultDatabaseLabels {
   mine: string;
 }
 
-/**
- * Task + Member + Status + Date with table, kanban (by status), calendar,
- * timeline and "mine" views: three sample tasks, one per status,
- * assigned to `labels.me` and due a week after `today`.
- */
 export function buildDefaultDatabaseJSON(
   labels: DefaultDatabaseLabels,
   today: Date = new Date(),
@@ -253,7 +223,8 @@ function renderDatabaseDOM(node: PMNode): any {
       'data-type': 'database',
       'data-id': node.attrs.id || '',
       'data-title': title,
-      'data-title-align': normalizeDatabaseAlign(node.attrs.titleAlign) ?? 'left',
+      'data-title-align':
+        normalizeDatabaseAlign(node.attrs.titleAlign) ?? 'left',
       'data-columns': JSON.stringify(columns),
       'data-views': JSON.stringify(views),
       'data-row-order': JSON.stringify(
@@ -314,8 +285,6 @@ export const Database = Node.create<DatabaseOptions>({
   name: 'database',
   group: 'block',
   content: 'databaseRow*',
-  // A black box for ProseMirror: the React view renders rows itself and
-  // edits them through transactions in database-transforms.ts.
   atom: true,
   isolating: true,
   selectable: true,
@@ -392,8 +361,6 @@ export const Database = Node.create<DatabaseOptions>({
   },
 
   addNodeView() {
-    // Every event inside the view (inputs, keyboard, pointer drags) belongs
-    // to React, never to ProseMirror.
     return ReactNodeViewRenderer(this.options.view, { stopEvent: () => true });
   },
 
@@ -413,9 +380,6 @@ export const Database = Node.create<DatabaseOptions>({
   },
 });
 
-// Rows and cells are only ever created by the database's own parse rule and
-// transforms, so they have no parse rules of their own: a stray row pasted
-// outside a database is dropped instead of being wrapped in an empty one.
 export const DatabaseRow = Node.create({
   name: 'databaseRow',
   content: 'databaseCell*',

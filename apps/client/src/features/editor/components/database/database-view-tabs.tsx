@@ -33,7 +33,6 @@ export const VIEW_ICONS: Record<DatabaseViewType, Icon> = {
   mine: IconUserCheck,
 };
 
-/** i18n keys. */
 export const VIEW_LABELS: Record<DatabaseViewType, string> = {
   table: "Table",
   kanban: "Kanban",
@@ -43,7 +42,6 @@ export const VIEW_LABELS: Record<DatabaseViewType, string> = {
   mine: "Mine",
 };
 
-/** Props a tab needs to be dragged and to show where a dragged tab would land. */
 interface TabDrag {
   dragging: boolean;
   dropBefore: boolean;
@@ -61,7 +59,6 @@ function tabProps(drag: TabDrag) {
   };
 }
 
-/** The active tab; double-click renames it in place (Enter / blur saves, Escape cancels). */
 function ActiveTab({
   db,
   view,
@@ -141,7 +138,6 @@ export function DatabaseViewTabs({ db }: { db: DatabaseContext }) {
   };
 
   const tabsRef = useRef<HTMLDivElement>(null);
-  // Index of the tab the dragged one would be inserted before.
   const [dropIndex, setDropIndex] = useState<number | null>(null);
   const hit = (x: number, y: number) =>
     hitTestList(tabsRef.current, "[data-view-tab]", "x", x, y);

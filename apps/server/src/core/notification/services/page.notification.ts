@@ -23,7 +23,7 @@ import { getPageTitle } from '../../../common/helpers';
 import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 
 const PAGE_UPDATE_COOLDOWN_HOURS = 7;
-const DIGEST_DELAY_MS = 12 * 60 * 60 * 1000; // 12 hours
+const DIGEST_DELAY_MS = 12 * 60 * 60 * 1000;
 
 @Injectable()
 export class PageNotificationService {
@@ -297,9 +297,7 @@ export class PageNotificationService {
         { delay: DIGEST_DELAY_MS, removeOnComplete: true },
       )
       .catch((err) => {
-        this.logger.error(
-          `Failed to schedule digest for ${userId}: ${err.message}`,
-        );
+        this.logger.error({ userId, err }, 'Failed to schedule digest');
       });
   }
 
@@ -370,13 +368,14 @@ export class PageNotificationService {
     const pages = spaceFilteredPages.filter((p) => accessiblePageIds.has(p.id));
     if (pages.length === 0) return;
 
-    const actors = actorIds.length > 0
-      ? await this.db
-          .selectFrom('users')
-          .select(['id', 'name'])
-          .where('id', 'in', actorIds)
-          .execute()
-      : [];
+    const actors =
+      actorIds.length > 0
+        ? await this.db
+            .selectFrom('users')
+            .select(['id', 'name'])
+            .where('id', 'in', actorIds)
+            .execute()
+        : [];
 
     const actorMap = new Map(actors.map((a) => [a.id, a.name]));
     const pageActors = new Map<string, Set<string>>();

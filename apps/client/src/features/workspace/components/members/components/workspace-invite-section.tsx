@@ -10,13 +10,6 @@ export default function WorkspaceInviteSection() {
   const [currentUser] = useAtom(currentUserAtom);
   const [inviteLink, setInviteLink] = useState<string>("");
 
-  /*
-  useEffect(() => {
-    setInviteLink(
-      `${window.location.origin}/invite/${currentUser.workspace.inviteCode}`,
-    );
-  }, [currentUser.workspace.inviteCode]);
-*/
   return (
     <>
       <div>

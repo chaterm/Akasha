@@ -43,7 +43,6 @@ export const COLUMN_TYPE_ICONS: Record<DatabaseColumnType, Icon> = {
   progress: IconProgress,
 };
 
-/** i18n keys. */
 export const COLUMN_TYPE_LABELS: Record<DatabaseColumnType, string> = {
   text: "Text",
   number: "Number",
@@ -57,7 +56,6 @@ export const COLUMN_TYPE_LABELS: Record<DatabaseColumnType, string> = {
   progress: "Progress",
 };
 
-/** Types offered when creating or converting a column. */
 export const ADDABLE_COLUMN_TYPES: DatabaseColumnType[] = [
   "text",
   "number",
@@ -71,7 +69,6 @@ export const ADDABLE_COLUMN_TYPES: DatabaseColumnType[] = [
   "progress",
 ];
 
-/** `text` with case-insensitive matches of `search` marked. */
 export function Highlighted({
   text,
   search,
@@ -101,12 +98,10 @@ export function Highlighted({
   return <>{parts}</>;
 }
 
-/** Display width in CJK characters: a Latin letter or digit counts as half. */
 function charWidth(char: string) {
   return /[\x00-\xff]/.test(char) ? 0.5 : 1;
 }
 
-/** `text` cut to `limit` CJK-character widths, with "…" when anything was cut. */
 export function clampText(text: string, limit: number): string {
   let used = 0;
   let out = "";
@@ -118,11 +113,9 @@ export function clampText(text: string, limit: number): string {
   return out;
 }
 
-/** Member names show at most this many CJK characters, document titles this many. */
 export const PERSON_NAME_LIMIT = 3;
 export const PAGE_TITLE_LIMIT = 4;
 
-/** A member: avatar plus name (in menus the full name, elsewhere at most three characters). */
 export function PersonChip({
   person,
   search,
@@ -148,11 +141,6 @@ export function PersonChip({
   );
 }
 
-/**
- * A document: icon plus title, linking to the page. Its title is the viewer's
- * permission-checked lookup; while it loads a dot shows, and a page the viewer
- * cannot see shows a lock instead of its title.
- */
 export function PageChip({
   page,
   search,
@@ -201,7 +189,6 @@ export function PageChip({
       {...props}
       className={`${classes.personChip} ${classes.pageLink}`}
       href={buildPageUrl(page.spaceSlug, page.slugId, page.name)}
-      // Cards and cells react to clicks; following the link must not.
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
     >
@@ -210,7 +197,6 @@ export function PageChip({
   );
 }
 
-/** Option badge, or the chip of a member / document column; `menu` shows full names, no links. */
 export function OptionLabel({
   type,
   option,
@@ -229,20 +215,13 @@ export function OptionLabel({
   return <OptionBadge option={option} search={search} />;
 }
 
-/** Gap between chips, in pixels; the same for members and documents. */
 const CHIP_GAP = 6;
-/** Narrowest a chip may get: members keep the avatar, documents icon plus one character. */
 const CHIP_MIN_WIDTH: Partial<Record<DatabaseColumnType, number>> = {
   person: 18,
   page: 15 + 4 + 14 + 10,
 };
 const MORE_WIDTH = 16;
 
-/**
- * Member / document chips in one line: as many as fit at their narrowest; the
- * rest becomes "…". Chips shrink from their name down to that minimum. With
- * `wrap` they flow onto more lines instead.
- */
 export function ChipList({
   type,
   options,
@@ -347,7 +326,6 @@ export function OptionBadge({
 interface MenuRowProps {
   icon?: Icon;
   label: ReactNode;
-  /** Text shown on the right, e.g. the current value of a submenu. */
   hint?: ReactNode;
   submenu?: boolean;
   danger?: boolean;
@@ -355,7 +333,6 @@ interface MenuRowProps {
   onClick: () => void;
 }
 
-/** A row in our popover menus; Mantine Menu steals focus from inputs placed inside it. */
 export function MenuRow({
   icon: RowIcon,
   label,
@@ -415,14 +392,12 @@ const ALIGN_ICONS: Record<DatabaseAlign, Icon> = {
   right: IconAlignRight,
 };
 
-/** i18n keys. */
 const ALIGN_LABELS: Record<DatabaseAlign, string> = {
   left: "Align left",
   center: "Align center",
   right: "Align right",
 };
 
-/** Left / center / right toggle buttons; `null` = none active (mixed). */
 export function AlignPicker({
   value,
   onChange,

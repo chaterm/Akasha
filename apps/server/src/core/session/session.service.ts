@@ -10,6 +10,7 @@ import {
   AUDIT_CONTEXT_KEY,
 } from '../../common/middlewares/audit-context.middleware';
 import * as Bowser from 'bowser';
+import { WithJobContext } from '../../common/logger/with-job-context.decorator';
 
 const MAX_SESSIONS_PER_USER = 25;
 const RETENTION_DAYS = 7;
@@ -26,13 +27,13 @@ export class SessionService {
   ) {}
 
   @Interval('session-cleanup', 24 * 60 * 60 * 1000)
+  @WithJobContext('session-cleanup')
   async cleanupSessions() {
     try {
       await this.userSessionRepo.deleteStale(RETENTION_DAYS);
       await this.userSessionRepo.trimExcessSessions(MAX_SESSIONS_PER_USER);
-      this.logger.debug('Session cleanup completed');
     } catch (err) {
-      this.logger.error('Session cleanup failed', err);
+      this.logger.error({ err }, 'Session cleanup failed');
     }
   }
 

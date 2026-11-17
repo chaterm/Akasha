@@ -83,9 +83,6 @@ describe('MigrationService', () => {
     expect(service.statementTimeouts).toEqual([900_000, 30_000]);
   });
 
-  // Regression: the migrator runs with `disableTransactions: true`, so it calls
-  // `db.connection()` itself. Handing it a `Transaction` made that throw
-  // "calling the connection method for a Transaction is not supported".
   it('gives the real migrator a db it can open a connection on', async () => {
     const migrationFolder = await fs.mkdtemp(
       path.join(os.tmpdir(), 'akasha-migrations-'),

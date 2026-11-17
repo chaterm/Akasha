@@ -60,7 +60,12 @@ const groupedData: DataGroup[] = [
   {
     heading: "Account",
     items: [
-      { label: "Profile", icon: IconUser, path: "/settings/account/profile", role: "owner" },
+      {
+        label: "Profile",
+        icon: IconUser,
+        path: "/settings/account/profile",
+        role: "owner",
+      },
       {
         label: "Preferences",
         icon: IconBrush,
@@ -77,8 +82,18 @@ const groupedData: DataGroup[] = [
   {
     heading: "Workspace",
     items: [
-      { label: "General", icon: IconSettings, path: "/settings/workspace", role: "owner" },
-      { label: "Members", icon: IconUsers, path: "/settings/members", role: "owner" },
+      {
+        label: "General",
+        icon: IconSettings,
+        path: "/settings/workspace",
+        role: "owner",
+      },
+      {
+        label: "Members",
+        icon: IconUsers,
+        path: "/settings/members",
+        role: "owner",
+      },
       {
         label: "Billing",
         icon: IconCoin,
@@ -86,16 +101,24 @@ const groupedData: DataGroup[] = [
         role: "owner",
         env: "cloud",
       },
-      // {
-      //   label: "Security & SSO",
-      //   icon: IconLock,
-      //   path: "/settings/security",
-      //   feature: Feature.SECURITY_SETTINGS,
-      //   role: "owner",
-      // },
-      { label: "Groups", icon: IconUsersGroup, path: "/settings/groups", role: "owner" },
-      { label: "Spaces", icon: IconSpaces, path: "/settings/spaces", role: "owner" },
-      { label: "Public sharing", icon: IconWorld, path: "/settings/sharing", role: "owner" },
+      {
+        label: "Groups",
+        icon: IconUsersGroup,
+        path: "/settings/groups",
+        role: "owner",
+      },
+      {
+        label: "Spaces",
+        icon: IconSpaces,
+        path: "/settings/spaces",
+        role: "owner",
+      },
+      {
+        label: "Public sharing",
+        icon: IconWorld,
+        path: "/settings/sharing",
+        role: "owner",
+      },
       {
         label: "Verified pages",
         icon: IconShieldCheck,

@@ -84,7 +84,6 @@ const EditorAiMenu = ({
       );
     }
   }
-  // Read-only pages only support asking questions, so no command list.
   const currentItems = useMemo(
     () =>
       readOnly
@@ -268,9 +267,6 @@ const EditorAiMenu = ({
           html.endsWith("</p>") &&
           html.lastIndexOf("<p>") === 0;
 
-        // Strip <p> wrapper for single-paragraph output to preserve inline context,
-        // then decode HTML entities via DOMParser since TipTap would otherwise
-        // treat the tagless string as plain text and insert entities literally.
         const content = isSingleParagraph
           ? new DOMParser().parseFromString(html.slice(3, -4), "text/html").body
               .innerHTML
@@ -338,8 +334,6 @@ const EditorAiMenu = ({
     const handleBlur = ({ event }: { event: FocusEvent }) => {
       const nextTarget = event.relatedTarget;
 
-      // Opening the AI menu moves focus from ProseMirror to the prompt input.
-      // Keep the menu open when that focus transition is internal to the menu.
       if (isFocusWithinAiMenu(nextTarget, containerRef.current)) {
         return;
       }
@@ -393,7 +387,6 @@ const EditorAiMenu = ({
     return () => streamAbortControllerRef.current?.abort();
   }, []);
   useEffect(() => {
-    // Focus input when menu opens or command set changes
     requestAnimationFrame(() => {
       inputRef.current?.focus({ preventScroll: true });
     });

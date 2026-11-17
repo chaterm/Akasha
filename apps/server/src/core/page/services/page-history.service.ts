@@ -110,7 +110,8 @@ export class PageHistoryService {
         diff.algorithmVersion,
       ).catch((error) => {
         this.logger.error(
-          `Failed to queue history diff for ${diff.toHistoryId}: ${error.message}`,
+          { toHistoryId: diff.toHistoryId, err: error },
+          'Failed to queue history diff',
         );
       });
     }

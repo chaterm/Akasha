@@ -40,12 +40,10 @@ export default function SpaceKnowledgeSettings({
         spaceId: space.id,
         knowledgeIndexMode: value,
       });
-      // Effective page modes and their lock state depend on this setting.
       await queryClient.invalidateQueries({
         queryKey: ["page-compile-status"],
       });
     } catch {
-      // The mutation shows the error notification.
       setIndexMode(previous);
     }
   };

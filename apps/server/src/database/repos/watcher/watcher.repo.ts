@@ -54,15 +54,6 @@ export class WatcherRepo {
     return watchers.map((w) => w.userId);
   }
 
-  /**
-   * Recipients for a `page.updated` notification, combining:
-   *   - Active page watchers on this page, AND
-   *   - Active space watchers on this space, EXCLUDING any user who has a
-   *     muted page watcher row for this page (per-page mute always wins).
-   *
-   * Deduplicated at the SQL level — a user watching both the page and the
-   * containing space appears once.
-   */
   async getPageUpdateRecipientIds(
     pageId: string,
     spaceId: string,

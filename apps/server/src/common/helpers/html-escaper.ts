@@ -23,7 +23,6 @@
 
 const { replace } = '';
 
-// escape
 const es = /&(?:amp|#38|lt|#60|gt|#62|apos|#39|quot|#34);/g;
 const ca = /[&<>'"]/g;
 
@@ -36,16 +35,8 @@ const esca = {
 };
 const pe = (m) => esca[m];
 
-/**
- * Safely escape HTML entities such as `&`, `<`, `>`, `"`, and `'`.
- * @param {string} es the input to safely escape
- * @returns {string} the escaped input, and it **throws** an error if
- *  the input type is unexpected, except for boolean and numbers,
- *  converted as string.
- */
 export const htmlEscape = (es) => replace.call(es, ca, pe);
 
-// unescape
 const unes = {
   '&amp;': '&',
   '&#38;': '&',
@@ -60,12 +51,4 @@ const unes = {
 };
 const cape = (m) => unes[m];
 
-/**
- * Safely unescape previously escaped entities such as `&`, `<`, `>`, `"`,
- * and `'`.
- * @param {string} un a previously escaped string
- * @returns {string} the unescaped input, and it **throws** an error if
- *  the input type is unexpected, except for boolean and numbers,
- *  converted as string.
- */
 export const htmlUnescape = (un) => replace.call(un, es, cape);

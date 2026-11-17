@@ -39,7 +39,6 @@ export function chunkKnowledgeSource(input: {
   content?: unknown;
   maxChildCharacters?: number;
   attachmentOccurrences?: OccurrenceRange[];
-  /** Trusted structural blocks from the attachment serializer's text basis. */
   sourceBlocks?: SerializedKnowledgeSourceBlock[];
   stableKeyNamespace?: string;
 }): StructuralParentSection[] {
@@ -53,8 +52,6 @@ export function chunkKnowledgeSource(input: {
   const occurrences = normalizeOccurrences(input.attachmentOccurrences);
   const stableKeyOf = (identity: string): string => {
     if (!input.stableKeyNamespace) return digest(identity);
-    // Stable keys are persisted in varchar(64). Preserve a readable source
-    // namespace for diagnostics while retaining a deterministic digest suffix.
     const prefix = `${input.stableKeyNamespace}:`;
     return `${prefix}${digest(identity).slice(0, 64 - prefix.length)}`;
   };
@@ -258,8 +255,6 @@ function splitRange(
         endOffset = startOffset + preferredBreak;
       }
     }
-    // A marker is an unsplittable unit: never cut inside an occurrence. Move
-    // the boundary before the marker when possible, otherwise past it.
     endOffset = avoidSplittingOccurrences(endOffset, startOffset, occurrences);
     const trimmed = trimRange(source, startOffset, endOffset);
     if (trimmed.startOffset < trimmed.endOffset) ranges.push(trimmed);
@@ -269,13 +264,6 @@ function splitRange(
   return ranges;
 }
 
-/**
- * Returns an end boundary that does not fall strictly inside any occurrence. If
- * a boundary lands inside `[start, end)`, it is pulled back to the
- * occurrence's start; when that would produce an empty slice (the occurrence
- * begins at or before the chunk start), it is pushed past the occurrence end
- * so the whole marker stays in a single chunk.
- */
 function avoidSplittingOccurrences(
   endOffset: number,
   startOffset: number,
@@ -490,13 +478,6 @@ function normalizeStableText(value: string): string {
 const ATTACHMENT_MARKER_PREFIX_WITH_SPACE = ' [[AKASHA_ATTACHMENT:v1:';
 const ATTACHMENT_MARKER_SUFFIX = ']]';
 
-/**
- * Removes compile-time attachment markers only from trusted occurrence ranges,
- * keeping the preceding file name and consuming the separator space. Marker-
- * shaped text typed by a user outside a real attachment node remains ordinary
- * content. Applied to both `text` and `embeddingText`; `quoteHash` is recomputed
- * from the cleaned text so display, hash and vector input stay consistent.
- */
 function cleanMarkers(
   source: string,
   startOffset: number,

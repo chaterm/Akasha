@@ -1,6 +1,5 @@
 import type { JSONContent } from '@tiptap/core';
 
-/** A fixed, non-factual marker lets a two-step Skill resume only its unfilled page. */
 export const WEEKLY_REPORT_DRAFT_TEXT = '【Akasha 周报草稿：正文待写入】';
 
 export function isWeeklyReportDraft(

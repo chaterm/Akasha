@@ -66,7 +66,6 @@ import {
   splitUnits,
 } from "../page-split.utils";
 
-/** nested：放到新建的父页面下；flat：与原页面同级。 */
 type SplitMode = "nested" | "flat";
 
 interface PageSplitModalProps {
@@ -90,7 +89,6 @@ export function PageSplitModal({ page, opened, onClose }: PageSplitModalProps) {
   );
 }
 
-// 各列固定宽度，使输入框上下对齐。
 const TOGGLE_WIDTH = 22;
 const LABEL_WIDTH = 64;
 
@@ -126,7 +124,11 @@ function PreviewRow({
             aria-expanded={expanded}
             aria-label={expanded ? t("Collapse") : t("Expand")}
           >
-            {expanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+            {expanded ? (
+              <IconChevronDown size={14} />
+            ) : (
+              <IconChevronRight size={14} />
+            )}
           </ActionIcon>
         )}
       </div>
@@ -163,7 +165,13 @@ function UnitAction({
 }) {
   return (
     <Tooltip label={label} openDelay={300} withArrow>
-      <ActionIcon size="sm" variant="subtle" color="gray" onClick={onClick} aria-label={label}>
+      <ActionIcon
+        size="sm"
+        variant="subtle"
+        color="gray"
+        onClick={onClick}
+        aria-label={label}
+      >
         {icon}
       </ActionIcon>
     </Tooltip>
@@ -204,7 +212,6 @@ function PageSplitPanel({
   const navigate = useNavigate();
   const { spaceSlug } = useParams();
 
-  // 打开面板时的快照，拆分前校验期间是否被编辑过。
   const [blocks, setBlocks] = useState(() => readBlocks(pageEditor?.getJSON()));
   const levels = useMemo(() => displayLevels(blocks), [blocks]);
   const recommended = useMemo(() => recommendLevel(blocks), [blocks]);
@@ -215,11 +222,9 @@ function PageSplitPanel({
     [blocks, level],
   );
   const recommendedStarts = useMemo(() => recommendStarts(units), [units]);
-  // 用户手动调整后的方案，null 表示用推荐方案。
   const [customStarts, setCustomStarts] = useState<number[] | null>(null);
   const starts = customStarts ?? recommendedStarts;
   const pages = useMemo(() => buildPages(units, starts), [units, starts]);
-  // 按页首单元记录，调整其他页的分界时不受影响。
   const [titles, setTitles] = useState<Record<number, string>>({});
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [parentTitle, setParentTitle] = useState(page.title ?? "");
@@ -234,8 +239,8 @@ function PageSplitPanel({
     setTitles({});
     setExpanded(new Set());
   };
-  // 只含第一个标题前内容的页面沿用原页面标题。
-  const defaultTitle = (planned: PlannedPage) => planned.title || page.title || "";
+  const defaultTitle = (planned: PlannedPage) =>
+    planned.title || page.title || "";
   const unitLabel = (unitIndex: number) =>
     units[unitIndex].title || t("Content before the first heading");
   const titleOf = (planned: PlannedPage) =>
@@ -243,10 +248,8 @@ function PageSplitPanel({
   const connected = connectionStatus === WebSocketStatus.Connected;
   const hasOverLimit = pages.some((planned) => exceedsLimits(planned.stats));
 
-  // 该页的标题和展开状态跟随新的页首单元。
   const moveBoundary = (pageIndex: number, to: number) => {
     const from = starts[pageIndex];
-    // 该页被合并掉时不再保留它的状态。
     const merged = starts.includes(to) || to >= units.length;
     setCustomStarts(moveStart(starts, pageIndex, to, units.length));
     setExpanded((prev) => {
@@ -295,13 +298,16 @@ function PageSplitPanel({
     if (parentId === null) {
       store.set(treeDataAtom, treeModel.insert(current, null, node, index));
     } else if (parent) {
-      // 子节点未加载时只标记 hasChildren，避免懒加载误以为子节点已就绪。
       const unloaded =
         (parent as SpaceTreeNode).hasChildren && !parent.children?.length;
-      const next = unloaded ? current : treeModel.insert(current, parentId, node, index);
+      const next = unloaded
+        ? current
+        : treeModel.insert(current, parentId, node, index);
       store.set(
         treeDataAtom,
-        treeModel.update(next, parentId, { hasChildren: true } as Partial<SpaceTreeNode>),
+        treeModel.update(next, parentId, {
+          hasChildren: true,
+        } as Partial<SpaceTreeNode>),
       );
     }
     setTimeout(() => {
@@ -338,21 +344,29 @@ function PageSplitPanel({
     return created;
   };
 
-  // 删除会连带子页面，先把原页面的子页面移到 targetId 下，按原顺序排在末尾。
   const moveChildrenTo = async (targetId: string) => {
-    const result = await getAllSidebarPages({ spaceId: page.spaceId, pageId: page.id });
+    const result = await getAllSidebarPages({
+      spaceId: page.spaceId,
+      pageId: page.id,
+    });
     const children = result.pages.flatMap((item) => item.items);
     let lastPosition: string | null = null;
     for (const child of children) {
       const tree = store.get(treeDataAtom);
       if (treeModel.find(tree, child.id) && treeModel.find(tree, targetId)) {
         await handleMove(child.id, { kind: "make-child", targetId });
-        const moved = treeModel.find(store.get(treeDataAtom), child.id) as SpaceTreeNode | null;
-        // handleMove 失败时不抛错，需自行确认。
+        const moved = treeModel.find(
+          store.get(treeDataAtom),
+          child.id,
+        ) as SpaceTreeNode | null;
         if (moved?.parentPageId !== targetId) throw new Error("move failed");
       } else {
         lastPosition = generateJitteredKeyBetween(lastPosition, null);
-        await movePage({ pageId: child.id, parentPageId: targetId, position: lastPosition });
+        await movePage({
+          pageId: child.id,
+          parentPageId: targetId,
+          position: lastPosition,
+        });
         invalidateTree();
       }
     }
@@ -369,20 +383,32 @@ function PageSplitPanel({
     store.set(treeDataAtom, treeModel.remove(store.get(treeDataAtom), page.id));
     if (node) {
       setTimeout(() => {
-        emit({ operation: "deleteTreeNode", spaceId: page.spaceId, payload: { node } });
+        emit({
+          operation: "deleteTreeNode",
+          spaceId: page.spaceId,
+          payload: { node },
+        });
       }, 50);
     }
   };
 
   const handleSplit = async () => {
-    if (!pageEditor || pageEditor.isDestroyed || pages.length < 2 || hasOverLimit) return;
+    if (
+      !pageEditor ||
+      pageEditor.isDestroyed ||
+      pages.length < 2 ||
+      hasOverLimit
+    )
+      return;
     const latest = readBlocks(pageEditor.getJSON());
     if (JSON.stringify(latest) !== JSON.stringify(blocks)) {
       setBlocks(latest);
       setLevel(recommendLevel(latest));
       resetPlan();
       notifications.show({
-        message: t("The page changed while the panel was open. Split options were refreshed."),
+        message: t(
+          "The page changed while the panel was open. Split options were refreshed.",
+        ),
         color: "yellow",
       });
       return;
@@ -394,7 +420,6 @@ function PageSplitPanel({
     let step: "create" | "children" | "trash" = "create";
     let destination: IPage | null = null;
     try {
-      // 新页面依次排在原页面之后，原页面删除后正好占据它的位置。
       let anchorId = page.id;
       let parentPageId = page.parentPageId || undefined;
       if (mode === "nested") {
@@ -403,16 +428,26 @@ function PageSplitPanel({
           parentPageId,
         );
         created += 1;
-        await handleMove(parentPage.id, { kind: "reorder-after", targetId: page.id });
+        await handleMove(parentPage.id, {
+          kind: "reorder-after",
+          targetId: page.id,
+        });
         destination = parentPage;
         parentPageId = parentPage.id;
         anchorId = "";
       }
       for (const planned of pages) {
-        const newPage = await createPlannedPage(titleOf(planned), parentPageId, planned.content);
+        const newPage = await createPlannedPage(
+          titleOf(planned),
+          parentPageId,
+          planned.content,
+        );
         created += 1;
         if (anchorId) {
-          await handleMove(newPage.id, { kind: "reorder-after", targetId: anchorId });
+          await handleMove(newPage.id, {
+            kind: "reorder-after",
+            targetId: anchorId,
+          });
         }
         anchorId = newPage.id;
         destination ??= newPage;
@@ -427,21 +462,31 @@ function PageSplitPanel({
       setSubmitting(false);
       const message =
         step === "trash"
-          ? t("The new pages were created, but the original page couldn't be moved to the trash. Please move it manually.")
+          ? t(
+              "The new pages were created, but the original page couldn't be moved to the trash. Please move it manually.",
+            )
           : step === "children"
-            ? t("The new pages were created, but moving the original page's subpages failed. The original page was kept.")
-            : t("Split stopped after creating {{created}} of {{total}} pages. The original page was kept.", {
-                created,
-                total,
-              });
+            ? t(
+                "The new pages were created, but moving the original page's subpages failed. The original page was kept.",
+              )
+            : t(
+                "Split stopped after creating {{created}} of {{total}} pages. The original page was kept.",
+                {
+                  created,
+                  total,
+                },
+              );
       notifications.show({ message, color: "red" });
       return;
     }
 
     notifications.show({
-      message: t("Split into {{pageCount}} pages. The original page was moved to the trash.", {
-        pageCount: pages.length,
-      }),
+      message: t(
+        "Split into {{pageCount}} pages. The original page was moved to the trash.",
+        {
+          pageCount: pages.length,
+        },
+      ),
     });
     setSubmitting(false);
     onClose();
@@ -452,7 +497,9 @@ function PageSplitPanel({
     return (
       <Stack>
         <Alert color="gray" icon={<IconAlertTriangle size={16} />}>
-          {t("No headings to split by, so this page can't be split automatically. Please split it manually, or add headings and try again.")}
+          {t(
+            "No headings to split by, so this page can't be split automatically. Please split it manually, or add headings and try again.",
+          )}
         </Alert>
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose}>
@@ -468,14 +515,24 @@ function PageSplitPanel({
       <Alert color="orange" icon={<IconAlertTriangle size={16} />}>
         <Text size="sm">
           {mode === "nested"
-            ? t("The content will be split into subpages under a new parent page.")
-            : t("The content will be split into several pages at the same level.")}
+            ? t(
+                "The content will be split into subpages under a new parent page.",
+              )
+            : t(
+                "The content will be split into several pages at the same level.",
+              )}
         </Text>
         <Text size="sm" mt={4}>
           <Trans
             defaults="The original page will be moved to the trash. You can restore it from Space menu > <link>Trash</link>."
             components={{
-              link: <Anchor component={Link} to={`/s/${spaceSlug}/trash`} size="sm" />,
+              link: (
+                <Anchor
+                  component={Link}
+                  to={`/s/${spaceSlug}/trash`}
+                  size="sm"
+                />
+              ),
             }}
           />
         </Text>
@@ -522,7 +579,9 @@ function PageSplitPanel({
             aria-label={t("Page count")}
           />
           <Text size="xs" c="dimmed">
-            {t("Recommended: {{pageCount}}", { pageCount: recommendedStarts.length })}
+            {t("Recommended: {{pageCount}}", {
+              pageCount: recommendedStarts.length,
+            })}
           </Text>
           {customStarts && (
             <Button
@@ -567,13 +626,20 @@ function PageSplitPanel({
                   onChange={(value) =>
                     setTitles((prev) => ({ ...prev, [planned.start]: value }))
                   }
-                  status={exceedsLimits(planned.stats) ? t("Over limit") : undefined}
+                  status={
+                    exceedsLimits(planned.stats) ? t("Over limit") : undefined
+                  }
                   statusColor="red"
                   expanded={isExpanded}
                   onToggle={() => toggleExpanded(planned.start)}
                 />
                 {isExpanded && (
-                  <Stack gap={2} mt={4} mb={4} pl={TOGGLE_WIDTH + LABEL_WIDTH + 20}>
+                  <Stack
+                    gap={2}
+                    mt={4}
+                    mb={4}
+                    pl={TOGGLE_WIDTH + LABEL_WIDTH + 20}
+                  >
                     {planned.unitIndexes.map((unitIndex, offset) => {
                       return (
                         <Group
@@ -588,16 +654,22 @@ function PageSplitPanel({
                           <div className={classes.unitActions}>
                             {pageIndex > 0 && (
                               <UnitAction
-                                label={t("Move this and above to previous page")}
+                                label={t(
+                                  "Move this and above to previous page",
+                                )}
                                 icon={<IconArrowBarUp size={14} />}
-                                onClick={() => moveBoundary(pageIndex, unitIndex + 1)}
+                                onClick={() =>
+                                  moveBoundary(pageIndex, unitIndex + 1)
+                                }
                               />
                             )}
                             {!isLastPage && (
                               <UnitAction
                                 label={t("Move this and below to next page")}
                                 icon={<IconArrowBarDown size={14} />}
-                                onClick={() => moveBoundary(pageIndex + 1, unitIndex)}
+                                onClick={() =>
+                                  moveBoundary(pageIndex + 1, unitIndex)
+                                }
                               />
                             )}
                           </div>
@@ -614,18 +686,28 @@ function PageSplitPanel({
 
       {pages.length < 2 && (
         <Text size="xs" c="dimmed">
-          {t("The content fits on one page. Increase the page count to split it.")}
+          {t(
+            "The content fits on one page. Increase the page count to split it.",
+          )}
         </Text>
       )}
       <Group gap={6} wrap="nowrap" align="flex-start">
-        <IconBulb size={14} color="var(--mantine-color-dimmed)" style={{ flexShrink: 0, marginTop: 2 }} />
+        <IconBulb
+          size={14}
+          color="var(--mantine-color-dimmed)"
+          style={{ flexShrink: 0, marginTop: 2 }}
+        />
         <Text size="xs" c="dimmed">
-          {t("Tip: Rule-based splitting is approximate. Expand a page to adjust its sections, and edit page titles as needed.")}
+          {t(
+            "Tip: Rule-based splitting is approximate. Expand a page to adjust its sections, and edit page titles as needed.",
+          )}
         </Text>
       </Group>
       {hasOverLimit && (
         <Text size="xs" c="red">
-          {t("Some pages are over the limit. Adjust the split before continuing.")}
+          {t(
+            "Some pages are over the limit. Adjust the split before continuing.",
+          )}
         </Text>
       )}
       {!connected && (

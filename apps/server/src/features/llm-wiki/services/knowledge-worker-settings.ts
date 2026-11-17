@@ -82,8 +82,6 @@ export function parseKnowledgeWorkerSettings(
     ),
   };
 
-  // Text and Page Merge workers share the same KNOWLEDGE_SPACE_CONCURRENCY
-  // configuration value, but each holds its own worker slots.
   const withMerge = {
     ...settings,
     mergeConcurrency: settings.spaceConcurrency,

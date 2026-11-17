@@ -5,6 +5,7 @@ import { Queue } from 'bullmq';
 import { KnowledgeSpaceExecutionRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-execution.repo';
 import { MERGE_TRANSPORT_RECOVERY_BUDGET } from '@akasha/db/repos/llm-wiki/knowledge-compilation-budgets';
 import { QueueName } from '../../../integrations/queue/constants';
+import { WithJobContext } from '../../../common/logger/with-job-context.decorator';
 
 const EXECUTABLE_JOB_STATES = new Set([
   'active',
@@ -14,12 +15,6 @@ const EXECUTABLE_JOB_STATES = new Set([
   'waiting-children',
 ]);
 
-/**
- * Recovers Page Merge jobs whose BullMQ transport was lost: a `queued` job that
- * was dispatched but never picked up, or a `running` job whose processing lease
- * expired. Redis job state is inspected outside any DB transaction; recovery
- * re-validates run generation + job identity under the canonical lock order.
- */
 @Injectable()
 export class KnowledgePageMergeReaperService {
   private readonly logger = new Logger(KnowledgePageMergeReaperService.name);
@@ -32,6 +27,7 @@ export class KnowledgePageMergeReaperService {
   ) {}
 
   @Interval('knowledge-page-merge-reaper', 30_000)
+  @WithJobContext('knowledge-page-merge-reaper')
   async reap(): Promise<void> {
     if (this.reaping) return;
     this.reaping = true;
@@ -53,7 +49,8 @@ export class KnowledgePageMergeReaperService {
           state = job ? await job.getState() : 'missing';
         } catch {
           this.logger.warn(
-            `Unable to inspect page merge job ${candidate.mergeJobId}; recovery deferred.`,
+            { mergeJobId: candidate.mergeJobId },
+            'Unable to inspect page merge job; recovery deferred',
           );
           continue;
         }
@@ -93,7 +90,8 @@ export class KnowledgePageMergeReaperService {
           });
         } catch {
           this.logger.warn(
-            `Unable to settle page merge recovery for ${candidate.mergeJobId}; recovery deferred.`,
+            { mergeJobId: candidate.mergeJobId },
+            'Unable to settle page merge recovery; recovery deferred',
           );
         }
       }

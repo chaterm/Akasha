@@ -10,14 +10,8 @@ import { EnvironmentService } from '../../../integrations/environment/environmen
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;
 const KEY_LENGTH = 32;
-// Stable salt: APP_SECRET is the real secret; a fixed salt keeps key
-// derivation deterministic so previously stored ciphertext stays decryptable.
 const KEY_SALT = 'akasha-ai-model-config';
 
-/**
- * Encrypts AI provider API keys before they are persisted, using a key
- * derived from APP_SECRET. Ciphertext is stored as `iv:authTag:data` in hex.
- */
 @Injectable()
 export class AiConfigSecretService {
   constructor(private readonly environmentService: EnvironmentService) {}

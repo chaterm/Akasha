@@ -23,7 +23,6 @@ const MCP_EXACT: Record<string, AgentOpCategory> = {
   get_citation_page: 'query',
 };
 
-// MCP tools follow verb_noun naming; the verb decides the category.
 const MCP_VERBS: [string, AgentOpCategory][] = [
   ['search_', 'search'],
   ['get_', 'read'],
@@ -39,7 +38,6 @@ const MCP_VERBS: [string, AgentOpCategory][] = [
   ['upload_', 'write'],
 ];
 
-/** Classifies an agent_op `route` ('page.read' or 'mcp:<tool>'). */
 export function categorizeAgentOp(op: string): AgentOpCategory {
   if (!op.startsWith('mcp:')) return API_CATEGORIES[op] ?? 'other';
 
@@ -49,7 +47,6 @@ export function categorizeAgentOp(op: string): AgentOpCategory {
   return match ? match[1] : 'other';
 }
 
-/** Sums op counts per category, keeping every category (zero-filled). */
 export function groupAgentOpsByCategory(
   byOp: { op: string; count: number }[],
 ): { category: AgentOpCategory; count: number }[] {
@@ -68,7 +65,6 @@ export function groupAgentOpsByCategory(
 
 export type AgentOpKeyType = 'agent' | 'personal' | 'sso';
 
-/** Minimal shape of an authenticated MCP request (see McpAuthContext). */
 type McpCaller = {
   user: { id: string };
   workspace: { id: string };
@@ -79,10 +75,6 @@ type McpCaller = {
   };
 };
 
-/**
- * One agent_op row per `tools/call`, whatever the credential: agent keys,
- * personal keys and SSO tokens all count as the MCP channel.
- */
 export function buildMcpAgentOps(
   caller: McpCaller,
   body: unknown,
@@ -106,7 +98,6 @@ export function buildMcpAgentOps(
   }));
 }
 
-/** Tool names from `tools/call` messages in a single or batched JSON-RPC body. */
 export function extractMcpToolCalls(body: unknown): string[] {
   const messages = Array.isArray(body) ? body : [body];
   return messages

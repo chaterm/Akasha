@@ -53,10 +53,6 @@ function InsertDateModal({ onConfirm }: InsertDateModalProps) {
   );
 }
 
-/**
- * Opens a compact modal with a localized date picker and inserts the selected
- * date (formatted as plain text) into the editor at the current selection.
- */
 export function insertDateAction(editor: Editor) {
   modals.open({
     title: i18n.t("Pick a date"),

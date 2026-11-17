@@ -648,7 +648,8 @@ export class AiChatService {
       });
     } catch (error) {
       this.logger.warn(
-        `Failed to record AI Q&A retrieval audit: ${error instanceof Error ? error.message : String(error)}`,
+        { err: error },
+        'Failed to record AI Q&A retrieval audit',
       );
     }
   }

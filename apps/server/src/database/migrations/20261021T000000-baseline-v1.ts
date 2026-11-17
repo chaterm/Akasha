@@ -10,5 +10,4 @@ export async function up(db: Kysely<any>): Promise<void> {
   await sql.raw(schema).execute(db);
 }
 
-// Baseline migrations are not reversible.
 export async function down(_db: Kysely<any>): Promise<void> {}

@@ -19,15 +19,10 @@ import {
 } from './knowledge-context-pack.service';
 import type { AiKnowledgeCitationEvidence } from './ai-knowledge-chat.service';
 
-/** Supported image MIME types (system-wide: only png/jpeg). See design §4.3. */
 const SUPPORTED_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg']);
-/** Single-query global image cap (strong + weak). Design §4.2. */
 const MAX_IMAGES_PER_QUERY = 6;
-/** Weak-association score threshold; below this the image is not returned. */
 const MIN_WEAK_ASSOCIATION_SCORE = 3;
-/** Generalized terms that must not participate in weak scoring. Design §4.2. */
 const GENERIC_MATCH_TERMS = new Set(['图片', '截图', '示意', '意图']);
-/** Extracts `附件 ID: {uuid}` from evidence text. Design §4.1 strong path. */
 const ATTACHMENT_ID_PATTERN = /附件\s*ID:\s*([0-9a-fA-F-]{36})/g;
 
 const ASSOCIATION_STRONG = 0;
@@ -57,19 +52,6 @@ export class KnowledgeCitationImageResolverService {
     private readonly environmentService: EnvironmentService,
   ) {}
 
-  /**
-   * Resolves query-API images for each final citation. Strong association comes
-   * only from the Evidence path (regex over `citationEvidence[].excerpts[].text`);
-   * weak association scores the current published run-image candidate pool.
-   *
-   * `answerText` is required (added per design §4.2: weak match text =
-   * evidence + final answer). The base method signature carries no answer text,
-   * so it is threaded through here for the controller to supply.
-   *
-   * Batch-query failures propagate to the caller (controller wraps the overall
-   * fail-open boundary, §4.3). Per-image validation and token failures are
-   * isolated so a single bad image never fails the whole method.
-   */
   async resolveImagesForCitations(input: {
     workspaceId: string;
     citations: KnowledgeCitation[];
@@ -80,30 +62,26 @@ export class KnowledgeCitationImageResolverService {
 
     if (citations.length === 0) return [];
 
-    // evidence text per citation = concatenated excerpts of the citation whose
-    // sourcePageId matches (design §3.3 / method contract).
     const evidenceTextByPage = this.buildEvidenceTextByPage(citationEvidence);
 
-    // 1. Strong association: attachmentId(s) extracted from the citation's own
-    //    evidence text, with first-occurrence index for later ordering.
     const strongByCitation = citations.map((citation) =>
       this.extractStrongAttachmentIds(
         evidenceTextByPage.get(citation.sourcePageId) ?? '',
       ),
     );
 
-    // 2. Weak candidate pool: current published run images for all citation pages.
     const sourcePageIds = [...new Set(citations.map((c) => c.sourcePageId))];
-    const runImages = await this.citationImageRepo.findCurrentPublishedRunImages(
-      { workspaceId, sourcePageIds },
-    );
+    const runImages =
+      await this.citationImageRepo.findCurrentPublishedRunImages({
+        workspaceId,
+        sourcePageIds,
+      });
     const runImagesByPage = new Map<string, RunImageCandidate[]>();
     for (const image of runImages) {
       const list = runImagesByPage.get(image.sourcePageId) ?? [];
       list.push(image);
       runImagesByPage.set(image.sourcePageId, list);
     }
-    // alt lookup for strong-association description (design §5): pageId+attId.
     const runAltByPageAttachment = new Map<string, string | null>();
     const runOrdinalByPageAttachment = new Map<string, number>();
     for (const image of runImages) {
@@ -112,7 +90,6 @@ export class KnowledgeCitationImageResolverService {
       runOrdinalByPageAttachment.set(key, image.imageOrdinal);
     }
 
-    // 3. Collect all candidate attachmentIds (strong + weak) and batch-load.
     const candidateAttachmentIds = new Set<string>();
     for (const ids of strongByCitation) {
       for (const id of ids.keys()) candidateAttachmentIds.add(id);
@@ -128,21 +105,18 @@ export class KnowledgeCitationImageResolverService {
       attachmentById.set(attachment.id, attachment);
     }
 
-    // 4. Load captions: extractionIds from weak candidates; attachmentIds from
-    //    strong candidates (caption reverse-lookup by attachmentId).
     const extractionIds = runImages
       .map((image) => image.extractionId)
       .filter((id): id is string => id !== null);
     const strongAttachmentIds = strongByCitation.flatMap((ids) => [
       ...ids.keys(),
     ]);
-    const captionByAttachment = await this.citationImageRepo.findExtractionCaptions(
-      {
+    const captionByAttachment =
+      await this.citationImageRepo.findExtractionCaptions({
         workspaceId,
         extractionIds,
         attachmentIds: strongAttachmentIds,
-      },
-    );
+      });
 
     const selected = this.selectImages({
       citations,
@@ -178,11 +152,6 @@ export class KnowledgeCitationImageResolverService {
     return joined;
   }
 
-  /**
-   * Strong association (Evidence path only): extract `附件 ID: {uuid}` from the
-   * citation's evidence text. Returns attachmentId -> first-occurrence index
-   * (used as the imageOrdinal fallback ordering key when no run image exists).
-   */
   private extractStrongAttachmentIds(text: string): Map<string, number> {
     const ids = new Map<string, number>();
     if (!text) return ids;
@@ -197,11 +166,6 @@ export class KnowledgeCitationImageResolverService {
     return ids;
   }
 
-  /**
-   * DB-record validation only (design §4.3): exists, not deleted, File type,
-   * supported image MIME, pageId matches citation, workspace matches. Returns
-   * the attachment when valid, otherwise null (single image skipped).
-   */
   private validateAttachment(
     attachment: Attachment | undefined,
     sourcePageId: string,
@@ -248,7 +212,6 @@ export class KnowledgeCitationImageResolverService {
       const strongIds = strongByCitation[citationIndex];
       const strongCovered = new Set<string>();
 
-      // Strong association: all valid, in-budget images returned (§4.1).
       for (const [attachmentId, evidenceIndex] of strongIds) {
         const attachment = this.validateAttachment(
           attachmentById.get(attachmentId),
@@ -267,22 +230,13 @@ export class KnowledgeCitationImageResolverService {
           attachment,
           associationType: ASSOCIATION_STRONG,
           score: Number.POSITIVE_INFINITY,
-          imageOrdinal:
-            runOrdinalByPageAttachment.get(altKey) ?? evidenceIndex,
+          imageOrdinal: runOrdinalByPageAttachment.get(altKey) ?? evidenceIndex,
           description: this.resolveDescription(alt, caption),
         });
       }
 
-      // A validated strong association is grounded in this citation's own
-      // evidence. Do not append a weaker same-page candidate: term-only weak
-      // matching can otherwise surface an unrelated image whose OCR/caption
-      // merely mentions the query (including in a negated sentence). Signing
-      // remains a later, isolated step; a strong-image signing failure does not
-      // reopen weak selection for this citation.
       if (strongCovered.size > 0) return;
 
-      // Weak association is a fallback only when no valid strong image exists:
-      // keep the single highest-scoring image (>= threshold) per citation.
       const matchText = `${answerText}\n${evidenceTextByPage.get(pageId) ?? ''}`;
       const queryTerms = informativeTerms(matchText).filter(
         (term) => !GENERIC_MATCH_TERMS.has(term),
@@ -329,7 +283,6 @@ export class KnowledgeCitationImageResolverService {
     return this.mergeSortAndCap(candidates);
   }
 
-  /** Higher score wins; tie-break imageOrdinal ASC then attachmentId ASC. */
   private isBetterWeak(a: SelectedImage, b: SelectedImage): boolean {
     if (a.score !== b.score) return a.score > b.score;
     if (a.imageOrdinal !== b.imageOrdinal)
@@ -337,11 +290,6 @@ export class KnowledgeCitationImageResolverService {
     return a.attachmentId < b.attachmentId;
   }
 
-  /**
-   * Unified sort key (§4.2): associationType (strong first) -> citationIndex ASC
-   * -> score DESC -> imageOrdinal ASC -> attachmentId ASC. Dedupe by
-   * attachmentId (first in sort order wins), then cap at 6.
-   */
   private mergeSortAndCap(candidates: SelectedImage[]): SelectedImage[] {
     candidates.sort((a, b) => {
       if (a.associationType !== b.associationType)
@@ -365,14 +313,6 @@ export class KnowledgeCitationImageResolverService {
     return deduped;
   }
 
-  /**
-   * Weak-association score (§4.2): alt hit = 2, caption hit = 1, OCR hit = 1;
-   * alt full phrase +3 once; alt identifier +1 once. Same field + same term
-   * counts once. Generic terms already filtered out of `queryTerms`.
-   *
-   * OCR scoring待候选池补 ocrText 后启用: RunImageCandidate carries no ocrText,
-   * so only alt (RunImageCandidate.altText) and caption participate this round.
-   */
   private scoreWeakCandidate(args: {
     alt: string | null;
     caption: string;
@@ -390,7 +330,6 @@ export class KnowledgeCitationImageResolverService {
       normalizeSearchText(caption),
     );
 
-    // Field hits: each distinct query term counts once per field.
     for (const term of queryTerms) {
       if (normalizedAlt.includes(term)) score += 2;
     }
@@ -398,24 +337,20 @@ export class KnowledgeCitationImageResolverService {
       if (normalizedCaption.includes(term)) score += 1;
     }
 
-    // alt full-phrase bonus (once): non-empty normalized alt appears verbatim.
     if (normalizedAlt && normalizedMatchText.includes(normalizedAlt)) {
       score += 3;
     }
 
-    // alt identifier bonus (once): a hit term with _ / . : - or mixed alnum.
     const hasIdentifierHit = queryTerms.some(
       (term) =>
         normalizedAlt.includes(term) &&
-        (/[_/.:-]/.test(term) ||
-          (/[a-z]/.test(term) && /[0-9]/.test(term))),
+        (/[_/.:-]/.test(term) || (/[a-z]/.test(term) && /[0-9]/.test(term))),
     );
     if (hasIdentifierHit) score += 1;
 
     return score;
   }
 
-  /** alt -> caption -> ''. Design §5 / §8. Never returns OCR. */
   private resolveDescription(alt: string | null, caption: string): string {
     const trimmedAlt = alt?.trim();
     if (trimmedAlt) return trimmedAlt;
@@ -428,11 +363,6 @@ export class KnowledgeCitationImageResolverService {
     return value.replace(/\s+/g, ' ').trim();
   }
 
-  /**
-   * Signs public URLs per selected image, isolated via Promise.allSettled so a
-   * single token failure only drops that image. Then groups images back onto
-   * each citation in original order (images ordered by the global sort key).
-   */
   private async assembleCitations(args: {
     citations: KnowledgeCitation[];
     workspaceId: string;

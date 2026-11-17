@@ -1,17 +1,12 @@
-// Source: https://github.com/mantinedev/mantine/blob/master/packages/@mantine/core/src/components/CopyButton/CopyButton.tsx - MIT
-// modified to use the polyfilled clipboard api
 import React from "react";
 import { useClipboard } from "@/hooks/use-clipboard";
 import { useProps } from "@mantine/core";
 
 interface CopyButtonProps {
-  /** Children callback, provides current status and copy function as an argument */
   children: (payload: { copied: boolean; copy: () => void }) => React.ReactNode;
 
-  /** Value that is copied to the clipboard when the button is clicked */
   value: string;
 
-  /** Copied status timeout in ms @default `1000` */
   timeout?: number;
 }
 

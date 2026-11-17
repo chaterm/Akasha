@@ -16,16 +16,13 @@ import { rememberPage } from "./use-page-info";
 import { focusWithoutScroll } from "./database-utils";
 import classes from "./database.module.css";
 
-/** A member or document as cached in a reference column's options. */
 type Reference = Omit<DatabaseSelectOption, "color">;
 
-/** Members (person) or documents (page) matching `query`. */
 function useReferences(kind: "person" | "page", query: string) {
   const [items, setItems] = useState<Reference[]>([]);
   useEffect(() => {
     let alive = true;
     const timer = setTimeout(async () => {
-      // Loaded on demand so the database view does not pull in the API client up front.
       const { searchSuggestions } =
         await import("@/features/search/services/search-service");
       const result = await searchSuggestions({
@@ -55,7 +52,6 @@ function useReferences(kind: "person" | "page", query: string) {
   return items;
 }
 
-/** Only fields with a value are cached, so options stay small. */
 function toOption(item: Reference): DatabaseSelectOption {
   const option: DatabaseSelectOption = {
     id: item.id,
@@ -68,10 +64,6 @@ function toOption(item: Reference): DatabaseSelectOption {
   return option;
 }
 
-/**
- * Popover for a member or document column: the row's references first, then
- * search results. Picking toggles one; a new one is cached in the options.
- */
 export function ReferenceEditor({
   db,
   row,
@@ -99,7 +91,6 @@ export function ReferenceEditor({
   ];
 
   const toggle = (item: Reference) => {
-    // Picked from this viewer's search, so it is visible to them.
     if (kind === "page" && item.slugId)
       rememberPage(item.id, {
         title: item.name,

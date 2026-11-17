@@ -7,7 +7,6 @@ function readPixelWidth(value: string | undefined): string {
   return match?.[1] ?? '';
 }
 
-/** Convert Confluence's exported Panel HTML into the Akasha Panel node HTML. */
 export function transformConfluencePanels(html: string): string {
   if (!html) return html;
 

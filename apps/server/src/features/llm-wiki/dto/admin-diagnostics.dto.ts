@@ -24,8 +24,6 @@ const RUN_STATUSES = [
   'cancelled',
 ] as const;
 
-// Per-page compilation statuses recorded on knowledge_space_compile_run_pages
-// (matches chk_knowledge_space_compile_run_pages_status).
 const PAGE_LOG_STATUSES = [
   'pending',
   'queued',
@@ -35,8 +33,6 @@ const PAGE_LOG_STATUSES = [
   'skipped',
 ] as const;
 
-// Per-page merge statuses recorded on knowledge_space_compile_run_pages
-// (matches chk_knowledge_space_compile_run_pages_merge_status).
 const PAGE_LOG_MERGE_STATUSES = [
   'not_required',
   'waiting_images',
@@ -180,7 +176,6 @@ export class AdminKnowledgePageLogDto extends AdminKnowledgeRunSummaryDto {
   @MaxLength(100)
   search?: string;
 
-  // ISO-8601 timestamps bounding the most-recent-compilation time window.
   @IsOptional()
   @IsDateString()
   from?: string;

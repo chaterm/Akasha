@@ -23,10 +23,8 @@ export class SmtpDriver implements MailDriver {
         text: message.text,
         html: message.html,
       });
-
-      this.logger.debug(`Sent mail to ${message.to}`);
     } catch (err) {
-      this.logger.warn(`Failed to send mail to ${message.to}: ${err}`);
+      this.logger.warn({ to: message.to, err }, 'Failed to send mail');
       throw err;
     }
   }

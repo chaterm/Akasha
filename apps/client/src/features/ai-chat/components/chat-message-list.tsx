@@ -80,10 +80,6 @@ export default function ChatMessageList({
     }
   }, [editingMessageId, isStreaming, onEditingStateChange]);
 
-  // Dedicated status-region announcement for screen readers. Rather than
-  // putting aria-live on the whole transcript (which re-fires for every
-  // streamed token), announce "AI is thinking…" when streaming starts and
-  // the full assistant reply once streaming completes — a single, clean read.
   const [statusAnnouncement, setStatusAnnouncement] = useState("");
   const wasStreamingRef = useRef(false);
 
@@ -96,9 +92,6 @@ export default function ChatMessageList({
     } else if (justFinishedStreaming) {
       const lastMessage = messages[messages.length - 1];
       if (lastMessage?.role === "assistant" && lastMessage.content) {
-        // Strip markdown punctuation so screen readers don't read symbols
-        // like # * _ ` ~ aloud. A plain-text version is fine — the styled
-        // version stays in the DOM for visual users.
         const plainText = lastMessage.content
           .replace(/[#*_`~]/g, "")
           .replace(/\s+/g, " ")
@@ -167,16 +160,12 @@ export default function ChatMessageList({
     return () => container.removeEventListener("scroll", handleScroll);
   }, [handleScroll]);
 
-  // Instant scroll during streaming to keep up with rapid updates
   useEffect(() => {
     if (isAtBottomRef.current) {
       scrollToBottom("instant");
     }
   }, [streamingContent, streamingToolCalls.length, scrollToBottom]);
 
-  // Smooth scroll for new messages. Always force-scroll when the latest
-  // message is from the user (they just sent it), even if they were reading
-  // scrollback.
   useEffect(() => {
     const lastMessage = messages[messages.length - 1];
     const lastIsUser = lastMessage?.role === "user";
@@ -185,9 +174,6 @@ export default function ChatMessageList({
       return;
     }
 
-    // No auto-scroll: recompute from actual layout so that chat switches to
-    // content that doesn't overflow correctly hide the button even when no
-    // scroll event fires.
     const container = containerRef.current;
     if (!container) return;
     const distanceFromBottom =

@@ -60,7 +60,6 @@ vi.mock("../lib/use-space-names", () => ({
   useSpaceDirectory: () => ({ availabilityLabel: () => "scope" }),
 }));
 
-// 编辑器渲染与本测试无关
 vi.mock("./template-preview", () => ({ TemplatePreview: () => null }));
 vi.mock("./template-creator", () => ({ TemplateCreator: () => null }));
 
@@ -130,7 +129,6 @@ describe("TemplateQuickPicker", () => {
       ).toBe("true"),
     );
 
-    // 从第一项向上循环到最后一项
     fireEvent.keyDown(input, { key: "ArrowUp" });
     fireEvent.keyDown(input, { key: "ArrowUp" });
     await waitFor(() =>

@@ -78,11 +78,13 @@ describe('ImportService Confluence task metadata', () => {
     };
     const service = new ImportService(
       undefined as never,
-      { upload: async (_path: string, stream: Readable) => {
-        for await (const _chunk of stream) {
-          // Drain stream.
-        }
-      } } as never,
+      {
+        upload: async (_path: string, stream: Readable) => {
+          for await (const _chunk of stream) {
+            // Drain stream.
+          }
+        },
+      } as never,
       { insertInto: () => query } as never,
       { add: async () => undefined } as never,
       undefined as never,
@@ -106,12 +108,14 @@ describe('ImportService Confluence task metadata', () => {
     expect(
       buildConfluenceImportMetadata('confluence', '6389822', '~user@xxxxx.net'),
     ).toEqual({
-      confluence: { spaceId: '6389822', spaceKey: '~user@xxxxxx.net' },
+      confluence: { spaceId: '6389822', spaceKey: '~user@xxxxx.net' },
     });
-    expect(buildConfluenceImportMetadata('confluence', undefined, undefined))
-      .toBeUndefined();
-    expect(buildConfluenceImportMetadata('generic', '6389822', 'open'))
-      .toBeUndefined();
+    expect(
+      buildConfluenceImportMetadata('confluence', undefined, undefined),
+    ).toBeUndefined();
+    expect(
+      buildConfluenceImportMetadata('generic', '6389822', 'open'),
+    ).toBeUndefined();
     expect(() =>
       buildConfluenceImportMetadata('confluence', '6389822', undefined),
     ).toThrow(BadRequestException);

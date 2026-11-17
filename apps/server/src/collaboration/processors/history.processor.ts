@@ -1,6 +1,7 @@
 import { Logger, OnModuleDestroy } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
+import { OnWorkerEvent, Processor } from '@nestjs/bullmq';
+import { ContextualWorkerHost } from '../../common/logger/contextual-worker.host';
 import { Job } from 'bullmq';
 import { QueueJob, QueueName } from '../../integrations/queue/constants';
 import {
@@ -24,7 +25,10 @@ import { Worker as NodeWorker } from 'node:worker_threads';
 import { resolve } from 'node:path';
 
 @Processor(QueueName.HISTORY_QUEUE)
-export class HistoryProcessor extends WorkerHost implements OnModuleDestroy {
+export class HistoryProcessor
+  extends ContextualWorkerHost
+  implements OnModuleDestroy
+{
   private readonly logger = new Logger(HistoryProcessor.name);
 
   constructor(
@@ -37,88 +41,78 @@ export class HistoryProcessor extends WorkerHost implements OnModuleDestroy {
     super();
   }
 
-  async process(job: Job<IPageHistoryJob, void>): Promise<void> {
+  async handle(job: Job<IPageHistoryJob, void>): Promise<void> {
     if (job.name !== QueueJob.PAGE_HISTORY) return;
 
-    try {
-      const { pageId } = job.data;
+    const { pageId } = job.data;
 
-      const page = await this.pageRepo.findById(pageId, {
-        includeContent: true,
-      });
+    const page = await this.pageRepo.findById(pageId, {
+      includeContent: true,
+    });
 
-      if (!page) {
-        this.logger.warn(`Page ${pageId} not found, skipping history`);
-        await this.collabHistory.clearContributors(pageId);
-        return;
-      }
-
-      const lastHistory = await this.pageHistoryRepo.findPageLastHistory(
-        pageId,
-        { includeContent: true },
-      );
-
-      if (!lastHistory && isEmptyParagraphDoc(page.content as any)) {
-        this.logger.debug(
-          `Skipping first history for page ${pageId}: empty content`,
-        );
-        await this.collabHistory.clearContributors(pageId);
-        return;
-      }
-
-      if (
-        !lastHistory ||
-        !isDeepStrictEqual(lastHistory.content, page.content)
-      ) {
-        const contributorIds = await this.collabHistory.popContributors(pageId);
-
-        try {
-          await this.watcherService.addPageWatchers(
-            contributorIds,
-            pageId,
-            page.spaceId,
-            page.workspaceId,
-          );
-
-          const newHistory = await this.pageHistoryRepo.saveHistory(page, {
-            contributorIds,
-          });
-          this.logger.debug(`History created for page: ${pageId}`);
-
-          if (lastHistory) {
-            await this.historySnapshot
-              .enqueueHistoryDiff(lastHistory.id, newHistory.id)
-              .catch((err) => {
-                this.logger.error(
-                  `Failed to queue history diff for ${newHistory.id}: ${err.message}`,
-                );
-              });
-          }
-        } catch (err) {
-          await this.collabHistory.addContributors(pageId, contributorIds);
-          throw err;
-        }
-
-        await this.historySnapshot.enqueuePostHistoryJobs(
-          page,
-          contributorIds,
-          !!lastHistory?.content,
-        );
-      }
-    } catch (err) {
-      throw err;
+    if (!page) {
+      this.logger.warn({ pageId }, 'Page not found, skipping history');
+      await this.collabHistory.clearContributors(pageId);
+      return;
     }
-  }
 
-  @OnWorkerEvent('active')
-  onActive(job: Job) {
-    this.logger.debug(`Processing ${job.name} for page: ${job.data.pageId}`);
+    const lastHistory = await this.pageHistoryRepo.findPageLastHistory(pageId, {
+      includeContent: true,
+    });
+
+    if (!lastHistory && isEmptyParagraphDoc(page.content as any)) {
+      await this.collabHistory.clearContributors(pageId);
+      return;
+    }
+
+    if (!lastHistory || !isDeepStrictEqual(lastHistory.content, page.content)) {
+      const contributorIds = await this.collabHistory.popContributors(pageId);
+
+      try {
+        await this.watcherService.addPageWatchers(
+          contributorIds,
+          pageId,
+          page.spaceId,
+          page.workspaceId,
+        );
+
+        const newHistory = await this.pageHistoryRepo.saveHistory(page, {
+          contributorIds,
+        });
+
+        if (lastHistory) {
+          await this.historySnapshot
+            .enqueueHistoryDiff(lastHistory.id, newHistory.id)
+            .catch((err) => {
+              this.logger.error(
+                { pageId, historyId: newHistory.id, err },
+                'Failed to queue history diff',
+              );
+            });
+        }
+      } catch (err) {
+        await this.collabHistory.addContributors(pageId, contributorIds);
+        throw err;
+      }
+
+      await this.historySnapshot.enqueuePostHistoryJobs(
+        page,
+        contributorIds,
+        !!lastHistory?.content,
+      );
+    }
   }
 
   @OnWorkerEvent('failed')
   onError(job: Job) {
     this.logger.error(
-      `Failed ${job.name} for page: ${job.data.pageId}. Reason: ${job.failedReason}`,
+      {
+        jobId: job.id,
+        jobName: job.name,
+        pageId: job.data?.pageId,
+        reason: job.failedReason,
+      },
+      'Page history job failed',
     );
   }
 
@@ -140,7 +134,7 @@ class DiffWorkerPool {
     if (!this.worker) {
       this.worker = new NodeWorker(DIFF_THREAD_PATH);
       this.worker.on('exit', (code) => {
-        this.logger.warn(`Diff worker exited with code ${code}`);
+        this.logger.warn({ code }, 'Diff worker exited');
         this.worker = null;
       });
     }
@@ -160,7 +154,11 @@ class DiffWorkerPool {
         rj(new Error('diff_worker_timeout'));
       }, DIFF_TIMEOUT_MS);
 
-      const onMessage = (msg: { ok: boolean; result?: HistoryDiffResult; error?: string }) => {
+      const onMessage = (msg: {
+        ok: boolean;
+        result?: HistoryDiffResult;
+        error?: string;
+      }) => {
         clearTimeout(timer);
         w.off('message', onMessage);
         w.off('error', onError);
@@ -199,7 +197,7 @@ const MAX_HISTORY_DIFF_RESULT_BYTES = 5 * 1024 * 1024;
   maxStalledCount: 2,
 })
 export class HistoryDiffProcessor
-  extends WorkerHost
+  extends ContextualWorkerHost
   implements OnModuleDestroy
 {
   private readonly logger = new Logger(HistoryDiffProcessor.name);
@@ -209,7 +207,7 @@ export class HistoryDiffProcessor
     super();
   }
 
-  async process(job: Job<IPageHistoryDiffJob, void>): Promise<void> {
+  async handle(job: Job<IPageHistoryDiffJob, void>): Promise<void> {
     if (job.name !== QueueJob.PAGE_HISTORY_DIFF) return;
 
     const { fromHistoryId, toHistoryId, algorithmVersion } = job.data;
@@ -295,7 +293,12 @@ export class HistoryDiffProcessor
   @OnWorkerEvent('failed')
   onFailed(job: Job) {
     this.logger.error(
-      `Failed history diff for ${job.data.toHistoryId}: ${job.failedReason}`,
+      {
+        jobId: job.id,
+        toHistoryId: job.data?.toHistoryId,
+        reason: job.failedReason,
+      },
+      'History diff job failed',
     );
   }
 

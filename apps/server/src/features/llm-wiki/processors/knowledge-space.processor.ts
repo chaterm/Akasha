@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Logger, OnModuleDestroy } from '@nestjs/common';
-import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
+import { OnWorkerEvent, Processor } from '@nestjs/bullmq';
+import { ContextualWorkerHost } from '../../../common/logger/contextual-worker.host';
 import { Job, UnrecoverableError } from 'bullmq';
 import { KnowledgeSpaceExecutionRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-execution.repo';
 import { QueueJob, QueueName } from '../../../integrations/queue/constants';
@@ -18,7 +19,7 @@ import {
 
 @Processor(QueueName.KNOWLEDGE_SPACE_QUEUE, KNOWLEDGE_SPACE_WORKER_OPTIONS)
 export class KnowledgeSpaceProcessor
-  extends WorkerHost
+  extends ContextualWorkerHost
   implements OnModuleDestroy
 {
   private readonly logger = new Logger(KnowledgeSpaceProcessor.name);
@@ -31,7 +32,7 @@ export class KnowledgeSpaceProcessor
     super();
   }
 
-  async process(job: Job) {
+  async handle(job: Job) {
     if (
       ![
         QueueJob.KNOWLEDGE_COMPILE_SPACE_TEXT,
@@ -60,9 +61,6 @@ export class KnowledgeSpaceProcessor
         { workerId: this.workerId },
       );
     } catch (error) {
-      // Deterministic failures (constraint violations, programming errors,
-      // explicitly non-retryable errors) fail on the first attempt; anything
-      // else may be a transient DB/Redis fault and keeps the retry budget.
       if (isDeterministicJobFailure(error))
         throw toUnrecoverableJobError(error);
       throw error;
@@ -156,8 +154,6 @@ export class KnowledgeSpaceProcessor
 async function isTerminalFailure(job: Job): Promise<boolean> {
   const attempts = Math.max(Number(job.opts?.attempts ?? 1), 1);
   if (Number(job.attemptsMade ?? 0) >= attempts) return true;
-  // UnrecoverableError skips the remaining attempts budget, so the queue state
-  // is the only authoritative signal that no retry was scheduled.
   return job.isFailed();
 }
 

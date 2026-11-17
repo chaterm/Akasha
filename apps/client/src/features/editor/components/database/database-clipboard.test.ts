@@ -24,10 +24,7 @@ describe("title column", () => {
         {
           id: "t",
           type: "table",
-          columns: [
-            { id: "due" },
-            { id: "name", hidden: true },
-          ],
+          columns: [{ id: "due" }, { id: "name", hidden: true }],
         },
       ],
       columns,
@@ -99,11 +96,17 @@ describe("clipboard", () => {
     expect(parseClipboardCell(select, "done", "en-US", options)).toBe("o1");
     const created = parseClipboardCell(select, "Blocked", "en-US", options);
     expect(options).toHaveLength(2);
-    expect(parseClipboardCell(select, "blocked", "en-US", options)).toBe(created);
+    expect(parseClipboardCell(select, "blocked", "en-US", options)).toBe(
+      created,
+    );
 
     const date: DatabaseColumn = { id: "d", name: "Due", type: "date" };
-    expect(parseClipboardCell(date, "2026/1/5", "en-US", [])).toBe("2026-01-05");
-    expect(parseClipboardCell(date, "2026年11月3日", "zh-CN", [])).toBe("2026-11-03");
+    expect(parseClipboardCell(date, "2026/1/5", "en-US", [])).toBe(
+      "2026-01-05",
+    );
+    expect(parseClipboardCell(date, "2026年11月3日", "zh-CN", [])).toBe(
+      "2026-11-03",
+    );
     expect(parseClipboardCell(date, "soon", "en-US", [])).toBeUndefined();
 
     const number: DatabaseColumn = { id: "n", name: "N", type: "number" };
@@ -118,15 +121,23 @@ describe("clipboard", () => {
       type: "person",
       options: [{ id: "u1", name: "Ann", color: "blue" }],
     };
-    // Members are only matched, never created.
-    expect(parseClipboardCell(person, "Ann, Bob", "en-US", person.options!)).toEqual(["u1"]);
-    expect(parseClipboardCell(person, "Bob", "en-US", person.options!)).toBeUndefined();
+    expect(
+      parseClipboardCell(person, "Ann, Bob", "en-US", person.options!),
+    ).toEqual(["u1"]);
+    expect(
+      parseClipboardCell(person, "Bob", "en-US", person.options!),
+    ).toBeUndefined();
   });
 });
 
 describe("timeline axis", () => {
   it("pads the rows' dates and aligns weeks and months", () => {
-    const week = getTimelineWindow(["2026-11-04", "2026-11-20"], "2026-11-10", "week", 1);
+    const week = getTimelineWindow(
+      ["2026-11-04", "2026-11-20"],
+      "2026-11-10",
+      "week",
+      1,
+    );
     expect(new Date(`${week.start}T00:00`).getDay()).toBe(1);
     expect(week.days % 7).toBe(0);
     expect(week.start <= "2026-10-21").toBe(true);

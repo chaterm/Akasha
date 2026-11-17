@@ -15,7 +15,7 @@ import {
   setDatabaseCellValue,
 } from "@docmost/editor-ext";
 
-const DB_POS = 2; // The empty paragraph before the database.
+const DB_POS = 2;
 const cleanups: (() => void)[] = [];
 afterEach(() => cleanups.splice(0).forEach((cleanup) => cleanup()));
 

@@ -6,7 +6,10 @@ import {
 } from './ai-knowledge-chat.service';
 import { KnowledgeCitationResolverService } from './knowledge-citation-resolver.service';
 import { KnowledgeContextPackService } from './knowledge-context-pack.service';
-import { KNOWLEDGE_COMPLETENESS_NOTICE, KnowledgeRetrievalService } from './knowledge-retrieval.service';
+import {
+  KNOWLEDGE_COMPLETENESS_NOTICE,
+  KnowledgeRetrievalService,
+} from './knowledge-retrieval.service';
 import { KnowledgeAuthorizationCache } from './knowledge-source-authorization.cache';
 
 describe('AiKnowledgeChatService', () => {
@@ -202,9 +205,6 @@ describe('AiKnowledgeChatService', () => {
         filteredChunkCount: 0,
       },
       attachmentHitContext: { directHitChunkIds: ['chunk-1'] },
-      // Durations are wall-clock, so only their presence and shape are asserted.
-      // This provider has no `rewriteQuery` and no `stream`, so `rewriteMs` and
-      // `ttftMs` must stay absent rather than be reported as 0.
       timings: {
         retrievalMs: expect.any(Number),
         generationMs: expect.any(Number),
@@ -234,8 +234,6 @@ describe('AiKnowledgeChatService', () => {
         labelNames: ['项目计划', 'kafka'],
       }),
     );
-    // The request-scoped cache must actually be created and threaded into
-    // retrieval — guards against a future regression that drops the pass-through.
     const retrievalInput = retrieval.retrieve.mock.calls[0][0];
     expect(retrievalInput.authCache).toBeInstanceOf(
       KnowledgeAuthorizationCache,
@@ -600,8 +598,6 @@ describe('AiKnowledgeChatService', () => {
       context: '',
       chatContext: undefined,
       mode: 'general',
-      // Stamping first-token latency is the provider's job now: it is the only
-      // layer that sees reasoning deltas, which arrive before any answer text.
       onFirstToken: expect.any(Function),
     });
     const knowledgeContext = stream.mock.calls[0][0].context;

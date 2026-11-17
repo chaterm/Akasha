@@ -27,12 +27,6 @@ interface PageEditorProps {
   title: string;
   content: any;
   pageId?: string;
-  /**
-   * When rendering inside a public share, pass the share's id (or key). Lookups
-   * for transclusion content then resolve against the share graph instead of
-   * the viewer's personal permissions, so a share never leaks source content
-   * that isn't itself shared.
-   */
   shareId?: string;
 }
 

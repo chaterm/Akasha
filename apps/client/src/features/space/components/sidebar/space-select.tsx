@@ -68,7 +68,6 @@ export function SpaceSelect({
       data={options}
       renderOption={renderSelectOption}
       maxDropdownHeight={300}
-      //label={label || 'Select space'}
       placeholder={t("Search for spaces")}
       searchable
       searchValue={searchValue}
@@ -83,7 +82,13 @@ export function SpaceSelect({
       nothingFoundMessage={t("No space found")}
       limit={50}
       checkIconPosition="right"
-      comboboxProps={{ width, withinPortal: true, position: "bottom", keepMounted: false, dropdownPadding: 0 }}
+      comboboxProps={{
+        width,
+        withinPortal: true,
+        position: "bottom",
+        keepMounted: false,
+        dropdownPadding: 0,
+      }}
       dropdownOpened={opened}
     />
   );

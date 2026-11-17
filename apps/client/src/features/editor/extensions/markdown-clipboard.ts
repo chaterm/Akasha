@@ -1,4 +1,3 @@
-// adapted from: https://github.com/aguingand/tiptap-markdown/blob/main/src/extensions/tiptap/clipboard.js - MIT
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { DOMParser, DOMSerializer, Fragment, Slice } from "@tiptap/pm/model";
@@ -67,7 +66,10 @@ export const MarkdownClipboard = Extension.create({
             }
 
             if (isPlainTextOnly) {
-              if ((view as any).input?.shiftKey || !this.options.transformPastedText) {
+              if (
+                (view as any).input?.shiftKey ||
+                !this.options.transformPastedText
+              ) {
                 return false;
               }
 
@@ -101,19 +103,13 @@ export const MarkdownClipboard = Extension.create({
                 : parsedSlice;
 
             tr.replaceSelection(contentNodes);
-            tr.setMeta('paste', true)
+            tr.setMeta("paste", true);
             view.dispatch(tr);
             return true;
           },
-          // Strip trailing whitespace-only paragraphs from pasted content.
-          // Terminals (GNOME Terminal, etc.) often include trailing
-          // whitespace in their HTML clipboard data, which ProseMirror
-          // parses as an extra paragraph. Inside a list item this creates
-          // an orphan empty line that breaks the list structure.
           transformPasted: (slice) => {
             let { content, openStart, openEnd } = slice;
 
-            // Remove trailing paragraphs that contain only whitespace
             while (content.childCount > 1) {
               const lastChild = content.lastChild;
               if (
@@ -143,7 +139,6 @@ export const MarkdownClipboard = Extension.create({
 });
 
 function elementFromString(value) {
-  // add a wrapper to preserve leading and trailing whitespace
   const wrappedValue = `<body>${value}</body>`;
 
   return new window.DOMParser().parseFromString(wrappedValue, "text/html").body;
@@ -157,7 +152,6 @@ function removeWhitespaceBetweenBlocks(body: HTMLElement) {
   });
 }
 
-// MIT - https://github.com/ProseMirror/prosemirror-view/blob/master/src/clipboard.ts
 function closeIsolatingNodes(slice: Slice): Slice {
   let openStart = 0;
   let openEnd = 0;
@@ -283,10 +277,6 @@ function deriveColumnWidths(table: Element): (number | null)[] | null {
   return widths;
 }
 
-// Mirror of server normalizeTableColumnWidths (see import/utils/table-utils.ts):
-// markdown source has no widths, so without this every pasted table renders
-// at table-layout:fixed/100% and squashes columns to fit the editor instead of
-// letting .tableWrapper's overflow-x: auto scroll.
 export function normalizeTableColumnWidths(root: Element): void {
   root.querySelectorAll("table").forEach((table) => {
     const firstRow = getFirstRow(table);

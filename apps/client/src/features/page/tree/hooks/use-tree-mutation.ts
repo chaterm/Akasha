@@ -30,7 +30,6 @@ import { notifyError } from "@/lib/errors";
 
 export type UseTreeMutation = {
   handleMove: (sourceId: string, op: DropOp) => Promise<void>;
-  /** 传 templateId 时用模板内容建页。 */
   handleCreate: (
     parentId: string | null,
     opts?: { templateId?: string },
@@ -42,9 +41,6 @@ export type UseTreeMutation = {
 export function useTreeMutation(spaceId: string): UseTreeMutation {
   const { t } = useTranslation();
   const [, setData] = useAtom(treeDataAtom);
-  // `store` reads the *current* treeDataAtom imperatively in handlers — avoids
-  // stale-closure issues when the caller updates the tree (e.g. lazy-load
-  // children) and then immediately invokes a handler.
   const store = useStore();
   const createPageMutation = useCreatePageMutation();
   const updatePageMutation = useUpdatePageMutation();
@@ -65,15 +61,11 @@ export function useTreeMutation(spaceId: string): UseTreeMutation {
       if (!source) return;
       const oldParentId = source.parentPageId ?? null;
 
-      // optimistic apply with the new position from the payload
       let optimistic = treeModel.update(after, sourceId, {
         position: payload.position,
         parentPageId: payload.parentPageId,
       } as Partial<SpaceTreeNode>);
 
-      // If the old parent has no children left, mark hasChildren: false so the
-      // chevron disappears. Without this, the empty parent keeps rendering an
-      // expand toggle that fetches zero rows on click.
       if (oldParentId) {
         const oldParent = treeModel.find(optimistic, oldParentId);
         if (!oldParent?.children?.length) {
@@ -83,8 +75,6 @@ export function useTreeMutation(spaceId: string): UseTreeMutation {
         }
       }
 
-      // For make-child onto a previously-childless target: flip hasChildren on
-      // so the new parent shows its chevron.
       if (op.kind === "make-child") {
         optimistic = treeModel.update(optimistic, op.targetId, {
           hasChildren: true,
@@ -149,7 +139,10 @@ export function useTreeMutation(spaceId: string): UseTreeMutation {
       let createdPage: IPage;
       try {
         createdPage = opts?.templateId
-          ? await createPageFromTemplate({ ...payload, templateId: opts.templateId })
+          ? await createPageFromTemplate({
+              ...payload,
+              templateId: opts.templateId,
+            })
           : await createPageMutation.mutateAsync(payload);
       } catch (err: any) {
         if (opts?.templateId) {
@@ -170,10 +163,6 @@ export function useTreeMutation(spaceId: string): UseTreeMutation {
         children: [],
       };
 
-      // Read latest tree at call time. Without this, callers that mutate the
-      // tree (e.g. lazy-load children on expand) immediately before calling
-      // handleCreate hit a stale closure and compute lastIndex against the
-      // pre-load tree, requiring a setTimeout-based wait at the call site.
       const current = spaceRoots(store.get(treeDataAtom), spaceId);
       let lastIndex: number;
       if (parentId === null) {
@@ -206,7 +195,6 @@ export function useTreeMutation(spaceId: string): UseTreeMutation {
         createdPage.slugId,
         createdPage.title,
       );
-      // 新建页面直接进入编辑模式，方便马上填写。
       navigate(pageUrl, { state: OPEN_IN_EDIT_MODE_STATE });
     },
     [spaceId, createPageMutation, setData, store, emit, navigate, spaceSlug, t],
@@ -237,9 +225,6 @@ export function useTreeMutation(spaceId: string): UseTreeMutation {
         await removePageMutation.mutateAsync(id);
         setData((prev) => {
           let next = treeModel.remove(prev, id);
-          // If the parent has no children left, mark hasChildren: false so the
-          // chevron disappears. Without this, the empty parent keeps rendering an
-          // expand toggle that fetches zero rows on click.
           if (parentPageId) {
             const parent = treeModel.find(next, parentPageId);
             if (!parent?.children?.length) {
@@ -272,7 +257,16 @@ export function useTreeMutation(spaceId: string): UseTreeMutation {
         console.error("Failed to delete page:", error);
       }
     },
-    [removePageMutation, setData, store, pageSlug, navigate, spaceSlug, emit, spaceId],
+    [
+      removePageMutation,
+      setData,
+      store,
+      pageSlug,
+      navigate,
+      spaceSlug,
+      emit,
+      spaceId,
+    ],
   );
 
   return { handleMove, handleCreate, handleRename, handleDelete };

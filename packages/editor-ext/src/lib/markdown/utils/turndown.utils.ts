@@ -3,7 +3,6 @@ import * as TurndownPluginGfm from '@joplin/turndown-plugin-gfm';
 import { getBasename } from './basename';
 import { macroTurndownRules } from '../../macros/turndown-rules';
 
-// CJS/ESM interop: .default exists in Vite, not in NestJS
 const TurndownService = (_TurndownService as any).default || _TurndownService;
 
 function sanitizeMdLinkText(value: string): string {
@@ -35,8 +34,6 @@ export function htmlToMarkdown(html: string): string {
     iframeEmbed,
     image,
     video,
-    // Akasha-local Confluence-parity macros. Single touchpoint — see
-    // lib/macros/turndown-rules.ts
     ...macroTurndownRules,
   ]);
   preserveMergedTables(turndownService);
@@ -44,7 +41,6 @@ export function htmlToMarkdown(html: string): string {
 }
 
 function preserveMergedTables(turndownService: _TurndownService) {
-  // Markdown tables cannot represent rowspan/colspan, so keep these tables as HTML.
   turndownService.addRule('mergedTable', {
     filter: (node: HTMLInputElement) => {
       if (node.nodeName !== 'TABLE') return false;
@@ -75,7 +71,9 @@ function listParagraph(turndownService: _TurndownService) {
 function orderedListItem(turndownService: _TurndownService) {
   turndownService.addRule('orderedListItem', {
     filter: function (node: HTMLInputElement) {
-      return node.nodeName === 'LI' && node.getAttribute('data-type') !== 'taskItem';
+      return (
+        node.nodeName === 'LI' && node.getAttribute('data-type') !== 'taskItem'
+      );
     },
     replacement: (content: string, node: HTMLInputElement, options: any) => {
       const parent = node.parentNode as HTMLElement;
@@ -136,9 +134,7 @@ function taskList(turndownService: _TurndownService) {
       const prefix = `- ${isChecked ? '[x]' : '[ ]'} `;
 
       return (
-        prefix +
-        text +
-        (node.nextSibling && !/\n$/.test(text) ? '\n' : '')
+        prefix + text + (node.nextSibling && !/\n$/.test(text) ? '\n' : '')
       );
     },
   });
@@ -233,9 +229,7 @@ function video(turndownService: _TurndownService) {
     replacement: function (_content: string, node: HTMLInputElement) {
       const src = node.getAttribute('src') || '';
       const ariaLabel = node.getAttribute('aria-label');
-      const name = sanitizeMdLinkText(
-        ariaLabel || getBasename(src) || src,
-      );
+      const name = sanitizeMdLinkText(ariaLabel || getBasename(src) || src);
       return '[' + name + '](' + src + ')';
     },
   });

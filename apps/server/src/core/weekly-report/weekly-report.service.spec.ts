@@ -34,8 +34,6 @@ type Table =
 type Row = Record<string, unknown>;
 type Filter = { field: string; operator: string; value: unknown };
 
-/** Fluent query fake applies predicates and stages writes until commit. Advisory
- * locks are stubbed below: actual PostgreSQL locking belongs to integration tests. */
 class Query {
   readonly filters: Filter[] = [];
   private incoming: Row[] = [];
@@ -641,7 +639,6 @@ describe('WeeklyReportService signed saves and replay', () => {
       pageId: result.pageId,
       status: 'existing',
     });
-    // Simulate the separate collaboration content write; a completed report no longer resumes.
     f.db.rows.pages.find((row) => row.id === result.pageId)!.content = BODY;
     await expect(f.service.prepare(f.ctx, PERIOD)).resolves.toMatchObject({
       contentPending: false,

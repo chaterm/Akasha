@@ -8,13 +8,6 @@ export type TransclusionReferenceSnapshot = {
   transclusionId: string;
 };
 
-/**
- * Walks a ProseMirror JSON document and returns one snapshot per top-level
- * `transclusion` node. Does not recurse into transclusions (schema disallows
- * nesting). Skips transclusion nodes without an id (transient state). When
- * duplicate ids are encountered, the later occurrence wins so the result is
- * deterministic.
- */
 export function collectTransclusionsFromPmJson(
   doc: unknown,
 ): TransclusionNodeSnapshot[] {
@@ -33,7 +26,7 @@ export function collectTransclusionsFromPmJson(
           content: { type: 'doc', content: node.content ?? [] },
         });
       }
-      return; // do not recurse into transclusion children
+      return;
     }
 
     if (Array.isArray(node.content)) {
@@ -45,13 +38,6 @@ export function collectTransclusionsFromPmJson(
   return Array.from(byId.values());
 }
 
-/**
- * Walks a ProseMirror JSON document and returns one snapshot per unique
- * `(sourcePageId, transclusionId)` pair found on `transclusionReference`
- * nodes. The schema forbids references inside a `transclusionSource` so this
- * walk stops at source boundaries — references can only appear at page level.
- * Order preserved by first-seen.
- */
 export function collectReferencesFromPmJson(
   doc: unknown,
 ): TransclusionReferenceSnapshot[] {
@@ -78,11 +64,9 @@ export function collectReferencesFromPmJson(
           out.push({ sourcePageId, transclusionId });
         }
       }
-      return; // atom node - no children
+      return;
     }
 
-    // References cannot live inside a source (schema-enforced); skip recursing
-    // so a malformed inbound doc can't sneak in a nested reference here.
     if (node.type === TRANSCLUSION_TYPE) return;
 
     if (Array.isArray(node.content)) {

@@ -26,13 +26,10 @@ import classes from "./template-quick-picker.module.css";
 export interface TemplateQuickPickerProps {
   opened: boolean;
   onClose: () => void;
-  /** 选中模板（已含正文）后回调；返回 Promise 时按钮显示加载态。 */
   onConfirm: (template: PageTemplate) => void | Promise<void>;
   title: string;
   confirmLabel: string;
-  /** 该空间的模板排在最前面。 */
   preferredSpaceId?: string;
-  /** 只展示全工作区模板 + 该空间的模板（空间内建页场景）。 */
   restrictToSpaceId?: string;
 }
 
@@ -59,7 +56,6 @@ export function TemplateQuickPicker({
   const [submitting, setSubmitting] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // 空间内建页：直接按"在该空间可用"拉取，服务端负责过滤
   const { data: templates = [], isLoading } = useTemplateList(
     restrictToSpaceId
       ? {
@@ -70,7 +66,6 @@ export function TemplateQuickPicker({
       : { scope: "all", query: debouncedQuery || undefined },
   );
 
-  // 分组：本空间专属 → 所有空间 → 其他（多空间等）→ 公共模板
   const groups = useMemo<TemplateGroup[]>(() => {
     const thisSpace: PageTemplate[] = [];
     const everywhere: PageTemplate[] = [];

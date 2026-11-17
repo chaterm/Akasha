@@ -73,15 +73,13 @@ export function MfaBackupCodesModal({
     onError: (error: any) => {
       notifications.show({
         title: t("Error"),
-        message:
-          getErrorMessage(error, "Failed to regenerate backup codes"),
+        message: getErrorMessage(error, "Failed to regenerate backup codes"),
         color: "red",
       });
     },
   });
 
   const handleRegenerate = (values: { confirmPassword?: string }) => {
-    // Only send confirmPassword if it's required (non-SSO users)
     const payload = requiresPassword
       ? { confirmPassword: values.confirmPassword }
       : {};

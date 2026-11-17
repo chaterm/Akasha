@@ -14,25 +14,18 @@ import classes from "./database.module.css";
 interface TableRowProps {
   db: DatabaseContext;
   row: DatabaseRowData;
-  /** 1-based position in the view; null hides the row-number cell. */
   rowNumber: number | null;
   columns: DatabaseColumn[];
-  /** Selected column id in this row. */
   selection: string | null;
-  /** Columns of a multi-cell range that covers this row. */
   rangeColumns: Set<string> | null;
-  /** Columns that show their full value on several lines. */
   wrapColumns: Set<string>;
-  /** Checked for a bulk action. */
   checked: boolean;
-  /** Show the checkbox without hovering (some row is checked). */
   checking: boolean;
   onCheck: (shiftKey: boolean) => void;
   editing: { initialText?: string } | null;
   dragging: boolean;
   dropBefore: boolean;
   canDrag: boolean;
-  /** Why rows cannot be dragged right now (sorted or grouped view); null = they can. */
   dragBlocked: string | null;
   onCellMouseDown: (columnId: string, shiftKey: boolean) => void;
   onCellDoubleClick: (columnId: string) => void;

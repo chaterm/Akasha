@@ -45,7 +45,6 @@ export const handleInternalLink =
         view.dispatch(transaction);
       },
       () => {
-        // on failure, insert as normal link
         const { schema } = view.state;
 
         const transaction = view.state.tr.insertText(url, pos);
@@ -70,7 +69,6 @@ export const createMentionAction = handleInternalLink({
     }
   },
   validateFn: (url: string, view: EditorView) => {
-    // validation is already done on the paste handler
     return true;
   },
 });

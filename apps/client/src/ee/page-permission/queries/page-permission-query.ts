@@ -39,7 +39,6 @@ export function usePagePermissionsQuery(pageId: string) {
     queryKey: ["page-permissions", pageId],
     queryFn: ({ pageParam }) => getPagePermissions(pageId, pageParam),
     enabled: !!pageId,
-    //gcTime: 5000,
     placeholderData: keepPreviousData,
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) =>
@@ -52,18 +51,15 @@ function updatePageRestrictionCache(
   pageId: string,
   hasRestriction: boolean,
 ) {
-  queryClient.setQueriesData<IPage>(
-    { queryKey: ["pages"] },
-    (old) => {
-      if (old?.id === pageId) {
-        return {
-          ...old,
-          permissions: { ...old.permissions, hasRestriction },
-        };
-      }
-      return old;
-    },
-  );
+  queryClient.setQueriesData<IPage>({ queryKey: ["pages"] }, (old) => {
+    if (old?.id === pageId) {
+      return {
+        ...old,
+        permissions: { ...old.permissions, hasRestriction },
+      };
+    }
+    return old;
+  });
   queryClient.invalidateQueries({
     queryKey: ["page-restriction-info", pageId],
   });

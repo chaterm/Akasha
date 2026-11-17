@@ -77,7 +77,6 @@ export type AuthorizedCandidateInput = {
   workspaceId: string;
   spaceIds: string[];
   principals: KnowledgeAccessPrincipal[];
-  /** Normalized page label names. A source page may match any supplied label. */
   labelNames?: string[];
   retrievalChannel?: 'evidence' | 'memory';
   authorizationMode?: 'policy' | 'final-authorization-fallback';
@@ -134,11 +133,6 @@ export class KnowledgeCapsuleRepo {
 
   constructor(@InjectKysely() private readonly db: KyselyDB) {}
 
-  /**
-   * Searches canonical artifact identities entirely in PostgreSQL. Bodies and
-   * source lineage are used only for ranking and are never returned to Node or
-   * sent to the compiler model.
-   */
   async findCompilerCatalogCandidates(input: {
     workspaceId: string;
     spaceId: string;
@@ -460,9 +454,6 @@ export class KnowledgeCapsuleRepo {
       offset < targetIds.length;
       offset += CHILD_INSERT_BATCH_SIZE
     ) {
-      // All pages in this publication have already been upserted. Lock existing
-      // targets until commit so they cannot disappear between this check and
-      // the FK check on link insertion.
       const targets = await db
         .selectFrom('knowledgePages')
         .select('id')
@@ -477,10 +468,6 @@ export class KnowledgeCapsuleRepo {
       for (const target of targets) existingIds.add(target.id);
     }
 
-    // Historical contribution JSON is not protected by the link table's FK.
-    // A merged contribution can replay an ID that has since been purged. Keep
-    // its canonical identity for the finalizer's link resolver, but publish it
-    // as dangling rather than rolling back every artifact from this page.
     const missingLinks = links.filter(
       (link) =>
         link.toKnowledgePageId && !existingIds.has(link.toKnowledgePageId),
@@ -718,22 +705,13 @@ export class KnowledgeCapsuleRepo {
       return [];
 
     const db = dbOrTx(this.db, trx);
-    // jieba-segmented FTS (see migration 20261015T100000): `simple` does not
-    // split Han text, so Chinese queries used to match almost nothing.
     const terms = await this.classifyLexicalQueryTerms(input, trx);
     const rareTerms = terms.filter((term) => !term.common);
-    // A lexical hit bypasses the semantic-distance gate, so only rare terms
-    // may make a chunk relevant (ES common-terms query): a query left with
-    // only common words (请问配置在哪里 -> 配置) is handed to dense recall.
     if (rareTerms.length === 0) return [];
 
-    // Terms are passed as tsquery literals, not re-segmented per row; a
-    // per-row function call is re-evaluated on every recheck (≈15x slower).
     const rareQuery = rareTerms.map((term) => term.term).join(' | ');
     const allQuery = terms.map((term) => term.term).join(' | ');
     const rareTermArray = sql`${rareTerms.map((term) => term.term)}::tsquery[]`;
-    // Minimum-should-match over rare terms; coverage ranks first, and
-    // ts_rank_cd over all terms (common ones included) breaks ties.
     const coverage = sql<number>`(
       SELECT count(*)::int
       FROM unnest(${rareTermArray}) AS term
@@ -779,10 +757,6 @@ export class KnowledgeCapsuleRepo {
     );
   }
 
-  // Segments the query (knowledge_zh_query_terms) and measures each term's
-  // document frequency within the candidate scope. Document frequency ignores
-  // ACLs: it is a corpus statistic, not a visibility decision. Counts stop at
-  // the threshold, so a very common term costs at most `threshold` index hits.
   private async classifyLexicalQueryTerms(
     input: AuthorizedCandidateInput & {
       query: string;
@@ -1328,11 +1302,6 @@ export class KnowledgeCapsuleRepo {
     );
   }
 
-  /**
-   * Stored vectors for chunk ids about to be republished. Chunk ids are derived
-   * from the exact embedding input, so a row with the same id carries a vector
-   * for the same input; callers still must match the embedding profile.
-   */
   async findChunkEmbeddingsByIds(input: {
     workspaceId: string;
     chunkIds: string[];
@@ -1835,18 +1804,6 @@ export class KnowledgeCapsuleRepo {
     });
   }
 
-  /**
-   * Parent expansion replaces a child's text with its parent's text, so the
-   * parent must not carry any lineage the child does not. A parent is
-   * expandable for a child only when it belongs to the same knowledge page and
-   * every (source, version, content hash) of the parent also backs the child.
-   * Since the child's sources are authorized before it is returned, this also
-   * means every parent source is authorized. Missing lineage on either side is
-   * treated as not expandable, and the authorized child is returned as is.
-   *
-   * Returns parent ids that are expandable for at least one child, plus
-   * `${chunkId}:${parentId}` pairs for the exact child/parent decision.
-   */
   private async findExpandableParentIds(
     input: {
       workspaceId: string;
@@ -1970,11 +1927,7 @@ function splitPairKey(key: string): [string, string] {
   return [key.slice(0, separator), key.slice(separator + 1)];
 }
 
-// Lexical recall needs every rare term of a 1–2 term query and 75% (floored)
-// of a longer one, roughly the old AND semantics but tolerant of extra words.
 export const LEXICAL_MINIMUM_SHOULD_MATCH_RATIO = 0.75;
-// A term in more than 5% of the scope's chunks (and more than 20 chunks) is a
-// common term: it only affects ranking and never qualifies a chunk alone.
 export const LEXICAL_COMMON_TERM_RATIO = 0.05;
 export const LEXICAL_COMMON_TERM_MIN_DOCUMENTS = 20;
 

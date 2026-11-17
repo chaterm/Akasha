@@ -51,7 +51,6 @@ export class SignupService {
     const user = await executeTx(
       this.db,
       async (trx) => {
-        // create user
         const user = await this.userRepo.insertUser(
           {
             ...createUserDto,
@@ -60,7 +59,6 @@ export class SignupService {
           trx,
         );
 
-        // add user to workspace
         await this.workspaceService.addUserToWorkspace(
           user.id,
           workspaceId,
@@ -68,7 +66,6 @@ export class SignupService {
           trx,
         );
 
-        // add user to default group
         await this.groupUserRepo.addUserToDefaultGroup(
           user.id,
           workspaceId,
@@ -109,7 +106,6 @@ export class SignupService {
     await executeTx(
       this.db,
       async (trx) => {
-        // create user
         user = await this.userRepo.insertUser(
           {
             name: createAdminUserDto.name,
@@ -121,7 +117,6 @@ export class SignupService {
           trx,
         );
 
-        // create workspace with full setup
         const workspaceData: CreateWorkspaceDto = {
           name: createAdminUserDto.workspaceName || 'My workspace',
           hostname: createAdminUserDto.hostname,

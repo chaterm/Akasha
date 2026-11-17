@@ -42,10 +42,6 @@ export class HoidcController {
     };
   }
 
-  /**
-   * GET /api/sso/hoidc/login
-   * 302 跳转到 SSO 登录页
-   */
   @Get('login')
   async login(
     @Query('redirect') redirect: string | undefined,
@@ -74,10 +70,6 @@ export class HoidcController {
     return res.redirect(loginUrl, 302);
   }
 
-  /**
-   * GET /api/sso/hoidc/callback?token=xxx
-   * 接收 SSO 回调 token，换取用户信息，写 cookie，302 首页
-   */
   @Get('callback')
   async callback(
     @Query('token') token: string,

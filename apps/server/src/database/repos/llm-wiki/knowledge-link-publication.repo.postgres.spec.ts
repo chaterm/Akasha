@@ -53,7 +53,6 @@ describePostgres('KnowledgeCapsuleRepo link publication foreign keys', () => {
   });
 
   it('handles a replayed link to a deleted page and resolves it when the canonical target returns', async () => {
-    // The contribution JSON keeps this ID even after the target row is deleted.
     await db
       .insertInto('knowledgePages')
       .values(page(TARGET, 'old-concept'))
@@ -61,7 +60,6 @@ describePostgres('KnowledgeCapsuleRepo link publication foreign keys', () => {
     const historicalLink = link(OWNER, TARGET);
     await db.deleteFrom('knowledgePages').where('id', '=', TARGET).execute();
 
-    // Pin down the original failure against the real FK, before the repair.
     await db
       .insertInto('knowledgePages')
       .values(page(OWNER, 'owner'))
@@ -141,7 +139,6 @@ describePostgres('KnowledgeCapsuleRepo link publication foreign keys', () => {
     await db
       .transaction()
       .execute((trx) => repo.upsertCompiledArtifacts([first, second], trx));
-    // Publish again with TARGET now coming from the existing catalog.
     await db
       .transaction()
       .execute((trx) => repo.upsertCompiledArtifacts([first], trx));

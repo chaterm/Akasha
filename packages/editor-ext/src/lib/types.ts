@@ -1,4 +1,3 @@
-// repetition for now
 export interface IAttachment {
   id: string;
   fileName: string;

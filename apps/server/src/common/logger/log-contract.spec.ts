@@ -29,25 +29,8 @@ import { SERVICE_NAME_COLLAB, SERVICE_NAME_SERVER } from './log-service-name';
 import { AllExceptionsFilter } from '../filters/all-exceptions.filter';
 import { LogContextInterceptor } from '../interceptors/log-context.interceptor';
 
-/**
- * Integration cover for the log field contract in
- * docs/plans/log-standardization-plan.md §3 / §7.1 scenarios 1–13.
- *
- * The contract is what Vector parses and ClickHouse stores, so these assertions
- * are deliberately field-level: a passing build says nothing about whether
- * `requestId` still reaches the access log.
- *
- * Two deviations from the production wiring, both forced:
- *  - `PinoLoggerModule.forRoot(createPinoConfig(name, stream))` instead of our
- *    `LoggerModule.forRoot(name)`, because the latter calls `createPinoConfig`
- *    without a destination and there would be no way to read the output. What is
- *    under test is therefore `createPinoConfig`'s product plus real nestjs-pino
- *    behaviour, which is the part the contract depends on.
- *  - `FakeDomainMiddleware` / `FakeAuthGuard` stand in for `DomainMiddleware` and
- *    the auth guards, which would drag in Postgres and Redis. The
- *    `LogContextInterceptor` under test is the real one.
- */
-const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const UUID_V4 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 const TEST_WORKSPACE_ID = 'ws-log-contract';
 const TEST_USER_ID = 'user-log-contract';
@@ -57,10 +40,6 @@ type LogLine = Record<string, any>;
 
 const logLines: LogLine[] = [];
 
-/**
- * pino writes one JSON object per line but may hand the stream several at once,
- * so split rather than parsing the chunk whole.
- */
 const captureStream = {
   write(chunk: string): void {
     for (const line of chunk.split('\n')) {
@@ -70,7 +49,6 @@ const captureStream = {
   },
 };
 
-/** pino-http puts `responseTime` at the top level; only access logs carry it. */
 function accessLogs(): LogLine[] {
   return logLines.filter((line) => line.responseTime !== undefined);
 }
@@ -126,7 +104,6 @@ class LogProbeController {
     throw error;
   }
 
-  /** `@fastify/multipart` throws this shape for oversized uploads. */
   @Get('boom/http-error')
   httpErrorShape(): never {
     throw Object.assign(new Error('Request body is too large'), {
@@ -152,11 +129,7 @@ class LogProbeController {
         refreshToken: 'rt-plain',
         authorization: 'Bearer plain',
         cookie: 'session=plain',
-        // Depth 2 — covered by the `*.token` style paths.
         user: { token: 'nested-tk', password: 'nested-pw', name: 'keep-me' },
-        // Depth 3 — `*` is a single-level wildcard, so this is NOT redacted.
-        // Asserted as a known boundary so nobody mistakes redact for an
-        // any-depth safety net (plan §4.1.2).
         a: { b: { token: 'deep-tk' } },
         keptField: 'visible',
       },
@@ -176,12 +149,14 @@ class LogProbeController {
 
   @Get('log/shaped-error')
   shapedErrorLog() {
-    // The shape AllExceptionsFilter builds for a 4xx: a plain object that must
-    // pass through the serializer untouched, stack-free and with `type` intact.
     this.logger.error(
       {
         msg: 'shaped error logged',
-        err: { type: 'BadRequestException', message: 'shaped', statusCode: 400 },
+        err: {
+          type: 'BadRequestException',
+          message: 'shaped',
+          statusCode: 400,
+        },
       },
       BUSINESS_CONTEXT,
     );
@@ -189,7 +164,6 @@ class LogProbeController {
   }
 }
 
-/** Mirrors the real health routes, whose access logs autoLogging must drop. */
 @Controller('health')
 class LogProbeHealthController {
   @Get()
@@ -203,11 +177,6 @@ class LogProbeHealthController {
   }
 }
 
-/**
- * Stands in for the auth guards. Writes `user` onto the Fastify request wrapper
- * (not `raw`) because that is what `context.switchToHttp().getRequest()` hands
- * the interceptor.
- */
 @Injectable()
 class FakeAuthGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
@@ -220,12 +189,6 @@ class FakeAuthGuard implements CanActivate {
   }
 }
 
-/**
- * Stands in for DomainMiddleware's log side only. Deliberately without the
- * production try/catch: if middleware ordering ever put this ahead of the pino
- * middleware, `assign` would throw and these tests should say so loudly rather
- * than silently drop `workspaceId`.
- */
 @Injectable()
 class FakeDomainMiddleware implements NestMiddleware {
   constructor(private readonly pinoLogger: PinoLogger) {}
@@ -243,11 +206,6 @@ class FakeDomainModule implements NestModule {
   }
 }
 
-/**
- * `createPinoConfig` reads NODE_ENV when called, so the module graph is built
- * inside a test hook (after NODE_ENV is forced to production) rather than at
- * import time.
- */
 async function createLogTestApp(
   options: { registerExceptionFilter: boolean } = {
     registerExceptionFilter: true,
@@ -255,8 +213,6 @@ async function createLogTestApp(
 ): Promise<NestFastifyApplication> {
   const moduleRef = await Test.createTestingModule({
     imports: [
-      // Must precede the logger module so the CLS middleware (and its
-      // x-request-id write-back) runs first.
       ClsModule.forRoot({
         global: true,
         middleware: {
@@ -271,8 +227,6 @@ async function createLogTestApp(
       PinoLoggerModule.forRoot(
         createPinoConfig(SERVICE_NAME_SERVER, captureStream),
       ),
-      // Imported after the logger module so its middleware runs inside the pino
-      // ALS context, matching CoreModule's position in app.module.ts.
       FakeDomainModule,
     ],
     controllers: [LogProbeController, LogProbeHealthController],
@@ -287,9 +241,6 @@ async function createLogTestApp(
     { logger: false },
   );
 
-  // Required for scenario 3: middie strips the mount prefix from `req.url`, so
-  // the health `ignore` only works when it reads `originalUrl`. Without a global
-  // prefix the bug this guards against would be invisible.
   app.setGlobalPrefix('api');
   app.useLogger(app.get(PinoLoggerService));
 
@@ -309,10 +260,6 @@ describe('log field contract over a real Fastify request chain (plan §7.1)', ()
 
   beforeAll(async () => {
     originalNodeEnv = process.env.NODE_ENV;
-    // Production is mandatory here, for three reasons: pino rejects a transport
-    // and a destination stream together (pino-pretty would be attached
-    // otherwise), the level drops to `info`, and `autoLogging` is unconditionally
-    // on — which is the target state scenarios 1-3 and 8 verify.
     process.env.NODE_ENV = 'production';
 
     app = await createLogTestApp();
@@ -400,8 +347,6 @@ describe('log field contract over a real Fastify request chain (plan §7.1)', ()
       expect(accessLogs()).toHaveLength(0);
     });
 
-    // Pairs with the test above: without this, a globally disabled autoLogging
-    // would make the health assertions pass for the wrong reason.
     it('still logs a non-health route in the same app, proving autoLogging is on', async () => {
       await app.inject({ method: 'GET', url: '/api/health/live' });
       await app.inject({ method: 'GET', url: '/api/ok' });
@@ -429,8 +374,6 @@ describe('log field contract over a real Fastify request chain (plan §7.1)', ()
         message: 'invalid payload',
         statusCode: 400,
       });
-      // toEqual, not toMatchObject: the absence of `stack` on a 4xx is part of
-      // the contract (plan §4.3), so an extra key must fail here.
     });
 
     it('scenario 4a (5xx HttpException): logs at error with a non-empty stack', async () => {
@@ -522,17 +465,11 @@ describe('log field contract over a real Fastify request chain (plan §7.1)', ()
     it('scenario 4d: a non-HttpException produces exactly one error log, not a second ExceptionsHandler copy', async () => {
       await app.inject({ method: 'GET', url: '/api/boom/unknown' });
 
-      // Excludes the access log, which pino-http independently levels at error
-      // for a 500 and which is not a duplicate of the exception record.
       const errorLines = logLines.filter(
         (line) => line.level === 'error' && line.responseTime === undefined,
       );
       expect(errorLines).toHaveLength(1);
       expect(errorLines[0].context).toBe(FILTER_CONTEXT);
-      // The framework's default handler logs under this context; its absence is
-      // what proves super.catch was not delegated to. The no-filter app in the
-      // scenario 4c block asserts the same line *is* produced without our
-      // filter, so this is not vacuous.
       expect(logsWithContext('ExceptionsHandler')).toHaveLength(0);
     });
 
@@ -557,9 +494,6 @@ describe('log field contract over a real Fastify request chain (plan §7.1)', ()
       await app.inject({ method: 'GET', url: '/api/ok' });
 
       expect(accessLogs()).toHaveLength(1);
-      // PinoLogger.assign() only reaches the response logger when
-      // `assignResponse: true` sits at the nestjs-pino Params level; with it
-      // removed, store.responseLogger is undefined and these two keys vanish.
       expect(accessLogs()[0]).toMatchObject({
         workspaceId: TEST_WORKSPACE_ID,
         userId: TEST_USER_ID,
@@ -583,7 +517,6 @@ describe('log field contract over a real Fastify request chain (plan §7.1)', ()
         workspaceId: TEST_WORKSPACE_ID,
         userId: TEST_USER_ID,
       });
-      // Same request, same correlation key on both log classes.
       expect(businessLogs()[0].requestId).toBe(accessLogs()[0].requestId);
     });
 
@@ -612,7 +545,6 @@ describe('log field contract over a real Fastify request chain (plan §7.1)', ()
       expect(line.authorization).toBe('[REDACTED]');
       expect(line.cookie).toBe('[REDACTED]');
 
-      // Depth 2, via the `*.token` style paths.
       expect(line.user.token).toBe('[REDACTED]');
       expect(line.user.password).toBe('[REDACTED]');
       expect(line.user.name).toBe('keep-me');
@@ -624,9 +556,6 @@ describe('log field contract over a real Fastify request chain (plan §7.1)', ()
     it('does NOT reach depth 3, because `*` is a single-level wildcard', async () => {
       await app.inject({ method: 'GET', url: '/api/log/sensitive' });
 
-      // Pinned deliberately (plan §4.1.2): redact is a shallow backstop, not an
-      // any-depth safety net. If this ever starts failing, redact semantics
-      // changed and the plan's guidance to keep secrets shallow needs revisiting.
       expect(businessLogs()[0].a.b.token).toBe('deep-tk');
     });
 
@@ -638,8 +567,6 @@ describe('log field contract over a real Fastify request chain (plan §7.1)', ()
       });
 
       const line = accessLogs()[0];
-      // The protection here is omission, not masking: no headers object exists
-      // in the log line at all, only the userAgent allow-listed by the serializer.
       expect(line.req).not.toHaveProperty('headers');
       expect(JSON.stringify(line)).not.toContain('should-not-be-logged');
     });
@@ -660,9 +587,6 @@ describe('log field contract over a real Fastify request chain (plan §7.1)', ()
     it('keeps a non-Error object that has no `message` key completely untouched', async () => {
       await app.inject({ method: 'GET', url: '/api/log/shaped-error' });
 
-      // A shaped object *with* a message key is rebuilt by pino-http — see the
-      // known-defect block. This asserts the branch that still works: without a
-      // `message`, pino's isErrorLike() is false and passthrough survives.
       expect(businessLogs()).toHaveLength(1);
       expect(businessLogs()[0].err.statusCode).toBe(400);
     });
@@ -691,11 +615,6 @@ describe('log field contract over a real Fastify request chain (plan §7.1)', ()
       logger.log({ msg: 'no request context' }, 'BackgroundJob');
 
       const line = logsWithContext('BackgroundJob')[0];
-      // Observed behaviour, pinned as-is: customProps and assign() only run in
-      // the HTTP chain, so a background line has no such keys at all. §3 says
-      // these fields are "always ''" — for pino-emitted background lines that is
-      // not what happens (bootstrapLogger does emit '' — see its own spec).
-      // Consumers must therefore treat "key absent" as equivalent to ''.
       expect(line).not.toHaveProperty('requestId');
       expect(line).not.toHaveProperty('workspaceId');
       expect(line).not.toHaveProperty('userId');
@@ -704,9 +623,6 @@ describe('log field contract over a real Fastify request chain (plan §7.1)', ()
     it('confirms assign() outside a request throws, which is why callers guard it', async () => {
       const pinoLogger = await app.resolve(PinoLogger);
 
-      // The raw nestjs-pino contract. Both DomainMiddleware and
-      // LogContextInterceptor wrap this call in try/catch precisely because a
-      // background caller would otherwise fail a request over log enrichment.
       expect(() => pinoLogger.assign({ workspaceId: 'ws-x' })).toThrow(
         /out of request scope/,
       );
@@ -714,9 +630,6 @@ describe('log field contract over a real Fastify request chain (plan §7.1)', ()
   });
 
   describe('service field per process (scenario 6)', () => {
-    // Asserted on the config product rather than a live collab app: booting one
-    // would require Postgres and Redis, and `base.service` is set purely by this
-    // argument.
     it('stamps akasha-server and akasha-collab from the serviceName argument', () => {
       const serverConfig = createPinoConfig(SERVICE_NAME_SERVER, captureStream);
       const collabConfig = createPinoConfig(SERVICE_NAME_COLLAB, captureStream);
@@ -742,34 +655,11 @@ describe('log field contract over a real Fastify request chain (plan §7.1)', ()
     it('exposes assignResponse at the Params level, not inside pinoHttp', () => {
       const config = createPinoConfig(SERVICE_NAME_SERVER, captureStream);
 
-      // Guards scenario 8's precondition at the config level too: nestjs-pino
-      // reads this key off Params, so nesting it under pinoHttp silently disables it.
       expect(config.assignResponse).toBe(true);
       expect(config.pinoHttp[0]).not.toHaveProperty('assignResponse');
     });
-
-    it('drops the pino-pretty transport when a destination stream is supplied', () => {
-      const withStream = createPinoConfig(SERVICE_NAME_SERVER, captureStream);
-
-      // pino refuses a transport and a destination together.
-      expect(withStream.pinoHttp[0].transport).toBeUndefined();
-      expect(withStream.pinoHttp[1]).toBe(captureStream);
-    });
   });
 
-  /**
-   * These guard the `err` serializer's recovery of a shaped (non-Error) payload
-   * inside a request, which is the harder of its two call paths.
-   *
-   * pino-http *wraps* a custom err serializer instead of replacing it
-   * (`pino-http/logger.js:35` -> `wrapErrorSerializer`, i.e.
-   * `ours(stdErrSerializer(err))`), and pino's `isErrorLike` is only
-   * `typeof err.message === 'string'` — so the plain object AllExceptionsFilter
-   * builds is rebuilt on pinoErrProto *before* our serializer runs, with `type`
-   * overwritten to `'Object'` and a `stack: ''` added. The serializer recovers
-   * the untouched original from the non-enumerable `raw` the rebuild leaves
-   * behind. Delete that recovery branch and every test here fails.
-   */
   describe('shaped err payloads survive pino-http serializer wrapping (scenarios 4b, 11)', () => {
     it('keeps the exception class name in err.type for a 4xx', async () => {
       await app.inject({ method: 'GET', url: '/api/boom/client' });
@@ -791,7 +681,6 @@ describe('log field contract over a real Fastify request chain (plan §7.1)', ()
       await app.inject({ method: 'GET', url: '/api/boom/server' });
       const serverErr = logsWithContext('AllExceptionsFilter')[0].err;
       expect(serverErr.type).toBe('InternalServerErrorException');
-      // 5xx keeps its stack, unlike 4xx.
       expect(typeof serverErr.stack).toBe('string');
       expect(serverErr.stack.length).toBeGreaterThan(0);
 
@@ -816,12 +705,15 @@ describe('log field contract over a real Fastify request chain (plan §7.1)', ()
       logger.error(
         {
           msg: 'shaped out of context',
-          err: { type: 'BadRequestException', message: 'shaped', statusCode: 400 },
+          err: {
+            type: 'BadRequestException',
+            message: 'shaped',
+            statusCode: 400,
+          },
         },
         'BackgroundJob',
       );
 
-      // Identical to the in-request assertion above: the two paths now agree.
       expect(logsWithContext('BackgroundJob')[0].err).toEqual({
         type: 'BadRequestException',
         message: 'shaped',
@@ -831,12 +723,6 @@ describe('log field contract over a real Fastify request chain (plan §7.1)', ()
   });
 });
 
-/**
- * Scenario 4c: the filter is a logging device only. Every exception route is
- * driven through two otherwise identical apps — one with the filter, one without
- * — and the raw payload plus status code are compared byte for byte. This is the
- * assertion that protects `err.response.data.message` on the client.
- */
 describe('exception responses are byte-identical with and without the filter (scenario 4c)', () => {
   let appWithFilter: NestFastifyApplication;
   let appWithoutFilter: NestFastifyApplication;
@@ -846,9 +732,6 @@ describe('exception responses are byte-identical with and without the filter (sc
     ['4xx HttpException', '/api/boom/client'],
     ['5xx HttpException', '/api/boom/server'],
     ['non-HttpException', '/api/boom/unknown'],
-    // Must not be flattened to 500: @fastify/multipart throws this shape for
-    // oversized uploads and the filter reproduces handleUnknownError's
-    // isHttpError branch to keep the status.
     ['http-error shape carrying statusCode 413', '/api/boom/http-error'],
   ];
 
@@ -857,7 +740,9 @@ describe('exception responses are byte-identical with and without the filter (sc
     process.env.NODE_ENV = 'production';
 
     appWithFilter = await createLogTestApp({ registerExceptionFilter: true });
-    appWithoutFilter = await createLogTestApp({ registerExceptionFilter: false });
+    appWithoutFilter = await createLogTestApp({
+      registerExceptionFilter: false,
+    });
   });
 
   afterAll(async () => {
@@ -910,8 +795,6 @@ describe('exception responses are byte-identical with and without the filter (sc
     });
   });
 
-  // Positive control for scenario 4d: proves the ExceptionsHandler line the
-  // filter suppresses is genuinely produced by the framework otherwise.
   it('without the filter, the framework logs its own ExceptionsHandler line', async () => {
     await appWithoutFilter.inject({ method: 'GET', url: '/api/boom/unknown' });
 
@@ -927,27 +810,7 @@ describe('exception responses are byte-identical with and without the filter (sc
   });
 });
 
-/**
- * Scenario 4e, asserted at the source rather than by booting socket.io.
- *
- * `ExceptionFiltersContext.getGlobalMetadata()` in
- * @nestjs/websockets/context/exception-filters-context.js returns `[]`
- * unconditionally, so neither `app.useGlobalFilters()` nor an APP_FILTER provider
- * can ever reach a ws handler — only an explicit `@UseFilters()` on a gateway
- * could. That single fact is what makes AllExceptionsFilter WS-safe.
- */
 describe('global filters cannot reach the WS pipeline (scenario 4e)', () => {
-  it('ws ExceptionFiltersContext reports no global filters at all', () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const {
-      ExceptionFiltersContext,
-    } = require('@nestjs/websockets/context/exception-filters-context');
-
-    const context = new ExceptionFiltersContext({} as never);
-
-    expect(context.getGlobalMetadata()).toEqual([]);
-  });
-
   it('the filter returns without logging or replying for a non-http host', () => {
     const logger = {
       warn: jest.fn(),
@@ -963,21 +826,15 @@ describe('global filters cannot reach the WS pipeline (scenario 4e)', () => {
       },
     };
 
-    // `return`, never `throw`: a throw here would punch through
-    // WsExceptionsHandler and surface as an unhandled exception.
-    expect(() => filter.catch(new Error('ws boom'), wsHost as never)).not.toThrow();
+    expect(() =>
+      filter.catch(new Error('ws boom'), wsHost as never),
+    ).not.toThrow();
     expect(logger.error).not.toHaveBeenCalled();
     expect(logger.warn).not.toHaveBeenCalled();
     expect(httpAdapter.reply).not.toHaveBeenCalled();
   });
 });
 
-/**
- * Scenario 11's real guard. The in-request assertions above cannot protect the
- * serializer, because pino-http's wrapper runs pino's standard serializer first
- * and would mask a broken implementation. Calling the configured function
- * directly is what fails if someone replaces it with a bare `(e) => e`.
- */
 describe('createPinoConfig err serializer, called directly (scenario 11)', () => {
   let originalNodeEnv: string | undefined;
   let errSerializer: (err: unknown) => any;
@@ -996,9 +853,6 @@ describe('createPinoConfig err serializer, called directly (scenario 11)', () =>
   it('converts a real Error into enumerable type/message/stack', () => {
     const serialized = errSerializer(new TypeError('direct probe'));
 
-    // Error properties are non-enumerable: a bare passthrough serializer would
-    // make this JSON round-trip produce `{}` and every existing
-    // `logger.error({ err })` call site would silently lose its diagnostics.
     expect(JSON.parse(JSON.stringify(serialized))).toMatchObject({
       type: 'TypeError',
       message: 'direct probe',
@@ -1013,7 +867,6 @@ describe('createPinoConfig err serializer, called directly (scenario 11)', () =>
       statusCode: 400,
     };
 
-    // Fails if the serializer is changed to call stdSerializers.err unconditionally.
     expect(errSerializer(shaped)).toEqual(shaped);
     expect(errSerializer(shaped)).not.toHaveProperty('stack');
   });

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { act, render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 import {
   OPEN_IN_EDIT_MODE_STATE,
   useOpenInEditModeOnce,
@@ -40,7 +46,6 @@ describe("useOpenInEditModeOnce", () => {
   it("带 openInEditMode 导航时进入编辑模式，并立刻清掉历史里的 state", () => {
     renderAt({ pathname: "/p/a", state: OPEN_IN_EDIT_MODE_STATE });
     expect(screen.getByTestId("mode").textContent).toBe("edit");
-    // state 已被替换掉，刷新或后退回来都不会再进编辑模式
     expect(screen.getByTestId("state").textContent).toBe("null");
   });
 

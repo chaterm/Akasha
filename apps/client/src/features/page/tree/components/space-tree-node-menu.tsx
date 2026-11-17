@@ -79,7 +79,6 @@ export function NodeMenu({ node, canEdit }: NodeMenuProps) {
     try {
       const duplicatedPage = await duplicatePage({ pageId: node.id });
 
-      // figure out parent + insertion index
       const siblings = treeModel.siblingsOf(
         spaceRoots(data, node.spaceId),
         node.id,
@@ -132,7 +131,9 @@ export function NodeMenu({ node, canEdit }: NodeMenuProps) {
           <ActionIcon
             variant="transparent"
             c="gray"
-            aria-label={t("Page menu for {{name}}", { name: node.name || t("untitled") })}
+            aria-label={t("Page menu for {{name}}", {
+              name: node.name || t("untitled"),
+            })}
             tabIndex={-1}
             onClick={(e) => {
               e.preventDefault();
@@ -160,7 +161,11 @@ export function NodeMenu({ node, canEdit }: NodeMenuProps) {
 
           <Menu.Item
             leftSection={
-              isFavorited ? <IconStarFilled size={16} /> : <IconStar size={16} />
+              isFavorited ? (
+                <IconStarFilled size={16} />
+              ) : (
+                <IconStar size={16} />
+              )
             }
             onClick={(e) => {
               e.preventDefault();

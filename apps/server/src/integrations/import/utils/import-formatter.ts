@@ -3,13 +3,14 @@ import { Logger } from '@nestjs/common';
 import * as path from 'path';
 import { v7 } from 'uuid';
 import { InsertableBacklink } from '@akasha/db/types/entity.types';
+
+const logger = new Logger('ImportFormatter');
 import { Cheerio, CheerioAPI, load } from 'cheerio';
 import slugify from '@sindresorhus/slugify';
 import { normalizeTableColumnWidths } from './table-utils';
 
-// Check if text contains Unicode characters (for emojis/icons)
 function isUnicodeCharacter(text: string): boolean {
-  return text.length > 0 && text.codePointAt(0)! > 127; // Non-ASCII characters
+  return text.length > 0 && text.codePointAt(0)! > 127;
 }
 
 export async function formatImportHtml(opts: {
@@ -42,7 +43,6 @@ export async function formatImportHtml(opts: {
   const $root: Cheerio<any> = $.root();
 
   let pageIcon: string | null = null;
-  // extract notion page icon
   const headerIconSpan = $root.find('header .page-header-icon .icon');
 
   if (headerIconSpan.length > 0) {
@@ -72,18 +72,7 @@ export async function formatImportHtml(opts: {
   };
 }
 
-/**
- * Contextless HTML cleanup shared by every import path.
- * - notionFormatter: no-op on non-Notion HTML (class-selector-based).
- * - xwikiFormatter: no-op on non-XWiki HTML (looks for #xwikicontent).
- * - defaultHtmlFormatter: table column widths + provider auto-embeds.
- *
- * Does NOT run rewriteInternalLinksToMentionHtml — that requires zip context.
- */
-export function normalizeImportHtml(
-  $: CheerioAPI,
-  $root: Cheerio<any>,
-): void {
+export function normalizeImportHtml($: CheerioAPI, $root: Cheerio<any>): void {
   notionFormatter($, $root);
   xwikiFormatter($, $root);
   defaultHtmlFormatter($, $root);
@@ -130,16 +119,13 @@ const COLUMN_LAYOUTS = [
 ] as const;
 
 export function notionFormatter($: CheerioAPI, $root: Cheerio<any>) {
-  // remove page header icon and cover image
   $root.find('.page-header-icon').remove();
   $root.find('.page-cover-image').remove();
 
-  // remove empty description paragraphs
   $root.find('p.page-description').each((_, el) => {
     if (!$(el).text().trim()) $(el).remove();
   });
 
-  // columns
   $root.find('div.column-list').each((_, el) => {
     const $list = $(el);
     const $cols = $list.find('div.column');
@@ -164,7 +150,6 @@ export function notionFormatter($: CheerioAPI, $root: Cheerio<any>) {
     );
   });
 
-  // block math → mathBlock
   $root.find('figure.equation').each((_: any, fig: any) => {
     const $fig = $(fig);
     const tex = $fig
@@ -178,7 +163,6 @@ export function notionFormatter($: CheerioAPI, $root: Cheerio<any>) {
     $fig.replaceWith($math);
   });
 
-  // inline math → mathInline
   $root.find('span.notion-text-equation-token').each((_, tok) => {
     const $tok = $(tok);
     const $prev = $tok.prev('style');
@@ -194,7 +178,6 @@ export function notionFormatter($: CheerioAPI, $root: Cheerio<any>) {
     $tok.replaceWith($inline);
   });
 
-  // callouts
   $root
     .find('figure.callout')
     .get()
@@ -211,7 +194,6 @@ export function notionFormatter($: CheerioAPI, $root: Cheerio<any>) {
       $fig.replaceWith($wrapper);
     });
 
-  // to-do lists
   $root.find('ul.to-do-list').each((_, list) => {
     const $old = $(list);
     const $new = $('<ul>').attr('data-type', 'taskList');
@@ -238,7 +220,6 @@ export function notionFormatter($: CheerioAPI, $root: Cheerio<any>) {
     $old.replaceWith($new);
   });
 
-  // toggle blocks
   $root
     .find('ul.toggle details')
     .get()
@@ -257,7 +238,6 @@ export function notionFormatter($: CheerioAPI, $root: Cheerio<any>) {
       }
     });
 
-  // bookmarks
   $root
     .find('figure')
     .filter((_, fig) => $(fig).find('a.bookmark.source').length > 0)
@@ -279,49 +259,39 @@ export function notionFormatter($: CheerioAPI, $root: Cheerio<any>) {
       $fig.replaceWith($newAnchor);
     });
 
-  // remove user icons
   $root.find('span.user img.user-icon').remove();
 
-  // remove toc
   $root.find('nav.table_of_contents').remove();
 }
 
 export function unwrapFromParagraph($: CheerioAPI, $node: Cheerio<any>) {
-  // Keep track of processed wrappers to avoid infinite loops
   const processedWrappers = new Set<any>();
 
   let $wrapper = $node.closest('p, a');
   while ($wrapper.length) {
     const wrapperElement = $wrapper.get(0);
 
-    // If we've already processed this wrapper, break to avoid infinite loop
     if (processedWrappers.has(wrapperElement)) {
       break;
     }
 
     processedWrappers.add(wrapperElement);
 
-    // Check if the wrapper contains only whitespace and our target node
     const hasOnlyTargetNode =
       $wrapper.contents().filter((_, el) => {
         const $el = $(el);
-        // Skip whitespace-only text nodes. NodeType 3 = text node
         if (el.nodeType === 3 && !$el.text().trim()) {
           return false;
         }
-        // Return true if this is not our target node
         return !$el.is($node) && !$node.is($el);
       }).length === 0;
 
     if (hasOnlyTargetNode) {
-      // Replace the wrapper entirely with our node
       $wrapper.replaceWith($node);
     } else {
-      // Move the node to before the wrapper, preserving other content
       $wrapper.before($node);
     }
 
-    // look again for any new wrapper around $node
     $wrapper = $node.closest('p, a');
   }
 }
@@ -350,9 +320,9 @@ export async function rewriteInternalLinksToMentionHtml(
     try {
       decodedRaw = decodeURIComponent(raw);
     } catch (err) {
-      Logger.warn(
-        `URI malformed in page ${currentFilePath}: ${raw}. Falling back to raw path.`,
-        'ImportFormatter',
+      logger.warn(
+        { filePath: currentFilePath, raw },
+        'URI malformed in page, falling back to raw path',
       );
     }
 
@@ -364,8 +334,7 @@ export async function rewriteInternalLinksToMentionHtml(
 
     const linkText = $a.text().trim();
     const titleMatch =
-      linkText === meta.title ||
-      linkText === meta.title?.trim();
+      linkText === meta.title || linkText === meta.title?.trim();
 
     if (titleMatch) {
       const mentionId = v7();

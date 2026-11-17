@@ -79,7 +79,9 @@ function readStatusCode(value: unknown): number | undefined {
   return undefined;
 }
 
-function serializeUnknownException(exception: unknown): Record<string, unknown> {
+function serializeUnknownException(
+  exception: unknown,
+): Record<string, unknown> {
   if (exception instanceof Error) {
     const extraFields: Record<string, unknown> = {};
     const record = exception as unknown as Record<string, unknown>;
@@ -118,34 +120,21 @@ export class AllExceptionsFilter extends BaseExceptionFilter {
   }
 
   catch(exception: unknown, host: ArgumentsHost): void {
-    // Pure defence: `useGlobalFilters` never reaches the WS pipeline because
-    // `ExceptionFiltersContext.getGlobalMetadata()` returns `[]` on the ws side
-    // (`@nestjs/websockets/context/exception-filters-context.js:26`), so only an
-    // explicit `@UseFilters()` on a gateway could route a non-http host here.
-    // `return` hands the exception back to `WsExceptionsHandler`; a `throw` would
-    // punch through it and surface as an unhandled exception instead.
     if (host.getType() !== 'http') return;
 
     const requestId = ClsServiceManager.getClsService().getId() ?? '';
     const reply = host.switchToHttp().getResponse<FastifyReply>();
 
-    // Fastify 5 defines `reply.sent` as `hijacked || raw.writableEnded`
-    // (`fastify/lib/reply.js:98`), which is still false while headers are already
-    // flushed but the stream is open — `raw.headersSent` covers that window.
     const responseAlreadySent =
       reply?.sent === true || reply?.raw?.headersSent === true;
 
     if (exception instanceof HttpException) {
       const statusCode = exception.getStatus();
       const isClientError = statusCode >= 400 && statusCode < 500;
-      // A plain object, not the exception itself: the `err` serializer in
-      // pino.config.ts passes non-Error values through as-is, which is what lets
-      // a 4xx omit `stack` entirely.
       const err = {
         type: exception.constructor?.name ?? 'Error',
         message: exception.message,
         statusCode,
-        // 4xx are expected errors; a stack would only add noise.
         ...(isClientError ? {} : { stack: exception.stack }),
       };
       const fields = {
@@ -178,15 +167,6 @@ export class AllExceptionsFilter extends BaseExceptionFilter {
 
     if (responseAlreadySent) return;
 
-    // Deliberately not delegating to `super.catch` for unknown exceptions: it
-    // routes into `handleUnknownError`, whose tail calls
-    // `BaseExceptionFilter.logger.error(exception)`
-    // (`@nestjs/core/exceptions/base-exception-filter.js:52`) under the
-    // `ExceptionsHandler` context — a second, unstructured copy of the log line
-    // we just wrote. The reply below reproduces `handleUnknownError`'s body,
-    // including its `isHttpError` branch: `@fastify/error` instances carry a real
-    // `statusCode` (e.g. 413 from `@fastify/multipart`), and collapsing those to
-    // 500 would be an outward-visible change.
     const body = this.isHttpError(exception)
       ? { statusCode: exception.statusCode, message: exception.message }
       : { statusCode: 500, message: 'Internal server error' };

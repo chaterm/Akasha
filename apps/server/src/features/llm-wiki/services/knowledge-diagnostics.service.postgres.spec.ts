@@ -104,7 +104,6 @@ describePostgres(
         limit: 50,
         includeSensitiveErrors: false,
       });
-      // Three distinct pages in space-a, most-recent-updated first.
       expect(log.total).toBe(3);
       expect(log.items.map((item) => item.sourcePageId)).toEqual([
         'page-a-3',
@@ -121,7 +120,6 @@ describePostgres(
         expectedImageCount: 2,
         succeededImageCount: 2,
       });
-      // Sensitive raw error text is redacted when not permitted.
       expect(JSON.stringify(log)).not.toContain('private page content');
     });
 
@@ -206,7 +204,6 @@ describePostgres(
       expect(dueSearch.items.map((item) => item.sourcePageId)).toEqual([
         'page-a-2',
       ]);
-      // Without a night window, compilation starts when the quiet period ends.
       expect(result.summary.compileWindow).toMatchObject({
         enabled: false,
         open: true,
@@ -222,8 +219,6 @@ describePostgres(
     });
 
     it('reports when a closed night window holds delayed pages back', async () => {
-      // A one-minute window starting two hours from now (server local time)
-      // is closed both now and at page-a-1's quiet-period deadline.
       const pad = (value: number) => String(value).padStart(2, '0');
       const opensAt = new Date(Date.now() + 2 * 60 * 60 * 1_000);
       const closesAt = new Date(opensAt.getTime() + 60_000);

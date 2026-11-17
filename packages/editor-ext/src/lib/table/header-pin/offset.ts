@@ -1,12 +1,7 @@
-// Pin-offset measurement and watcher used by the table header-pin controller.
-
-// Fallback app-bar height (px) when no fixed surface is mounted; matches global-app-shell.tsx.
 const APP_BAR_FALLBACK_HEIGHT = 45;
 
 export const EDITOR_PIN_OFFSET_VAR = '--editor-pin-offset';
 
-// Selectors for fixed surfaces between viewport top and editor content. Use data attributes —
-// CSS module classes are build-time hashed and won't match.
 const PIN_ANCHOR_SELECTORS = [
   '[data-page-header]',
   '[data-fixed-toolbar]',
@@ -23,7 +18,6 @@ export function computePinTop(): number {
   return bottom;
 }
 
-// Reference-counted watcher that publishes the editor's top offset to a CSS custom property.
 export const pinOffsetWatcher = {
   refs: 0,
   resizeObserver: null as ResizeObserver | null,

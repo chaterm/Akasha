@@ -72,11 +72,14 @@ export {
         plugins: [new CamelCasePlugin()],
         log: (event: LogEvent) => {
           if (environmentService.getNodeEnv() !== 'development') return;
-          const logger = new Logger(DatabaseModule.name);
-          if (process.env.DEBUG_DB?.toLowerCase() === 'true') {
-            logger.debug(event.query.sql);
-            logger.debug('query time: ' + event.queryDurationMillis + ' ms');
-          }
+          if (process.env.DEBUG_DB?.toLowerCase() !== 'true') return;
+          new Logger(DatabaseModule.name).debug(
+            {
+              sql: event.query.sql,
+              durationMs: event.queryDurationMillis,
+            },
+            'Database query',
+          );
         },
       }),
     }),
@@ -180,8 +183,6 @@ export class DatabaseModule implements OnModuleInit {
   async onModuleInit() {
     await this.establishConnection();
 
-    // Refuse to start on a database that lacks required components; a thrown
-    // error here aborts bootstrap (main.ts exits with a fatal log).
     await this.requirementsService.assertEnvironment();
 
     if (this.environmentService.getNodeEnv() === 'production') {
@@ -210,12 +211,14 @@ export class DatabaseModule implements OnModuleInit {
 
         if (i < retryAttempts - 1) {
           this.logger.log(
-            `Retrying [${i + 1}/${retryAttempts}] in ${retryDelay / 1000} seconds`,
+            { attempt: i + 1, retryAttempts, retryDelayMs: retryDelay },
+            'Retrying database connection',
           );
           await new Promise((resolve) => setTimeout(resolve, retryDelay));
         } else {
           this.logger.error(
-            `Failed to connect to database after ${retryAttempts} attempts. Exiting...`,
+            { retryAttempts },
+            'Failed to connect to database, exiting',
           );
           process.exit(1);
         }
