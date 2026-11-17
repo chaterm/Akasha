@@ -7,22 +7,13 @@ import { LowlightPlugin } from './lowlight-plugin.js';
 import { ReactNodeViewRenderer } from '@tiptap/react';
 
 export interface CodeBlockLowlightOptions extends CodeBlockOptions {
-  /**
-   * The lowlight instance.
-   */
   lowlight: any;
   view: any;
 }
 
 const TAB_CHAR = '\u00A0\u00A0';
 
-/**
- * This extension allows you to highlight code blocks with lowlight.
- * @see https://tiptap.dev/api/nodes/code-block-lowlight
- */
 export const CustomCodeBlock = CodeBlock.extend<CodeBlockLowlightOptions>({
-  // Run ahead of Gapcursor (100) so the mermaid arrow-into-source plugin
-  // can intercept before gapcursor takes over.
   priority: 101,
   selectable: true,
   isolating: true,
@@ -46,9 +37,6 @@ export const CustomCodeBlock = CodeBlock.extend<CodeBlockLowlightOptions>({
 
     return {
       ...this.parent?.(),
-      // Stop at the gap (or enter mermaid source) instead of jumping
-      // straight into the next block, so the user can place a cursor
-      // between two adjacent isolating blocks.
       ArrowDown: ({ editor }) => {
         const { state } = editor;
         const { selection, doc } = state;
@@ -72,10 +60,7 @@ export const CustomCodeBlock = CodeBlock.extend<CodeBlockLowlightOptions>({
           });
         }
 
-        if (
-          nodeAfter?.type.spec.isolating &&
-          !nodeAfter.type.spec.atom
-        ) {
+        if (nodeAfter?.type.spec.isolating && !nodeAfter.type.spec.atom) {
           return editor.commands.command(({ tr }) => {
             tr.setSelection(new GapCursor(tr.doc.resolve(after)));
             return true;
@@ -87,7 +72,6 @@ export const CustomCodeBlock = CodeBlock.extend<CodeBlockLowlightOptions>({
           return true;
         });
       },
-      // Mirror of ArrowDown; upstream has no ArrowUp handler.
       ArrowUp: ({ editor }) => {
         const { state } = editor;
         const { selection, doc } = state;
@@ -109,10 +93,7 @@ export const CustomCodeBlock = CodeBlock.extend<CodeBlockLowlightOptions>({
           });
         }
 
-        if (
-          nodeBefore?.type.spec.isolating &&
-          !nodeBefore.type.spec.atom
-        ) {
+        if (nodeBefore?.type.spec.isolating && !nodeBefore.type.spec.atom) {
           return editor.commands.command(({ tr }) => {
             tr.setSelection(new GapCursor(tr.doc.resolve(before)));
             return true;
@@ -161,7 +142,6 @@ export const CustomCodeBlock = CodeBlock.extend<CodeBlockLowlightOptions>({
   },
 
   addNodeView() {
-    // Force the react node view to render immediately using flush sync (https://github.com/ueberdosis/tiptap/blob/b4db352f839e1d82f9add6ee7fb45561336286d8/packages/react/src/ReactRenderer.tsx#L183-L191)
     this.editor.isInitialized = true;
 
     return ReactNodeViewRenderer(this.options.view);
@@ -176,9 +156,6 @@ export const CustomCodeBlock = CodeBlock.extend<CodeBlockLowlightOptions>({
         lowlight: this.options.lowlight,
         defaultLanguage: this.options.defaultLanguage,
       }),
-      // Mermaid hides its <pre> when unselected, so the browser's native
-      // vertical caret movement skips past it. Land the cursor inside the
-      // source explicitly.
       new Plugin({
         props: {
           handleKeyDown: (view, event) => {
@@ -187,10 +164,7 @@ export const CustomCodeBlock = CodeBlock.extend<CodeBlockLowlightOptions>({
             }
             const { state } = view;
             const { selection } = state;
-            if (
-              !selection.empty ||
-              !(selection instanceof TextSelection)
-            ) {
+            if (!selection.empty || !(selection instanceof TextSelection)) {
               return false;
             }
             const { $from } = selection;
@@ -210,9 +184,7 @@ export const CustomCodeBlock = CodeBlock.extend<CodeBlockLowlightOptions>({
               if (!isMermaid(prev)) return false;
               const endPos = beforePos - 1;
               view.dispatch(
-                state.tr.setSelection(
-                  TextSelection.create(state.doc, endPos),
-                ),
+                state.tr.setSelection(TextSelection.create(state.doc, endPos)),
               );
               return true;
             }
@@ -222,9 +194,7 @@ export const CustomCodeBlock = CodeBlock.extend<CodeBlockLowlightOptions>({
             if (!isMermaid(next)) return false;
             const startPos = afterPos + 1;
             view.dispatch(
-              state.tr.setSelection(
-                TextSelection.create(state.doc, startPos),
-              ),
+              state.tr.setSelection(TextSelection.create(state.doc, startPos)),
             );
             return true;
           },

@@ -1,6 +1,6 @@
-import { mergeAttributes, Node } from "@tiptap/core";
-import { ReactNodeViewRenderer } from "@tiptap/react";
-import { TRANSCLUSION_SOURCE_CONTENT_EXPRESSION } from "./constants";
+import { mergeAttributes, Node } from '@tiptap/core';
+import { ReactNodeViewRenderer } from '@tiptap/react';
+import { TRANSCLUSION_SOURCE_CONTENT_EXPRESSION } from './constants';
 
 export interface TransclusionSourceOptions {
   HTMLAttributes: Record<string, any>;
@@ -11,7 +11,7 @@ export interface TransclusionSourceAttributes {
   id?: string | null;
 }
 
-declare module "@tiptap/core" {
+declare module '@tiptap/core' {
   interface Commands<ReturnType> {
     transclusionSource: {
       insertTransclusionSource: (
@@ -24,7 +24,7 @@ declare module "@tiptap/core" {
 }
 
 export const TransclusionSource = Node.create<TransclusionSourceOptions>({
-  name: "transclusionSource",
+  name: 'transclusionSource',
 
   addOptions() {
     return {
@@ -33,8 +33,7 @@ export const TransclusionSource = Node.create<TransclusionSourceOptions>({
     };
   },
 
-  group: "block",
-  // Schema-enforced allow-list. Excludes `transclusionSource` (no nesting)
+  group: 'block',
   content: TRANSCLUSION_SOURCE_CONTENT_EXPRESSION,
   defining: true,
   isolating: true,
@@ -43,9 +42,8 @@ export const TransclusionSource = Node.create<TransclusionSourceOptions>({
     return {
       id: {
         default: null,
-        parseHTML: (el) => el.getAttribute("data-id"),
-        renderHTML: (attrs) =>
-          attrs.id ? { "data-id": attrs.id } : {},
+        parseHTML: (el) => el.getAttribute('data-id'),
+        renderHTML: (attrs) => (attrs.id ? { 'data-id': attrs.id } : {}),
       },
     };
   },
@@ -56,9 +54,9 @@ export const TransclusionSource = Node.create<TransclusionSourceOptions>({
 
   renderHTML({ HTMLAttributes }) {
     return [
-      "div",
+      'div',
       mergeAttributes(
-        { "data-type": this.name },
+        { 'data-type': this.name },
         this.options.HTMLAttributes,
         HTMLAttributes,
       ),
@@ -79,12 +77,12 @@ export const TransclusionSource = Node.create<TransclusionSourceOptions>({
           const node = {
             type: this.name,
             attrs: attributes ?? {},
-            content: [{ type: "paragraph" }],
+            content: [{ type: 'paragraph' }],
           };
 
           const parent = $from.parent;
           const isEmptyParagraph =
-            parent.type.name === "paragraph" && parent.content.size === 0;
+            parent.type.name === 'paragraph' && parent.content.size === 0;
 
           if (isEmptyParagraph) {
             return chain()
@@ -105,7 +103,6 @@ export const TransclusionSource = Node.create<TransclusionSourceOptions>({
         () =>
         ({ state, tr, dispatch }) => {
           const { $from } = state.selection;
-          // Walk up to the nearest source wrapper.
           let depth = $from.depth;
           while (depth > 0 && $from.node(depth).type.name !== this.name) {
             depth -= 1;
@@ -127,7 +124,6 @@ export const TransclusionSource = Node.create<TransclusionSourceOptions>({
 
   addNodeView() {
     if (!this.options.view) return null;
-    // Force the react node view to render immediately using flush sync
     this.editor.isInitialized = true;
     return ReactNodeViewRenderer(this.options.view);
   },

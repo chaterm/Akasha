@@ -1,8 +1,8 @@
-import { ReactNodeViewRenderer } from "@tiptap/react";
-import { Range, Node, mergeAttributes } from "@tiptap/core";
-import { ResizableNodeView } from "../resizable-nodeview";
-import type { ResizableNodeViewDirection } from "../resizable-nodeview";
-import { normalizeFileUrl } from "../media-utils";
+import { ReactNodeViewRenderer } from '@tiptap/react';
+import { Range, Node, mergeAttributes } from '@tiptap/core';
+import { ResizableNodeView } from '../resizable-nodeview';
+import type { ResizableNodeViewDirection } from '../resizable-nodeview';
+import { normalizeFileUrl } from '../media-utils';
 
 export type VideoResizeOptions = {
   enabled: boolean;
@@ -40,14 +40,14 @@ export interface VideoAttributes {
   };
 }
 
-declare module "@tiptap/core" {
+declare module '@tiptap/core' {
   interface Commands<ReturnType> {
     videoBlock: {
       setVideo: (attributes: VideoAttributes) => ReturnType;
       setVideoAt: (
-        attributes: VideoAttributes & { pos: number | Range }
+        attributes: VideoAttributes & { pos: number | Range },
       ) => ReturnType;
-      setVideoAlign: (align: "left" | "center" | "right") => ReturnType;
+      setVideoAlign: (align: 'left' | 'center' | 'right') => ReturnType;
       setVideoWidth: (width: number) => ReturnType;
       setVideoSize: (width: number, height: number) => ReturnType;
     };
@@ -55,9 +55,9 @@ declare module "@tiptap/core" {
 }
 
 export const TiptapVideo = Node.create<VideoOptions>({
-  name: "video",
+  name: 'video',
 
-  group: "block",
+  group: 'block',
   isolating: true,
   atom: true,
   defining: true,
@@ -74,32 +74,32 @@ export const TiptapVideo = Node.create<VideoOptions>({
   addAttributes() {
     return {
       src: {
-        default: "",
-        parseHTML: (element) => element.getAttribute("src"),
+        default: '',
+        parseHTML: (element) => element.getAttribute('src'),
         renderHTML: (attributes) => ({
           src: attributes.src,
         }),
       },
       alt: {
         default: undefined,
-        parseHTML: (element) => element.getAttribute("aria-label"),
+        parseHTML: (element) => element.getAttribute('aria-label'),
         renderHTML: (attributes: VideoAttributes) => ({
-          "aria-label": attributes.alt,
+          'aria-label': attributes.alt,
         }),
       },
       attachmentId: {
         default: undefined,
-        parseHTML: (element) => element.getAttribute("data-attachment-id"),
+        parseHTML: (element) => element.getAttribute('data-attachment-id'),
         renderHTML: (attributes: VideoAttributes) => ({
-          "data-attachment-id": attributes.attachmentId,
+          'data-attachment-id': attributes.attachmentId,
         }),
       },
       width: {
         default: null,
         parseHTML: (element) => {
-          const raw = element.getAttribute("width");
+          const raw = element.getAttribute('width');
           if (!raw) return null;
-          if (raw.endsWith("%")) return raw;
+          if (raw.endsWith('%')) return raw;
           const num = parseFloat(raw);
           return isNaN(num) ? null : num;
         },
@@ -110,7 +110,7 @@ export const TiptapVideo = Node.create<VideoOptions>({
       height: {
         default: null,
         parseHTML: (element) => {
-          const raw = element.getAttribute("height");
+          const raw = element.getAttribute('height');
           if (!raw) return null;
           const num = parseFloat(raw);
           return isNaN(num) ? null : num;
@@ -121,23 +121,23 @@ export const TiptapVideo = Node.create<VideoOptions>({
       },
       size: {
         default: null,
-        parseHTML: (element) => element.getAttribute("data-size"),
+        parseHTML: (element) => element.getAttribute('data-size'),
         renderHTML: (attributes: VideoAttributes) => ({
-          "data-size": attributes.size,
+          'data-size': attributes.size,
         }),
       },
       align: {
-        default: "center",
-        parseHTML: (element) => element.getAttribute("data-align"),
+        default: 'center',
+        parseHTML: (element) => element.getAttribute('data-align'),
         renderHTML: (attributes: VideoAttributes) => ({
-          "data-align": attributes.align,
+          'data-align': attributes.align,
         }),
       },
       aspectRatio: {
         default: null,
-        parseHTML: (element) => element.getAttribute("data-aspect-ratio"),
+        parseHTML: (element) => element.getAttribute('data-aspect-ratio'),
         renderHTML: (attributes: VideoAttributes) => ({
-          "data-aspect-ratio": attributes.aspectRatio,
+          'data-aspect-ratio': attributes.aspectRatio,
         }),
       },
       placeholder: {
@@ -150,16 +150,16 @@ export const TiptapVideo = Node.create<VideoOptions>({
   parseHTML() {
     return [
       {
-        tag: "video",
+        tag: 'video',
       },
     ];
   },
 
   renderHTML({ HTMLAttributes }) {
     return [
-      "video",
-      { controls: "true", ...HTMLAttributes },
-      ["source", HTMLAttributes],
+      'video',
+      { controls: 'true', ...HTMLAttributes },
+      ['source', HTMLAttributes],
     ];
   },
 
@@ -169,7 +169,7 @@ export const TiptapVideo = Node.create<VideoOptions>({
         (attrs: VideoAttributes) =>
         ({ commands }) => {
           return commands.insertContent({
-            type: "video",
+            type: 'video',
             attrs: attrs,
           });
         },
@@ -177,19 +177,19 @@ export const TiptapVideo = Node.create<VideoOptions>({
       setVideoAlign:
         (align) =>
         ({ commands }) =>
-          commands.updateAttributes("video", { align }),
+          commands.updateAttributes('video', { align }),
 
       setVideoWidth:
         (width) =>
         ({ commands }) =>
-          commands.updateAttributes("video", {
+          commands.updateAttributes('video', {
             width: `${Math.max(0, Math.min(100, width))}%`,
           }),
 
       setVideoSize:
         (width, height) =>
         ({ commands }) =>
-          commands.updateAttributes("video", { width, height }),
+          commands.updateAttributes('video', { width, height }),
     };
   },
 
@@ -232,20 +232,20 @@ export const TiptapVideo = Node.create<VideoOptions>({
         return view;
       }
 
-      const el = document.createElement("video");
+      const el = document.createElement('video');
       el.src = normalizeFileUrl(node.attrs.src);
       el.controls = true;
-      el.preload = "metadata";
+      el.preload = 'metadata';
       if (node.attrs.alt) {
-        el.setAttribute("aria-label", node.attrs.alt);
+        el.setAttribute('aria-label', node.attrs.alt);
       }
-      el.style.display = "block";
-      el.style.maxWidth = "100%";
-      el.style.borderRadius = "8px";
+      el.style.display = 'block';
+      el.style.maxWidth = '100%';
+      el.style.borderRadius = '8px';
 
-      if (typeof node.attrs.width === "number" && node.attrs.width > 0) {
+      if (typeof node.attrs.width === 'number' && node.attrs.width > 0) {
         el.style.width = `${node.attrs.width}px`;
-        if (typeof node.attrs.height === "number" && node.attrs.height > 0) {
+        if (typeof node.attrs.height === 'number' && node.attrs.height > 0) {
           el.style.height = `${node.attrs.height}px`;
         }
       }
@@ -285,9 +285,9 @@ export const TiptapVideo = Node.create<VideoOptions>({
 
           if (updatedNode.attrs.alt !== currentNode.attrs.alt) {
             if (updatedNode.attrs.alt) {
-              el.setAttribute("aria-label", updatedNode.attrs.alt);
+              el.setAttribute('aria-label', updatedNode.attrs.alt);
             } else {
-              el.removeAttribute("aria-label");
+              el.removeAttribute('aria-label');
             }
           }
 
@@ -300,7 +300,7 @@ export const TiptapVideo = Node.create<VideoOptions>({
             el.style.height = `${h}px`;
           }
 
-          const align = updatedNode.attrs.align || "center";
+          const align = updatedNode.attrs.align || 'center';
           const container = nodeView.dom as HTMLElement;
           applyAlignment(container, align);
 
@@ -321,38 +321,34 @@ export const TiptapVideo = Node.create<VideoOptions>({
 
       const dom = nodeView.dom as HTMLElement;
 
-      applyAlignment(dom, node.attrs.align || "center");
+      applyAlignment(dom, node.attrs.align || 'center');
 
-      // Handle percentage width backward compat
       const widthAttr = node.attrs.width;
-      if (typeof widthAttr === "string" && widthAttr.endsWith("%")) {
+      if (typeof widthAttr === 'string' && widthAttr.endsWith('%')) {
         requestAnimationFrame(() => {
           const parentEl = dom.parentElement;
           if (parentEl) {
             const containerWidth = parentEl.clientWidth;
             const pctValue = parseInt(widthAttr, 10);
             if (!isNaN(pctValue) && containerWidth > 0) {
-              const pxWidth = Math.round(
-                containerWidth * (pctValue / 100),
-              );
+              const pxWidth = Math.round(containerWidth * (pctValue / 100));
               el.style.width = `${pxWidth}px`;
               if (node.attrs.aspectRatio) {
                 el.style.height = `${Math.round(pxWidth / node.attrs.aspectRatio)}px`;
               }
             }
           }
-          dom.style.visibility = "";
-          dom.style.pointerEvents = "";
+          dom.style.visibility = '';
+          dom.style.pointerEvents = '';
         });
       }
 
-      // Show skeleton background while video loads from server
-      dom.style.pointerEvents = "none";
-      el.classList.add("media-pulse");
+      dom.style.pointerEvents = 'none';
+      el.classList.add('media-pulse');
 
       el.onloadedmetadata = () => {
-        dom.style.pointerEvents = "";
-        el.classList.remove("media-pulse");
+        dom.style.pointerEvents = '';
+        el.classList.remove('media-pulse');
       };
 
       return nodeView;
@@ -361,11 +357,11 @@ export const TiptapVideo = Node.create<VideoOptions>({
 });
 
 function applyAlignment(container: HTMLElement, align: string) {
-  if (align === "left") {
-    container.style.justifyContent = "flex-start";
-  } else if (align === "right") {
-    container.style.justifyContent = "flex-end";
+  if (align === 'left') {
+    container.style.justifyContent = 'flex-start';
+  } else if (align === 'right') {
+    container.style.justifyContent = 'flex-end';
   } else {
-    container.style.justifyContent = "center";
+    container.style.justifyContent = 'center';
   }
 }

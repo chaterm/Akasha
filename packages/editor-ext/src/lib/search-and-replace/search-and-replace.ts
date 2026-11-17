@@ -20,61 +20,31 @@
  SOFTWARE.
  ***/
 
-import { Extension, Range, type Dispatch } from "@tiptap/core";
-import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { Extension, Range, type Dispatch } from '@tiptap/core';
+import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import {
   Plugin,
   PluginKey,
   type EditorState,
   type Transaction,
-} from "@tiptap/pm/state";
-import { Node as PMNode, Mark } from "@tiptap/pm/model";
+} from '@tiptap/pm/state';
+import { Node as PMNode, Mark } from '@tiptap/pm/model';
 
-declare module "@tiptap/core" {
+declare module '@tiptap/core' {
   interface Storage {
     searchAndReplace: SearchAndReplaceStorage;
   }
   interface Commands<ReturnType> {
     search: {
-      /**
-       * @description Set search term in extension.
-       */
       setSearchTerms: (searchTerms: string[]) => ReturnType;
-      /**
-       * @description Set whole word search in extension.
-       */
       setWholeWord: (wholeWord: boolean) => ReturnType;
-      /**
-       * @description Set replace term in extension.
-       */
       setReplaceTerm: (replaceTerm: string) => ReturnType;
-      /**
-       * @description Set case sensitivity in extension.
-       */
       setCaseSensitive: (caseSensitive: boolean) => ReturnType;
-      /**
-       * @description Reset current search result to first instance.
-       */
       resetIndex: () => ReturnType;
-      /**
-       * @description Find next instance of search result.
-       */
       nextSearchResult: () => ReturnType;
-      /**
-       * @description Find previous instance of search result.
-       */
       previousSearchResult: () => ReturnType;
-      /**
-       * @description Replace first instance of search result with given replace term.
-       */
       replace: () => ReturnType;
-      /**
-       * @description Replace all instances of search result with given replace term.
-       */
       replaceAll: () => ReturnType;
-      /**
-       * @description Find selected instance of search result.
-       */
       selectCurrentItem: () => ReturnType;
     };
   }
@@ -95,18 +65,15 @@ const getRegex = (
 
   const pattern = terms
     .map((term) =>
-      disableRegex ? term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : term,
+      disableRegex ? term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : term,
     )
-    .join("|");
+    .join('|');
 
   const finalPattern = wholeWord
     ? `(?<![\\p{L}\\p{N}_])(?:${pattern})(?![\\p{L}\\p{N}_])`
     : pattern;
 
-  return new RegExp(
-    finalPattern,
-    caseSensitive ? "gu" : "giu",
-  );
+  return new RegExp(finalPattern, caseSensitive ? 'gu' : 'giu');
 };
 
 interface ProcessedSearches {
@@ -160,7 +127,7 @@ function processSearches(
     );
 
     for (const m of matches) {
-      if (m[0] === "") break;
+      if (m[0] === '') break;
 
       if (m.index !== undefined) {
         results.push({
@@ -205,7 +172,6 @@ const replace = (
   if (dispatch) {
     const tr = state.tr;
 
-    // Get all marks that span the text being replaced
     const marksSet = new Set<Mark>();
     state.doc.nodesBetween(from, to, (node) => {
       if (node.isText && node.marks) {
@@ -214,15 +180,13 @@ const replace = (
     });
 
     const marks = Array.from(marksSet);
-    
-    // Delete the old text
+
     tr.delete(from, to);
 
-    // Only insert new text if replaceTerm is not empty (allows for deletion when replaceTerm is empty)
     if (replaceTerm) {
       tr.insert(from, state.schema.text(replaceTerm, marks));
     }
-    
+
     dispatch(tr);
   }
 };
@@ -236,11 +200,9 @@ const replaceAll = (
 
   if (!resultsCopy.length) return;
 
-  // Process replacements in reverse order to avoid position shifting issues
   for (let i = resultsCopy.length - 1; i >= 0; i -= 1) {
     const { from, to } = resultsCopy[i];
 
-    // Get all marks that span the text being replaced
     const marksSet = new Set<Mark>();
     tr.doc.nodesBetween(from, to, (node) => {
       if (node.isText && node.marks) {
@@ -249,11 +211,9 @@ const replaceAll = (
     });
 
     const marks = Array.from(marksSet);
-    
-    // Delete the old text
+
     tr.delete(from, to);
 
-    // Only insert new text if replaceTerm is not empty (allows for deletion when replaceTerm is empty)
     if (replaceTerm) {
       tr.insert(from, tr.doc.type.schema.text(replaceTerm, marks));
     }
@@ -263,7 +223,7 @@ const replaceAll = (
 };
 
 export const searchAndReplacePluginKey = new PluginKey(
-  "searchAndReplacePlugin",
+  'searchAndReplacePlugin',
 );
 
 export interface SearchAndReplaceOptions {
@@ -288,11 +248,11 @@ export const SearchAndReplace = Extension.create<
   SearchAndReplaceOptions,
   SearchAndReplaceStorage
 >({
-  name: "searchAndReplace",
+  name: 'searchAndReplace',
 
   addOptions() {
     return {
-      searchResultClass: "search-result",
+      searchResultClass: 'search-result',
       disableRegex: true,
     };
   },
@@ -300,7 +260,7 @@ export const SearchAndReplace = Extension.create<
   addStorage() {
     return {
       searchTerms: [],
-      replaceTerm: "",
+      replaceTerm: '',
       results: [],
       lastSearchTerms: [],
       caseSensitive: false,
@@ -317,10 +277,9 @@ export const SearchAndReplace = Extension.create<
       setSearchTerms:
         (searchTerms: string[]) =>
         ({ editor }) => {
-          editor.storage.searchAndReplace.searchTerms = searchTerms.filter(Boolean);
+          editor.storage.searchAndReplace.searchTerms =
+            searchTerms.filter(Boolean);
 
-          // clear whole word by default
-          // should remove if whole word toggle is added to search and replace dialog
           editor.storage.searchAndReplace.wholeWord = false;
 
           return false;
@@ -391,9 +350,6 @@ export const SearchAndReplace = Extension.create<
 
           replace(replaceTerm, results, resultIndex, { state, dispatch });
 
-          // After replace, adjust index if needed
-          // The results will be recalculated by the plugin, but we need to ensure
-          // the index doesn't exceed the new bounds
           setTimeout(() => {
             const newResultsLength =
               editor.storage.searchAndReplace.results.length;
@@ -401,7 +357,6 @@ export const SearchAndReplace = Extension.create<
               newResultsLength > 0 &&
               editor.storage.searchAndReplace.resultIndex >= newResultsLength
             ) {
-              // Keep the same position if possible, otherwise go to the last result
               editor.storage.searchAndReplace.resultIndex = Math.min(
                 resultIndex,
                 newResultsLength - 1,
@@ -470,7 +425,9 @@ export const SearchAndReplace = Extension.create<
             if (
               !docChanged &&
               searchTerms.length === lastSearchTerms.length &&
-              searchTerms.every((term, index) => term === lastSearchTerms[index]) &&
+              searchTerms.every(
+                (term, index) => term === lastSearchTerms[index],
+              ) &&
               lastCaseSensitive === caseSensitive &&
               lastWholeWord === wholeWord &&
               lastResultIndex === resultIndex
@@ -488,16 +445,11 @@ export const SearchAndReplace = Extension.create<
             }
 
             const { decorationsToReturn, results } = processSearches(
-            doc,
-              getRegex(
-                searchTerms,
-                disableRegex,
-                caseSensitive,
-                wholeWord,
-              ),
-            searchResultClass,
-            resultIndex,
-          );
+              doc,
+              getRegex(searchTerms, disableRegex, caseSensitive, wholeWord),
+              searchResultClass,
+              resultIndex,
+            );
 
             editor.storage.searchAndReplace.results = results;
 

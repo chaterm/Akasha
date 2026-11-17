@@ -15,7 +15,10 @@ const tableReadonlySortKey = new PluginKey('tableReadonlySort');
 const sortStates = new WeakMap<HTMLTableElement, SortState>();
 const originalOrders = new WeakMap<HTMLTableElement, HTMLTableRowElement[]>();
 
-const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+const collator = new Intl.Collator(undefined, {
+  sensitivity: 'base',
+  numeric: true,
+});
 
 function getColumnIndex(th: HTMLTableCellElement): number {
   const row = th.parentElement as HTMLTableRowElement;
@@ -39,7 +42,6 @@ function getHeaderTh(target: EventTarget | null): HTMLTableCellElement | null {
   const table = tbody.closest('table');
   if (!table) return null;
 
-  // th must be in the first row of the table (could be in thead or tbody)
   const firstRow = table.querySelector('tr');
   if (firstRow !== row) return null;
 
@@ -87,7 +89,9 @@ function applySort(table: HTMLTableElement, colIndex: number): void {
   const tbody = table.querySelector('tbody');
   if (!tbody) return;
 
-  const allRows = Array.from(tbody.querySelectorAll<HTMLTableRowElement>(':scope > tr'));
+  const allRows = Array.from(
+    tbody.querySelectorAll<HTMLTableRowElement>(':scope > tr'),
+  );
   if (allRows.length === 0) return;
 
   const headerRow = allRows[0];
@@ -183,9 +187,6 @@ export const TableReadonlySort = Extension.create({
 
     const onClick = (event: MouseEvent) => {
       if (editor.isEditable) return;
-      // Only react to clicks on the chevron, not anywhere else in the header
-      // cell. This lets the user click into a header to select text without
-      // accidentally triggering a sort.
       if (!(event.target instanceof Element)) return;
       const chevron = event.target.closest(`.${CHEVRON_CLASS}`);
       if (!chevron) return;

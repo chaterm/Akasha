@@ -29,7 +29,6 @@ function parseNodes(
 }
 
 function getHighlightNodes(result: any) {
-  // `.value` for lowlight v1, `.children` for lowlight v2
   return result.value || result.children || [];
 }
 
@@ -37,7 +36,6 @@ function registered(aliasOrLanguage: string) {
   return Boolean(highlight.getLanguage(aliasOrLanguage));
 }
 
-// Max characters to sample for auto-detection to avoid performance issues with large code blocks
 const AUTO_DETECT_SAMPLE_SIZE = 3000;
 
 function getDecorations({
@@ -68,8 +66,6 @@ function getDecorations({
     ) {
       nodes = getHighlightNodes(lowlight.highlight(language, textContent));
     } else {
-      // For auto-detection, sample a limited portion to detect the language,
-      // then highlight the full content with the detected language
       const sample =
         textContent.length > AUTO_DETECT_SAMPLE_SIZE
           ? textContent.slice(0, AUTO_DETECT_SAMPLE_SIZE)
@@ -152,14 +148,8 @@ export function LowlightPlugin({
 
         if (
           transaction.docChanged &&
-          // Apply decorations if:
-          // selection includes named node,
           ([oldNodeName, newNodeName].includes(name) ||
-            // OR transaction adds/removes named node,
             newNodes.length !== oldNodes.length ||
-            // OR transaction has changes that completely encapsulte a node
-            // (for example, a transaction that affects the entire document).
-            // Such transactions can happen during collab syncing via y-prosemirror, for example.
             transaction.steps.some((step) => {
               // @ts-ignore
               return (

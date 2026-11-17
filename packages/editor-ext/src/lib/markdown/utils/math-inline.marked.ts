@@ -44,7 +44,6 @@ export const mathInlineExtension = {
   },
   renderer(token: Token) {
     const mathInlineToken = token as MathInlineToken;
-    // parse to prevent escaping slashes
     const latex = marked
       .parse(mathInlineToken.text)
       .toString()

@@ -23,13 +23,6 @@ import {
   type DatabaseView,
 } from './database-schema';
 
-/**
- * Pure transaction builders for the database block. `dbPos` is the position
- * of the database node; each function re-reads the node from `tr.doc`, so
- * calls can be chained on one transaction. Edits inside the node never move
- * `dbPos` itself.
- */
-
 function getDatabase(tr: Transaction, dbPos: number): PMNode {
   const node = tr.doc.nodeAt(dbPos);
   if (!node || node.type.name !== 'database') {
@@ -75,7 +68,6 @@ function writeViews(
   );
 }
 
-/** Absolute positions of every row, in document order. */
 function findRows(
   tr: Transaction,
   dbPos: number,
@@ -105,17 +97,13 @@ function findCellPos(
   return cellPos;
 }
 
-// ---------------------------------------------------------------- rows
-
 export function insertDatabaseRow(
   tr: Transaction,
   dbPos: number,
   options: {
     id?: string;
     values?: Record<string, DatabaseCellValue>;
-    /** Insert before this row. */
     beforeRowId?: string | null;
-    /** Insert after this row (ignored when beforeRowId is set). */
     afterRowId?: string | null;
   } = {},
 ): string {
@@ -141,8 +129,6 @@ export function insertDatabaseRow(
     !before && options.afterRowId
       ? findRow(tr, dbPos, options.afterRowId)
       : null;
-  // Keep existing Yjs row/cell identities stable, including when inserting
-  // above a row that another user is editing.
   tr.insert(dbPos + db.nodeSize - 1, row);
   if (before || after) {
     const ids = readDatabaseRows(db).map((item) => item.id);
@@ -165,7 +151,6 @@ export function deleteDatabaseRow(
   return tr;
 }
 
-/** Moves a row in the saved order, preserving its Yjs identity and concurrent cell edits. */
 export function moveDatabaseRow(
   tr: Transaction,
   dbPos: number,
@@ -228,9 +213,6 @@ export function setDatabaseTitleAlign(
   return tr.setNodeAttribute(dbPos, 'titleAlign', align);
 }
 
-// ---------------------------------------------------------------- columns
-
-/** Places `columnId` next to `anchorId` in every view; views without the anchor append it. */
 function placeColumnInViews(
   views: DatabaseView[],
   columnId: string,
@@ -263,8 +245,7 @@ export function addDatabaseColumn(
   const db = getDatabase(tr, dbPos);
   const id = column.id || generateNodeId();
   const next: DatabaseColumn = { ...column, id };
-  if (hasDatabaseOptions(column.type))
-    next.options = column.options ?? [];
+  if (hasDatabaseOptions(column.type)) next.options = column.options ?? [];
   const views = placeColumnInViews(
     getViews(db),
     id,
@@ -275,7 +256,6 @@ export function addDatabaseColumn(
   return id;
 }
 
-/** Copies the column config and every value into a new column placed right after it. */
 export function duplicateDatabaseColumn(
   tr: Transaction,
   dbPos: number,
@@ -306,7 +286,6 @@ export function duplicateDatabaseColumn(
   return id;
 }
 
-/** Changes the column type and converts every existing value (see convertDatabaseColumn). The title stays text. */
 export function changeDatabaseColumnType(
   tr: Transaction,
   dbPos: number,
@@ -316,15 +295,13 @@ export function changeDatabaseColumnType(
   const db = getDatabase(tr, dbPos);
   const columns = getColumns(db);
   const column = columns.find((item) => item.id === columnId);
-  if (!column || column.type === type || column.id === columns[0].id)
-    return tr;
+  if (!column || column.type === type || column.id === columns[0].id) return tr;
   const rows = readDatabaseRows(db);
   const { column: next, convert } = convertDatabaseColumn(
     column,
     type,
     rows.map((row) => row.values[columnId] ?? null),
   );
-  // Schema first: setDatabaseCellValue normalizes against the new type.
   writeSchema(
     tr,
     dbPos,
@@ -345,7 +322,6 @@ export function changeDatabaseColumnType(
   return tr;
 }
 
-/** Updates name/options/number format. Use changeDatabaseColumnType for the type. */
 export function updateDatabaseColumn(
   tr: Transaction,
   dbPos: number,
@@ -361,7 +337,6 @@ export function updateDatabaseColumn(
   return writeSchema(tr, dbPos, columns, getViews(db));
 }
 
-/** Removes the column, its cells in every row, and view references to it. The title column cannot be deleted. */
 export function deleteDatabaseColumn(
   tr: Transaction,
   dbPos: number,
@@ -383,7 +358,6 @@ export function deleteDatabaseColumn(
   }
   for (const { from, to } of cellPositions.reverse()) tr.delete(from, to);
 
-  // Stale view references are dropped by normalizeDatabaseViews.
   return writeSchema(
     tr,
     dbPos,
@@ -391,8 +365,6 @@ export function deleteDatabaseColumn(
     getViews(db),
   );
 }
-
-// ---------------------------------------------------------------- views
 
 export function addDatabaseView(
   tr: Transaction,
@@ -407,7 +379,6 @@ export function addDatabaseView(
 
 export type DatabaseViewPatch = Partial<Omit<DatabaseView, 'id' | 'type'>>;
 
-/** Changing groupBy resets the group layout, whose keys belong to the old column. */
 export function updateDatabaseView(
   tr: Transaction,
   dbPos: number,
@@ -429,7 +400,6 @@ export function updateDatabaseView(
   return writeViews(tr, dbPos, views);
 }
 
-/** The last view cannot be deleted. */
 export function deleteDatabaseView(
   tr: Transaction,
   dbPos: number,
@@ -445,7 +415,6 @@ export function deleteDatabaseView(
   );
 }
 
-/** Moves a view before `beforeViewId` in the tab order; null = to the end. */
 export function moveDatabaseView(
   tr: Transaction,
   dbPos: number,
@@ -466,13 +435,6 @@ export function moveDatabaseView(
   return writeViews(tr, dbPos, views);
 }
 
-// ---------------------------------------------------------------- kanban / calendar moves
-
-/**
- * Moves a card to group `toKey`, placed before `beforeRowId` (or last).
- * Writes the group value, and the view's manual card order when the view
- * has no sorts. A multiSelect card only swaps the `fromKey` value.
- */
 export function moveDatabaseCard(
   tr: Transaction,
   dbPos: number,
@@ -524,7 +486,6 @@ export function moveDatabaseCard(
   return updateDatabaseView(tr, dbPos, viewId, { cardOrder });
 }
 
-/** Moves a row to start on `date`, keeping its duration when the view has an end date column. */
 export function moveDatabaseRowToDate(
   tr: Transaction,
   dbPos: number,
@@ -555,7 +516,6 @@ export function moveDatabaseRowToDate(
   return tr;
 }
 
-/** Drags one edge of a multi-day row; the other edge never gets crossed. */
 export function resizeDatabaseRowRange(
   tr: Transaction,
   dbPos: number,

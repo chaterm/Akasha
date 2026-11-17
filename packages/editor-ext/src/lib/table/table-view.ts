@@ -136,7 +136,6 @@ export class TableView implements NodeView {
       }
     }
 
-    // Chevron span (.tableReadonlySortChevron) added/removed by sort plugin.
     if (mutation.type === 'childList') {
       const nodes = [
         ...Array.from(mutation.addedNodes),

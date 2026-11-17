@@ -26,7 +26,6 @@ export const mathBlockExtension = {
   },
   renderer(token: Token) {
     const mathBlockToken = token as MathBlockToken;
-    // parse to prevent escaping slashes
     const latex = marked
       .parse(mathBlockToken.text)
       .toString()
