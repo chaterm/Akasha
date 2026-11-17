@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Logger, OnModuleDestroy } from '@nestjs/common';
-import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
+import { OnWorkerEvent, Processor } from '@nestjs/bullmq';
+import { ContextualWorkerHost } from '../../../common/logger/contextual-worker.host';
 import { Job, UnrecoverableError } from 'bullmq';
 import { KnowledgeSpaceExecutionRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-execution.repo';
 import { QueueJob, QueueName } from '../../../integrations/queue/constants';
@@ -18,7 +19,7 @@ import {
 
 @Processor(QueueName.KNOWLEDGE_SPACE_QUEUE, KNOWLEDGE_SPACE_WORKER_OPTIONS)
 export class KnowledgeSpaceProcessor
-  extends WorkerHost
+  extends ContextualWorkerHost
   implements OnModuleDestroy
 {
   private readonly logger = new Logger(KnowledgeSpaceProcessor.name);
@@ -31,7 +32,7 @@ export class KnowledgeSpaceProcessor
     super();
   }
 
-  async process(job: Job) {
+  async handle(job: Job) {
     if (
       ![
         QueueJob.KNOWLEDGE_COMPILE_SPACE_TEXT,

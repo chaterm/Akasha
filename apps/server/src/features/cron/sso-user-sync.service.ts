@@ -7,6 +7,7 @@ import type { Redis } from 'ioredis';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
 import { HoidcService, HoidcProviderConfig } from '../../ee/sso/hoidc.service';
 import { WorkspaceRepo } from '@akasha/db/repos/workspace/workspace.repo';
+import { WithJobContext } from '../../common/logger/with-job-context.decorator';
 
 type SsoUserListItem = {
   email?: string;
@@ -36,6 +37,7 @@ export class SsoUserSyncService {
   }
 
   @Cron('0 0 * * * *', { name: 'sso-user-sync' })
+  @WithJobContext('sso-user-sync')
   async handleScheduledSync(): Promise<void> {
     const lockKey = 'lock:sso-user-sync';
     const lockValue = randomUUID();
@@ -54,7 +56,9 @@ export class SsoUserSyncService {
     } finally {
       await this.redis.eval(
         `if redis.call("get",KEYS[1])==ARGV[1] then return redis.call("del",KEYS[1]) else return 0 end`,
-        1, lockKey, lockValue,
+        1,
+        lockKey,
+        lockValue,
       );
     }
   }
@@ -169,9 +173,7 @@ export class SsoUserSyncService {
       data?: unknown;
     };
     if (json.code !== 0 || !Array.isArray(json.data)) {
-      throw new Error(
-        `SSO get-all failed: ${json.msg ?? `code=${json.code}`}`,
-      );
+      throw new Error(`SSO get-all failed: ${json.msg ?? `code=${json.code}`}`);
     }
 
     return json.data as SsoUserListItem[];

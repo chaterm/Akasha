@@ -52,6 +52,7 @@ import { KnowledgeSourceRetirementService } from './knowledge-source-retirement.
 import { KnowledgeImageUnderstandingProvider } from './knowledge-image-understanding-provider.service';
 import { KnowledgeIndexMode } from '../types/knowledge-index-mode.types';
 import { ErrorCode, errorBody } from '../../../common/errors/error-codes';
+import { WithJobContext } from '../../../common/logger/with-job-context.decorator';
 
 @Injectable()
 export class KnowledgeSpaceCompilationService implements OnModuleInit {
@@ -89,6 +90,7 @@ export class KnowledgeSpaceCompilationService implements OnModuleInit {
   }
 
   @Interval('knowledge-space-compile-outbox', 5_000)
+  @WithJobContext('knowledge-space-compile-outbox')
   async recoverPendingDispatches(): Promise<void> {
     await this.dispatchPending();
   }

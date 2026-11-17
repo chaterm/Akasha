@@ -14,6 +14,7 @@ import {
   IAuditService,
 } from '../../integrations/audit/audit.service';
 import { AuditEvent, AuditResource } from '../../common/events/audit-events';
+import { WithJobContext } from '../../common/logger/with-job-context.decorator';
 
 /** Each effect has an independent durable checkpoint; the producer never emits early. */
 @Injectable()
@@ -34,6 +35,7 @@ export class WeeklyReportOutboxService {
   ) {}
 
   @Interval('weekly-report-outbox', 5000)
+  @WithJobContext('weekly-report-outbox')
   async drain() {
     if (this.running) return;
     this.running = true;

@@ -11,7 +11,6 @@ import {
   HistoryDiffProcessor,
   HistoryProcessor,
 } from './processors/history.processor';
-import { LoggerExtension } from './extensions/logger.extension';
 import { CollaborationHandler } from './collaboration.handler';
 import { CollabHistoryService } from './services/collab-history.service';
 import { HistorySnapshotService } from './services/history-snapshot.service';
@@ -27,7 +26,6 @@ import { PageAttachmentRehomeService } from '../core/attachment/services/page-at
     CollaborationGateway,
     AuthenticationExtension,
     PersistenceExtension,
-    LoggerExtension,
     HistoryProcessor,
     HistoryDiffProcessor,
     CollabHistoryService,
@@ -66,12 +64,12 @@ export class CollaborationModule implements OnModuleInit, OnModuleDestroy {
       this.collaborationGateway.handleConnection(client, request);
 
       client.on('error', (error) => {
-        this.logger.error('WebSocket client error:', error);
+        this.logger.error({ err: error }, 'WebSocket client error');
       });
     });
 
     wss.on('error', (error) =>
-      this.logger.error('WebSocket server error:', error),
+      this.logger.error({ err: error }, 'WebSocket server error'),
     );
   }
 

@@ -1,8 +1,8 @@
 import { isValidRequestId, resolveRequestId } from './request-id';
 
-const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const UUID_V4 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-/** Minimal stand-in for the raw request object customProps/idGenerator receive. */
 function reqWith(headerValue?: string | string[]) {
   return {
     headers: headerValue === undefined ? {} : { 'x-request-id': headerValue },
@@ -34,7 +34,6 @@ describe('resolveRequestId — inbound x-request-id trust boundary (plan §4.2, 
       const requestId = resolveRequestId(reqWith(headerValue));
 
       expect(requestId).toMatch(UUID_V4);
-      // The ClickHouse column must never receive commas/whitespace from a caller.
       expect(requestId).not.toMatch(/[\s,]/);
     },
   );
@@ -60,10 +59,6 @@ describe('resolveRequestId — inbound x-request-id trust boundary (plan §4.2, 
     expect(resolveRequestId({})).toMatch(UUID_V4);
   });
 
-  // Scenario 12: pino-http evaluates customProps twice (loggingMiddleware for
-  // business logs, onResFinished for the access log). Without the cache the two
-  // evaluations would generate different UUIDs and the access log could never be
-  // correlated with the business logs of the same request.
   it('is idempotent per request object, so access log and business logs agree (scenario 12)', () => {
     const req = reqWith();
 

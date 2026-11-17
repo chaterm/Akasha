@@ -329,7 +329,10 @@ export class SpaceService {
         name: space.name,
       })
       .catch((error) =>
-        this.logger.warn(`Failed to record space_deleted event: ${error}`),
+        this.logger.warn(
+          { err: error },
+          'Failed to record space_deleted event',
+        ),
       );
 
     this.auditService.log({

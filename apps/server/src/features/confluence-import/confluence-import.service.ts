@@ -189,7 +189,8 @@ export class ConfluenceImportService {
           const htmlWithMermaid = this.transformMermaidMacros(htmlWithCode);
 
           // 转换 noformat 预格式化宏（必须在 transformCodeBlocks 之后）
-          const htmlWithNoformat = this.transformNoformatMacros(htmlWithMermaid);
+          const htmlWithNoformat =
+            this.transformNoformatMacros(htmlWithMermaid);
 
           // 转换 expand 折叠宏
           const htmlWithExpand = this.transformExpandMacros(htmlWithNoformat);
@@ -276,10 +277,6 @@ export class ConfluenceImportService {
             targetUrl: buildPageUrl(appUrl, space?.slug, page.slugId),
           });
           totalProcessed++;
-
-          if (totalProcessed % 50 === 0) {
-            this.logger.debug(`Processed ${totalProcessed} pages...`);
-          }
         }
 
         // 写入 backlinks（只保留双端页面都存在的）
@@ -328,7 +325,7 @@ export class ConfluenceImportService {
         `Confluence import complete: ${totalProcessed} pages imported`,
       );
     } catch (err) {
-      this.logger.error('Confluence import failed', err);
+      this.logger.error({ err }, 'Confluence import failed');
       throw new Error(`Confluence import failed: ${err?.['message']}`);
     }
   }
@@ -354,7 +351,6 @@ export class ConfluenceImportService {
       const indexInSub = path.join(candidate, 'index.html');
       try {
         await fs.access(indexInSub);
-        this.logger.debug(`Resolved content dir: ${subDirs[0].name}/`);
         return candidate;
       } catch {
         // 子目录里也没有 index.html，回退
@@ -429,7 +425,6 @@ export class ConfluenceImportService {
         .each((_, ul) => processUl(ul, null));
     }
 
-    this.logger.debug(`Parsed ${pagesMap.size} pages from index.html`);
     return pagesMap;
   }
 
@@ -539,10 +534,12 @@ export class ConfluenceImportService {
     // 锚点 <h1 id="x"><a href="#x">标题</a></h1>(用于"复制链接到此标题")。
     // 透传进编辑器后 <a> 会被当成真实链接,标题带上链接图标。这里把标题内
     // 以 # 开头(页内锚点)的 <a> 替换成其纯文本,保留标题文字、去掉链接。
-    $('h1, h2, h3, h4, h5, h6').find('a[href^="#"]').each((_, el) => {
-      const $a = $(el);
-      $a.replaceWith($a.text());
-    });
+    $('h1, h2, h3, h4, h5, h6')
+      .find('a[href^="#"]')
+      .each((_, el) => {
+        const $a = $(el);
+        $a.replaceWith($a.text());
+      });
 
     // 移除 Confluence UI 噪音
     $('#breadcrumb-section').remove();
@@ -835,7 +832,8 @@ export class ConfluenceImportService {
     // Confluence class 关键字 → callout type
     // tip(绿)→success, info(蓝)→info, note(黄)→warning, warning(红)→danger
     const classToType = (className: string): string => {
-      if (/confluence-information-macro-tip\b/.test(className)) return 'success';
+      if (/confluence-information-macro-tip\b/.test(className))
+        return 'success';
       if (/confluence-information-macro-note\b/.test(className))
         return 'warning';
       if (/confluence-information-macro-warning\b/.test(className))

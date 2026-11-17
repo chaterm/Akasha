@@ -2,18 +2,11 @@ import * as fs from 'node:fs';
 import { bootstrapLogger } from './bootstrap-logger';
 import { SERVICE_NAME_COLLAB, SERVICE_NAME_SERVER } from './log-service-name';
 
-/**
- * Scenario 13: the bootstrap logger is the only logger available before the DI
- * container exists, so its output has to satisfy the same §3 field contract as
- * the pino pipeline — Vector parses every stdout line with `parse_json` and has
- * no regex fallback for these lines.
- */
 describe('bootstrapLogger — pre-DI log line contract (plan §3, §4.4, scenario 13)', () => {
   let writeSyncSpy: jest.SpyInstance;
   let originalEnv: string | undefined;
   let originalServiceName: string | undefined;
 
-  /** Captures what `writeSync(1, ...)` was handed, one entry per call. */
   function writtenPayloads(): string[] {
     return writeSyncSpy.mock.calls
       .filter((call) => call[0] === 1)
@@ -23,8 +16,6 @@ describe('bootstrapLogger — pre-DI log line contract (plan §3, §4.4, scenari
   function singleWrittenLine(): Record<string, any> {
     const payloads = writtenPayloads();
     expect(payloads).toHaveLength(1);
-    // Exactly one trailing newline: Vector splits stdout on newlines, so a line
-    // without one would be glued to whatever pino writes next.
     expect(payloads[0].endsWith('\n')).toBe(true);
     expect(payloads[0].trimEnd()).not.toContain('\n');
     return JSON.parse(payloads[0]);
@@ -37,8 +28,6 @@ describe('bootstrapLogger — pre-DI log line contract (plan §3, §4.4, scenari
 
   beforeEach(() => {
     process.env.NODE_ENV = 'production';
-    // writeSync must be stubbed, not just observed: fd 1 during a jest run is
-    // the reporter's pipe and raw JSON there would corrupt the test output.
     writeSyncSpy = jest
       .spyOn(fs, 'writeSync')
       .mockImplementation(() => 0 as unknown as number);
@@ -65,14 +54,11 @@ describe('bootstrapLogger — pre-DI log line contract (plan §3, §4.4, scenari
       context: 'AppModule',
       service: SERVICE_NAME_SERVER,
       env: 'production',
-      // §3 empty-string convention: these keys must exist so the non-Nullable
-      // ClickHouse columns always get a value on bootstrap lines.
       requestId: '',
       workspaceId: '',
       userId: '',
     });
     expect(typeof line.time).toBe('string');
-    // ISO8601, matching pino's stdTimeFunctions.isoTime.
     expect(new Date(line.time).toISOString()).toBe(line.time);
     expect(typeof line.pid).toBe('number');
     expect(typeof line.hostname).toBe('string');
@@ -111,7 +97,11 @@ describe('bootstrapLogger — pre-DI log line contract (plan §3, §4.4, scenari
   });
 
   it('serializes a non-Error thrown value without losing the line', () => {
-    bootstrapLogger.error({ context: 'Bootstrap', msg: 'crashed', err: 'oops' });
+    bootstrapLogger.error({
+      context: 'Bootstrap',
+      msg: 'crashed',
+      err: 'oops',
+    });
 
     expect(singleWrittenLine().err).toEqual({
       type: 'string',

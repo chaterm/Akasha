@@ -1,4 +1,3 @@
-
 import * as path from 'path';
 import { promises as fs } from 'fs';
 import { Kysely, sql } from 'kysely';
@@ -6,6 +5,7 @@ import { PostgresJSDialect } from 'kysely-postgres-js';
 import postgres = require('postgres');
 import * as dotenv from 'dotenv';
 import { envPath, normalizePostgresUrl } from '../common/helpers';
+import { bootstrapLogger } from '../common/logger/bootstrap-logger';
 import { buildMigrationPostgresOptions } from './database-postgres-options';
 
 const MIGRATION_TABLE = 'kysely_migration';
@@ -114,7 +114,11 @@ async function main(): Promise<void> {
 
 if (require.main === module) {
   void main().catch((error) => {
-    console.error(error);
+    bootstrapLogger.error({
+      context: 'PruneMigrationHistory',
+      msg: 'Prune command failed',
+      err: error,
+    });
     process.exitCode = 1;
   });
 }

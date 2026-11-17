@@ -55,7 +55,7 @@ import { generateHTML, generateJSON } from '../common/helpers/prosemirror/html';
 //import { generateJSON } from '@tiptap/html';
 import { Node, Schema } from '@tiptap/pm/model';
 import * as Y from 'yjs';
-import { Logger, LoggerService } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import {
   hasTableNode,
   serializeTableNode,
@@ -124,10 +124,9 @@ export function jsonToHtml(tiptapJson: any) {
   return generateHTML(tiptapJson, tiptapExtensions);
 }
 
-export function htmlToJson(
-  html: string,
-  logger: LoggerService = new Logger('CollaborationUtil'),
-) {
+const logger = new Logger('CollaborationUtil');
+
+export function htmlToJson(html: string) {
   const pmJson = generateJSON(html, tiptapExtensions);
 
   try {
@@ -168,7 +167,7 @@ export function jsonToNode(tiptapJson: JSONContent) {
       error instanceof RangeError &&
       error.message.includes('Unknown node type')
     ) {
-      Logger.warn('Stripping unknown node types from document:', error.message);
+      logger.warn({ err: error }, 'Stripping unknown node types from document');
       const cleanedJson = stripUnknownNodes(tiptapJson, schema);
       return Node.fromJSON(schema, cleanedJson);
     }

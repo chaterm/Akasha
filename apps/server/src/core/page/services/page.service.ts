@@ -188,7 +188,7 @@ export class PageService {
           workspaceId,
         })
         .catch((err) =>
-          this.logger.warn(`Failed to queue add-page-watchers: ${err.message}`),
+          this.logger.warn({ err }, 'Failed to queue add-page-watchers'),
         );
 
     return page;
@@ -289,7 +289,7 @@ export class PageService {
         workspaceId: page.workspaceId,
       })
       .catch((err) =>
-        this.logger.warn(`Failed to queue add-page-watchers: ${err.message}`),
+        this.logger.warn({ err }, 'Failed to queue add-page-watchers'),
       );
 
     if (

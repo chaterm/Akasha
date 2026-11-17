@@ -7,13 +7,11 @@
 // Options (env): ZH_BACKFILL_BATCH_SIZE (default 2000), ZH_BACKFILL_PAUSE_MS (default 200)
 import { Kysely } from 'kysely';
 import { PostgresJSDialect } from 'kysely-postgres-js';
-// `postgres` is CommonJS (`module.exports = Postgres`). This form resolves to
-// the function both under tsx (dev) and in the compiled dist script, where the
-// project builds without esModuleInterop.
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- postgres is CommonJS in both tsx and the compiled script.
 import postgres = require('postgres');
 import * as dotenv from 'dotenv';
 import { envPath, normalizePostgresUrl } from '../../common/helpers';
+import { bootstrapLogger } from '../../common/logger/bootstrap-logger';
 import { buildMigrationPostgresOptions } from '../database-postgres-options';
 import { backfillKnowledgeChunkZhSearch } from './knowledge-chunk-zh-search-backfill';
 
@@ -55,6 +53,10 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  console.error(error);
+  bootstrapLogger.error({
+    context: 'BackfillKnowledgeChunkZhSearch',
+    msg: 'Backfill failed',
+    err: error,
+  });
   process.exit(1);
 });

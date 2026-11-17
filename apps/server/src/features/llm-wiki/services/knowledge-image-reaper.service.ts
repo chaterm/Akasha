@@ -4,6 +4,7 @@ import { Interval } from '@nestjs/schedule';
 import { Queue } from 'bullmq';
 import { KnowledgeSpaceCompilationRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-compilation.repo';
 import { QueueName } from '../../../integrations/queue/constants';
+import { WithJobContext } from '../../../common/logger/with-job-context.decorator';
 
 const EXECUTABLE_JOB_STATES = new Set([
   'active',
@@ -25,6 +26,7 @@ export class KnowledgeImageReaperService {
   ) {}
 
   @Interval('knowledge-run-image-reaper', 30_000)
+  @WithJobContext('knowledge-run-image-reaper')
   async reap(): Promise<void> {
     if (this.reaping) return;
     this.reaping = true;

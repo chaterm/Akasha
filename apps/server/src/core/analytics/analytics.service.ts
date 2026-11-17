@@ -17,6 +17,7 @@ import {
   TrackPageViewDto,
 } from './dto/analytics.dto';
 import { groupAgentOpsByCategory } from './agent-op-category';
+import { WithJobContext } from '../../common/logger/with-job-context.decorator';
 
 // Applies to page_view and agent_op events.
 const EVENT_RETENTION_DAYS = 400;
@@ -233,16 +234,17 @@ export class AnalyticsService {
   }
 
   @Interval('analytics-event-cleanup', CLEANUP_INTERVAL_MS)
+  @WithJobContext('analytics-event-cleanup')
   async cleanupExpiredEvents(): Promise<void> {
     try {
       const cutoff = new Date(Date.now() - EVENT_RETENTION_DAYS * DAY_MS);
       const deleted =
         await this.analyticsEventRepo.deleteExpiredEventsBefore(cutoff);
       if (deleted > 0) {
-        this.logger.log(`Deleted ${deleted} expired analytics events`);
+        this.logger.log({ deleted }, 'Deleted expired analytics events');
       }
     } catch (error) {
-      this.logger.error('Failed to clean up analytics events', error);
+      this.logger.error({ err: error }, 'Failed to clean up analytics events');
     }
   }
 

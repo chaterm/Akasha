@@ -56,16 +56,12 @@ try {
 
 @Module({
   imports: [
-    // Must stay ahead of LoggerModule so the CLS middleware is registered first.
     ClsModule.forRoot({
       global: true,
       middleware: {
         mount: true,
-        // Required: defaults to false, and without it idGenerator is never called.
         generateId: true,
         idGenerator: (req) => resolveRequestId(req),
-        // Under Fastify this middleware receives the *native* ServerResponse,
-        // not a FastifyReply, so only setHeader() exists here.
         setup: (cls, req, res) => {
           res.setHeader('x-request-id', cls.getId());
         },

@@ -67,7 +67,7 @@ export class FileImportTaskService {
       .executeTakeFirst();
 
     if (!fileTask) {
-      this.logger.log(`Import file task with ID ${fileTaskId} not found`);
+      this.logger.log({ fileTaskId }, 'Import file task not found');
       return;
     }
 
@@ -264,7 +264,8 @@ export class FileImportTaskService {
           const partialId = extractNotionPartialId(folderName);
           const strippedFolderName = stripNotionID(folderName);
           const isSameDir = (fileDir: string) =>
-            fileDir === parentDir || (parentDir === '.' && !fileDir.includes('/'));
+            fileDir === parentDir ||
+            (parentDir === '.' && !fileDir.includes('/'));
 
           for (const [filePath, page] of pagesMap.entries()) {
             if (!isSameDir(path.dirname(filePath))) continue;
@@ -276,7 +277,10 @@ export class FileImportTaskService {
               const fullIdMatch = fileBase.match(/[a-f0-9]{32}$/i);
               if (!fullIdMatch) continue;
               const fullId = fullIdMatch[0].toLowerCase();
-              if (!fullId.startsWith(partialId.prefix) || !fullId.endsWith(partialId.suffix)) {
+              if (
+                !fullId.startsWith(partialId.prefix) ||
+                !fullId.endsWith(partialId.suffix)
+              ) {
                 continue;
               }
             }
@@ -540,16 +544,10 @@ export class FileImportTaskService {
 
             await trx.insertInto('pages').values(insertablePage).execute();
 
-            // Track valid page IDs, titles, and collect backlinks
             validPageIds.add(insertablePage.id);
             pageTitles.set(insertablePage.id, insertablePage.title);
             allBacklinks.push(...backlinks);
             totalPagesProcessed++;
-
-            // Log progress periodically
-            if (totalPagesProcessed % 50 === 0) {
-              this.logger.debug(`Processed ${totalPagesProcessed} pages...`);
-            }
           }
         }
 
@@ -607,7 +605,7 @@ export class FileImportTaskService {
         });
       }
     } catch (error) {
-      this.logger.error('Failed to import files:', error);
+      this.logger.error({ err: error }, 'Failed to import files');
       throw new Error(`File import failed: ${error?.['message']}`);
     }
   }

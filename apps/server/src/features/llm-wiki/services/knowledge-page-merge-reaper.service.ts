@@ -5,6 +5,7 @@ import { Queue } from 'bullmq';
 import { KnowledgeSpaceExecutionRepo } from '@akasha/db/repos/llm-wiki/knowledge-space-execution.repo';
 import { MERGE_TRANSPORT_RECOVERY_BUDGET } from '@akasha/db/repos/llm-wiki/knowledge-compilation-budgets';
 import { QueueName } from '../../../integrations/queue/constants';
+import { WithJobContext } from '../../../common/logger/with-job-context.decorator';
 
 const EXECUTABLE_JOB_STATES = new Set([
   'active',
@@ -32,6 +33,7 @@ export class KnowledgePageMergeReaperService {
   ) {}
 
   @Interval('knowledge-page-merge-reaper', 30_000)
+  @WithJobContext('knowledge-page-merge-reaper')
   async reap(): Promise<void> {
     if (this.reaping) return;
     this.reaping = true;

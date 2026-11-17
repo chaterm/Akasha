@@ -1,12 +1,13 @@
 import { Logger, OnModuleDestroy } from '@nestjs/common';
-import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
+import { OnWorkerEvent, Processor } from '@nestjs/bullmq';
+import { ContextualWorkerHost } from '../../../common/logger/contextual-worker.host';
 import { Job, UnrecoverableError } from 'bullmq';
 import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import { KnowledgeTextJobHandler } from '../services/knowledge-text-job.handler';
 
 @Processor(QueueName.KNOWLEDGE_TEXT_QUEUE, { concurrency: 2 })
 export class KnowledgeTextProcessor
-  extends WorkerHost
+  extends ContextualWorkerHost
   implements OnModuleDestroy
 {
   private readonly logger = new Logger(KnowledgeTextProcessor.name);
@@ -15,7 +16,7 @@ export class KnowledgeTextProcessor
     super();
   }
 
-  async process(job: Job) {
+  async handle(job: Job) {
     if (!SUPPORTED_TEXT_JOBS.has(job.name as QueueJob)) {
       throw new UnrecoverableError(
         `Unsupported Knowledge Text job ${job.name}.`,
@@ -24,21 +25,12 @@ export class KnowledgeTextProcessor
     return this.handler.handle(job);
   }
 
-  @OnWorkerEvent('active')
-  onActive(job: Job) {
-    this.logger.debug(`Processing ${job.name} job`);
-  }
-
   @OnWorkerEvent('failed')
   onError(job: Job) {
     this.logger.error(
-      `Error processing ${job.name} job. Reason: ${job.failedReason}`,
+      { jobId: job.id, jobName: job.name, reason: job.failedReason },
+      'Job failed',
     );
-  }
-
-  @OnWorkerEvent('completed')
-  onCompleted(job: Job) {
-    this.logger.debug(`Completed ${job.name} job`);
   }
 
   async onModuleDestroy(): Promise<void> {

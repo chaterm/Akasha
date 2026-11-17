@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Logger, OnModuleDestroy } from '@nestjs/common';
-import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
+import { OnWorkerEvent, Processor } from '@nestjs/bullmq';
+import { ContextualWorkerHost } from '../../../common/logger/contextual-worker.host';
 import { Job, UnrecoverableError } from 'bullmq';
 import {
   KnowledgeSpaceExecutionRepo,
@@ -28,7 +29,7 @@ import { recordKnowledgeWorkerEvent } from '../services/knowledge-worker-observa
  */
 @Processor(QueueName.KNOWLEDGE_MERGE_QUEUE, KNOWLEDGE_MERGE_WORKER_OPTIONS)
 export class KnowledgePageMergeProcessor
-  extends WorkerHost
+  extends ContextualWorkerHost
   implements OnModuleDestroy
 {
   private readonly logger = new Logger(KnowledgePageMergeProcessor.name);
@@ -42,7 +43,7 @@ export class KnowledgePageMergeProcessor
     super();
   }
 
-  async process(job: Job) {
+  async handle(job: Job) {
     if (job.name !== QueueJob.KNOWLEDGE_MERGE_PAGE) {
       throw new UnrecoverableError(
         `Unsupported Knowledge Merge job ${job.name}.`,

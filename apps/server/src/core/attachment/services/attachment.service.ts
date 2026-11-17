@@ -246,7 +246,7 @@ export class AttachmentService {
         await this.attachmentRepo.deleteAttachmentByFilePath(filePath);
       this.emitKnowledgePageAttachmentUpdated(deleted);
     } catch (error) {
-      this.logger.error('deleteRedundantFile', error);
+      this.logger.error({ err: error }, 'Failed to delete redundant file');
     }
   }
 
@@ -259,7 +259,7 @@ export class AttachmentService {
     try {
       await this.storageService.upload(filePath, fileContent);
     } catch (err) {
-      this.logger.error('Error uploading file to drive:', err);
+      this.logger.error({ err }, 'Error uploading file to drive');
       throw new BadRequestException('Error uploading file to drive');
     }
   }

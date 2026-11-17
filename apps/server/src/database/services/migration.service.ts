@@ -127,7 +127,10 @@ export class MigrationService {
           `Migration "${it.migrationName}" executed successfully`,
         );
       } else if (it.status === 'Error') {
-        this.logger.error(`Failed to execute migration "${it.migrationName}"`);
+        this.logger.error(
+          { migrationName: it.migrationName },
+          'Failed to execute migration',
+        );
       }
     });
 

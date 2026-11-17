@@ -108,8 +108,6 @@ export class ImportAttachmentService {
       }
     >();
 
-    //this.logger.debug(`Found ${drawioPairs.size} Draw.io pairs to process`);
-
     // Process Draw.io pairs and create combined SVG files
     for (const [drawioHref, pair] of drawioPairs) {
       if (!pair.drawioFile) continue;
@@ -209,7 +207,10 @@ export class ImportAttachmentService {
         const dir = path.posix.dirname(relPath);
         const aliasKey = `${dir}/${attachment.fileName}`;
         if (!attachmentCandidates.has(aliasKey)) {
-          attachmentCandidates.set(aliasKey, attachmentCandidates.get(relPath)!);
+          attachmentCandidates.set(
+            aliasKey,
+            attachmentCandidates.get(relPath)!,
+          );
           attachmentNameByRelPath.set(aliasKey, attachment.fileName);
         }
       }
@@ -377,9 +378,7 @@ export class ImportAttachmentService {
 
       const { attachmentId, apiFilePath } = processFile(relPath);
 
-      $aud
-        .attr('src', apiFilePath)
-        .attr('data-attachment-id', attachmentId);
+      $aud.attr('src', apiFilePath).attr('data-attachment-id', attachmentId);
 
       unwrapFromParagraph($, $aud);
     }
@@ -450,7 +449,15 @@ export class ImportAttachmentService {
       const { attachmentId, apiFilePath, abs } = processFile(relPath);
       const ext = path.extname(relPath).toLowerCase();
 
-      const audioExtensions = new Set(['.mp3', '.wav', '.ogg', '.m4a', '.webm', '.flac', '.aac']);
+      const audioExtensions = new Set([
+        '.mp3',
+        '.wav',
+        '.ogg',
+        '.m4a',
+        '.webm',
+        '.flac',
+        '.aac',
+      ]);
 
       if (ext === '.pdf') {
         const $pdf = $('<div>')
@@ -616,7 +623,7 @@ export class ImportAttachmentService {
       try {
         await Promise.all(attachmentTasks.map((task) => limit(task)));
       } catch (err) {
-        this.logger.error('Import attachment upload error', err);
+        this.logger.error({ err }, 'Import attachment upload error');
       }
 
       this.logger.debug(
@@ -815,7 +822,10 @@ export class ImportAttachmentService {
           `Found Draw.io pair: ${drawio.fileName} -> ${matchingPng.fileName}`,
         );
       } else {
-        this.logger.debug(`No PNG found for Draw.io file: ${drawio.fileName}`);
+        this.logger.debug(
+          { fileName: drawio.fileName },
+          'No PNG found for Draw.io file',
+        );
       }
 
       const pair: DrawioPair = {
@@ -879,7 +889,7 @@ export class ImportAttachmentService {
 
       return Buffer.from(svgContent, 'utf-8');
     } catch (error) {
-      this.logger.error(`Failed to create Draw.io SVG: ${error}`);
+      this.logger.error({ err: error }, 'Failed to create Draw.io SVG');
       throw error;
     }
   }

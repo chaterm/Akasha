@@ -12,12 +12,13 @@ export class LogDriver implements MailDriver {
       return;
     }
 
-    const mailLog = {
-      to: message.to,
-      subject: message.subject,
-      text: message.text,
-    };
-
-    this.logger.log(`Logged email: ${JSON.stringify(mailLog)}`);
+    this.logger.log(
+      {
+        to: message.to,
+        subject: message.subject,
+        text: message.text,
+      },
+      'Logged email',
+    );
   }
 }

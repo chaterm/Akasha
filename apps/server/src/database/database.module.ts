@@ -72,11 +72,14 @@ export {
         plugins: [new CamelCasePlugin()],
         log: (event: LogEvent) => {
           if (environmentService.getNodeEnv() !== 'development') return;
-          const logger = new Logger(DatabaseModule.name);
-          if (process.env.DEBUG_DB?.toLowerCase() === 'true') {
-            logger.debug(event.query.sql);
-            logger.debug('query time: ' + event.queryDurationMillis + ' ms');
-          }
+          if (process.env.DEBUG_DB?.toLowerCase() !== 'true') return;
+          new Logger(DatabaseModule.name).debug(
+            {
+              sql: event.query.sql,
+              durationMs: event.queryDurationMillis,
+            },
+            'Database query',
+          );
         },
       }),
     }),

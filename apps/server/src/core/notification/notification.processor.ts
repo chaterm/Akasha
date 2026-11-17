@@ -1,6 +1,7 @@
 import { Logger, OnModuleDestroy } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
-import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
+import { OnWorkerEvent, Processor } from '@nestjs/bullmq';
+import { ContextualWorkerHost } from '../../common/logger/contextual-worker.host';
 import { Job } from 'bullmq';
 import { InjectKysely } from 'nestjs-kysely';
 import { KyselyDB } from '@akasha/db/types/kysely.types';
@@ -25,7 +26,7 @@ import { DomainService } from '../../integrations/environment/domain.service';
 
 @Processor(QueueName.NOTIFICATION_QUEUE)
 export class NotificationProcessor
-  extends WorkerHost
+  extends ContextualWorkerHost
   implements OnModuleDestroy
 {
   private readonly logger = new Logger(NotificationProcessor.name);
@@ -41,7 +42,7 @@ export class NotificationProcessor
     super();
   }
 
-  async process(
+  async handle(
     job: Job<
       | ICommentNotificationJob
       | ICommentResolvedNotificationJob
@@ -153,11 +154,10 @@ export class NotificationProcessor
         }
 
         default:
-          this.logger.warn(`Unknown notification job: ${job.name}`);
+          this.logger.warn({ jobName: job.name }, 'Unknown notification job');
       }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      this.logger.error(`Failed to process ${job.name}: ${message}`);
+    } catch (err) {
+      this.logger.error({ jobName: job.name, err }, 'Notification job failed');
       throw err;
     }
   }

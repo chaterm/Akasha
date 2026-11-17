@@ -80,7 +80,9 @@ export class CommentService {
     });
 
     if (createCommentDto.yjsSelection) {
-      const parsed = yjsSelectionSchema.safeParse(createCommentDto.yjsSelection);
+      const parsed = yjsSelectionSchema.safeParse(
+        createCommentDto.yjsSelection,
+      );
       if (!parsed.success) {
         this.logger.warn(
           `Invalid yjsSelection for comment ${inserted.id}: ${parsed.error.message}`,
@@ -120,7 +122,7 @@ export class CommentService {
         workspaceId,
       })
       .catch((err) =>
-        this.logger.warn(`Failed to queue add-page-watchers: ${err.message}`),
+        this.logger.warn({ err }, 'Failed to queue add-page-watchers'),
       );
 
     const isReply = !!createCommentDto.parentCommentId;
@@ -273,7 +275,8 @@ export class CommentService {
       (id) => id !== actorId && !oldMentionIds.includes(id),
     );
 
-    if (newMentionIds.length === 0 && !notifyWatchers && !parentCommentId) return;
+    if (newMentionIds.length === 0 && !notifyWatchers && !parentCommentId)
+      return;
 
     const jobData: ICommentNotificationJob = {
       commentId,
@@ -286,9 +289,6 @@ export class CommentService {
       notifyWatchers,
     };
 
-    await this.notificationQueue.add(
-      QueueJob.COMMENT_NOTIFICATION,
-      jobData,
-    );
+    await this.notificationQueue.add(QueueJob.COMMENT_NOTIFICATION, jobData);
   }
 }

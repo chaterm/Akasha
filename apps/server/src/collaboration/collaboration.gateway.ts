@@ -10,7 +10,6 @@ import {
   parseRedisUrl,
   RedisConfig,
 } from '../common/helpers';
-import { LoggerExtension } from './extensions/logger.extension';
 import {
   RedisSyncExtension,
   SerializedHTTPRequest,
@@ -25,10 +24,7 @@ import {
   CollaborationHandler,
   CollabEventHandlers,
 } from './collaboration.handler';
-import type {
-  PageEditOp,
-  PageEditOutcome,
-} from './page-edit/page-edit.types';
+import type { PageEditOp, PageEditOutcome } from './page-edit/page-edit.types';
 import { User } from '@akasha/db/types/entity.types';
 
 @Injectable()
@@ -44,7 +40,6 @@ export class CollaborationGateway {
   constructor(
     private authenticationExtension: AuthenticationExtension,
     private persistenceExtension: PersistenceExtension,
-    private loggerExtension: LoggerExtension,
     private environmentService: EnvironmentService,
     private collabEventsService: CollaborationHandler,
   ) {
@@ -55,11 +50,7 @@ export class CollaborationGateway {
       debounce: 10000,
       maxDebounce: 45000,
       unloadImmediately: false,
-      extensions: [
-        this.authenticationExtension,
-        this.persistenceExtension,
-        this.loggerExtension,
-      ],
+      extensions: [this.authenticationExtension, this.persistenceExtension],
     });
 
     if (this.withRedis) {

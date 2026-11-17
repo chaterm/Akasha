@@ -243,8 +243,6 @@ export class ImportService {
 
   async createYdoc(prosemirrorJson: any): Promise<Buffer | null> {
     if (prosemirrorJson) {
-      // this.logger.debug(`Converting prosemirror json state to ydoc`);
-
       const ydoc = TiptapTransformer.toYdoc(
         prosemirrorJson,
         'default',

@@ -149,7 +149,10 @@ export class PdfImportService {
               replacement: `/api/files/${attachmentId}/${fileName}`,
             };
           } catch (err) {
-            this.logger.warn(`Failed to upload PDF image ${i}`, err);
+            this.logger.warn(
+              { imageIndex: i, err },
+              'Failed to upload PDF image',
+            );
             return null;
           }
         }),

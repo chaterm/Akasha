@@ -1,7 +1,9 @@
 import * as yauzl from 'yauzl';
 import * as path from 'path';
 import * as fs from 'node:fs';
-import { Logger, LoggerService } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
+
+const logger = new Logger('FileUtils');
 
 export enum FileTaskType {
   Import = 'import',
@@ -32,29 +34,17 @@ export function getFileTaskFolderPath(
   }
 }
 
-/**
- * Extracts a ZIP archive.
- */
 export async function extractZip(
   source: string,
   target: string,
-  logger: LoggerService = new Logger('FileUtils'),
 ): Promise<void> {
-  return extractZipInternal(source, target, true, logger);
+  return extractZipInternal(source, target, true);
 }
 
-/**
- * Internal helper to extract a ZIP, with optional single-nested-ZIP handling.
- * @param source   Path to the ZIP file
- * @param target   Directory to extract into
- * @param allowNested  Whether to check and unwrap one level of nested ZIP
- * @param logger   Logger used for skipped-entry diagnostics
- */
 function extractZipInternal(
   source: string,
   target: string,
   allowNested: boolean,
-  logger: LoggerService,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     yauzl.open(
@@ -63,7 +53,6 @@ function extractZipInternal(
       (err, zipfile) => {
         if (err) return reject(err);
 
-        // Handle one level of nested ZIP if allowed
         if (allowNested && zipfile.entryCount === 1) {
           zipfile.readEntry();
           zipfile.once('entry', (entry) => {
@@ -72,7 +61,6 @@ function extractZipInternal(
               !/\/$/.test(entry.fileName) &&
               name.toLowerCase().endsWith('.zip');
             if (isZip) {
-              // temporary name to avoid overwriting file
               const nestedPath = source.endsWith('.zip')
                 ? source.slice(0, -4) + '.inner.zip'
                 : source + '.inner.zip';
@@ -84,7 +72,7 @@ function extractZipInternal(
                 ws.on('error', reject);
                 ws.on('finish', () => {
                   zipfile.close();
-                  extractZipInternal(nestedPath, target, false, logger)
+                  extractZipInternal(nestedPath, target, false)
                     .then(() => {
                       fs.unlinkSync(nestedPath);
                       resolve();
@@ -95,17 +83,13 @@ function extractZipInternal(
               });
             } else {
               zipfile.close();
-              extractZipInternal(source, target, false, logger).then(
-                resolve,
-                reject,
-              );
+              extractZipInternal(source, target, false).then(resolve, reject);
             }
           });
           zipfile.once('error', reject);
           return;
         }
 
-        // Normal extraction
         zipfile.readEntry();
         zipfile.on('entry', (entry) => {
           const name = entry.fileName.toString('utf8');
@@ -140,7 +124,6 @@ function extractZipInternal(
             return;
           }
 
-          // Handle directories
           if (/\/$/.test(name)) {
             try {
               fs.mkdirSync(fullPath, { recursive: true });
@@ -164,7 +147,6 @@ function extractZipInternal(
             return;
           }
 
-          // Handle files
           try {
             fs.mkdirSync(path.dirname(fullPath), { recursive: true });
           } catch (mkdirErr: any) {

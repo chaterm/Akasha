@@ -87,7 +87,7 @@ export class McpController {
       this.analyticsEventRepo
         .insertAgentOp(op)
         .catch((error) =>
-          this.logger.warn(`Failed to record agent_op event: ${error}`),
+          this.logger.warn({ err: error }, 'Failed to record agent_op event'),
         );
     }
   }

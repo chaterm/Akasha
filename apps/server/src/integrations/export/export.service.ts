@@ -331,7 +331,11 @@ export class ExportService {
         );
 
         if (includeAttachments) {
-          await this.zipAttachments(updatedJsonContent, folder, allowedAttachments);
+          await this.zipAttachments(
+            updatedJsonContent,
+            folder,
+            allowedAttachments,
+          );
           updatedJsonContent =
             updateAttachmentUrlsToLocalPaths(updatedJsonContent);
         }
@@ -395,7 +399,10 @@ export class ExportService {
           const filePath = `/files/${attachment.id}/${attachment.fileName}`;
           zip.file(filePath, fileBuffer);
         } catch (err) {
-          this.logger.debug(`Attachment export error ${attachment.id}`, err);
+          this.logger.debug(
+            { attachmentId: attachment.id, err },
+            'Attachment export error',
+          );
         }
       }),
     );
@@ -411,7 +418,9 @@ export class ExportService {
     for (const siblings of Object.values(tree)) {
       for (const page of siblings) {
         if (!spaceId) spaceId = page.spaceId;
-        for (const id of getAttachmentIds(getProsemirrorContent(page.content))) {
+        for (const id of getAttachmentIds(
+          getProsemirrorContent(page.content),
+        )) {
           allAttachmentIds.add(id);
         }
       }
@@ -432,9 +441,7 @@ export class ExportService {
     if (!ignorePermissions && userId) {
       const ownerPageIds = [
         ...new Set(
-          attachments
-            .map((a) => a.pageId)
-            .filter((id): id is string => !!id),
+          attachments.map((a) => a.pageId).filter((id): id is string => !!id),
         ),
       ];
       const accessible = ownerPageIds.length

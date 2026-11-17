@@ -181,7 +181,7 @@ export class WorkspaceInvitationService {
           .execute();
       });
     } catch (err) {
-      this.logger.error(`createInvitation - ${err}`);
+      this.logger.error({ err }, 'Failed to create invitation');
       throw new BadRequestException(
         'An error occurred while processing the invitations.',
       );
@@ -303,7 +303,7 @@ export class WorkspaceInvitationService {
           .execute();
       });
     } catch (err: any) {
-      this.logger.error(`acceptInvitation - ${err}`);
+      this.logger.error({ err }, 'Failed to accept invitation');
       if (err.message.includes('unique constraint')) {
         throw new BadRequestException(
           errorBody(

@@ -1,5 +1,6 @@
 import { Logger, OnModuleDestroy } from '@nestjs/common';
-import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
+import { OnWorkerEvent, Processor } from '@nestjs/bullmq';
+import { ContextualWorkerHost } from '../../../common/logger/contextual-worker.host';
 import { Job } from 'bullmq';
 import { QueueJob, QueueName } from 'src/integrations/queue/constants';
 import { FileImportTaskService } from '../services/file-import-task.service';
@@ -10,7 +11,10 @@ import { InjectKysely } from 'nestjs-kysely';
 import { KyselyDB } from '@akasha/db/types/kysely.types';
 
 @Processor(QueueName.FILE_TASK_QUEUE)
-export class FileTaskProcessor extends WorkerHost implements OnModuleDestroy {
+export class FileTaskProcessor
+  extends ContextualWorkerHost
+  implements OnModuleDestroy
+{
   private readonly logger = new Logger(FileTaskProcessor.name);
 
   constructor(
@@ -22,7 +26,7 @@ export class FileTaskProcessor extends WorkerHost implements OnModuleDestroy {
     super();
   }
 
-  async process(job: Job<any, void>): Promise<void> {
+  async handle(job: Job<any, void>): Promise<void> {
     try {
       switch (job.name) {
         case QueueJob.IMPORT_TASK:
@@ -36,7 +40,7 @@ export class FileTaskProcessor extends WorkerHost implements OnModuleDestroy {
           break;
       }
     } catch (err) {
-      this.logger.error('File task failed', err);
+      this.logger.error({ err }, 'File task failed');
       throw err;
     }
   }
@@ -59,18 +63,16 @@ export class FileTaskProcessor extends WorkerHost implements OnModuleDestroy {
     await pdfExportService.cleanupExpiredExports();
   }
 
-  @OnWorkerEvent('active')
-  onActive(job: Job) {
-    this.logger.debug(`Processing ${job.name} job`);
-  }
-
   @OnWorkerEvent('failed')
   async onFailed(job: Job) {
-    const fileTaskId = job.data?.fileTaskId;
     this.logger.error(
-      fileTaskId
-        ? `Error processing ${job.name} job. File Task ID: ${fileTaskId}. Reason: ${job.failedReason}`
-        : `Error processing ${job.name} job. Reason: ${job.failedReason}`,
+      {
+        jobId: job.id,
+        jobName: job.name,
+        fileTaskId: job.data?.fileTaskId,
+        reason: job.failedReason,
+      },
+      'File task job failed',
     );
 
     if (job.name === QueueJob.IMPORT_TASK) {
@@ -82,13 +84,6 @@ export class FileTaskProcessor extends WorkerHost implements OnModuleDestroy {
 
   @OnWorkerEvent('completed')
   async onCompleted(job: Job) {
-    const fileTaskId = job.data?.fileTaskId;
-    this.logger.log(
-      fileTaskId
-        ? `Completed ${job.name} job for File task ID ${fileTaskId}`
-        : `Completed ${job.name} job`,
-    );
-
     if (job.name === QueueJob.IMPORT_TASK) {
       try {
         const fileTask = await this.fileTaskService.getFileTask(
@@ -96,13 +91,14 @@ export class FileTaskProcessor extends WorkerHost implements OnModuleDestroy {
         );
         if (fileTask) {
           await this.storageService.delete(fileTask.filePath);
-          this.logger.debug(`Deleted imported zip file: ${fileTask.filePath}`);
         }
       } catch (err) {
-        this.logger.error(`Failed to delete imported zip file:`, err);
+        this.logger.error(
+          { fileTaskId: job.data?.fileTaskId, err },
+          'Failed to delete imported zip file',
+        );
       }
     }
-    // Export tasks: do NOT delete the file on completion (kept for 24h cache)
   }
 
   private async handleFailedImportJob(job: Job) {

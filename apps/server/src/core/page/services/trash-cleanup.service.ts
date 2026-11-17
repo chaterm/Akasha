@@ -5,6 +5,7 @@ import { KyselyDB } from '@akasha/db/types/kysely.types';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { QueueJob, QueueName } from '../../../integrations/queue/constants';
+import { WithJobContext } from '../../../common/logger/with-job-context.decorator';
 
 const DEFAULT_RETENTION_DAYS = 30;
 
@@ -18,10 +19,9 @@ export class TrashCleanupService {
   ) {}
 
   @Interval('trash-cleanup', 24 * 60 * 60 * 1000) // every 24 hours
+  @WithJobContext('trash-cleanup')
   async cleanupOldTrash() {
     try {
-      this.logger.debug('Starting trash cleanup job');
-
       const workspaces = await this.db
         .selectFrom('workspaces')
         .select(['id', 'trashRetentionDays'])

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { KnowledgeRunRetentionService } from './knowledge-run-retention.service';
+import { WithJobContext } from '../../../common/logger/with-job-context.decorator';
 
 const RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 const MAX_BATCHES_PER_SCHEDULE = 20;
@@ -24,6 +25,7 @@ export class KnowledgeRunRetentionScheduler {
   constructor(private readonly retention: KnowledgeRunRetentionService) {}
 
   @Interval('knowledge-run-retention', RETENTION_INTERVAL_MS)
+  @WithJobContext('knowledge-run-retention')
   async purgeExpiredRunHistory(): Promise<void> {
     if (this.running) return;
 

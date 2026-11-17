@@ -9,10 +9,7 @@ import {
 } from './collaboration.util';
 import { setYjsMark, updateYjsMarkAttribute, YjsSelection } from './yjs.util';
 import { applyPageEdits } from './page-edit/page-edit';
-import type {
-  PageEditOp,
-  PageEditOutcome,
-} from './page-edit/page-edit.types';
+import type { PageEditOp, PageEditOutcome } from './page-edit/page-edit.types';
 import * as Y from 'yjs';
 import { User } from '@akasha/db/types/entity.types';
 
@@ -30,7 +27,6 @@ export class CollaborationHandler {
     return {
       alterState: async (documentName: string, payload: { pageId: string }) => {
         // dummy
-        // this.logger.log('Processing', documentName, payload);
         // await this.withYdocConnection(hocuspocus, documentName, {}, (doc) => {
         //   const fragment = doc.getXmlFragment('default');
         //});
@@ -91,7 +87,7 @@ export class CollaborationHandler {
         },
       ) => {
         const { prosemirrorJson, operation, user } = payload;
-        this.logger.debug('Updating page content via yjs', documentName);
+        this.logger.debug({ documentName }, 'Updating page content via yjs');
         await this.withYdocConnection(
           hocuspocus,
           documentName,

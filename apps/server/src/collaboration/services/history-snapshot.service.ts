@@ -112,7 +112,6 @@ export class HistorySnapshotService {
       );
     }
 
-    this.logger.debug(`Manual history snapshot created for page: ${pageId}`);
     const { content: _content, ...metadata } = newHistory;
     return { ...metadata, created: true };
   }
