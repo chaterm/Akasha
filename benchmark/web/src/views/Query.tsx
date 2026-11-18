@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { CompileRun, Task } from '../types'
@@ -5,7 +6,6 @@ import {
   AnswerModeFilter,
   CleanupButton,
   ConfigPanel,
-  DatasetPicker,
   Failed,
   Field,
   Loading,
@@ -73,24 +73,29 @@ export function Query({
         </div>
       ) : (
         <ConfigPanel storageKey="query" title="查询配置">
-          <Field label="选择编译">
-            <select
-              value={compile?.id ?? ''}
-              onChange={(e) => {
-                onSelectCompile(Number(e.target.value))
-                setOpenQuery(null)
-              }}
-            >
-              {ready.map((run) => (
-                <option key={run.id} value={run.id}>
-                  {run.run_id}（#{run.id}，{run.datasets.join('+')}
-                  {run.readiness.warnings.length ? '，部分可用' : ''}）
-                </option>
-              ))}
-            </select>
-          </Field>
           {compile && (
-            <NewQuery key={compile.id} compile={compile} onStarted={tasks.watch} />
+            <NewQuery
+              key={compile.id}
+              compile={compile}
+              onStarted={tasks.watch}
+              selection={
+                <Field label="选择编译">
+                  <select
+                    value={compile.id}
+                    onChange={(event) => {
+                      onSelectCompile(Number(event.target.value))
+                      setOpenQuery(null)
+                    }}
+                  >
+                    {ready.map((run) => (
+                      <option key={run.id} value={run.id}>
+                        {run.run_id} · #{run.id} · {run.datasets.join('+')}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              }
+            />
           )}
         </ConfigPanel>
       )}
@@ -271,11 +276,12 @@ function useEmbedding(compile: CompileRun, onStarted: (task: Task) => void) {
 function NewQuery({
   compile,
   onStarted,
+  selection,
 }: {
   compile: CompileRun
   onStarted: (task: Task) => void
+  selection: ReactNode
 }) {
-  const [selected, setSelected] = useState<string[]>(compile.datasets)
   const [name, setName] = useState('')
   const [limit, setLimit] = useState<number | ''>('')
   const [concurrency, setConcurrency] = useState(5)
@@ -283,8 +289,7 @@ function NewQuery({
   const start = useAction<unknown>()
   const embedding = useEmbedding(compile, onStarted)
 
-  const available = Object.keys(compile.stats)
-  const selectedAvailable = selected.filter((name) => available.includes(name))
+  const selectedAvailable = compile.datasets
 
   return (
     <div style={{ marginTop: 12 }}>
@@ -294,15 +299,13 @@ function NewQuery({
           {warning}
         </div>
       ))}
-      <DatasetPicker
-        all={available}
-        selected={selectedAvailable}
-        onChange={setSelected}
-      />
-      <div className="row" style={{ marginTop: 10 }}>
+      <div className="row creation-header">
+        {selection}
         <Field label="查询名称" hint="留空自动生成">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="自动" />
         </Field>
+      </div>
+      <div className="row" style={{ marginTop: 10 }}>
         <Field label="每组样本数" hint="留空则跑全部">
           <input
             type="number"

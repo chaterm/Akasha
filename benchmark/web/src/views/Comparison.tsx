@@ -182,6 +182,17 @@ function sumOrNull(left: number | null, right: number | null): number | null {
   return left === null && right === null ? null : (left ?? 0) + (right ?? 0)
 }
 
+function formatTokenCount(value: number | null): string {
+  if (value === null) return '—'
+  if (value >= 1_000_000) return `${trimUnit(value / 1_000_000)}M`
+  if (value >= 1_000) return `${trimUnit(value / 1_000)}K`
+  return String(value)
+}
+
+function trimUnit(value: number): string {
+  return value.toFixed(1).replace(/\.0$/, '')
+}
+
 function embeddingLabel(option: EvalOption): string {
   return option.query.embedding_label ?? option.compile.embedding_label ?? '嵌入模型未知'
 }
@@ -449,14 +460,13 @@ function buildMarkdown(items: LoadedItem[]): string {
     if (!generation) return []
     const tokens = generation.total_tokens
     return [
-      `| ${escapeCell(`${circledNumber(itemIndex + 1)} ${embeddingLabel(item.option)}`)} | ${generation.chunks} | ${generation.dimensions ?? '—'} | ${generation.source} | ${tokens === null ? '—' : tokens} | ${timingCell(generation.duration_ms_mean, generation.duration_ms_sum, '/块', item.option.query.embedding_concurrency ?? '远端默认')} |`,
+      `| ${escapeCell(`${circledNumber(itemIndex + 1)} ${embeddingLabel(item.option)}`)} | ${generation.chunks} | ${generation.dimensions ?? '—'} | ${generation.source} | ${formatTokenCount(tokens)} | ${timingCell(generation.duration_ms_mean, generation.duration_ms_sum, '/块', item.option.query.embedding_concurrency ?? '远端默认')} |`,
     ]
   })
   if (costRows.length > 0) {
     lines.push('', '### 1.2 嵌入成本', '')
     lines.push(...tableHeader(['嵌入模型', '向量数', '维度', '用量来源', 'token 合计', '嵌入耗时']))
     lines.push(...costRows)
-    lines.push('', '用量来源为「编译」时，嵌入耗时是单次调用墙钟相加，不反映并发；「重建」是整批并发的真墙钟。')
   }
 
   lines.push('', '## 二、路由率对比', '')

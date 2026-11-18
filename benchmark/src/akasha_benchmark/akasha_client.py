@@ -237,6 +237,7 @@ class AkashaClient:
         data: Any | None = None,
         raise_for_status: bool = True,
         retry: bool = True,
+        raw: bool = False,
     ) -> Response:
         url = self.config.api(path)
         response, latency_ms = self._request_with_retry(
@@ -251,11 +252,14 @@ class AkashaClient:
                 method, url, json_body, files, data, retry
             )
 
-        try:
-            body: Any = response.json() if response.content else None
-        except ValueError:
-            body = response.text
-        body = unwrap_envelope(body)
+        if raw and response.is_success:
+            body: Any = response.content
+        else:
+            try:
+                body = response.json() if response.content else None
+            except ValueError:
+                body = response.text
+            body = unwrap_envelope(body)
 
         if raise_for_status and not response.is_success:
             raise AkashaError(method, url, response.status_code, response.text)
@@ -345,6 +349,30 @@ class AkashaClient:
 
     def current_user(self) -> dict[str, Any]:
         return self.post("users/me")
+
+    def list_spaces(self) -> list[dict[str, Any]]:
+        spaces: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            payload: dict[str, Any] = {"limit": 5000}
+            if cursor:
+                payload["cursor"] = cursor
+            result = self.post("spaces", payload)
+            spaces.extend(result.get("items") or [])
+            cursor = (result.get("meta") or {}).get("nextCursor")
+            if not cursor:
+                return spaces
+
+    def space_info(self, space_id: str) -> dict[str, Any]:
+        return self.post("spaces/info", {"spaceId": space_id})
+
+    def export_space(self, space_id: str) -> bytes:
+        return self.request(
+            "POST",
+            "spaces/export",
+            json_body={"spaceId": space_id, "format": "markdown"},
+            raw=True,
+        ).body
 
     def create_space(self, name: str, slug: str, description: str = "") -> dict[str, Any]:
         return self.post(

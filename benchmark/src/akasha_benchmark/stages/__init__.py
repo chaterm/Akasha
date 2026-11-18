@@ -107,6 +107,7 @@ STAGES: dict[str, StageDefinition] = {
             "name": str,
             "use_model": bool,
             "provider_id": int,
+            "concurrency": int,
         },
     ),
 }

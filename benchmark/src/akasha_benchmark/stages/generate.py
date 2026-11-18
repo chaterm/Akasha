@@ -6,7 +6,7 @@ from typing import Any
 
 from ..datasets import LocalAdapter, dataset_dir, is_local_name, load_corpus
 from ..io_utils import load_json, write_json
-from ..judge.client import complete_many, parse_json_object
+from ..judge.client import openai_complete_many, parse_json_object
 from ..judge.providers import resolve_provider
 from ..task import TaskContext
 
@@ -14,6 +14,9 @@ DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 16
 MAX_DOC_CHARS = 12000
 MAX_TOKENS = 8192
+
+# Kept as a module-level seam for callers and tests that replace the generator.
+complete_many = openai_complete_many
 
 SYSTEM = (
     "You write evaluation questions for a retrieval-augmented QA benchmark. "
@@ -29,8 +32,9 @@ ADAPTIVE = (
 USER = """Read the document below. {task}
 
 Rules:
+- If the document already contains question-answer pairs (FAQ, "Q:"/"A:", 问/答, or any similar layout), reuse them as-is: copy the question and answer verbatim instead of writing new ones. Only write new pairs when the document has none, or when more are needed to reach the requested count.
 - Each question must be answerable from this document alone and must not mention "the document" or "the text".
-- Answers are short and factual.
+- Answers are short and factual; a reused answer keeps its original wording even when longer.
 - Every pair cites evidence: one or more quotes copied verbatim from the document that support the answer.
 - Write questions and answers in the same language as the document.
 
@@ -119,7 +123,13 @@ def run(ctx: TaskContext) -> None:
         ctx.progress(len(docs) - len(todo) + offset, len(docs), f"生成 {offset}/{len(todo)}")
         chunk = todo[offset : offset + batch]
         prompts = [prompt(d, per_doc) for d in chunk]
-        replies = complete_many(provider, prompts, concurrency, max_tokens=MAX_TOKENS)
+        replies = complete_many(
+            provider,
+            prompts,
+            concurrency,
+            max_tokens=MAX_TOKENS,
+            register_canceller=ctx.register_canceller,
+        )
         for doc, reply in zip(chunk, replies):
             try:
                 if reply.content is None:

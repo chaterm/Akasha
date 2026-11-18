@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from .. import naming
 from ..datasets import get_adapter
 from ..metrics import registry
 from ..store import (
@@ -106,7 +105,6 @@ def build(params: dict[str, Any], connection) -> list[dict[str, Any]]:
         )
     negatives_ratio = (5 - gold_count) / gold_count if gold_count else 0.0
 
-    run_id = naming.smoke_name(connection, dataset)
     available_metrics = registry.available(get_adapter(dataset).provides)
     with_judge = bool(params.get("with_judge", False))
     metrics = [
@@ -125,7 +123,6 @@ def build(params: dict[str, Any], connection) -> list[dict[str, Any]]:
         {
             "stage": "compile",
             "params": {
-                "run_id": run_id,
                 "datasets": [dataset],
                 "qa_limit": 1,
                 "sample_ids": [sample_id],

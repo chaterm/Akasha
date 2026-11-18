@@ -15,6 +15,7 @@ from .registry import (
     get_adapter,
     is_local_name,
     local_names,
+    source_space,
 )
 from .resolver import resolve
 
@@ -34,4 +35,5 @@ __all__ = [
     "load_corpus",
     "local_names",
     "resolve",
+    "source_space",
 ]

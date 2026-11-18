@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type {
@@ -93,23 +94,27 @@ export function Evaluate({
         <div className="note warn">还没有已完成的查询记录。</div>
       ) : (
         <ConfigPanel storageKey="evaluate" title="评测配置">
-          <Field label="选择查询">
-            <select
-              value={query?.id ?? ''}
-              onChange={(e) => {
-                onSelectQuery(Number(e.target.value))
-                onSelectEval(null)
-              }}
-            >
-              {done.map((run) => (
-                <option key={run.id} value={run.id}>
-                  {run.name}（#{run.id}）
-                </option>
-              ))}
-            </select>
-          </Field>
           {query && (
-            <NewEval query={query} onOpenSettings={onOpenSettings} onStarted={tasks.watch} />
+            <NewEval
+              query={query}
+              onOpenSettings={onOpenSettings}
+              onStarted={tasks.watch}
+              selection={
+                <Field label="选择查询">
+                  <select
+                    value={query.id}
+                    onChange={(e) => {
+                      onSelectQuery(Number(e.target.value))
+                      onSelectEval(null)
+                    }}
+                  >
+                    {done.map((run) => (
+                      <option key={run.id} value={run.id}>{run.name}（#{run.id}）</option>
+                    ))}
+                  </select>
+                </Field>
+              }
+            />
           )}
         </ConfigPanel>
       )}
@@ -195,10 +200,12 @@ function NewEval({
   query,
   onStarted,
   onOpenSettings,
+  selection,
 }: {
   query: QueryRun
   onStarted: (task: Task) => void
   onOpenSettings: () => void
+  selection: ReactNode
 }) {
   const datasets = Object.keys(query.stats)
   const metrics = useAsync<MetricsView>(() => api.metrics(datasets), [datasets.join(',')])
@@ -293,10 +300,13 @@ function NewEval({
         )
       })}
 
-      <div className="row" style={{ marginTop: 10 }}>
+      <div className="row creation-header">
+        {selection}
         <Field label="评测名称" hint="留空自动生成">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="自动" />
         </Field>
+      </div>
+      <div className="row" style={{ marginTop: 10 }}>
         {judgeSelected && (
           <>
             <ProviderSelect label="评估模型 Judge" provider={judge} />
@@ -367,9 +377,9 @@ function Results({ evalId }: { evalId: number }) {
   const availableFamilies = FAMILIES.filter(({ key }) =>
     metricNames.some((name) => metricFamily(name, definitions) === key),
   )
-  const family = availableFamilies.some(({ key }) => key === chosenFamily)
+  const family = chosenFamily !== null && availableFamilies.some(({ key }) => key === chosenFamily)
     ? chosenFamily
-    : availableFamilies[0]?.key ?? null
+    : null
   const shown = dataset ? data.datasets.filter((d) => d.dataset === dataset) : data.datasets
 
   return (
@@ -387,6 +397,12 @@ function Results({ evalId }: { evalId: number }) {
 
       {availableFamilies.length > 0 && (
         <div className="metric-family-filter">
+          <button
+            className={`action small${family === null ? ' primary' : ''}`}
+            onClick={() => setFamily(null)}
+          >
+            全部 <span className="muted">{metricNames.length}</span>
+          </button>
           <span className="small muted">指标组</span>
           {availableFamilies.map(({ key, label, hint }) => (
             <button

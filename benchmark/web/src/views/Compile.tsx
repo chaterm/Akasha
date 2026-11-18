@@ -4,7 +4,6 @@ import type { CompileDoc, CompileRun, DatasetEntry, QueryPreview, Task } from '.
 import {
   CleanupButton,
   ConfigPanel,
-  DatasetPicker,
   Failed,
   Field,
   Loading,
@@ -27,6 +26,24 @@ function todaySeed(): number {
   const month = `${now.getMonth() + 1}`.padStart(2, '0')
   const day = `${now.getDate()}`.padStart(2, '0')
   return Number(`${now.getFullYear()}${month}${day}`)
+}
+
+function scheduleAtToIso(value: string): string | null {
+  const match = value.trim().match(/^(\d{4})\/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2})$/)
+  if (!match) return null
+  const [, year, month, day, hour, minute] = match
+  const date = new Date(`${year}-${month}-${day}T${hour}:${minute}`)
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getFullYear() !== Number(year) ||
+    date.getMonth() + 1 !== Number(month) ||
+    date.getDate() !== Number(day) ||
+    date.getHours() !== Number(hour) ||
+    date.getMinutes() !== Number(minute)
+  ) {
+    return null
+  }
+  return `${year}-${month}-${day}T${hour}:${minute}`
 }
 
 export function Compile({
@@ -70,7 +87,7 @@ export function Compile({
         <table className="records-table">
           <thead>
             <tr>
-              <th>run_id</th>
+              <th>名称</th>
               <th>数据集</th>
               <th>编译模型</th>
               <th>状态</th>
@@ -165,12 +182,16 @@ function NewCompile({
   const [ratio, setRatio] = useState(1)
   const [importConcurrency, setImportConcurrency] = useState(10)
   const [scheduleAt, setScheduleAt] = useState('')
+  const scheduleAtIso = scheduleAt ? scheduleAtToIso(scheduleAt) : ''
   const start = useAction<unknown>()
   const selectedQaMax = Math.max(
     0,
     ...selected.map((name) => datasets.find((dataset) => dataset.name === name)?.qa_rows ?? 0),
   )
   const effectiveQaLimit = fullQa ? selectedQaMax : qaLimit
+  const sources = selected.flatMap(
+    (name) => datasets.find((dataset) => dataset.name === name)?.source_space ?? [],
+  )
   return (
     <ConfigPanel storageKey="compile" title="新建编译">
       {datasets.length === 0 && (
@@ -178,20 +199,38 @@ function NewCompile({
       )}
       {start.error && <Failed error={start.error} />}
 
-      <DatasetPicker
-        all={datasets.map((dataset) => dataset.name)}
-        selected={selected}
-        onChange={setSelected}
-      />
+      <div className="row creation-header">
+        <Field label="选择数据集">
+          <select
+            value={selected[0] ?? ''}
+            onChange={(e) => setSelected(e.target.value ? [e.target.value] : [])}
+          >
+            <option value="">请选择数据集</option>
+            {datasets.map((dataset) => (
+              <option key={dataset.name} value={dataset.name}>
+                {dataset.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label="编译名称" hint="留空自动生成；填已有名称续跑">
+          <input value={runId} onChange={(e) => setRunId(e.target.value)} placeholder="自动" />
+        </Field>
+      </div>
 
       <div className="note small" style={{ marginTop: 10 }}>
         编译使用 Akasha 当前远端生效的 compiler、embedding 和 image 配置。
       </div>
+      {sources.length > 0 && (
+        <div className={`note small${selected.length > 1 ? ' warn' : ''}`} style={{ marginTop: 10 }}>
+          {selected.length > 1
+            ? '从 Akasha 空间导入的数据集复用原空间，只能单独编译。'
+            : `复用来源空间 ${sources[0]}，不新建空间、不上传语料，语料范围固定为全量。`}
+        </div>
+      )}
 
       <div className="row" style={{ marginTop: 10 }}>
-        <Field label="run_id" hint="留空自动生成；填已有续跑">
-          <input value={runId} onChange={(e) => setRunId(e.target.value)} placeholder="自动" />
-        </Field>
         <Field label="QA 范围">
           <select
             value={fullQa ? 'all' : 'sampled'}
@@ -245,22 +284,29 @@ function NewCompile({
         </Field>
         <Field label="定时启动" hint="留空则立即开始">
           <input
-            type="datetime-local"
+            type="text"
             value={scheduleAt}
             onChange={(e) => setScheduleAt(e.target.value)}
+            placeholder="yyyy/mm/dd --:--"
+            inputMode="numeric"
           />
         </Field>
       </div>
+      {scheduleAt && !scheduleAtIso && (
+        <div className="note bad">请输入 yyyy/mm/dd HH:MM，例如 2026/11/18 09:30。</div>
+      )}
 
       <div className="panel-actions">
         <button
           className="action primary"
           disabled={
             start.busy ||
+            datasets.length === 0 ||
             selected.length === 0 ||
             effectiveQaLimit < 1 ||
             importConcurrency < 1 ||
-            importConcurrency > 16
+            importConcurrency > 16 ||
+            Boolean(scheduleAt) && !scheduleAtIso
           }
           onClick={() =>
             start.run(async () => {
@@ -272,7 +318,7 @@ function NewCompile({
                 import_concurrency: importConcurrency,
                 ...(fullCorpus ? {} : { negatives_ratio: ratio }),
                 ...(runId.trim() ? { run_id: runId.trim() } : {}),
-                ...(scheduleAt ? { schedule_at: scheduleAt } : {}),
+                ...(scheduleAtIso ? { schedule_at: scheduleAtIso } : {}),
               })
               onStarted(task)
               return task

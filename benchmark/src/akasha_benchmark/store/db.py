@@ -13,6 +13,12 @@ DEFAULT_DB_PATH = REPO_ROOT / "akasha_bench.db"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
 
+def database_bytes(connection: sqlite3.Connection) -> int:
+    page_size = int(connection.execute("PRAGMA page_size").fetchone()[0])
+    page_count = int(connection.execute("PRAGMA page_count").fetchone()[0])
+    return page_size * page_count
+
+
 def utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 

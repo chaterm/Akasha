@@ -1,41 +1,19 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Collection, Iterator
-from contextlib import contextmanager
+from collections.abc import Collection
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, Body, HTTPException, Request
 
-from akasha_benchmark.akasha_client import AkashaClient, AkashaError
-from akasha_benchmark.config import AkashaConfig
-from akasha_benchmark.judge import JudgeClient, JudgeConfigError, JudgeProvider
+from akasha_benchmark.judge import JudgeClient, JudgeProvider
 from akasha_benchmark.model_configs import FEATURES, drift
 from akasha_benchmark.store import compile_store, config_store, loads, task_store
 
-from ._common import config_of, db, writable
+from ._common import akasha_session, config_of, db, require_credentials, writable
 
 router = APIRouter(prefix="/api")
-
-
-def _require_credentials(config: AkashaConfig) -> None:
-    try:
-        config.require_credentials()
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-
-
-@contextmanager
-def _akasha(config: AkashaConfig, rejected: str = "") -> Iterator[AkashaClient]:
-    try:
-        with AkashaClient(config) as client:
-            client.login()
-            yield client
-    except AkashaError as exc:
-        raise HTTPException(502, f"{rejected}{exc}") from exc
-    except (httpx.RequestError, OSError) as exc:
-        raise HTTPException(502, f"连不上 {config.base_url}：{exc}") from exc
 
 
 MODEL_FEATURE_STAGES = {
@@ -101,8 +79,8 @@ def put_connection(request: Request, payload: dict[str, Any] = Body(...)) -> dic
 @router.post("/connection/test")
 def test_connection(request: Request) -> dict[str, Any]:
     config = config_of(request)
-    _require_credentials(config)
-    with _akasha(config, "Akasha 拒绝了请求：") as client:
+    require_credentials(config)
+    with akasha_session(config, "Akasha 拒绝了请求：") as client:
         me = client.current_user()
         model_configs = client.get_model_configs()
 
@@ -140,8 +118,8 @@ def test_connection(request: Request) -> dict[str, Any]:
 @router.get("/model-configs")
 def get_model_configs(request: Request) -> dict[str, Any]:
     config = config_of(request)
-    _require_credentials(config)
-    with _akasha(config) as client:
+    require_credentials(config)
+    with akasha_session(config) as client:
         live = client.get_model_configs()
 
     with db(request) as connection:
@@ -165,11 +143,11 @@ def put_model_config(
         raise HTTPException(422, f"未知配置项 {feature!r}；可用：{list(FEATURES)}")
     payload = {"provider": "openai-compatible", **payload}
     config = config_of(request)
-    _require_credentials(config)
+    require_credentials(config)
     with writable(request) as connection:
         connection.execute("BEGIN IMMEDIATE")
         _reject_model_change_while_running(connection, feature)
-        with _akasha(config) as client:
+        with akasha_session(config) as client:
             result = client.put_model_config(feature, payload)
 
     impact = {
@@ -231,7 +209,7 @@ def _save_model(
             raise HTTPException(409, f"{purpose} 下已经有一个叫 {label!r} 的端点")
 
         existing = (by_id.get(model_id) if model_id is not None else clash) or {}
-        api_key = str(payload.get("api_key") or "") or str(existing.get("api_key") or "")
+        api_key = "" if payload.get("clear_api_key") is True else (str(payload.get("api_key") or "") or str(existing.get("api_key") or ""))
         if parameters is None:
             parameters = loads(existing.get("parameters_json"), {})
         model_id = config_store.upsert_model_provider(
@@ -276,11 +254,6 @@ def _probe(request: Request, record: dict[str, Any]) -> dict[str, Any]:
             "provider": provider.redacted(),
         }
 
-    try:
-        key = provider.resolve_key()
-    except JudgeConfigError as exc:
-        return result(False, "config", None, "", str(exc))
-
     if record["purpose"] != "embedding":
         with JudgeClient(provider) as client:
             reply = client.complete(
@@ -292,6 +265,9 @@ def _probe(request: Request, record: dict[str, Any]) -> dict[str, Any]:
         return result(not failed, reply.failure_kind, reply.status, (reply.content or "")[:400], detail)
 
     try:
+        key = provider.resolve_key()
+        if not key:
+            return result(False, "config", None, "", "embedding 模型端点需要 api key。")
         with httpx.Client(timeout=httpx.Timeout(provider.timeout_seconds)) as client:
             response = client.post(
                 f"{provider.base_url.rstrip('/')}/embeddings",
@@ -474,7 +450,7 @@ def probe_akasha_model(request: Request, model_id: int) -> dict[str, Any]:
 @router.post("/akasha-models/{model_id}/apply")
 def apply_akasha_model(request: Request, model_id: int) -> dict[str, Any]:
     config = config_of(request)
-    _require_credentials(config)
+    require_credentials(config)
     with writable(request) as connection:
         connection.execute("BEGIN IMMEDIATE")
         record = config_store.get_model_provider(connection, model_id)
@@ -484,7 +460,7 @@ def apply_akasha_model(request: Request, model_id: int) -> dict[str, Any]:
         if feature not in FEATURES:
             raise HTTPException(422, f"模型配置 #{model_id} 不能应用到 Akasha")
         _reject_model_change_while_running(connection, feature)
-        with _akasha(config) as client:
+        with akasha_session(config) as client:
             client.put_model_config(
                 feature,
                 {

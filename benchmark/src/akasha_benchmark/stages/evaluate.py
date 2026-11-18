@@ -15,9 +15,12 @@ from ..judge import (
     faithfulness,
 )
 from ..judge.client import (
+    JudgeConfigError,
     JudgeProvider,
     complete_many,
+    openai_complete_many,
     parse_json_object,
+    systemone_many,
 )
 from ..judge.providers import resolve_provider
 from ..metrics import attribution, multihop, qa, registry, retrieval
@@ -36,6 +39,12 @@ DEFAULT_KS = retrieval.DEFAULT_KS
 
 MAX_JUDGE_FAILURE_RATE = 0.1
 MAX_JUDGE_CONCURRENCY = 16
+
+# Module-level seams are retained for task runners and tests. Judge metrics use
+# systemone, while answer-relevancy question generation uses the generation
+# model's OpenAI-compatible text path.
+complete_many = systemone_many
+generation_complete_many = openai_complete_many
 
 
 def _mean(values: list[float]) -> float:
@@ -272,6 +281,121 @@ def _answer_relevancy_task(
     return built, parse
 
 
+def _systemone_state(
+    question: str, answer: str, reference: str, response: dict[str, Any]
+) -> dict[str, Any]:
+    snippets = [
+        {
+            "title": str(item.get("title") or ""),
+            "text": str(item.get("text") or "")[:1200],
+        }
+        for item in (response.get("snippets") or [])[:20]
+        if isinstance(item, dict) and item.get("text")
+    ]
+    return {
+        "question": question,
+        "answer": answer,
+        "reference_answer": reference,
+        "context": snippets,
+    }
+
+
+def _systemone_questions(metrics: list[str]) -> dict[str, dict[str, Any]]:
+    instructions = {
+        "faithfulness": "答案中的事实陈述有多少能由给定 context 直接支持？只按 context 判断，不使用外部知识。",
+        "context_relevancy": "给定 context 中有多少内容对回答 question 有直接帮助？",
+        "answer_correctness": "answer 与 reference_answer 在事实上是否一致？拒答或没有事实内容应给低分。",
+    }
+    return {
+        metric: {
+            "type": "noul",
+            "instructions": instructions[metric],
+        }
+        for metric in metrics
+    }
+
+
+def _systemone_scores(
+    content: str, metrics: list[str]
+) -> dict[str, tuple[float, dict[str, Any]]]:
+    payload = parse_json_object(content)
+    answers = payload.get("answers")
+    if not isinstance(answers, dict):
+        raise ValueError("systemone response missing answers object")
+    scored: dict[str, tuple[float, dict[str, Any]]] = {}
+    for metric in metrics:
+        answer = answers.get(metric)
+        if not isinstance(answer, dict) or answer.get("type") != "noul":
+            raise ValueError(f"systemone answer for {metric} is not noul")
+        value = answer.get("noul")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+            raise ValueError(f"systemone returned invalid noul score for {metric}")
+        scored[metric] = (
+            float(value),
+            {"systemone_answer": answer, "systemone_model": payload.get("model")},
+        )
+    return scored
+
+
+def _record_systemone_reply(
+    ctx: TaskContext,
+    eval_id: int,
+    row: dict[str, Any],
+    metrics: list[str],
+    reply: Any,
+) -> None:
+    raw = {"raw_response": reply.content, "raw_http_response": (reply.raw or "")[:2000]}
+    if reply.failure_kind:
+        for metric in metrics:
+            eval_store.record_judge_verdict(
+                ctx.db,
+                eval_id,
+                sample_id=row["sample_id"],
+                metric=metric,
+                score=None,
+                failure_kind=reply.failure_kind,
+                latency_ms=reply.latency_ms,
+                detail=raw,
+            )
+        return
+    try:
+        scores = _systemone_scores(reply.content or "", metrics)
+    except ValueError as exc:
+        for metric in metrics:
+            eval_store.record_judge_verdict(
+                ctx.db,
+                eval_id,
+                sample_id=row["sample_id"],
+                metric=metric,
+                score=None,
+                failure_kind="parse_error",
+                detail={"error": str(exc)[:300], **raw},
+            )
+        return
+    for metric, (score, detail) in scores.items():
+        eval_store.record_judge_verdict(
+            ctx.db,
+            eval_id,
+            sample_id=row["sample_id"],
+            metric=metric,
+            score=score,
+            failure_kind=None,
+            latency_ms=reply.latency_ms,
+            detail={**detail, **raw},
+        )
+        eval_store.record_sample_eval(
+            ctx.db,
+            eval_id,
+            sample_id=row["sample_id"],
+            dataset=row["dataset"],
+            answer_mode=row["answer_mode"],
+            http_status=row["http_status"],
+            answer=row["answer"] or "",
+            detail=row["detail"],
+            metrics={metric: score},
+        )
+
+
 def _record_reply(
     ctx: TaskContext, eval_id: int, metric: str, row: dict[str, Any], parse: Any, reply: Any
 ) -> None:
@@ -344,6 +468,18 @@ def _judge(
     rows = eval_store.sample_evals(ctx.db, eval_id)
     query_run = query_store.get_query_run(ctx.db, query_id) or {}
     query_model_snapshot = loads(query_run.get("model_configs_json"))
+    generation_provider: JudgeProvider | None = None
+    if "answer_relevancy" in metrics:
+        try:
+            generation_provider = resolve_provider(ctx.db, None, "generation")
+        except JudgeConfigError as exc:
+            ctx.log(f"answer_relevancy 无法使用样本生成模型：{exc}", "warn")
+
+    bundled_metrics = [
+        metric
+        for metric in metrics
+        if metric in {"faithfulness", "context_relevancy", "answer_correctness"}
+    ]
     for position, row in enumerate(rows, 1):
         ctx.checkpoint()
         response = query_store.response_of(ctx.db, query_id, row["sample_id"]) or {}
@@ -351,22 +487,12 @@ def _judge(
         question = response.get("question") or ""
         answer = row["answer"] or ""
         references = (row["detail"] or {}).get("reference_answers") or []
-        pending: list[tuple[str, Any, tuple[str, str]]] = []
-        for metric in metrics:
+        reference = str(references[0]) if references else ""
+        applicable: list[str] = []
+        for metric in bundled_metrics:
             if row["sample_id"] in already_by_metric[metric]:
                 continue
-            if metric == "answer_relevancy":
-                task = _answer_relevancy_task(
-                    ctx.db, question, answer, query_model_snapshot
-                )
-            else:
-                task = _judge_task(
-                    metric,
-                    question,
-                    answer,
-                    references[0] if references else "",
-                    body,
-                )
+            task = _judge_task(metric, question, answer, reference, body)
             if task is None:
                 eval_store.record_judge_verdict(
                     ctx.db,
@@ -378,16 +504,51 @@ def _judge(
                     detail={"skipped": "not applicable to this sample"},
                 )
             else:
-                prompt, parse = task
-                pending.append((metric, parse, prompt))
+                applicable.append(metric)
 
-        replies = (
-            complete_many(provider, [prompt for _, _, prompt in pending], concurrency)
-            if pending
-            else []
-        )
-        for (metric, parse, _), reply in zip(pending, replies, strict=True):
-            _record_reply(ctx, eval_id, metric, row, parse, reply)
+        if applicable:
+            request = (
+                _systemone_state(question, answer, reference, body),
+                _systemone_questions(applicable),
+            )
+            try:
+                replies = complete_many(
+                    provider,
+                    [request],
+                    concurrency,
+                    register_canceller=ctx.register_canceller,
+                )
+            except TypeError as exc:
+                if "register_canceller" not in str(exc):
+                    raise
+                replies = complete_many(provider, [request], concurrency)
+            reply = replies[0]
+            _record_systemone_reply(ctx, eval_id, row, applicable, reply)
+
+        if (
+            "answer_relevancy" in metrics
+            and row["sample_id"] not in already_by_metric["answer_relevancy"]
+        ):
+            task = _answer_relevancy_task(ctx.db, question, answer, query_model_snapshot)
+            if task is None or generation_provider is None:
+                eval_store.record_judge_verdict(
+                    ctx.db,
+                    eval_id,
+                    sample_id=row["sample_id"],
+                    metric="answer_relevancy",
+                    score=None,
+                    failure_kind=None,
+                    detail={"skipped": "sample generation model unavailable"},
+                )
+            else:
+                prompt, parse = task
+                generation_reply = generation_complete_many(
+                    generation_provider,
+                    [prompt],
+                    1,
+                    register_canceller=ctx.register_canceller,
+                )[0]
+                _record_reply(ctx, eval_id, "answer_relevancy", row, parse, generation_reply)
 
         ctx.db.commit()
         ctx.progress(position, len(rows), "Judge")

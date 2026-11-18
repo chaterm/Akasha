@@ -25,7 +25,9 @@ def _query_one(
     client: AkashaClient,
     sample: dict[str, Any],
     space_id: str,
+    register_canceller: Any = None,
 ) -> dict[str, Any]:
+    unregister = register_canceller(client.close) if register_canceller else lambda: None
     try:
         response = client.query(sample["question"], [space_id])
         status, body, latency = response.status, response.body, response.latency_ms
@@ -33,15 +35,17 @@ def _query_one(
     except (AkashaError, httpx.RequestError, OSError) as exc:
         status, body, latency, error = 0, None, None, f"{type(exc).__name__}: {exc}"
 
-    return {
-        "sample_id": sample["sample_id"],
-        "dataset": sample["dataset"],
-        "question": sample["question"],
-        "http_status": status,
-        "latency_ms": latency,
-        "error": error,
-        "response": body,
-    }
+        return {
+            "sample_id": sample["sample_id"],
+            "dataset": sample["dataset"],
+            "question": sample["question"],
+            "http_status": status,
+            "latency_ms": latency,
+            "error": error,
+            "response": body,
+        }
+    finally:
+        unregister()
 
 
 def _collect_timings(ctx: TaskContext, query_id: int, since: str | None) -> None:
@@ -294,7 +298,9 @@ def _issue(
     if concurrency <= 1:
         for sample in todo:
             ctx.checkpoint()
-            emit(_query_one(client, sample, space_id))
+            result = _query_one(client, sample, space_id, ctx.register_canceller)
+            ctx.checkpoint()
+            emit(result)
         return
 
     with client_pool(client, concurrency, AkashaClient) as call:
@@ -305,13 +311,23 @@ def _issue(
             def fill_window() -> None:
                 nonlocal cursor
                 while cursor < len(todo) and len(pending) < concurrency:
-                    pending.add(executor.submit(call, _query_one, todo[cursor], space_id))
+                    pending.add(
+                        executor.submit(
+                            call,
+                            _query_one,
+                            todo[cursor],
+                            space_id,
+                            ctx.register_canceller,
+                        )
+                    )
                     cursor += 1
 
             fill_window()
             while pending:
                 completed, pending = wait(pending, return_when=FIRST_COMPLETED)
                 for future in completed:
-                    emit(future.result())
+                    result = future.result()
+                    ctx.checkpoint()
+                    emit(result)
                 ctx.checkpoint()
                 fill_window()
