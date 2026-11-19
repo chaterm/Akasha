@@ -68,10 +68,7 @@ export class WeeklyReportService {
   }
 
   private personal(ctx: McpToolContext) {
-    if (
-      getApiKeyAccess(ctx.user)?.keyType !== ApiKeyType.PERSONAL ||
-      ctx.agentAccess
-    ) {
+    if (getApiKeyAccess(ctx.user)?.keyType !== ApiKeyType.PERSONAL) {
       this.error(
         'IDENTITY_UNSUPPORTED',
         'Weekly reports require a personal API key; SSO and Agent keys are not supported',

@@ -425,13 +425,6 @@ describe('WeeklyReportService identity and preparation', () => {
       expect(f.db.transaction).not.toHaveBeenCalled();
     },
   );
-  it('also rejects an Agent delegation context even if a personal-key marker is present', async () => {
-    const f = fixture();
-    f.ctx.agentAccess = {} as McpToolContext['agentAccess'];
-    await expect(prepared(f)).rejects.toEqual(
-      errorCode('IDENTITY_UNSUPPORTED'),
-    );
-  });
   it('queries the real personal space with a null access-context cache and selects the semantic builtin', async () => {
     const f = fixture();
     const result = await prepared(f);

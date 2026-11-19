@@ -15,9 +15,6 @@ function subject(overrides: Record<string, any> = {}) {
   const pageAccessService = {
     validateCanEdit: jest.fn().mockResolvedValue({ hasRestriction: false }),
   };
-  const agentAccessService = {
-    assertPageWritable: jest.fn().mockResolvedValue({ hasRestriction: false }),
-  };
   const attachmentService = { uploadFile: jest.fn() };
   Object.assign(service, {
     pageRepo: {
@@ -30,7 +27,6 @@ function subject(overrides: Record<string, any> = {}) {
         }),
     },
     pageAccessService,
-    agentAccessService,
     attachmentService,
     domainService: {
       getUrl: jest.fn().mockReturnValue('https://acme.akasha.test'),
@@ -40,7 +36,7 @@ function subject(overrides: Record<string, any> = {}) {
     },
     ...overrides,
   });
-  return { service, pageAccessService, agentAccessService, attachmentService };
+  return { service, pageAccessService, attachmentService };
 }
 
 const ctx = { user, workspace } as any;
@@ -125,18 +121,14 @@ describe('upload_attachment instructions', () => {
     expect(pageAccessService.validateCanEdit).not.toHaveBeenCalled();
   });
 
-  it('uses the agent space-binding check for agent API keys', async () => {
-    const { service, pageAccessService, agentAccessService } = subject();
-    const agentAccess = { apiKeyId: 'key-1' };
+  it('checks the caller edit permission for every identity', async () => {
+    const { service, pageAccessService } = subject();
 
-    await service.runTool(() =>
-      service.uploadAttachment({ ...ctx, agentAccess }, { pageId }),
-    );
+    await service.runTool(() => service.uploadAttachment(ctx, { pageId }));
 
-    expect(agentAccessService.assertPageWritable).toHaveBeenCalledWith(
-      agentAccess,
+    expect(pageAccessService.validateCanEdit).toHaveBeenCalledWith(
       expect.objectContaining({ id: pageId }),
+      user,
     );
-    expect(pageAccessService.validateCanEdit).not.toHaveBeenCalled();
   });
 });

@@ -146,30 +146,15 @@ describe('buildMcpAgentOps', () => {
         channel: 'mcp',
         apiKeyId: 'key-p',
         keyType: 'personal',
-        delegatedUserId: null,
         outcome: 'called',
       },
     ]);
   });
 
-  it('records agent-key calls under the agent account', () => {
-    const agent = {
-      user: { id: 'agent-1' },
-      workspace: { id: 'ws-1' },
-      agentAccess: {
-        apiKeyId: 'key-a',
-        agentUser: { id: 'agent-1' },
-        delegatedUser: { id: 'human-1' },
-      },
-    };
-    expect(buildMcpAgentOps(agent, [call, call], null)).toEqual([
-      expect.objectContaining({
-        agentUserId: 'agent-1',
-        apiKeyId: 'key-a',
-        keyType: 'agent',
-        delegatedUserId: 'human-1',
-      }),
-      expect.objectContaining({ keyType: 'agent' }),
+  it('records every tool call in a batch', () => {
+    expect(buildMcpAgentOps(human, [call, call], 'key-p')).toEqual([
+      expect.objectContaining({ keyType: 'personal' }),
+      expect.objectContaining({ keyType: 'personal' }),
     ]);
   });
 
