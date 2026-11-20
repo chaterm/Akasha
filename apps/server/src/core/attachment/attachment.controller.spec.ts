@@ -61,7 +61,7 @@ function request() {
 const reply = () => ({ send: jest.fn((value) => value) }) as any;
 
 describe('AttachmentController.uploadFile', () => {
-  it('validates page edit permission for a regular credential', async () => {
+  it('validates page edit permission without an agent key', async () => {
     const { controller, pageAccessService, agentAccessService } = subject();
 
     await controller.uploadFile(request(), reply(), user, workspace);
@@ -73,9 +73,9 @@ describe('AttachmentController.uploadFile', () => {
     expect(agentAccessService.assertPageWritable).not.toHaveBeenCalled();
   });
 
-  it('applies the agent space-binding check for an agent API key', async () => {
+  it('narrows the write to the key scope when one is attached', async () => {
     const { controller, pageAccessService, agentAccessService } = subject();
-    const agentAccess = { apiKeyId: 'key-1' } as any;
+    const agentAccess = { apiKeyId: 'key-1', spaceIds: ['sp-1'] } as any;
 
     await controller.uploadFile(
       request(),
@@ -88,6 +88,7 @@ describe('AttachmentController.uploadFile', () => {
     expect(agentAccessService.assertPageWritable).toHaveBeenCalledWith(
       agentAccess,
       expect.objectContaining({ id: pageId }),
+      user,
     );
     expect(pageAccessService.validateCanEdit).not.toHaveBeenCalled();
   });

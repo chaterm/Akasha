@@ -58,7 +58,7 @@ export class IsElfLlmWikiController {
   @HttpCode(HttpStatus.OK)
   @Post('query')
   @AgentCallable(AgentCapability.KNOWLEDGE_QUERY)
-  @AuthCredentials(AuthCredentialPolicy.AGENT_AND_SSO)
+  @AuthCredentials(AuthCredentialPolicy.AGENT_SCOPE_REQUIRED)
   async queryKnowledge(
     @Body() dto: QueryKnowledgeDto,
     @AuthUser() user: User,
@@ -94,7 +94,6 @@ export class IsElfLlmWikiController {
     const result = await this.chatService.chat({
       workspaceId: workspace.id,
       userId: user.id,
-      supplementalUserId: agentAccess.delegatedUser!.id,
       query: dto.query,
       spaceIds: dto.spaceIds,
       ...(dto.labels?.length ? { labelNames: dto.labels } : {}),

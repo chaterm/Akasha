@@ -89,6 +89,7 @@ export class SpaceController {
       allowedSpaceIds =
         await this.agentAccessService.getBoundSpaceIds(agentAccess);
     }
+
     const result = useAdminView
       ? await this.spaceService.getWorkspaceSpaces(
           workspace.id,

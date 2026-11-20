@@ -12,10 +12,12 @@ export type AgentOpCategory = (typeof AGENT_OP_CATEGORIES)[number];
 const API_CATEGORIES: Record<string, AgentOpCategory> = {
   'knowledge.query': 'query',
   'space.read': 'read',
+  'space.binding.update': 'write',
   'page.read': 'read',
   'page.tree.read': 'read',
   'page.create': 'write',
   'page.content.update': 'write',
+  'attachment.upload': 'write',
 };
 
 const MCP_EXACT: Record<string, AgentOpCategory> = {

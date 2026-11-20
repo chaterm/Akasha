@@ -289,7 +289,7 @@ export class ApiKeyRepo {
         input.spaceIds.map((spaceId) => ({
           userId: input.agentUserId,
           spaceId,
-          role: SpaceRole.WRITER,
+          role: SpaceRole.READER,
         })),
       )
       .execute();
