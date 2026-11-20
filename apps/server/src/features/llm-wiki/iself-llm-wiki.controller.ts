@@ -58,7 +58,7 @@ export class IsElfLlmWikiController {
   @HttpCode(HttpStatus.OK)
   @Post('query')
   @AgentCallable(AgentCapability.KNOWLEDGE_QUERY)
-  @AuthCredentials(AuthCredentialPolicy.AGENT_AND_SSO)
+  @AuthCredentials(AuthCredentialPolicy.AGENT_SCOPE_REQUIRED)
   async queryKnowledge(
     @Body() dto: QueryKnowledgeDto,
     @AuthUser() user: User,
@@ -79,22 +79,13 @@ export class IsElfLlmWikiController {
       );
     }
 
-    const allowedSpaceIds = new Set(
-      await this.agentAccessService.getBoundSpaceIds(agentAccess),
-    );
-    const unauthorizedSpaceIds = dto.spaceIds.filter(
-      (spaceId) => !allowedSpaceIds.has(spaceId),
-    );
-    if (unauthorizedSpaceIds.length > 0) {
-      throw new ForbiddenException(
-        'Requested Spaces are outside the Public API key scope',
-      );
-    }
+    const boundSpaceIds =
+      await this.agentAccessService.getBoundSpaceIds(agentAccess);
 
     const result = await this.chatService.chat({
       workspaceId: workspace.id,
       userId: user.id,
-      supplementalUserId: agentAccess.delegatedUser!.id,
+      supplementalSpaceIds: boundSpaceIds,
       query: dto.query,
       spaceIds: dto.spaceIds,
       ...(dto.labels?.length ? { labelNames: dto.labels } : {}),

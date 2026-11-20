@@ -22,7 +22,7 @@ export class KnowledgeSourceAuthorizationService {
   async filterReadableSources(input: {
     workspaceId: string;
     userId: string;
-    supplementalUserId?: string;
+    supplementalSpaceIds?: string[];
     sourcePageIds: string[];
     cache?: KnowledgeAuthorizationCache;
   }): Promise<string[]> {
@@ -45,7 +45,7 @@ export class KnowledgeSourceAuthorizationService {
       const freshlyReadable = await this.resolveReadable({
         workspaceId: input.workspaceId,
         userId: input.userId,
-        supplementalUserId: input.supplementalUserId,
+        supplementalSpaceIds: input.supplementalSpaceIds,
         pageIds: unknown,
         cache,
       });
@@ -68,7 +68,7 @@ export class KnowledgeSourceAuthorizationService {
   private async resolveReadable(input: {
     workspaceId: string;
     userId: string;
-    supplementalUserId?: string;
+    supplementalSpaceIds?: string[];
     pageIds: string[];
     cache?: KnowledgeAuthorizationCache;
   }): Promise<Set<string>> {
@@ -101,70 +101,22 @@ export class KnowledgeSourceAuthorizationService {
       return readable;
     }
 
-    const readableSpaceIds = await this.resolveReadableSpaceIds({
+    const supplementalSpaceIds = new Set(input.supplementalSpaceIds ?? []);
+    const pageSpaceIds = unique(existingPages.map((page) => page.spaceId));
+    const ownReadableSpaceIds = await this.resolveReadableSpaceIds({
       user,
-      spaceIds: unique(existingPages.map((page) => page.spaceId)),
+      spaceIds: pageSpaceIds.filter(
+        (spaceId) => !supplementalSpaceIds.has(spaceId),
+      ),
       cache,
     });
-    const readableSpaceSet = new Set(readableSpaceIds);
+    const readableSpaceSet = new Set([
+      ...ownReadableSpaceIds,
+      ...pageSpaceIds.filter((spaceId) => supplementalSpaceIds.has(spaceId)),
+    ]);
     const pagesInReadableSpaces = existingPages.filter((page) =>
       readableSpaceSet.has(page.spaceId),
     );
-
-    if (input.supplementalUserId) {
-      const requirements =
-        await this.pagePermissionRepo.findRestrictedAncestorRequirementsForPages(
-          pagesInReadableSpaces.map((page) => page.id),
-        );
-      const restrictedIds = new Set(
-        requirements.map((requirement) => requirement.sourcePageId),
-      );
-      const readable = new Set(
-        pagesInReadableSpaces
-          .filter((page) => !restrictedIds.has(page.id))
-          .map((page) => page.id),
-      );
-      const supplementalUser = await this.userRepo.findById(
-        input.supplementalUserId,
-        input.workspaceId,
-      );
-      if (supplementalUser && restrictedIds.size > 0) {
-        const supplementalSpaceIds =
-          await this.spaceAuthorization.filterReadableSpaceIds({
-            user: supplementalUser,
-            spaceIds: unique(
-              pagesInReadableSpaces
-                .filter((page) => restrictedIds.has(page.id))
-                .map((page) => page.spaceId),
-            ),
-          });
-        const supplementalSpaceSet = new Set(supplementalSpaceIds);
-        const eligibleRestrictedPages = pagesInReadableSpaces.filter(
-          (page) =>
-            restrictedIds.has(page.id) &&
-            supplementalSpaceSet.has(page.spaceId),
-        );
-        if (supplementalUser.role === UserRole.OWNER) {
-          eligibleRestrictedPages.forEach((page) => readable.add(page.id));
-        } else {
-          for (const [spaceId, spacePages] of groupBy(
-            eligibleRestrictedPages,
-            (page) => page.spaceId,
-          )) {
-            const allowedPageIds =
-              await this.pagePermissionRepo.filterAccessiblePageIds({
-                pageIds: spacePages.map((page) => page.id),
-                userId: supplementalUser.id,
-                spaceId,
-              });
-            allowedPageIds.forEach((pageId) => readable.add(pageId));
-          }
-        }
-      }
-
-      cache?.recordPages(input.pageIds, readable);
-      return readable;
-    }
 
     const readable = new Set<string>();
     for (const [spaceId, spacePages] of groupBy(

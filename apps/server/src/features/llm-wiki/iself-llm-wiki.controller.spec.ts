@@ -130,7 +130,6 @@ describe('IsElfLlmWikiController', () => {
       credentialVersion: 1,
       agentUser: user,
       workspace,
-      delegatedUser: { id: 'delegated-user-1' },
     } as any;
 
     await expect(
@@ -190,7 +189,7 @@ describe('IsElfLlmWikiController', () => {
     expect(chatService.chat).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       userId: 'user-1',
-      supplementalUserId: 'delegated-user-1',
+      supplementalSpaceIds: ['space-1'],
       query: 'How do we use Kafka?',
       spaceIds: ['space-1'],
       labelNames: ['项目计划', 'kafka'],
@@ -447,7 +446,6 @@ describe('IsElfLlmWikiController', () => {
     } as any;
     const agentAccess = {
       apiKeyId: 'public-key-1',
-      delegatedUser: { id: 'delegated-user-1' },
     } as any;
 
     const response = await controller.queryKnowledge(

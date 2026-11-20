@@ -101,8 +101,32 @@ describe('ApiKeyService', () => {
     });
   });
 
-  it('以智能体用户为主身份并拒绝轮换前的旧值', async () => {
-    const { service, apiKeyRepo, userRepo } = makeService();
+  it('拒绝用智能体密钥作为 Bearer 凭证认证请求', async () => {
+    const { service, apiKeyRepo } = makeService();
+    apiKeyRepo.findById.mockResolvedValue({
+      id: 'agent-key-1',
+      keyType: ApiKeyType.AGENT,
+      agentUserId: 'agent-user-1',
+      credentialVersion: '2000',
+    });
+
+    await expect(
+      service.validateApiKey({
+        sub: 'agent-user-1',
+        workspaceId: 'workspace-1',
+        apiKeyId: 'agent-key-1',
+        credentialVersion: 2000,
+        type: 'api_key',
+      }),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('以范围凭证解析智能体密钥并拒绝轮换前的旧值', async () => {
+    const { service, apiKeyRepo, userRepo, tokenService } = makeService({
+      apiKeyRepo: {
+        findSpaceIdsByApiKeyId: jest.fn().mockResolvedValue(['space-1']),
+      },
+    });
     apiKeyRepo.findById.mockResolvedValue({
       id: 'agent-key-1',
       keyType: ApiKeyType.AGENT,
@@ -117,30 +141,54 @@ describe('ApiKeyService', () => {
       deactivatedAt: null,
     });
 
+    tokenService.verifyJwt.mockResolvedValue({
+      sub: 'agent-user-1',
+      workspaceId: 'workspace-1',
+      apiKeyId: 'agent-key-1',
+      credentialVersion: 1000,
+      type: 'api_key',
+    });
     await expect(
-      service.validateApiKey({
-        sub: 'agent-user-1',
-        workspaceId: 'workspace-1',
-        apiKeyId: 'agent-key-1',
-        credentialVersion: 1000,
-        type: 'api_key',
-      }),
+      service.validateAgentApiKeyScope('token', 'workspace-1'),
     ).rejects.toBeInstanceOf(UnauthorizedException);
 
-    const result = await service.validateApiKey({
+    tokenService.verifyJwt.mockResolvedValue({
       sub: 'agent-user-1',
       workspaceId: 'workspace-1',
       apiKeyId: 'agent-key-1',
       credentialVersion: 2000,
       type: 'api_key',
     });
-    expect(result.user.id).toBe('agent-user-1');
-    expect(getApiKeyAccess(result.user)).toEqual({
+    const scope = await service.validateAgentApiKeyScope(
+      'token',
+      'workspace-1',
+    );
+    expect(scope).toEqual({
       apiKeyId: 'agent-key-1',
-      personalSpaceId: null,
-      keyType: ApiKeyType.AGENT,
       credentialVersion: 2000,
+      agentUser: expect.objectContaining({ id: 'agent-user-1' }),
+      workspace: { id: 'workspace-1' },
+      spaceIds: ['space-1'],
     });
+  });
+
+  it('拒绝把个人密钥当作范围凭证', async () => {
+    const { service, apiKeyRepo, tokenService } = makeService();
+    tokenService.verifyJwt.mockResolvedValue({
+      sub: 'user-1',
+      workspaceId: 'workspace-1',
+      apiKeyId: 'personal-key-1',
+      type: 'api_key',
+    });
+    apiKeyRepo.findById.mockResolvedValue({
+      id: 'personal-key-1',
+      keyType: ApiKeyType.PERSONAL,
+      agentUserId: null,
+    });
+
+    await expect(
+      service.validateAgentApiKeyScope('token', 'workspace-1'),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
   it('由工作区所有者创建永久且初始无空间的智能体密钥', async () => {

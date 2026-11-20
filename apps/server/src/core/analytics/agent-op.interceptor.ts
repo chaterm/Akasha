@@ -50,7 +50,7 @@ export class AgentOpInterceptor implements NestInterceptor {
           channel: 'api',
           apiKeyId: agentAccess?.apiKeyId ?? access.apiKeyId,
           ...(personal ? { keyType: 'personal' as const } : {}),
-          delegatedUserId: agentAccess?.delegatedUser?.id,
+          delegatedUserId: agentAccess ? principal.user.id : undefined,
           outcome,
         })
         .catch((error) =>

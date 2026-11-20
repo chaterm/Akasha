@@ -134,7 +134,6 @@ describe('MCP agent_op recording', () => {
       channel: 'mcp',
       apiKeyId: 'key-p',
       keyType: 'personal',
-      delegatedUserId: null,
       outcome: 'called',
     });
     expect(service.handleRequest).toHaveBeenCalledTimes(1);

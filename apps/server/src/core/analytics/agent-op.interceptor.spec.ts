@@ -15,7 +15,11 @@ describe('AgentOpInterceptor', () => {
     credentialVersion: 1,
     agentUser: { id: 'agent-1' },
     workspace: { id: 'ws-1' },
-    delegatedUser: { id: 'human-1' },
+  };
+
+  const agentScopedRequest = {
+    agentAccess,
+    user: { user: { id: 'human-1' }, workspace: { id: 'ws-1' } },
   };
 
   function setup(request: any, capability?: string) {
@@ -34,7 +38,10 @@ describe('AgentOpInterceptor', () => {
   }
 
   it('records a successful agent call with its capability', async () => {
-    const { interceptor, repo, context } = setup({ agentAccess }, 'page.read');
+    const { interceptor, repo, context } = setup(
+      agentScopedRequest,
+      'page.read',
+    );
 
     await lastValueFrom(
       interceptor.intercept(context, { handle: () => of(1) }),
@@ -53,8 +60,8 @@ describe('AgentOpInterceptor', () => {
 
   it('records failures without swallowing the error', async () => {
     const { interceptor, repo, context } = setup(
-      { agentAccess },
-      'page.create',
+      agentScopedRequest,
+      'page.tree.read',
     );
     const failing = { handle: () => throwError(() => new Error('boom')) };
 
@@ -62,7 +69,7 @@ describe('AgentOpInterceptor', () => {
       lastValueFrom(interceptor.intercept(context, failing)),
     ).rejects.toThrow('boom');
     expect(repo.insertAgentOp).toHaveBeenCalledWith(
-      expect.objectContaining({ op: 'page.create', outcome: 'error' }),
+      expect.objectContaining({ op: 'page.tree.read', outcome: 'error' }),
     );
   });
 
@@ -146,30 +153,15 @@ describe('buildMcpAgentOps', () => {
         channel: 'mcp',
         apiKeyId: 'key-p',
         keyType: 'personal',
-        delegatedUserId: null,
         outcome: 'called',
       },
     ]);
   });
 
-  it('records agent-key calls under the agent account', () => {
-    const agent = {
-      user: { id: 'agent-1' },
-      workspace: { id: 'ws-1' },
-      agentAccess: {
-        apiKeyId: 'key-a',
-        agentUser: { id: 'agent-1' },
-        delegatedUser: { id: 'human-1' },
-      },
-    };
-    expect(buildMcpAgentOps(agent, [call, call], null)).toEqual([
-      expect.objectContaining({
-        agentUserId: 'agent-1',
-        apiKeyId: 'key-a',
-        keyType: 'agent',
-        delegatedUserId: 'human-1',
-      }),
-      expect.objectContaining({ keyType: 'agent' }),
+  it('records every tool call in a batch', () => {
+    expect(buildMcpAgentOps(human, [call, call], 'key-p')).toEqual([
+      expect.objectContaining({ keyType: 'personal' }),
+      expect.objectContaining({ keyType: 'personal' }),
     ]);
   });
 

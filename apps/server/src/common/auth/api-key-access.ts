@@ -30,12 +30,3 @@ export function withApiKeyAccess(
 export function getApiKeyAccess(user: User): ApiKeyAccess | undefined {
   return (user as ApiKeyAuthenticatedUser)[API_KEY_ACCESS];
 }
-
-export function isAgentApiKeyAccess(
-  access: ApiKeyAccess | undefined,
-): access is ApiKeyAccess & {
-  keyType: ApiKeyType.AGENT;
-  credentialVersion: number;
-} {
-  return access?.keyType === ApiKeyType.AGENT;
-}

@@ -62,7 +62,7 @@ export type KnowledgeContextObservation = {
 type AiKnowledgeChatInput = {
   workspaceId: string;
   userId: string;
-  supplementalUserId?: string;
+  supplementalSpaceIds?: string[];
   chatId?: string;
   query: string;
   spaceIds: string[];
@@ -246,7 +246,7 @@ export class AiKnowledgeChatService {
   async retrieveOnly(input: {
     workspaceId: string;
     userId: string;
-    supplementalUserId?: string;
+    supplementalSpaceIds?: string[];
     query: string;
     spaceIds: string[];
     workspace?: Workspace;
@@ -267,7 +267,7 @@ export class AiKnowledgeChatService {
     const retrieval = await this.retrieval.retrieve({
       workspaceId: input.workspaceId,
       userId: input.userId,
-      supplementalUserId: input.supplementalUserId,
+      supplementalSpaceIds: input.supplementalSpaceIds,
       query: input.query,
       spaceIds: input.spaceIds,
       authCache,
@@ -403,7 +403,7 @@ export class AiKnowledgeChatService {
           this.retrieval.retrieve({
             workspaceId: input.workspaceId,
             userId: input.userId,
-            supplementalUserId: input.supplementalUserId,
+            supplementalSpaceIds: input.supplementalSpaceIds,
             query: retrievalQuery,
             spaceIds: input.spaceIds,
             ...(input.labelNames?.length
@@ -1217,7 +1217,7 @@ export class AiKnowledgeChatService {
           this.sourceAuthorization!.filterReadableSources({
             workspaceId: input.workspaceId,
             userId: input.userId,
-            supplementalUserId: input.supplementalUserId,
+            supplementalSpaceIds: input.supplementalSpaceIds,
             sourcePageIds: requestedPageIds,
             cache: authCache,
           }),

@@ -15,12 +15,7 @@ import {
   extractBearerTokenFromHeader,
   isUserDisabled,
 } from '../../common/helpers';
-import {
-  getApiKeyAccess,
-  isAgentApiKeyAccess,
-  withApiKeyAccess,
-} from '../../common/auth/api-key-access';
-import type { AgentAccessContext } from '../../common/auth/agent-access-context';
+import { withApiKeyAccess } from '../../common/auth/api-key-access';
 import { ApiKeyType } from '../../common/auth/api-key-type';
 import { UserType } from '../../common/auth/user-type';
 import { FastifyRequest } from 'fastify';
@@ -30,7 +25,6 @@ import { ModuleRef } from '@nestjs/core';
 export type McpAuthContext = {
   user: User;
   workspace: Workspace;
-  agentAccess?: AgentAccessContext;
 };
 
 @Injectable()
@@ -53,7 +47,9 @@ export class McpAuthService {
       ? publicKeyHeader[0]
       : publicKeyHeader;
     if (typeof publicKey === 'string' && publicKey.trim()) {
-      return this.authenticateAgentApiKey(request, publicKey.trim());
+      throw new UnauthorizedException(
+        'Agent API keys cannot be used for MCP; use a personal API key',
+      );
     }
 
     const tokenHeader = request.headers['x-token'];
@@ -92,35 +88,9 @@ export class McpAuthService {
     }
 
     if (key.keyType === ApiKeyType.AGENT) {
-      if (
-        !key.agentUserId ||
-        payload.sub !== key.agentUserId ||
-        payload.credentialVersion === undefined ||
-        Number(key.credentialVersion) !== payload.credentialVersion
-      ) {
-        throw new UnauthorizedException('Agent API key is no longer valid');
-      }
-      const user = await this.userRepo.findById(key.agentUserId, workspace.id);
-      if (!user || user.userType !== UserType.AGENT || isUserDisabled(user)) {
-        throw new UnauthorizedException('Agent user is unavailable');
-      }
-      const authenticatedUser = withApiKeyAccess(user, {
-        apiKeyId: key.id,
-        personalSpaceId: null,
-        keyType: ApiKeyType.AGENT,
-        credentialVersion: payload.credentialVersion,
-      });
-      this.trackLastUsed(key.id);
-      return {
-        user: authenticatedUser,
-        workspace,
-        agentAccess: {
-          apiKeyId: key.id,
-          credentialVersion: payload.credentialVersion,
-          agentUser: authenticatedUser,
-          workspace,
-        },
-      };
+      throw new UnauthorizedException(
+        'Agent API keys cannot be used for MCP; use a personal API key',
+      );
     }
 
     if (key.expiresAt && key.expiresAt <= new Date()) {
@@ -141,57 +111,6 @@ export class McpAuthService {
     });
     this.trackLastUsed(key.id);
     return { user: authenticatedUser, workspace };
-  }
-
-  private async authenticateAgentApiKey(
-    request: FastifyRequest,
-    token: string,
-  ): Promise<McpAuthContext> {
-    const workspace =
-      (request.raw as any)?.workspace ?? (request as any).workspace;
-    if (!workspace?.id) {
-      throw new UnauthorizedException('Workspace is required');
-    }
-    const result = await this.getApiKeyService().validatePublicApiKey(
-      token,
-      workspace.id,
-    );
-    const access = getApiKeyAccess(result.user);
-    if (!isAgentApiKeyAccess(access)) {
-      throw new UnauthorizedException('An Agent API key is required');
-    }
-    return {
-      user: result.user,
-      workspace: result.workspace,
-      agentAccess: {
-        apiKeyId: access.apiKeyId,
-        credentialVersion: access.credentialVersion,
-        agentUser: result.user,
-        workspace: result.workspace,
-      },
-    };
-  }
-
-  private getApiKeyService(): {
-    validateApiKey: (
-      payload: JwtApiKeyPayload,
-    ) => Promise<{ user: User; workspace: Workspace }>;
-    validatePublicApiKey: (
-      token: string,
-      workspaceId: string,
-    ) => Promise<{ user: User; workspace: Workspace }>;
-  } {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const {
-        ApiKeyService,
-      } = require('../../features/api-key/api-key.service');
-      const service = this.moduleRef?.get(ApiKeyService, { strict: false });
-      if (service) return service;
-    } catch {
-      // Mapped to one stable authentication error below.
-    }
-    throw new UnauthorizedException('API key authentication is unavailable');
   }
 
   private trackLastUsed(apiKeyId: string): void {

@@ -24,6 +24,11 @@ import * as bytes from 'bytes';
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
 import { AuthWorkspace } from '../../common/decorators/auth-workspace.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { AgentCallable } from '../../common/decorators/agent-callable.decorator';
+import { AgentCapability } from '../../common/auth/agent-capability';
+import { AgentAccess } from '../../common/decorators/agent-access.decorator';
+import type { AgentAccessContext } from '../../common/auth/agent-access-context';
+import { AgentAccessService } from '../page/page-access/agent-access.service';
 import { Attachment, User, Workspace } from '@akasha/db/types/entity.types';
 import { StorageService } from '../../integrations/storage/storage.service';
 import {
@@ -68,11 +73,6 @@ import {
   IAuditService,
 } from '../../integrations/audit/audit.service';
 import { ErrorCode, errorBody } from '../../common/errors/error-codes';
-import { AgentCallable } from '../../common/decorators/agent-callable.decorator';
-import { AgentCapability } from '../../common/auth/agent-capability';
-import { AgentAccess } from '../../common/decorators/agent-access.decorator';
-import type { AgentAccessContext } from '../../common/auth/agent-access-context';
-import { AgentAccessService } from '../page/page-access/agent-access.service';
 
 @Controller()
 export class AttachmentController {
@@ -142,7 +142,7 @@ export class AttachmentController {
     }
 
     if (agentAccess) {
-      await this.agentAccessService.assertPageWritable(agentAccess, page);
+      await this.agentAccessService.assertPageWritable(agentAccess, page, user);
     } else {
       await this.pageAccessService.validateCanEdit(page, user);
     }
