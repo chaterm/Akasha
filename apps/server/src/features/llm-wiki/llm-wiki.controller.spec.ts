@@ -466,32 +466,44 @@ describe('LlmWikiController', () => {
     );
   });
 
-  it('rejects robot queries when a requested Space is outside the public key', async () => {
+  it('passes the bound spaces as a supplemental scope on robot queries', async () => {
     const agentAccessService = {
-      getBoundSpaceIds: jest.fn().mockResolvedValue(['space-1']),
+      getBoundSpaceIds: jest.fn().mockResolvedValue(['space-1', 'space-2']),
     };
     const chatService = {
       isEnabledForWorkspace: jest.fn().mockReturnValue(true),
-      chat: jest.fn(),
+      chat: jest.fn().mockResolvedValue({
+        answer: 'Scoped answer',
+        citations: [],
+        retrievalScope: {
+          requestedSpaceIds: ['space-2'],
+          effectiveSpaceIds: ['space-2'],
+        },
+      }),
     };
     const controller = createController({ chatService, agentAccessService });
 
-    await expect(
-      controller.queryKnowledge(
-        {
-          type: KnowledgeQueryType.ROBOT,
-          query: 'Out of scope',
-          spaceIds: ['space-2'],
-        },
-        withApiKeyAccess(user(), {
-          apiKeyId: 'personal-1',
-          personalSpaceId: null,
-        }),
-        workspace(),
-        agentAccess(),
-      ),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(chatService.chat).not.toHaveBeenCalled();
+    await controller.queryKnowledge(
+      {
+        type: KnowledgeQueryType.ROBOT,
+        query: 'Space the caller is not a member of',
+        spaceIds: ['space-2'],
+      },
+      withApiKeyAccess(user(), {
+        apiKeyId: 'personal-1',
+        personalSpaceId: null,
+      }),
+      workspace(),
+      agentAccess(),
+    );
+
+    expect(chatService.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        spaceIds: ['space-2'],
+        supplementalSpaceIds: ['space-1', 'space-2'],
+      }),
+    );
   });
 
   it('rejects robot queries authenticated only by a session', async () => {

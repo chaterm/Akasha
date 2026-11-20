@@ -42,9 +42,6 @@ lerna-debug.log*
 .nx/installation
 .nx/cache
 
-# Internal design docs (may contain env-specific credentials or internal system details)
-docs
-
 # CodeGraph (local index, per-machine)
 .codegraph/
 .vscode/

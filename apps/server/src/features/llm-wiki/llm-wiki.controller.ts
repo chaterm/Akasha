@@ -186,6 +186,7 @@ export class LlmWikiController {
 
     const queryType = dto.type ?? KnowledgeQueryType.USER;
     let publicApiKeyId: string | undefined;
+    let boundSpaceIds: string[] | undefined;
     if (queryType === KnowledgeQueryType.ROBOT) {
       const personalApiKeyAccess = getApiKeyAccess(user);
       if (!personalApiKeyAccess) {
@@ -197,14 +198,8 @@ export class LlmWikiController {
         if (!this.agentAccessService) {
           throw new ForbiddenException('Agent authorization unavailable');
         }
-        const allowedSpaceIds = new Set(
-          await this.agentAccessService.getBoundSpaceIds(agentAccess),
-        );
-        if (dto.spaceIds.some((spaceId) => !allowedSpaceIds.has(spaceId))) {
-          throw new ForbiddenException(
-            'Requested Spaces are outside the Agent API key scope',
-          );
-        }
+        boundSpaceIds =
+          await this.agentAccessService.getBoundSpaceIds(agentAccess);
         publicApiKeyId = agentAccess.apiKeyId;
       }
     } else if (agentAccess) {
@@ -217,6 +212,7 @@ export class LlmWikiController {
     const result = await this.chatService.chat({
       workspaceId: workspace.id,
       userId: user.id,
+      supplementalSpaceIds: boundSpaceIds,
       query: dto.query,
       spaceIds: dto.spaceIds,
       ...(dto.labels?.length ? { labelNames: dto.labels } : {}),
