@@ -162,7 +162,6 @@ function ConnectionForm() {
         />
         <SecretField
           label="只读 PostgreSQL"
-          hint="归因链路用，可不填"
           value={form.database_url ?? ''}
           onChange={(value) => set('database_url', value)}
           placeholder="postgresql://…"
@@ -276,7 +275,7 @@ function LiveTable({ data }: { data: ModelConfigsView }) {
         <tr>
           <th>配置项</th>
           <th>模型</th>
-          <th>base_url(/v1)</th>
+          <th>base_url</th>
           <th>parameters</th>
           <th>密钥</th>
         </tr>
@@ -311,7 +310,7 @@ function LiveTable({ data }: { data: ModelConfigsView }) {
   )
 }
 
-const BLANK = { label: '', base_url: '', model: '', api_key: '' }
+const BLANK = { label: '', base_url: '', model: '', api_key: '', clear_api_key: false }
 
 type AkashaModelForm = {
   feature: AkashaFeature
@@ -319,11 +318,12 @@ type AkashaModelForm = {
   base_url: string
   model: string
   api_key: string
+  clear_api_key: boolean
   parameters: string
 }
 
 const emptyAkashaModel = (feature: AkashaFeature): AkashaModelForm => ({
-  feature, label: '', base_url: '', model: '', api_key: '', parameters: '{}',
+  feature, label: '', base_url: '', model: '', api_key: '', clear_api_key: false, parameters: '{}',
 })
 
 const TUNABLE_KEYS =
@@ -381,7 +381,7 @@ function AkashaModels() {
     setEditing(item.id)
     setForm({
       feature: item.feature, label: item.label, base_url: item.base_url,
-      model: item.model, api_key: '',
+      model: item.model, api_key: '', clear_api_key: false,
       parameters: JSON.stringify(item.parameters ?? {}, null, 2),
     })
     save.reset()
@@ -453,10 +453,18 @@ function AkashaModels() {
             <>
               <h4>{typeof editing === 'number' ? `编辑端点 #${editing}` : '新增端点'}</h4>
               <div className="form-grid inline">
-                <Field label="标签" hint="同一类型下不重名"><input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="default" /></Field>
+                <Field label="标签"><input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="default" /></Field>
                 <Field label="模型"><input value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} /></Field>
                 <Field label="base_url"><input value={form.base_url} onChange={(e) => setForm({ ...form, base_url: e.target.value })} placeholder="https://api.example.com/v1" /></Field>
-                <SecretField label="api_key" hint={typeof editing === 'number' ? '留空保留原值' : undefined} value={form.api_key} onChange={(api_key) => setForm({ ...form, api_key })} />
+                <div className="secret-field-inline">
+                  <SecretField label="api_key" hint={typeof editing === 'number' ? '留空保留原值；勾选下方选项可清空' : undefined} value={form.api_key} onChange={(api_key) => setForm({ ...form, api_key, clear_api_key: false })} />
+                  {typeof editing === 'number' && (
+                  <label className="check secret-clear-field">
+                    <input type="checkbox" checked={form.clear_api_key} onChange={(e) => setForm({ ...form, clear_api_key: e.target.checked, api_key: '' })} />
+                    清空现有密钥
+                  </label>
+                  )}
+                </div>
                 <Field label="parameters" hint={`JSON 对象，可用：${PARAMETER_KEYS[feature]}`} wide>
                   <textarea
                     className="mono"
@@ -474,7 +482,7 @@ function AkashaModels() {
                 <button className="action primary" disabled={save.busy || !parameters.value || taken || !label || !form.model.trim() || !form.base_url.trim()} onClick={() => save.run(async () => {
                   const result = await api.saveAkashaModel({
                     feature: form.feature, label, base_url: form.base_url.trim(),
-                    model: form.model.trim(), api_key: form.api_key,
+                    model: form.model.trim(), api_key: form.api_key, clear_api_key: form.clear_api_key,
                     parameters: parameters.value ?? {},
                     ...(typeof editing === 'number' ? { id: editing } : {}),
                   })
@@ -565,7 +573,9 @@ function ProviderRow({
   return (
     <>
       <tr className={selected ? 'selected' : ''}>
-        <td>{provider.label}</td>
+        <td>
+          {provider.label}
+        </td>
         <td className="small mono">{provider.model}</td>
         <td className="small mono muted truncate">{provider.base_url}</td>
         <td>
@@ -675,6 +685,7 @@ function Providers({ role, title }: { role: ProviderRole; title: string }) {
       base_url: provider.base_url,
       model: provider.model,
       api_key: '',
+      clear_api_key: false,
     })
     save.reset()
   }
@@ -741,7 +752,7 @@ function Providers({ role, title }: { role: ProviderRole; title: string }) {
         <>
           <h4>{editing === null ? '新增端点' : `编辑端点 #${editing}`}</h4>
           <div className="form-grid inline">
-            <Field label="标签" hint="同一类型下不重名">
+            <Field label="标签">
               <input
                 value={form.label}
                 onChange={(e) => set({ label: e.target.value })}
@@ -758,12 +769,24 @@ function Providers({ role, title }: { role: ProviderRole; title: string }) {
                 placeholder="https://api.example.com/v1"
               />
             </Field>
-            <SecretField
-              label="api_key"
-              hint={editing === null ? undefined : '留空保留原值'}
-              value={form.api_key}
-              onChange={(value) => set({ api_key: value })}
-            />
+            <div className="secret-field-inline">
+              <SecretField
+                label="api_key"
+                hint={editing === null ? undefined : '留空保留原值；勾选下方选项可清空'}
+                value={form.api_key}
+                onChange={(value) => set({ api_key: value, clear_api_key: false })}
+              />
+              {editing !== null && (
+              <label className="check secret-clear-field">
+                <input
+                  type="checkbox"
+                  checked={form.clear_api_key}
+                  onChange={(e) => set({ clear_api_key: e.target.checked, api_key: '' })}
+                />
+                清空现有密钥
+              </label>
+              )}
+            </div>
           </div>
 
           {taken && (

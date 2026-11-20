@@ -1,97 +1,62 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="200" alt="Nest Logo" /></a>
-</p>
+# Akasha Server
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+NestJS (Fastify) backend for Akasha: the REST API, the MCP endpoint used by agents,
+knowledge compilation and retrieval, and the collaboration WebSocket server.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://coveralls.io/github/nestjs/nest?branch=master" target="_blank"><img src="https://coveralls.io/repos/github/nestjs/nest/badge.svg?branch=master#9" alt="Coverage" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Local setup, environment variables, and troubleshooting live in
+[`docs/development.md`](../../docs/development.md). This file only covers what is in
+this package and how to run it.
 
-## Description
+## Run
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Installation
+From the repository root:
 
 ```bash
-$ npm install
+pnpm --filter ./apps/server run migration:latest   # apply pending migrations
+pnpm run server:dev                                # watch mode, listens on $PORT (default 8080)
 ```
 
-## Running the app
+The API process also serves the collaboration WebSocket at `/collab`. The `collab:dev`
+and `collab:prod` scripts run that same gateway as a standalone process instead
+(`dist/collaboration/server/collab-main`, default port 3001), for deployments that scale
+or restart collaboration separately. Both scripts run the compiled output, so build with
+`pnpm run server:build` first.
 
-```bash
-# development
-$ npm run start
+Health and dependency status: `GET /api/health`.
 
-# watch mode
-$ npm run start:dev
+## Database
 
-# production mode
-$ npm run start:prod
-```
+- Migrations live in `src/database/migrations` and are applied with
+  `migration:latest`; `migration:create` scaffolds a new one, `migration:down` and
+  `migration:reset` roll back, `migration:prune-history` trims the history table.
+- The server requires PostgreSQL 18 with UTF8, the `vector`, `pg_trgm`, and
+  `pg_jieba` extensions, and `pg_jieba` in `shared_preload_libraries`
+  (`src/database/services/database-requirements.service.ts`). The Compose service in
+  the repository root ships exactly that image.
+- `migration:codegen` regenerates `src/database/types/db.d.ts` from a live database.
 
+## Scripts
 
-## Migrations
+| Script | Purpose |
+| --- | --- |
+| `start:dev` | Watch-mode development server |
+| `build` / `start:prod` | Compile to `dist` / run the compiled API |
+| `collab:dev` / `collab:prod` | Run the collaboration server from `dist` |
+| `lint` / `format` | ESLint with autofix / Prettier |
+| `test` / `test:cov` / `test:e2e` | Jest unit tests, coverage, e2e suite |
+| `skill:node-reference` | Regenerate the addressable-node reference shipped with the agent skills |
+| `backfill:zh-search` | Backfill Chinese full-text search columns |
 
-```bash
-# This creates a new empty migration file named 'init'
-$ npm run migration:create --name=init
+## Layout
 
-# Generates 'init' migration file from existing entities to update the database schema
-$ npm run migration:generate --name=init
+| Path | Contents |
+| --- | --- |
+| `src/core` | Pages, spaces, comments, attachments, MCP tools, weekly report |
+| `src/features` | AI chat, knowledge (llm-wiki) compilation and retrieval, imports, API keys |
+| `src/collaboration` | Hocuspocus-style collaboration server, page edit operations |
+| `src/database` | Kysely setup, migrations, requirement checks |
+| `src/integrations` | Environment, health, storage, mail, SSO |
 
-# Runs all pending migrations to update the database schema
-$ npm run migration:run
-
-# Reverts the last executed migration
-$ npm run migration:revert
-
-# Reverts all migrations
-$ npm run migration:revert
-
-# Shows the list of executed and pending migrations
-$ npm run migration:show
-
-
-
-## Test
-
-```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
-```
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://kamilmysliwiec.com)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](LICENSE).
+Log calls pass a leading object and a constant message; ESLint enforces this
+(`eslint.config.mjs`). See [`CONTRIBUTING.md`](../../CONTRIBUTING.md) for the
+repository-wide conventions.

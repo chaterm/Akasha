@@ -144,7 +144,6 @@ export function App() {
               setEvalId(evalId)
               setView('evaluate')
             }}
-            onOpenSettings={() => setView('settings')}
           />
         )}
         {view === 'tasks' && (

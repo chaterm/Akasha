@@ -14,13 +14,13 @@ authentication:
       type: string
       description: >-
         原始 SSO 访问 Token，不要添加 Bearer 前缀。系统会通过 HOIDC 校验 Token，
-        并将其映射为 agent 的补充授权主体。
+        并将其映射为本次请求的身份主体，检索授权以该用户为准。
     x-akasha-public-key:
       required: true
       type: string
       description: >-
-        agent API Key。系统会校验 request.spaceIds 中的每个空间是否都在该 key
-        的绑定范围内。
+        agent API Key。不构成身份，只把它绑定的空间追加到该用户的可检索范围上；
+        绑定空间内的受限页面仍需该用户自己有授权。
 
 request:
   body:
@@ -45,7 +45,8 @@ request:
           type: string
           format: uuid
         description: >-
-          要检索的知识空间。每个空间都必须位于公共检索 API Key 的授权范围内。
+          要检索的知识空间。可以是 agent API Key 绑定的空间，也可以是该用户自己
+          有权限的空间；两者都不满足的空间不会返回结果。
       labels:
         type: array
         required: false
@@ -285,7 +286,8 @@ errors:
       请求参数校验失败，例如 UUID、布尔值格式错误，或 scoreThreshold 超出范围。
   401:
     description: >-
-      缺少或无效的 x-token、SSO 用户不是当前工作区成员，或公共 API Key 缺失/无效。
+      缺少或无效的 x-token、SSO 用户不是当前工作区成员，或 agent API Key 缺失/无效/
+      已轮换。agent API Key 必须随人类凭据一同提供，单独提供不构成身份。
   403:
     description: >-
-      工作区未启用 AI 知识问答，或请求的知识空间不在公共 API Key 的授权范围内。
+      工作区未启用 AI 知识问答。

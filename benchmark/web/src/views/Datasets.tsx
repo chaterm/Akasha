@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ApiError, api } from '../api'
+import type { DatasetEntry } from '../types'
 import {
   DatasetPicker,
   Failed,
@@ -9,20 +10,13 @@ import {
   ProviderSelect,
   RecordSearch,
   num,
-  pickFile,
   useAction,
   useAsync,
   useProvider,
 } from '../ui'
 
-const slugify = (fileName: string) =>
-  fileName
-    .replace(/\.zip$/i, '')
-    .replace(/-space-export$/i, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 63)
+const PAGE_SIZE = 5
+
 
 export function Datasets({ onOpenTasks }: { onOpenTasks: () => void }) {
   const { data, error, loading, reload } = useAsync(() => api.datasets(), [])
@@ -30,8 +24,12 @@ export function Datasets({ onOpenTasks }: { onOpenTasks: () => void }) {
   const [preview, setPreview] = useState<{ dataset: string; kind: 'qa' | 'corpus' } | null>(null)
   const [generating, setGenerating] = useState<string | null>(null)
   const [reopened, setReopened] = useState(false)
+  const [choosing, setChoosing] = useState(false)
+  const [offset, setOffset] = useState(0)
+  const [kind, setKind] = useState<'all' | 'space' | 'public'>('all')
   const start = useAction<unknown>()
   const upload = useAction<{ dataset: string; docs: number }>()
+  const remove = useAction<{ deleted: number; files_removed: number }>()
 
   if (loading) return <Loading what="数据集状态" />
   if (error) return <Failed error={error} />
@@ -41,45 +39,136 @@ export function Datasets({ onOpenTasks }: { onOpenTasks: () => void }) {
   const names = downloadable.map((d) => d.name)
   const targets = selected.length ? selected : names
   const allReady = downloadable.every((d) => d.files_ready)
+  const spaceCount = data.datasets.filter((d) => !d.downloadable).length
+  const counts = {
+    all: data.datasets.length,
+    space: spaceCount,
+    public: data.datasets.length - spaceCount,
+  }
+  const visible = data.datasets.filter((d) =>
+    kind === 'all' ? true : kind === 'space' ? !d.downloadable : d.downloadable,
+  )
+  const pageOffset = Math.min(
+    offset,
+    Math.max(0, Math.ceil(visible.length / PAGE_SIZE) - 1) * PAGE_SIZE,
+  )
 
-  const pickArchive = () =>
-    pickFile('.zip,application/zip', (file) => {
-      const name = window.prompt('数据集名称（小写字母、数字、连字符）', slugify(file.name))?.trim()
-      if (!name) return
-      upload.run(async () => {
-        try {
-          return await api.importSpace(name, file)
-        } catch (exc) {
-          if (!(exc instanceof ApiError && exc.status === 409)) throw exc
-          if (!window.confirm(`${name} 已存在，覆盖语料并清空已生成的样本？`)) throw exc
-          return await api.importSpace(name, file, true)
-        } finally {
-          reload()
-        }
-      })
+  const replaceAs = (send: () => Promise<{ dataset: string; docs: number }>) =>
+    upload.run(async () => {
+      try {
+        return await send()
+      } finally {
+        setOffset(0)
+        reload()
+      }
     })
+
+  const importAs = (
+    name: string,
+    send: (overwrite: boolean) => Promise<{ dataset: string; docs: number }>,
+  ) =>
+    replaceAs(async () => {
+      try {
+        return await send(false)
+      } catch (exc) {
+        if (!(exc instanceof ApiError && exc.status === 409)) throw exc
+        if (!window.confirm(`${name} 已存在，覆盖语料并清空已生成的样本？`)) throw exc
+        return await send(true)
+      }
+    })
+
+  const redownload = (entry: DatasetEntry) => {
+    if (!window.confirm(`重新下载 ${entry.name}？现有语料和样本会被覆盖。`)) return
+    if (entry.space_id) {
+      replaceAs(() => api.importAkashaSpace(entry.name, entry.space_id!, true))
+      return
+    }
+    start.run(async () => {
+      const task = await api.startTask('download', { datasets: [entry.name] })
+      onOpenTasks()
+      return task
+    })
+  }
+
+  const removeDataset = (entry: DatasetEntry) => {
+    if (
+      !window.confirm(
+        `删除数据集 ${entry.name}？\n\n本地语料和归一化数据都会删除，已被编译层引用时会拒绝。`,
+      )
+    )
+      return
+    remove.run(async () => {
+      const result = await api.deleteDataset(entry.name, { remove_files: true })
+      if (generating === entry.name) setGenerating(null)
+      if (preview?.dataset === entry.name) setPreview(null)
+      reload()
+      return result
+    })
+  }
 
   return (
     <>
       <div className="spread">
         <h2>数据集</h2>
-        <div className="row tight">
-          <button className="action small" disabled={upload.busy} onClick={pickArchive}>
-            {upload.busy ? '导入中…' : '导入 Akasha 空间'}
+      </div>
+
+      <div className="record-filters">
+        {(
+          [
+            ['all', '全部'],
+            ['space', '空间数据集'],
+            ['public', '公开数据集'],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            className={`action small${kind === value ? ' primary' : ''}`}
+            onClick={() => {
+              setKind(value)
+              setOffset(0)
+            }}
+          >
+            {label} · {counts[value]}
           </button>
-          {allReady && !reopened && (
-            <button className="action small" onClick={() => setReopened(true)}>
-              重新下载
-            </button>
-          )}
+        ))}
+      </div>
+
+      <div className="row tight dataset-actions">
+        {kind === 'all' && (
           <button className="action small" onClick={reload}>
             刷新
           </button>
-        </div>
+        )}
+        {kind === 'space' && (
+          <>
+            <button
+              className={`action small${choosing ? ' primary' : ''}`}
+              onClick={() => setChoosing(!choosing)}
+            >
+              从 Akasha 选择空间
+            </button>
+            <button className="action small" onClick={reload}>
+              刷新
+            </button>
+          </>
+        )}
+        {kind === 'public' && (
+          <>
+            {allReady && !reopened && (
+              <button className="action small" onClick={() => setReopened(true)}>
+                重新下载
+              </button>
+            )}
+            <button className="action small" onClick={reload}>
+              刷新
+            </button>
+          </>
+        )}
       </div>
 
       {start.error && <Failed error={start.error} />}
       {upload.error && <Failed error={upload.error} />}
+      {remove.error && <Failed error={remove.error} />}
       {upload.result && (
         <div className="note">
           已导入 {upload.result.dataset}：{upload.result.docs} 篇语料。下一步点「生成样本」。
@@ -112,6 +201,15 @@ export function Datasets({ onOpenTasks }: { onOpenTasks: () => void }) {
         </div>
       )}
 
+      {choosing && kind === 'space' && (
+        <SpacePicker
+          busy={upload.busy}
+          onImport={(name, spaceId) =>
+            importAs(name, (overwrite) => api.importAkashaSpace(name, spaceId, overwrite))
+          }
+        />
+      )}
+
       <table>
         <thead>
           <tr>
@@ -124,10 +222,17 @@ export function Datasets({ onOpenTasks }: { onOpenTasks: () => void }) {
           </tr>
         </thead>
         <tbody>
-          {data.datasets.flatMap((entry) =>
+          {visible.slice(pageOffset, pageOffset + PAGE_SIZE).flatMap((entry) =>
             entry.files.map((file, index) => (
               <tr key={file.file}>
-                {index === 0 && <td rowSpan={entry.files.length}>{entry.name}</td>}
+                {index === 0 && (
+                  <td rowSpan={entry.files.length}>
+                    {entry.name}{' '}
+                    <span className={`tag ${entry.downloadable ? '' : 'accent'}`}>
+                      {entry.downloadable ? '公开' : '空间'}
+                    </span>
+                  </td>
+                )}
                 <td className="small mono">{file.file}</td>
                 <td>
                   {!file.present ? (
@@ -149,21 +254,22 @@ export function Datasets({ onOpenTasks }: { onOpenTasks: () => void }) {
                 {index === 0 && (
                   <td rowSpan={entry.files.length}>
                     <div className="row tight">
-                      {(['qa', 'corpus'] as const).map((kind) => {
-                        const open = preview?.dataset === entry.name && preview.kind === kind
+                      {(['qa', 'corpus'] as const).map((fileKind) => {
+                        const open =
+                          preview?.dataset === entry.name && preview.kind === fileKind
                         const ready = entry.files.some(
-                          (f) => f.kind === kind && f.present && !f.error,
+                          (f) => f.kind === fileKind && f.present && !f.error,
                         )
                         return (
                           <button
-                            key={kind}
+                            key={fileKind}
                             className={`action small${open ? ' primary' : ''}`}
                             disabled={!ready}
                             onClick={() =>
-                              setPreview(open ? null : { dataset: entry.name, kind })
+                              setPreview(open ? null : { dataset: entry.name, kind: fileKind })
                             }
                           >
-                            {kind === 'qa' ? '样本' : '语料'}
+                            {fileKind === 'qa' ? '样本' : '语料'}
                           </button>
                         )
                       })}
@@ -177,6 +283,20 @@ export function Datasets({ onOpenTasks }: { onOpenTasks: () => void }) {
                           生成样本
                         </button>
                       )}
+                      <button
+                        className="action small"
+                        disabled={remove.busy || start.busy || upload.busy}
+                        onClick={() => redownload(entry)}
+                      >
+                        重新下载
+                      </button>
+                      <button
+                        className="action small danger"
+                        disabled={remove.busy}
+                        onClick={() => removeDataset(entry)}
+                      >
+                        删除
+                      </button>
                     </div>
                   </td>
                 )}
@@ -185,6 +305,13 @@ export function Datasets({ onOpenTasks }: { onOpenTasks: () => void }) {
           )}
         </tbody>
       </table>
+
+      <Pager
+        total={visible.length}
+        offset={pageOffset}
+        limit={PAGE_SIZE}
+        onChange={setOffset}
+      />
 
       {generating && (
         <GeneratePanel
@@ -207,6 +334,89 @@ export function Datasets({ onOpenTasks }: { onOpenTasks: () => void }) {
         />
       )}
     </>
+  )
+}
+
+function SpacePicker({
+  busy,
+  onImport,
+}: {
+  busy: boolean
+  onImport: (name: string, spaceId: string) => void
+}) {
+  const { data, error, loading } = useAsync(() => api.akashaSpaces(), [])
+  const [spaceId, setSpaceId] = useState('')
+  const [name, setName] = useState('')
+  const [query, setQuery] = useState('')
+
+  if (loading) return <Loading what="Akasha 空间" />
+  if (error) return <Failed error={error} />
+  if (!data) return null
+
+  const choose = (id: string) => {
+    const space = data.spaces.find((s) => s.id === id)
+    setSpaceId(id)
+    setQuery('')
+    const datasetName = space ? space.name.trim() || space.slug.trim() || 'space' : ''
+    setName(space ? `${datasetName}-数据集` : '')
+  }
+
+  const keyword = query.trim().toLowerCase()
+  const matched = keyword
+    ? data.spaces.filter((s) =>
+        `${s.name} ${s.slug} ${s.id} ${s.name} · ${s.slug}`.toLowerCase().includes(keyword),
+      )
+    : data.spaces
+  const current = data.spaces.find((s) => s.id === spaceId)
+  const options = current && !matched.includes(current) ? [current, ...matched] : matched
+
+  const handleSpaceInput = (value: string) => {
+    setQuery(value)
+    const space = data.spaces.find(
+      (s) =>
+        value === s.name ||
+        value === s.slug ||
+        value === s.id ||
+        value === `${s.name} · ${s.slug}`,
+    )
+    if (space) choose(space.id)
+    else {
+      setSpaceId('')
+      setName('')
+    }
+  }
+
+  return (
+    <div className="panel" style={{ marginTop: 14 }}>
+      <div className="row">
+        <Field label="空间" hint={`共 ${data.spaces.length} 个`}>
+          <input
+            className="space-picker-input"
+            list="akasha-space-options"
+            value={query}
+            placeholder={current ? `已选择：${current.name} · ${current.slug}` : '搜索或选择空间'}
+            onChange={(e) => handleSpaceInput(e.target.value)}
+          />
+          <datalist id="akasha-space-options">
+            {options.map((s) => (
+              <option key={s.id} value={`${s.name} · ${s.slug}`} />
+            ))}
+          </datalist>
+        </Field>
+        <Field label="数据集名称" hint="支持 UTF-8 字符">
+          <input className="dataset-name-input" value={name} onChange={(e) => setName(e.target.value.trim())} />
+        </Field>
+      </div>
+      <div className="panel-actions">
+        <button
+          className="action primary"
+          disabled={busy || !spaceId || !name}
+          onClick={() => onImport(name, spaceId)}
+        >
+          {busy ? '导入中…' : '导入'}
+        </button>
+      </div>
+    </div>
   )
 }
 

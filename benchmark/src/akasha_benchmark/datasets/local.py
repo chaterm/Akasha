@@ -17,6 +17,7 @@ class LocalAdapter(DatasetAdapter):
         self.name = name
         self.qa_filename = f"{name}.json"
         self.corpus_filename = f"{name}_corpus.json"
+        self.space_filename = f"{name}_space.json"
 
     def parse_row(
         self, row: dict[str, Any], row_index: int, corpus: CorpusIndex

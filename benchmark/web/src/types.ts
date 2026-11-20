@@ -46,9 +46,27 @@ export interface TaskTreeNode {
 
 export interface TaskTree {
   total_tasks: number
-  inactive_total: number
+  finished_total: number
+  finished_runs: number
   compiles: TaskTreeNode[]
   unlinked_tasks: Task[]
+}
+
+export interface TaskPurgeResult {
+  deleted_tasks: number
+  deleted_runs: {
+    compiles: number
+    queries: number
+    evals: number
+    attributions: number
+  }
+  reclaimed_bytes: number
+}
+
+export interface AkashaSpace {
+  id: string
+  name: string
+  slug: string
 }
 
 export interface Connection {
@@ -143,6 +161,8 @@ export interface DatasetEntry {
   identity_rules: Record<string, string>
   subset_strategy: string
   downloadable: boolean
+  source_space: string | null
+  space_id: string | null
   expected_qa_rows: number | null
   files: DatasetFile[]
   files_ready: boolean

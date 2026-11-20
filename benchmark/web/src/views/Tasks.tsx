@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import type { Task, TaskDetail, TaskTreeNode } from '../types'
+import type { Task, TaskDetail, TaskPurgeResult, TaskTreeNode } from '../types'
 import {
   Bar,
   Failed,
@@ -37,6 +37,18 @@ type Navigate = (
   params: Record<string, unknown>,
 ) => void
 
+function readableBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB']
+  let value = bytes / 1024
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  return `${value.toFixed(1)} ${units[unit]}`
+}
+
 function tasksIn(nodes: TaskTreeNode[]): Task[] {
   return nodes.flatMap((node) => [
     ...node.tasks,
@@ -53,7 +65,7 @@ export function Tasks({
   const tasks = useAsync(() => api.taskTree(), [])
   const [open, setOpen] = useState<number | null>(null)
   const [showAudit, setShowAudit] = useState(false)
-  const cleanup = useAction<{ deleted: number }>()
+  const cleanup = useAction<TaskPurgeResult>()
 
   const linkedTasks = tasksIn(tasks.data?.compiles ?? [])
   const allTasks = [...linkedTasks, ...(tasks.data?.unlinked_tasks ?? [])]
@@ -62,7 +74,9 @@ export function Tasks({
     tasks.reload,
   )
 
-  const removableCount = tasks.data?.inactive_total ?? 0
+  const finishedTasks = tasks.data?.finished_total ?? 0
+  const finishedRuns = tasks.data?.finished_runs ?? 0
+  const removable = finishedTasks + finishedRuns > 0
 
   return (
     <>
@@ -77,9 +91,15 @@ export function Tasks({
           </button>
           <button
             className="action small danger"
-            disabled={removableCount === 0 || cleanup.busy}
+            disabled={!removable || cleanup.busy}
+            title="删除已结束的编译/查询/评测/归因数据与任务记录，暂停中的任务与其运行会保留"
             onClick={() => {
-              if (!window.confirm('清理所有已结束的任务记录？审计日志会保留。')) return
+              if (
+                !window.confirm(
+                  `删除 ${finishedRuns} 条已结束运行和 ${finishedTasks} 个任务记录？\n\n运行数据会级联删除（样本、指标、归因结果），审计日志保留；暂停中的任务与其运行不受影响。`,
+                )
+              )
+                return
               cleanup.run(async () => {
                 const result = await api.cleanupTasks()
                 tasks.reload()
@@ -87,10 +107,21 @@ export function Tasks({
               })
             }}
           >
-            清理已结束（{removableCount}）
+            清理已结束（{finishedRuns} 条运行 · {finishedTasks} 个任务）
           </button>
         </div>
       </div>
+
+      {cleanup.error && <Failed error={cleanup.error} />}
+      {cleanup.result && (
+        <div className="note">
+          已清理 {cleanup.result.deleted_runs.compiles} 条编译、
+          {cleanup.result.deleted_runs.queries} 条查询、
+          {cleanup.result.deleted_runs.evals} 条评测、
+          {cleanup.result.deleted_runs.attributions} 条归因与 {cleanup.result.deleted_tasks} 个任务记录，
+          数据库释放 {readableBytes(cleanup.result.reclaimed_bytes)}。
+        </div>
+      )}
 
       {tasks.loading && <Loading what="任务" />}
       {tasks.error && <Failed error={tasks.error} />}
@@ -107,7 +138,6 @@ export function Tasks({
         </div>
       )}
 
-      {cleanup.error && <Failed error={cleanup.error} />}
       {open !== null && <Logs key={open} taskId={open} onClose={() => setOpen(null)} />}
       {showAudit && <Audit />}
     </>

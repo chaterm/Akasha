@@ -28,6 +28,7 @@ from akasha_benchmark.store import (
     task_store,
 )
 from akasha_benchmark.task import Paused
+from akasha_platform.api import _common as common_api
 from akasha_platform.api import config as config_api
 from akasha_platform.api import datasets as datasets_api
 from akasha_platform.api import runs as runs_api
@@ -442,7 +443,7 @@ def test_connection_test_flags_compiles_in_another_workspace(client, db, monkeyp
                 "workspace": {"id": "w-other", "name": "Other"},
             }
 
-    monkeypatch.setattr(config_api, "AkashaClient", Fake)
+    monkeypatch.setattr(common_api, "AkashaClient", Fake)
     body = client.post("/api/connection/test").json()
     assert body["ok"] is True
     assert [entry["run_id"] for entry in body["blocked_compiles"]] == ["r1"]
@@ -611,7 +612,7 @@ def _pushing_akasha(monkeypatch) -> list[tuple[str, dict]]:
             pushed.append((feature, payload))
             return {}
 
-    monkeypatch.setattr(config_api, "AkashaClient", Fake)
+    monkeypatch.setattr(common_api, "AkashaClient", Fake)
     return pushed
 
 
@@ -657,7 +658,7 @@ def test_model_config_put_fills_the_only_legal_provider(client, monkeypatch):
     ],
 )
 def test_remote_model_config_lock_is_feature_scoped(client, db, monkeypatch, stage, feature, allowed):
-    monkeypatch.setattr(config_api, "AkashaClient", _AkashaStub)
+    monkeypatch.setattr(common_api, "AkashaClient", _AkashaStub)
     _task(db, stage, task_store.RUNNING)
     response = client.put(f"/api/model-configs/{feature}", json={"model": "m", "baseUrl": "https://x/v1"})
     assert response.status_code == (200 if allowed else 409)
@@ -669,7 +670,7 @@ def test_saved_model_apply_uses_the_same_feature_lock(client, db, monkeypatch, f
         db, purpose=feature, label=f"{feature}-lock", base_url="https://x/v1", model="m", api_key=""
     )
     _task(db, "compile", task_store.RUNNING)
-    monkeypatch.setattr(config_api, "AkashaClient", _AkashaStub)
+    monkeypatch.setattr(common_api, "AkashaClient", _AkashaStub)
     assert client.post(f"/api/akasha-models/{model_id}/apply").status_code == expected
 
 
@@ -801,7 +802,13 @@ def test_normalized_corpus_returns_full_text(client, normalized):
 def test_task_tree_route(client):
     response = client.get("/api/task-tree")
     assert response.status_code == 200
-    assert set(response.json()) == {"total_tasks", "inactive_total", "compiles", "unlinked_tasks"}
+    assert set(response.json()) == {
+        "total_tasks",
+        "finished_total",
+        "finished_runs",
+        "compiles",
+        "unlinked_tasks",
+    }
 
 
 def test_missing_records_return_404(client):
@@ -1086,3 +1093,41 @@ def test_cleanup_protects_active_descendants(client, db, compile_id, query_id, e
     db.commit()
     assert client.delete(f"/api/{route}/{ids[parent]}").status_code == 200
     assert attribution_store.get_attribution_run(db, attribution_id) is None
+
+
+def test_bulk_cleanup_purges_finished_chain(client, db, compile_id, query_id, eval_id):
+    attribution_id = attribution_store.create_attribution_run(
+        db, name="a", eval_id=eval_id, report_provider_id=None
+    )
+    _task(db, "compile", task_store.SUCCEEDED, target=("compile", compile_id))
+    _task(db, "query", task_store.SUCCEEDED, target=("query", query_id))
+    _task(db, "attribute", task_store.SUCCEEDED, target=("attribution", attribution_id))
+    run_store.set_run_status(db, "eval", eval_id, task_store.SUCCEEDED)
+    db.commit()
+
+    body = client.post("/api/tasks/cleanup/inactive").json()
+
+    assert body["deleted_tasks"] == 3
+    assert body["deleted_runs"] == {"compiles": 1, "queries": 1, "evals": 1, "attributions": 1}
+    assert body["reclaimed_bytes"] >= 0
+    assert run_store.get_run(db, "compile", compile_id) is None
+    assert run_store.get_run(db, "query", query_id) is None
+    assert run_store.get_run(db, "eval", eval_id) is None
+    assert attribution_store.get_attribution_run(db, attribution_id) is None
+    assert task_store.count_finished_tasks(db) == 0
+    messages = [entry["message"] for entry in task_store.audit_logs(db)]
+    assert any("清理已结束" in message for message in messages)
+
+
+def test_bulk_cleanup_keeps_paused_run_and_its_ancestors(client, db, compile_id, query_id):
+    _task(db, "compile", task_store.SUCCEEDED, target=("compile", compile_id))
+    paused = _task(db, "query", task_store.PAUSED, target=("query", query_id))
+
+    body = client.post("/api/tasks/cleanup/inactive").json()
+
+    assert body["deleted_runs"]["compiles"] == 0
+    assert body["deleted_runs"]["queries"] == 0
+    assert body["deleted_tasks"] == 1
+    assert task_store.get_task(db, paused)["status"] == task_store.PAUSED
+    assert compile_store.get_compile_run(db, compile_id) is not None
+    assert query_store.get_query_run(db, query_id) is not None

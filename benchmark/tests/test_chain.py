@@ -28,6 +28,7 @@ def test_build_lays_out_four_steps(normalized, monkeypatch, with_judge):
     assert [s["link"] for s in steps[1:]] == ["compile_id", "query_id", "eval_id"]
     assert all(s["stage"] in STAGES for s in steps)
     assert steps[0]["params"]["sample_ids"] == [sample_id]
+    assert "run_id" not in steps[0]["params"]
     assert steps[0]["params"]["negatives_ratio"] == 1.5
     assert steps[2]["params"]["ks"] == [2]
     expected = {

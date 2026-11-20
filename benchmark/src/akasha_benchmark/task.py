@@ -21,12 +21,19 @@ class TaskContext:
         params: dict[str, Any],
         connection: sqlite3.Connection,
         pause_event: threading.Event,
+        register_canceller: Callable[[Callable[[], None]], Callable[[], None]] | None = None,
     ) -> None:
         self.task_id = task_id
         self.stage = stage
         self.params = params
         self.db = connection
         self._pause = pause_event
+        self._register_canceller = register_canceller
+
+    def register_canceller(self, callback: Callable[[], None]) -> Callable[[], None]:
+        if self._register_canceller is None:
+            return lambda: None
+        return self._register_canceller(callback)
 
     def freeze(self, **params: Any) -> None:
         self.params.update(params)
@@ -85,8 +92,10 @@ def execute(stage: Stage, ctx: TaskContext, verify: Callable[[], None] | None = 
     try:
         ctx.checkpoint()
         stage(ctx)
+        ctx.checkpoint()
         if verify is not None:
             verify()
+        ctx.checkpoint()
     except BaseException as exc:
         ctx.db.rollback()
         paused = isinstance(exc, Paused)

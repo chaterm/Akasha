@@ -130,7 +130,7 @@ export class PageController {
     }
 
     const { canEdit, hasRestriction } = agentAccess
-      ? await this.agentAccessService.assertPageReadable(agentAccess, page)
+      ? await this.agentAccessService.assertPageReadable(agentAccess, page, user)
       : await this.pageAccessService.validateCanReadSourceWithPermissions(
           page,
           user,
@@ -188,9 +188,7 @@ export class PageController {
     const accessiblePageIds =
       await this.pagePermissionRepo.filterAccessiblePageIds({
         pageIds: pages.map((page) => page.id),
-        userId: agentAccess
-          ? this.agentAccessService.pagePermissionUserId(agentAccess)
-          : user.id,
+        userId: user.id,
         spaceId,
       });
     const accessibleSet = new Set(accessiblePageIds);
@@ -697,24 +695,26 @@ export class PageController {
         await this.agentAccessService.assertCanCreate(
           agentAccess,
           createPageDto.spaceId,
+          user,
           parentPage,
         );
       } else {
         await this.pageAccessService.validateCanEdit(parentPage, user);
       }
     } else {
+      if (agentAccess) {
+        await this.agentAccessService.assertCanCreate(
+          agentAccess,
+          createPageDto.spaceId,
+          user,
+        );
+      }
       const ability = await this.spaceAbility.createForUser(
         user,
         createPageDto.spaceId,
       );
       if (ability.cannot(SpaceCaslAction.Create, SpaceCaslSubject.Page)) {
         throw new ForbiddenException();
-      }
-      if (agentAccess) {
-        await this.agentAccessService.assertCanCreate(
-          agentAccess,
-          createPageDto.spaceId,
-        );
       }
     }
 
@@ -774,14 +774,6 @@ export class PageController {
         'Agent API keys cannot change Page location',
       );
     }
-    if (
-      agentAccess &&
-      updatePageDto.title === undefined &&
-      updatePageDto.icon === undefined &&
-      updatePageDto.content === undefined
-    ) {
-      throw new BadRequestException('At least one Page field is required');
-    }
     const page = await this.pageRepo.findById(updatePageDto.pageId);
 
     if (!page) {
@@ -789,7 +781,11 @@ export class PageController {
     }
 
     const { hasRestriction } = agentAccess
-      ? await this.agentAccessService.assertPageWritable(agentAccess, page)
+      ? await this.agentAccessService.assertPageWritable(
+          agentAccess,
+          page,
+          user,
+        )
       : await this.pageAccessService.validateCanEdit(page, user);
 
     const updatedPage = await this.pageService.update(
@@ -1101,7 +1097,11 @@ export class PageController {
       spaceId = page.spaceId;
       pageId = page.id;
       if (agentAccess) {
-        await this.agentAccessService.assertPageReadable(agentAccess, page);
+        await this.agentAccessService.assertPageReadable(
+          agentAccess,
+          page,
+          user,
+        );
       }
     }
 
@@ -1123,11 +1123,7 @@ export class PageController {
       spaceId,
       pagination,
       pageId,
-      user.role === UserRole.OWNER
-        ? undefined
-        : agentAccess
-          ? this.agentAccessService.pagePermissionUserId(agentAccess)
-          : user.id,
+      user.role === UserRole.OWNER ? undefined : user.id,
       user.role === UserRole.OWNER ? true : spaceCanEdit,
     );
   }

@@ -66,7 +66,6 @@ import {
 import { editPageSchema } from './page-edit.schemas';
 import type { PageEditOp } from '../../collaboration/page-edit/page-edit.types';
 import { normalizeEditorDocument } from '../../collaboration/content-validation';
-import { AgentAccessService } from '../page/page-access/agent-access.service';
 
 type ToolContext = McpToolContext;
 
@@ -120,7 +119,6 @@ export class McpService {
     private readonly workspaceAbility: WorkspaceAbilityFactory,
     private readonly toolRegistry: McpToolRegistry,
     private readonly attachmentRepo: AttachmentRepo,
-    private readonly agentAccessService: AgentAccessService,
     private readonly domainService: DomainService,
     private readonly environmentService: EnvironmentService,
     @InjectKysely() private readonly db: KyselyDB,
@@ -311,80 +309,78 @@ export class McpService {
       (args) => this.runTool(() => this.listChildPages(ctx, args)),
     );
 
-    if (!ctx.agentAccess) {
-      server.registerTool(
-        'duplicate_page',
-        {
-          title: 'Duplicate page',
-          description: 'Duplicate a page in its current space.',
-          inputSchema: {
-            pageId: z.string().min(1).describe('Page UUID to duplicate.'),
-          },
+    server.registerTool(
+      'duplicate_page',
+      {
+        title: 'Duplicate page',
+        description: 'Duplicate a page in its current space.',
+        inputSchema: {
+          pageId: z.string().min(1).describe('Page UUID to duplicate.'),
         },
-        (args) => this.runTool(() => this.duplicatePage(ctx, args)),
-      );
+      },
+      (args) => this.runTool(() => this.duplicatePage(ctx, args)),
+    );
 
-      server.registerTool(
-        'copy_page_to_space',
-        {
-          title: 'Copy page to space',
-          description:
-            'Copy a page and accessible descendants to another space.',
-          inputSchema: {
-            pageId: z.string().min(1).describe('Page UUID to copy.'),
-            spaceId: z
-              .string()
-              .min(1)
-              .describe('Destination accessible space UUID.'),
-          },
+    server.registerTool(
+      'copy_page_to_space',
+      {
+        title: 'Copy page to space',
+        description:
+          'Copy a page and accessible descendants to another space.',
+        inputSchema: {
+          pageId: z.string().min(1).describe('Page UUID to copy.'),
+          spaceId: z
+            .string()
+            .min(1)
+            .describe('Destination accessible space UUID.'),
         },
-        (args) => this.runTool(() => this.copyPageToSpace(ctx, args)),
-      );
+      },
+      (args) => this.runTool(() => this.copyPageToSpace(ctx, args)),
+    );
 
-      server.registerTool(
-        'move_page',
-        {
-          title: 'Move page',
-          description: 'Move or reorder a page within its current space.',
-          inputSchema: {
-            pageId: z
-              .string()
-              .min(1)
-              .describe('Page UUID obtained from another Tool.'),
-            position: z
-              .string()
-              .min(5)
-              .max(12)
-              .describe(
-                'Valid 5-12 character page ordering key, not natural-language text.',
-              ),
-            parentPageId: z
-              .string()
-              .nullable()
-              .optional()
-              .describe('New parent page UUID, or null for a root page.'),
-          },
+    server.registerTool(
+      'move_page',
+      {
+        title: 'Move page',
+        description: 'Move or reorder a page within its current space.',
+        inputSchema: {
+          pageId: z
+            .string()
+            .min(1)
+            .describe('Page UUID obtained from another Tool.'),
+          position: z
+            .string()
+            .min(5)
+            .max(12)
+            .describe(
+              'Valid 5-12 character page ordering key, not natural-language text.',
+            ),
+          parentPageId: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('New parent page UUID, or null for a root page.'),
         },
-        (args) => this.runTool(() => this.movePage(ctx, args)),
-      );
+      },
+      (args) => this.runTool(() => this.movePage(ctx, args)),
+    );
 
-      server.registerTool(
-        'move_page_to_space',
-        {
-          title: 'Move page to space',
-          description:
-            'Move a page and accessible descendants to another space.',
-          inputSchema: {
-            pageId: z.string().min(1).describe('Page UUID to move.'),
-            spaceId: z
-              .string()
-              .min(1)
-              .describe('Destination accessible space UUID.'),
-          },
+    server.registerTool(
+      'move_page_to_space',
+      {
+        title: 'Move page to space',
+        description:
+          'Move a page and accessible descendants to another space.',
+        inputSchema: {
+          pageId: z.string().min(1).describe('Page UUID to move.'),
+          spaceId: z
+            .string()
+            .min(1)
+            .describe('Destination accessible space UUID.'),
         },
-        (args) => this.runTool(() => this.movePageToSpace(ctx, args)),
-      );
-    }
+      },
+      (args) => this.runTool(() => this.movePageToSpace(ctx, args)),
+    );
 
     server.registerTool(
       'get_space',
@@ -408,115 +404,113 @@ export class McpService {
       (args) => this.runTool(() => this.listSpaces(ctx, args)),
     );
 
-    if (!ctx.agentAccess) {
-      server.registerTool(
-        'get_comments',
-        {
-          title: 'Get comments',
-          description: 'List comments on a page.',
-          inputSchema: {
-            pageId: z.string().min(1).describe('Page UUID.'),
-            ...paginationSchema,
-          },
+    server.registerTool(
+      'get_comments',
+      {
+        title: 'Get comments',
+        description: 'List comments on a page.',
+        inputSchema: {
+          pageId: z.string().min(1).describe('Page UUID.'),
+          ...paginationSchema,
         },
-        (args) => this.runTool(() => this.getComments(ctx, args)),
-      );
+      },
+      (args) => this.runTool(() => this.getComments(ctx, args)),
+    );
 
-      server.registerTool(
-        'create_comment',
-        {
-          title: 'Create comment',
-          description: 'Create a page or inline comment.',
-          inputSchema: {
-            pageId: z
-              .string()
-              .min(1)
-              .describe('Page UUID obtained from another Tool.'),
-            content: z
-              .any()
-              .describe(
-                'JSON object/array or JSON-encoded string; do not send unencoded plain text.',
-              ),
-            selection: z
-              .string()
-              .optional()
-              .describe('Selection payload required for inline comments.'),
-            type: z
-              .enum(['inline', 'page'])
-              .optional()
-              .describe('Comment kind; defaults to the service default.'),
-            parentCommentId: z
-              .string()
-              .optional()
-              .describe('Existing comment UUID when replying.'),
-          },
+    server.registerTool(
+      'create_comment',
+      {
+        title: 'Create comment',
+        description: 'Create a page or inline comment.',
+        inputSchema: {
+          pageId: z
+            .string()
+            .min(1)
+            .describe('Page UUID obtained from another Tool.'),
+          content: z
+            .any()
+            .describe(
+              'JSON object/array or JSON-encoded string; do not send unencoded plain text.',
+            ),
+          selection: z
+            .string()
+            .optional()
+            .describe('Selection payload required for inline comments.'),
+          type: z
+            .enum(['inline', 'page'])
+            .optional()
+            .describe('Comment kind; defaults to the service default.'),
+          parentCommentId: z
+            .string()
+            .optional()
+            .describe('Existing comment UUID when replying.'),
         },
-        (args) => this.runTool(() => this.createComment(ctx, args)),
-      );
+      },
+      (args) => this.runTool(() => this.createComment(ctx, args)),
+    );
 
-      server.registerTool(
-        'update_comment',
-        {
-          title: 'Update comment',
-          description: 'Update a comment owned by the current API key user.',
-          inputSchema: {
-            commentId: z
-              .string()
-              .min(1)
-              .describe('Comment UUID obtained from get_comments.'),
-            content: z
-              .any()
-              .describe(
-                'JSON object/array or JSON-encoded string; do not send unencoded plain text.',
-              ),
-          },
+    server.registerTool(
+      'update_comment',
+      {
+        title: 'Update comment',
+        description: 'Update a comment owned by the current API key user.',
+        inputSchema: {
+          commentId: z
+            .string()
+            .min(1)
+            .describe('Comment UUID obtained from get_comments.'),
+          content: z
+            .any()
+            .describe(
+              'JSON object/array or JSON-encoded string; do not send unencoded plain text.',
+            ),
         },
-        (args) => this.runTool(() => this.updateComment(ctx, args)),
-      );
+      },
+      (args) => this.runTool(() => this.updateComment(ctx, args)),
+    );
 
-      server.registerTool(
-        'search_attachments',
-        {
-          title: 'Search attachments',
-          description: 'Search page attachments by filename or indexed text.',
-          inputSchema: {
-            query: z
-              .string()
-              .min(1)
-              .describe('Filename or indexed-text search query.'),
-            spaceId: z
-              .string()
-              .optional()
-              .describe('Restrict results to this accessible space.'),
-            limit: z
-              .number()
-              .int()
-              .min(1)
-              .max(100)
-              .optional()
-              .describe('Maximum results; defaults to 25.'),
-          },
+    server.registerTool(
+      'search_attachments',
+      {
+        title: 'Search attachments',
+        description: 'Search page attachments by filename or indexed text.',
+        inputSchema: {
+          query: z
+            .string()
+            .min(1)
+            .describe('Filename or indexed-text search query.'),
+          spaceId: z
+            .string()
+            .optional()
+            .describe('Restrict results to this accessible space.'),
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(100)
+            .optional()
+            .describe('Maximum results; defaults to 25.'),
         },
-        (args) => this.runTool(() => this.searchAttachments(ctx, args)),
-      );
+      },
+      (args) => this.runTool(() => this.searchAttachments(ctx, args)),
+    );
 
-      server.registerTool(
-        'list_workspace_members',
-        {
-          title: 'List workspace members',
-          description:
-            'List workspace members visible to the current API key user.',
-          inputSchema: {
-            query: z
-              .string()
-              .optional()
-              .describe('Optional member name or email filter.'),
-            ...paginationSchema,
-          },
+    server.registerTool(
+      'list_workspace_members',
+      {
+        title: 'List workspace members',
+        description:
+          'List workspace members visible to the current API key user.',
+        inputSchema: {
+          query: z
+            .string()
+            .optional()
+            .describe('Optional member name or email filter.'),
+          ...paginationSchema,
         },
-        (args) => this.runTool(() => this.listWorkspaceMembers(ctx, args)),
-      );
-    }
+      },
+      (args) => this.runTool(() => this.listWorkspaceMembers(ctx, args)),
+    );
 
     server.registerTool(
       'get_current_user',
@@ -542,98 +536,96 @@ export class McpService {
       },
       (args) => this.runTool(() => this.getCitationPage(ctx, args)),
     );
-    if (!ctx.agentAccess) {
-      server.registerTool(
-        'delete_page',
-        {
-          title: 'Move personal page to trash',
-          description: 'Soft-delete a Page in the current user personal space.',
-          inputSchema: {
-            pageId: z.string().min(1).describe('Personal-space page UUID.'),
-          },
+    server.registerTool(
+      'delete_page',
+      {
+        title: 'Move personal page to trash',
+        description: 'Soft-delete a Page in the current user personal space.',
+        inputSchema: {
+          pageId: z.string().min(1).describe('Personal-space page UUID.'),
         },
-        (args) => this.runTool(() => this.deletePersonalPage(ctx, args)),
-      );
-      server.registerTool(
-        'restore_page',
-        {
-          title: 'Restore personal page',
-          description:
-            'Restore a Page from the current user personal-space trash.',
-          inputSchema: {
-            pageId: z
-              .string()
-              .min(1)
-              .describe('Deleted personal-space page UUID.'),
-          },
+      },
+      (args) => this.runTool(() => this.deletePersonalPage(ctx, args)),
+    );
+    server.registerTool(
+      'restore_page',
+      {
+        title: 'Restore personal page',
+        description:
+          'Restore a Page from the current user personal-space trash.',
+        inputSchema: {
+          pageId: z
+            .string()
+            .min(1)
+            .describe('Deleted personal-space page UUID.'),
         },
-        (args) => this.runTool(() => this.restorePersonalPage(ctx, args)),
-      );
-      server.registerTool(
-        'list_recent_pages',
-        {
-          title: 'List recent personal pages',
-          description:
-            'List recently updated Pages in the current user personal space.',
-          inputSchema: paginationSchema,
+      },
+      (args) => this.runTool(() => this.restorePersonalPage(ctx, args)),
+    );
+    server.registerTool(
+      'list_recent_pages',
+      {
+        title: 'List recent personal pages',
+        description:
+          'List recently updated Pages in the current user personal space.',
+        inputSchema: paginationSchema,
+      },
+      (args) => this.runTool(() => this.listRecentPersonalPages(ctx, args)),
+    );
+    server.registerTool(
+      'list_trash_pages',
+      {
+        title: 'List personal page trash',
+        description: 'List deleted Pages in the current user personal space.',
+        inputSchema: paginationSchema,
+      },
+      (args) => this.runTool(() => this.listTrashPersonalPages(ctx, args)),
+    );
+    server.registerTool(
+      'get_attachment_info',
+      {
+        title: 'Get attachment info',
+        description:
+          'Get metadata and an ACL-authorized download URL for a Page attachment. The Agent fetches the bytes locally from the URL.',
+        inputSchema: {
+          attachmentId: z.string().min(1).describe('Attachment UUID.'),
         },
-        (args) => this.runTool(() => this.listRecentPersonalPages(ctx, args)),
-      );
-      server.registerTool(
-        'list_trash_pages',
-        {
-          title: 'List personal page trash',
-          description: 'List deleted Pages in the current user personal space.',
-          inputSchema: paginationSchema,
+      },
+      (args) => this.runTool(() => this.getAttachmentInfo(ctx, args)),
+    );
+    server.registerTool(
+      'download_attachment',
+      {
+        title: 'Download Page attachment',
+        description:
+          'Resolve an ACL-authorized Page attachment download URL. The Agent fetches the bytes locally from the returned URL.',
+        inputSchema: {
+          attachmentId: z.string().min(1).describe('Attachment UUID.'),
         },
-        (args) => this.runTool(() => this.listTrashPersonalPages(ctx, args)),
-      );
-      server.registerTool(
-        'get_attachment_info',
-        {
-          title: 'Get attachment info',
-          description:
-            'Get metadata and an ACL-authorized download URL for a Page attachment. The Agent fetches the bytes locally from the URL.',
-          inputSchema: {
-            attachmentId: z.string().min(1).describe('Attachment UUID.'),
-          },
+      },
+      (args) => this.runTool(() => this.downloadAttachment(ctx, args)),
+    );
+    server.registerTool(
+      'upload_attachment',
+      {
+        title: 'Prepare Page attachment upload',
+        description:
+          'Check edit permission on a Page and return instructions for uploading a local file to it. This Tool does not accept file content: it returns an upload URL that the Agent posts the file to locally as multipart/form-data, so the bytes never pass through the MCP request.',
+        inputSchema: {
+          pageId: z
+            .string()
+            .min(1)
+            .describe('Page UUID obtained from another Tool.'),
+          attachmentId: z
+            .string()
+            .optional()
+            .describe(
+              'Existing attachment UUID to replace; omit to upload a new attachment.',
+            ),
         },
-        (args) => this.runTool(() => this.getAttachmentInfo(ctx, args)),
-      );
-      server.registerTool(
-        'download_attachment',
-        {
-          title: 'Download Page attachment',
-          description:
-            'Resolve an ACL-authorized Page attachment download URL. The Agent fetches the bytes locally from the returned URL.',
-          inputSchema: {
-            attachmentId: z.string().min(1).describe('Attachment UUID.'),
-          },
-        },
-        (args) => this.runTool(() => this.downloadAttachment(ctx, args)),
-      );
-      server.registerTool(
-        'upload_attachment',
-        {
-          title: 'Prepare Page attachment upload',
-          description:
-            'Check edit permission on a Page and return instructions for uploading a local file to it. This Tool does not accept file content: it returns an upload URL that the Agent posts the file to locally as multipart/form-data, so the bytes never pass through the MCP request.',
-          inputSchema: {
-            pageId: z
-              .string()
-              .min(1)
-              .describe('Page UUID obtained from another Tool.'),
-            attachmentId: z
-              .string()
-              .optional()
-              .describe(
-                'Existing attachment UUID to replace; omit to upload a new attachment.',
-              ),
-          },
-        },
-        (args) => this.runTool(() => this.uploadAttachment(ctx, args)),
-      );
-    }
+      },
+      (args) => this.runTool(() => this.uploadAttachment(ctx, args)),
+    );
     server.registerTool(
       'list_templates',
       {
@@ -789,14 +781,10 @@ export class McpService {
     ) {
       throw new NotFoundException('Shared Page not found');
     }
-    if (ctx.agentAccess) {
-      await this.agentAccessService.assertPageReadable(ctx.agentAccess, page);
-    } else {
-      await this.pageAccessService.validateCanReadCitationSourceWithPermissions(
-        page,
-        ctx.user,
-      );
-    }
+    await this.pageAccessService.validateCanReadCitationSourceWithPermissions(
+      page,
+      ctx.user,
+    );
     return {
       pageId: page.id,
       spaceId: page.spaceId,
@@ -862,11 +850,7 @@ export class McpService {
     if (!page || page.workspaceId !== ctx.workspace.id) {
       throw new NotFoundException('Page not found');
     }
-    if (ctx.agentAccess) {
-      await this.agentAccessService.assertPageWritable(ctx.agentAccess, page);
-    } else {
-      await this.pageAccessService.validateCanEdit(page, ctx.user);
-    }
+    await this.pageAccessService.validateCanEdit(page, ctx.user);
 
     const uploadUrl = `${this.domainService.getUrl(ctx.workspace.hostname)}/api/files/upload`;
     const fields: Record<string, string> = {
@@ -960,12 +944,6 @@ export class McpService {
     args: { query: string; spaceId?: string; limit?: number; offset?: number },
   ) {
     if (args.spaceId) {
-      if (ctx.agentAccess) {
-        await this.agentAccessService.assertSpaceBound(
-          ctx.agentAccess,
-          args.spaceId,
-        );
-      }
       await this.requireSpaceAbility(
         ctx.user,
         args.spaceId,
@@ -1001,12 +979,11 @@ export class McpService {
       throw new NotFoundException('Page not found');
     }
 
-    const permissions = ctx.agentAccess
-      ? await this.agentAccessService.assertPageReadable(ctx.agentAccess, page)
-      : await this.pageAccessService.validateCanViewWithPermissions(
-          page,
-          ctx.user,
-        );
+    const permissions =
+      await this.pageAccessService.validateCanViewWithPermissions(
+        page,
+        ctx.user,
+      );
 
     return this.formatPageContent(page, args.format, permissions);
   }
@@ -1022,9 +999,6 @@ export class McpService {
       format?: ContentFormat;
     },
   ) {
-    if (ctx.agentAccess && !args.spaceId) {
-      throw new BadRequestException('spaceId is required');
-    }
     const spaceId = args.spaceId ?? this.personalSpaceId(ctx);
     if (args.parentPageId) {
       const parentPage = await this.pageRepo.findById(args.parentPageId);
@@ -1036,15 +1010,7 @@ export class McpService {
       ) {
         throw new NotFoundException('Parent page not found');
       }
-      if (ctx.agentAccess) {
-        await this.agentAccessService.assertCanCreate(
-          ctx.agentAccess,
-          spaceId,
-          parentPage,
-        );
-      } else {
-        await this.pageAccessService.validateCanEdit(parentPage, ctx.user);
-      }
+      await this.pageAccessService.validateCanEdit(parentPage, ctx.user);
     } else {
       await this.requireSpaceAbility(
         ctx.user,
@@ -1052,9 +1018,6 @@ export class McpService {
         SpaceCaslAction.Create,
         SpaceCaslSubject.Page,
       );
-      if (ctx.agentAccess) {
-        await this.agentAccessService.assertCanCreate(ctx.agentAccess, spaceId);
-      }
     }
 
     const dto: CreatePageDto = {
@@ -1070,12 +1033,11 @@ export class McpService {
       ctx.workspace.id,
       dto,
     );
-    const permissions = ctx.agentAccess
-      ? await this.agentAccessService.assertPageReadable(ctx.agentAccess, page)
-      : await this.pageAccessService.validateCanViewWithPermissions(
-          page,
-          ctx.user,
-        );
+    const permissions =
+      await this.pageAccessService.validateCanViewWithPermissions(
+        page,
+        ctx.user,
+      );
 
     return this.formatPageContent(page, args.format, permissions);
   }
@@ -1098,9 +1060,10 @@ export class McpService {
       throw new NotFoundException('Page not found');
     }
 
-    const { hasRestriction } = ctx.agentAccess
-      ? await this.agentAccessService.assertPageWritable(ctx.agentAccess, page)
-      : await this.pageAccessService.validateCanEdit(page, ctx.user);
+    const { hasRestriction } = await this.pageAccessService.validateCanEdit(
+      page,
+      ctx.user,
+    );
     if (
       args.title === undefined &&
       args.icon === undefined &&
@@ -1145,9 +1108,10 @@ export class McpService {
       );
     }
 
-    const { hasRestriction } = ctx.agentAccess
-      ? await this.agentAccessService.assertPageWritable(ctx.agentAccess, page)
-      : await this.pageAccessService.validateCanEdit(page, ctx.user);
+    const { hasRestriction } = await this.pageAccessService.validateCanEdit(
+      page,
+      ctx.user,
+    );
 
     const outcomes = await this.pageService.editPageContent(
       page.id,
@@ -1177,12 +1141,6 @@ export class McpService {
       beforeCursor?: string;
     },
   ) {
-    if (ctx.agentAccess) {
-      await this.agentAccessService.assertSpaceBound(
-        ctx.agentAccess,
-        args.spaceId,
-      );
-    }
     const ability = await this.requireSpaceAbility(
       ctx.user,
       args.spaceId,
@@ -1193,11 +1151,7 @@ export class McpService {
       args.spaceId,
       this.pagination(args),
       undefined,
-      ctx.user.role === UserRole.OWNER
-        ? undefined
-        : ctx.agentAccess
-          ? this.agentAccessService.pagePermissionUserId(ctx.agentAccess)
-          : ctx.user.id,
+      ctx.user.role === UserRole.OWNER ? undefined : ctx.user.id,
       ctx.user.role === UserRole.OWNER
         ? true
         : ability.can(SpaceCaslAction.Edit, SpaceCaslSubject.Page),
@@ -1217,11 +1171,7 @@ export class McpService {
     if (!page || page.workspaceId !== ctx.workspace.id) {
       throw new NotFoundException('Page not found');
     }
-    if (ctx.agentAccess) {
-      await this.agentAccessService.assertPageReadable(ctx.agentAccess, page);
-    } else {
-      await this.pageAccessService.validateCanView(page, ctx.user);
-    }
+    await this.pageAccessService.validateCanView(page, ctx.user);
 
     const ability = await this.requireSpaceAbility(
       ctx.user,
@@ -1233,11 +1183,7 @@ export class McpService {
       page.spaceId,
       this.pagination(args),
       page.id,
-      ctx.user.role === UserRole.OWNER
-        ? undefined
-        : ctx.agentAccess
-          ? this.agentAccessService.pagePermissionUserId(ctx.agentAccess)
-          : ctx.user.id,
+      ctx.user.role === UserRole.OWNER ? undefined : ctx.user.id,
       ctx.user.role === UserRole.OWNER
         ? true
         : ability.can(SpaceCaslAction.Edit, SpaceCaslSubject.Page),
@@ -1329,12 +1275,6 @@ export class McpService {
   }
 
   private async getSpace(ctx: ToolContext, args: { spaceId: string }) {
-    if (ctx.agentAccess) {
-      await this.agentAccessService.assertSpaceBound(
-        ctx.agentAccess,
-        args.spaceId,
-      );
-    }
     const space = await this.spaceService.getSpaceInfo(
       args.spaceId,
       ctx.workspace.id,

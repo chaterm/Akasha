@@ -28,6 +28,7 @@ from ..datasets import (
     SubsetStrategy,
     dataset_names,
     get_adapter,
+    source_space,
 )
 from ..model_configs import matches
 from ..store import compile_store, data_store, dumps, loads, transaction
@@ -189,10 +190,7 @@ def build_subset(
     if strategy in gold_strategies and not adapter.has(DataDependency.GOLD_DOCS):
         raise ValueError(f"{adapter.name}: 策略 {strategy.value!r} 需要 gold 标注，但本组没有")
 
-    if sample_ids and strategy in gold_strategies:
-        picked = samples
-        gold_ids, negatives, doc_ids = _with_negatives(picked, usable_doc_ids, negatives_ratio, rng)
-    elif full_corpus:
+    if full_corpus:
         doc_ids = sorted(usable_doc_ids)
         picked = _sample(samples, qa_limit, rng)
         gold_ids = sorted({d for s in picked for d in s["gold_doc_ids"]})
@@ -201,6 +199,9 @@ def build_subset(
             if adapter.has(DataDependency.GOLD_DOCS)
             else []
         )
+    elif sample_ids and strategy in gold_strategies:
+        picked = samples
+        gold_ids, negatives, doc_ids = _with_negatives(picked, usable_doc_ids, negatives_ratio, rng)
     elif strategy is SubsetStrategy.WHOLE_DOCS:
         chunks: dict[str, list[str]] = defaultdict(list)
         for doc in corpus:
@@ -536,6 +537,32 @@ def _compiler_slug(ctx: TaskContext, config: AkashaConfig) -> str:
         return naming.model_slug(ctx.db, client.get_model_configs(), "compiler")
 
 
+def _source_space(datasets: list[str]) -> dict[str, Any] | None:
+    spaces = [source_space(name) for name in datasets]
+    if not any(spaces):
+        return None
+    if len(datasets) > 1:
+        raise ValueError("从 Akasha 空间导入的数据集复用原空间，只能单独编译")
+    return spaces[0]
+
+
+def _map_source_pages(ctx: TaskContext, compile_id: int, page_ids: dict[str, str]) -> None:
+    missing = []
+    for doc in compile_store.compile_docs(ctx.db, compile_id, pending_only=True):
+        page_id = page_ids.get(doc["doc_id"])
+        if page_id:
+            compile_store.record_page(
+                ctx.db, compile_id, doc["dataset"], doc["doc_id"], page_id=page_id, error=None
+            )
+        else:
+            missing.append(doc["doc_id"])
+    ctx.db.commit()
+    if missing:
+        raise RuntimeError(
+            f"{len(missing)} 篇语料在来源空间里没有对应页面，例如 {missing[0]!r}；请重新导入数据集"
+        )
+
+
 def run(ctx: TaskContext) -> None:
     params = ctx.params
     datasets = list(params.get("datasets") or [])
@@ -544,12 +571,13 @@ def run(ctx: TaskContext) -> None:
     unknown = sorted(set(datasets) - set(dataset_names()))
     if unknown:
         raise ValueError(f"未知数据集：{unknown}")
+    source = _source_space(datasets)
 
     seed = int(params["seed"]) if params.get("seed") is not None else default_seed()
     qa_limit = int(params.get("qa_limit") or DEFAULT_QA_LIMIT)
     sample_ids = [str(value) for value in params.get("sample_ids") or []]
     negatives_ratio = float(params.get("negatives_ratio", DEFAULT_NEGATIVES_RATIO))
-    full_corpus = bool(params.get("full_corpus", False))
+    full_corpus = source is not None or bool(params.get("full_corpus", False))
     import_concurrency = int(params.get("import_concurrency") or DEFAULT_IMPORT_CONCURRENCY)
     if qa_limit < 1:
         raise ValueError("每个数据集的 QA 数必须大于 0")
@@ -593,7 +621,7 @@ def run(ctx: TaskContext) -> None:
         ctx.bind("compile", compile_id)
     ctx.log(f"编译 {options.run_id}（#{compile_id}），数据集 {', '.join(options.datasets)}")
 
-    _execute(ctx, compile_id, options, config, resuming)
+    _execute(ctx, compile_id, options, config, resuming, source)
 
 
 def _execute(
@@ -602,6 +630,7 @@ def _execute(
     options: CompileOptions,
     config: AkashaConfig,
     resuming: bool,
+    source: dict[str, Any] | None = None,
 ) -> None:
     _prepare_subset(ctx, compile_id, options)
 
@@ -632,7 +661,20 @@ def _execute(
             ctx.db, compile_id, model_configs_json=dumps(current_configs)
         )
         ctx.db.commit()
-        if not space_id:
+        if not space_id and source:
+            if source.get("workspace_id") != workspace.get("id"):
+                raise RuntimeError("来源空间不在当前连接的 workspace 里，请重新导入数据集")
+            space_id = str(source["space_id"])
+            compile_store.update_compile_run(
+                ctx.db,
+                compile_id,
+                space_id=space_id,
+                space_name=source.get("space_name"),
+                workspace_id=workspace.get("id"),
+            )
+            ctx.db.commit()
+            ctx.log(f"复用来源空间 {source.get('space_name')}（{space_id}）")
+        elif not space_id:
             slug = naming.space_slug(options.run_id)
             space = client.create_space(
                 name=f"bench {options.run_id}"[:100],
@@ -656,6 +698,8 @@ def _execute(
             if mismatch:
                 raise RuntimeError(mismatch)
             ctx.log(f"复用本次编译的空间 {space_id}")
+        if source:
+            _map_source_pages(ctx, compile_id, source["page_ids"])
 
         _run_remote_compile(
             ctx, client, compile_id, space_id, options.import_concurrency, current_configs

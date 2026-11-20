@@ -1,27 +1,46 @@
-# React + TypeScript + Vite
+# Akasha Client
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React 18 + Vite single-page application: the collaborative editor (Tiptap via
+`@docmost/editor-ext`), spaces and pages, knowledge search and answers, the
+relationship graph, and the admin settings used to configure models.
 
-Currently, two official plugins are available:
+Vite loads its environment from the repository root `.env` (not from this
+directory), so `APP_URL`, `BACKEND_URL`, `COLLAB_URL`, and the upload limits
+are read from the same file as the server. If you have not created one yet, copy
+`.env.example` in the repository root.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Develop
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type aware lint rules:
-
-- Configure the top-level `parserOptions` property like this:
-
-```js
-   parserOptions: {
-    ecmaVersion: 'latest',
-    sourceType: 'module',
-    project: ['./tsconfig.json', './tsconfig.node.json'],
-    tsconfigRootDir: __dirname,
-   },
+```bash
+pnpm --filter ./apps/client run dev    # http://127.0.0.1:3000
 ```
 
-- Replace `plugin:@typescript-eslint/recommended` to `plugin:@typescript-eslint/recommended-type-checked` or `plugin:@typescript-eslint/strict-type-checked`
-- Optionally add `plugin:@typescript-eslint/stylistic-type-checked`
-- Install [eslint-plugin-react](https://github.com/jsx-eslint/eslint-plugin-react) and add `plugin:react/recommended` & `plugin:react/jsx-runtime` to the `extends` list
+The dev server proxies `/api`, `/mcp`, `/socket.io`, and `/collab` to
+`BACKEND_URL`. The API process serves the collaboration WebSocket at `/collab`, so
+real-time editing works without any extra process; set `COLLAB_URL` only when
+collaboration runs on a different origin. See
+[`docs/development.md`](../../docs/development.md).
+
+## Scripts
+
+| Script | Purpose |
+| --- | --- |
+| `dev` | Vite dev server with HMR |
+| `build` | Type-check, then emit the production bundle to `dist` |
+| `preview` | Serve the built bundle |
+| `lint` / `format` | ESLint / Prettier |
+| `test` / `test:watch` | Vitest suites |
+
+## Layout
+
+| Path | Contents |
+| --- | --- |
+| `src/features` | Feature modules (pages, spaces, editor, knowledge, AI settings) |
+| `src/components` | Shared UI components |
+| `src/pages` | Route-level pages |
+| `src/lib` | Runtime config, API client, utilities |
+| `src/ee` | Enterprise-only screens |
+| `src/i18n.ts` | Translation loading |
+
+UI primitives come from Mantine, server state from TanStack Query. Build artifacts
+are produced in `apps/client/dist`.

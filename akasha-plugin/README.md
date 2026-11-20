@@ -73,9 +73,9 @@ pnpm --filter ./apps/server run skill:node-reference
 
 [`akasha-weekly-report`](./skills/akasha-weekly-report/SKILL.md) 要求使用**个人 API Key**：工作区须
 启用 MCP（`settings.ai.mcp=true`），用户须在个人设置的 API keys 页面自行创建 Key，并具有目标空间、
-模板及父页面的访问权限。使用 Agent Key 或 `x-token` SSO 调用 `prepare_weekly_report`、
-`save_weekly_report`、`list_templates`、`get_template` 时，将返回 `IDENTITY_UNSUPPORTED`。时区固定为
-`Asia/Shanghai`，无需配置。
+模板及父页面的访问权限。Agent Key 不能用于 MCP，连接时即被拒绝；使用 `x-token` SSO 调用
+`prepare_weekly_report`、`save_weekly_report`、`list_templates`、`get_template` 时，将返回
+`IDENTITY_UNSUPPORTED`。时区固定为 `Asia/Shanghai`，无需配置。
 
 默认模板与保存位置可通过 MCP 连接的请求头统一配置：
 

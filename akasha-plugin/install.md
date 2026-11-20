@@ -11,9 +11,11 @@ npx -y skills@latest add https://github.com/chaterm/Akasha.git#beta \
   --agent <宿主> --global --copy --yes
 ```
 
-`<宿主>` 取 `claude-code`、`codex`、`cursor` 或 `opencode`。
+`<宿主>` 填 `skills` CLI 能识别的宿主名，`claude-code`、`codex`、`cursor`、`opencode` 已验证可用。
+其他宿主先按 CLI 的 `--agent` 列表填；CLI 不支持当前宿主时，改用下面的离线包安装。
 
-没有 Node.js 22.20 以上时，下载离线包，原样解压到宿主的全局 Skill 目录：
+没有 Node.js 22.20 以上，或宿主不在 CLI 支持范围内时，下载离线包，原样解压到宿主的全局 Skill
+目录：
 
 ```bash
 tmp=$(mktemp -d)
@@ -29,6 +31,7 @@ rm -rf "$tmp"
 | `codex` | `~/.agents/skills/` |
 | `cursor` | `~/.cursor/skills/` |
 | `opencode` | `~/.config/opencode/skills/` |
+| 其他宿主 | 自行判断：按该宿主存放全局 Skill 的目录放置，不确定时查其文档或 `skills` CLI 的 `--agent` 列表 |
 
 Windows 没有 `unzip` 时用 PowerShell 的 `Invoke-WebRequest` 和 `Expand-Archive`。
 

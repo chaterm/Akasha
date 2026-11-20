@@ -130,7 +130,7 @@ export class KnowledgeRetrievalService {
   async retrieve(input: {
     workspaceId: string;
     userId: string;
-    supplementalUserId?: string;
+    supplementalSpaceIds?: string[];
     query: string;
     spaceIds: string[];
     labelNames?: string[];
@@ -189,14 +189,24 @@ export class KnowledgeRetrievalService {
       });
     }
 
+    const supplementalSpaceIds = new Set(input.supplementalSpaceIds ?? []);
     const readableSpaceIds = await measureAiChatPhase(
       input.debugTiming,
       'retrieval.authorize_spaces',
-      () =>
-        this.spaceAuthorization.filterReadableSpaceIds({
-          user,
-          spaceIds: requestedSpaceIds,
-        }),
+      async () => {
+        const ownReadable = await this.spaceAuthorization.filterReadableSpaceIds(
+          {
+            user,
+            spaceIds: requestedSpaceIds.filter(
+              (spaceId) => !supplementalSpaceIds.has(spaceId),
+            ),
+          },
+        );
+        return requestedSpaceIds.filter(
+          (spaceId) =>
+            supplementalSpaceIds.has(spaceId) || ownReadable.includes(spaceId),
+        );
+      },
       (result) => ({
         requestedSpaceCount: requestedSpaceIds.length,
         readableSpaceCount: result.length,
@@ -236,27 +246,12 @@ export class KnowledgeRetrievalService {
       () => this.groupUserRepo.getUserGroupIds(input.userId),
       (result) => ({ groupCount: result.length }),
     );
-    const supplementalGroupIds = input.supplementalUserId
-      ? await this.groupUserRepo.getUserGroupIds(input.supplementalUserId)
-      : [];
     const principals = [
       { principalType: 'user' as const, principalId: input.userId },
       ...groupIds.map((groupId) => ({
         principalType: 'group' as const,
         principalId: groupId,
       })),
-      ...(input.supplementalUserId
-        ? [
-            {
-              principalType: 'user' as const,
-              principalId: input.supplementalUserId,
-            },
-            ...supplementalGroupIds.map((groupId) => ({
-              principalType: 'group' as const,
-              principalId: groupId,
-            })),
-          ]
-        : []),
     ];
     const candidateScope = {
       workspaceId: input.workspaceId,
@@ -445,7 +440,7 @@ export class KnowledgeRetrievalService {
         this.sourceAuthorization.filterReadableSources({
           workspaceId: input.workspaceId,
           userId: input.userId,
-          supplementalUserId: input.supplementalUserId,
+          supplementalSpaceIds: input.supplementalSpaceIds,
           sourcePageIds: allSourcePageIds,
           cache: authCache,
         }),
@@ -519,7 +514,7 @@ export class KnowledgeRetrievalService {
         this.expandGraph({
           workspaceId: input.workspaceId,
           userId: input.userId,
-          supplementalUserId: input.supplementalUserId,
+          supplementalSpaceIds: input.supplementalSpaceIds,
           readableSpaceIds,
           principals,
           ...(graphExpansionMode === 'edge_anchored'
@@ -604,7 +599,7 @@ export class KnowledgeRetrievalService {
             this.sourceAuthorization.filterReadableSources({
               workspaceId: input.workspaceId,
               userId: input.userId,
-              supplementalUserId: input.supplementalUserId,
+              supplementalSpaceIds: input.supplementalSpaceIds,
               sourcePageIds: unique(
                 anchoredSourceRows.flatMap((row) => row.sourcePageIds),
               ),
@@ -673,7 +668,7 @@ export class KnowledgeRetrievalService {
           this.sourceAuthorization.filterReadableSources({
             workspaceId: input.workspaceId,
             userId: input.userId,
-            supplementalUserId: input.supplementalUserId,
+            supplementalSpaceIds: input.supplementalSpaceIds,
             sourcePageIds: unique(
               fusedSourceRows.flatMap((row) => row.sourcePageIds),
             ),
@@ -727,7 +722,7 @@ export class KnowledgeRetrievalService {
         this.redactUnreadablePageMetadata({
           workspaceId: input.workspaceId,
           userId: input.userId,
-          supplementalUserId: input.supplementalUserId,
+          supplementalSpaceIds: input.supplementalSpaceIds,
           chunks: selectedChunks,
           authCache,
         }),
@@ -793,7 +788,7 @@ export class KnowledgeRetrievalService {
   private async redactUnreadablePageMetadata(input: {
     workspaceId: string;
     userId: string;
-    supplementalUserId?: string;
+    supplementalSpaceIds?: string[];
     chunks: KnowledgeRetrievalResult['chunks'];
     authCache: KnowledgeAuthorizationCache;
   }): Promise<KnowledgeRetrievalResult['chunks']> {
@@ -810,7 +805,7 @@ export class KnowledgeRetrievalService {
       await this.sourceAuthorization.filterReadableSources({
         workspaceId: input.workspaceId,
         userId: input.userId,
-        supplementalUserId: input.supplementalUserId,
+        supplementalSpaceIds: input.supplementalSpaceIds,
         sourcePageIds: unique([...pageSources.values()].flat()),
         cache: input.authCache,
       }),
@@ -865,7 +860,7 @@ export class KnowledgeRetrievalService {
   private async expandGraph(input: {
     workspaceId: string;
     userId: string;
-    supplementalUserId?: string;
+    supplementalSpaceIds?: string[];
     readableSpaceIds: string[];
     principals: Array<{
       principalType: 'user' | 'group';
@@ -943,7 +938,7 @@ export class KnowledgeRetrievalService {
         await this.sourceAuthorization.filterReadableSources({
           workspaceId: input.workspaceId,
           userId: input.userId,
-          supplementalUserId: input.supplementalUserId,
+          supplementalSpaceIds: input.supplementalSpaceIds,
           sourcePageIds: frontierSourceIds,
           cache: input.authCache,
         });

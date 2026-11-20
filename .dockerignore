@@ -4,3 +4,13 @@ dist
 /data
 .env*
 .nx
+benchmark
+docs
+docker
+resources
+akasha-plugin
+.github
+.idea
+.workbuddy
+.claude
+*.md

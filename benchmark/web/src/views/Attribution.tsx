@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useState } from 'react'
 import { api } from '../api'
 import type {
@@ -19,9 +20,9 @@ import {
   Field,
   Loading,
   ModeTag,
+  ProviderSelect,
   downloadText,
   Pager,
-  ProviderSelect,
   RecordNav,
   RecordSearch,
   RunCells,
@@ -29,9 +30,9 @@ import {
   Timing,
   useAction,
   useAsync,
+  useProvider,
   usePagedRecordNavigation,
   usePoll,
-  useProvider,
   useTaskWatch,
 } from '../ui'
 import { AttributionChain } from './AttributionChain'
@@ -41,12 +42,10 @@ export function Attribution({
   activeEval,
   onSelectEval,
   onOpenEval,
-  onOpenSettings,
 }: {
   activeEval: number | null
   onSelectEval: (id: number) => void
   onOpenEval: (queryId: number, evalId: number) => void
-  onOpenSettings: () => void
 }) {
   const compiles = useAsync(() => api.compiles(), [])
   const tasks = useTaskWatch(compiles.reload)
@@ -77,23 +76,26 @@ export function Attribution({
         <div className="note warn">还没有已完成的评测记录。</div>
       ) : (
         <ConfigPanel storageKey="attribution" title="归因配置">
-          <Field label="选择评测">
-            <select
-              value={current?.id ?? ''}
-              onChange={(e) => {
-                onSelectEval(Number(e.target.value))
-                setOpen(null)
-              }}
-            >
-              {done.map((run) => (
-                <option key={run.id} value={run.id}>
-                  {run.name}（#{run.id}）
-                </option>
-              ))}
-            </select>
-          </Field>
           {current && (
-            <NewAttribution evalRun={current} onOpenSettings={onOpenSettings} onStarted={tasks.watch} />
+            <NewAttribution
+              evalRun={current}
+              onStarted={tasks.watch}
+              selection={
+                <Field label="选择评测">
+                  <select
+                    value={current.id}
+                    onChange={(e) => {
+                      onSelectEval(Number(e.target.value))
+                      setOpen(null)
+                    }}
+                  >
+                    {done.map((run) => (
+                      <option key={run.id} value={run.id}>{run.name}（#{run.id}）</option>
+                    ))}
+                  </select>
+                </Field>
+              }
+            />
           )}
         </ConfigPanel>
       )}
@@ -109,7 +111,6 @@ export function Attribution({
                 <th>状态</th>
                 <th className="num">样本数</th>
                 <th className="num">成功</th>
-                <th>整体报告</th>
                 <th>耗时</th>
                 <th />
               </tr>
@@ -119,11 +120,6 @@ export function Attribution({
                 <tr key={run.id} className={open === run.id ? 'selected' : ''}>
                   <RunCells run={run} />
                   <RunCountCells run={run} />
-                  <td>
-                    <span className={`tag ${run.report_provider_id !== null ? 'ok' : ''}`}>
-                      {run.report_provider_id !== null ? '已请求' : '未使用模型'}
-                    </span>
-                  </td>
                   <td>
                     <Timing startedAt={run.created_at} finishedAt={run.finished_at} />
                   </td>
@@ -173,52 +169,72 @@ export function Attribution({
 function NewAttribution({
   evalRun,
   onStarted,
-  onOpenSettings,
+  selection,
 }: {
   evalRun: EvalRun
   onStarted: (task: Task) => void
-  onOpenSettings: () => void
+  selection: ReactNode
 }) {
-  const provider = useProvider('attribution')
   const [name, setName] = useState('')
-  const [useModel, setUseModel] = useState(false)
+  const [useModel, setUseModel] = useState(true)
+  const [concurrency, setConcurrency] = useState(1)
+  const attributionProvider = useProvider('attribution')
   const start = useAction<unknown>()
 
   return (
     <div style={{ marginTop: 12 }}>
       {start.error && <Failed error={start.error} />}
-      <div className="row">
+      <div className="row creation-header">
+        {selection}
         <Field label="归因名称" hint="留空自动生成">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="自动" />
         </Field>
-        {useModel && <ProviderSelect label="归因模型" provider={provider} />}
       </div>
-
-      <label className="check" style={{ marginTop: 8 }}>
-        <input type="checkbox" checked={useModel} onChange={() => setUseModel(!useModel)} />
-        用模型分析并生成一份报告
-      </label>
-
-      {useModel && provider.list.length === 0 && (
-        <div className="note warn">
-          还没配归因模型端点；不配只能进行规则归因。
-          <button className="action small" style={{ marginLeft: 8 }} onClick={onOpenSettings}>
-            去配置
-          </button>
+      <div className="row" style={{ marginTop: 10 }}>
+        <Field label="模型归因">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={useModel}
+              onChange={(event) => setUseModel(event.target.checked)}
+            />
+            使用模型归因
+          </label>
+        </Field>
+      </div>
+      {useModel && (
+        <div className="row" style={{ marginTop: 10 }}>
+          <ProviderSelect label="归因模型" provider={attributionProvider} />
+          <Field label="并发">
+            <input
+              type="number"
+              min={1}
+              max={16}
+              value={concurrency}
+              onChange={(event) => setConcurrency(Number(event.target.value))}
+            />
+          </Field>
         </div>
       )}
-
       <div style={{ marginTop: 10 }}>
         <button
           className="action primary"
-          disabled={start.busy}
+          disabled={
+            start.busy ||
+            (useModel && attributionProvider.id === null) ||
+            concurrency < 1 ||
+            concurrency > 16
+          }
           onClick={() =>
             start.run(async () => {
               const task = await api.startTask('attribute', {
                 eval_id: evalRun.id,
                 use_model: useModel,
+                ...(useModel ? { concurrency } : {}),
+                ...(useModel && attributionProvider.id !== null
+                  ? { provider_id: attributionProvider.id }
+                  : {}),
                 ...(name.trim() ? { name: name.trim() } : {}),
-                ...(provider.id === null ? {} : { provider_id: provider.id }),
               })
               onStarted(task)
               return task
@@ -231,7 +247,6 @@ function NewAttribution({
     </div>
   )
 }
-
 const PAGE = 5
 const ROOT_CAUSE_ORDER = [
   'answer_correct',
@@ -319,23 +334,6 @@ function Conclusions({ attributionId, evalId }: { attributionId: number; evalId:
         <div className="row tight">
           <button
             className="action small"
-            disabled={!data.report}
-            title={data.report ? '下载整体评测分析报告' : '本次归因没有模型报告'}
-            onClick={() => {
-              if (!data.report) return
-              const title = `# ${data.name} · 整体评测分析报告`
-              const metadata = `归因 ID：${data.id}  \n评测 ID：${data.eval_id}  \n生成时间：${data.finished_at ?? data.created_at}`
-              downloadText(
-                `${title}\n\n${metadata}\n\n${data.report}\n`,
-                `${exportFilename(data.name)}-report.md`,
-                'text/markdown;charset=utf-8',
-              )
-            }}
-          >
-            导出整体报告
-          </button>
-          <button
-            className="action small"
             disabled={results.length === 0}
             title="下载本次运行的全部逐样本规则归因，不受当前分组筛选影响"
             onClick={() => {
@@ -366,25 +364,8 @@ function Conclusions({ attributionId, evalId }: { attributionId: number; evalId:
             导出规则归因
           </button>
         </div>
-        <Timing
-          startedAt={data.created_at}
-          finishedAt={data.finished_at}
-          latencyMs={data.report_latency_ms}
-          perLabel="份报告"
-        />
+        <Timing startedAt={data.created_at} finishedAt={data.finished_at} />
       </div>
-
-      {(data.report || data.report_error) && (
-        <section className={`note ${data.report_error ? 'warn' : 'plain'}`} style={{ marginBottom: 14 }}>
-          <h3 style={{ marginTop: 0 }}>整体评测分析报告</h3>
-          {data.report_error && (
-            <div className="small" style={{ color: 'var(--bad)' }}>
-              报告生成失败：{data.report_error}。逐样本规则归因不受影响。
-            </div>
-          )}
-          {data.report && <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>{data.report}</div>}
-        </section>
-      )}
 
       <div className="row tight" style={{ marginBottom: 10 }}>
         <RecordSearch

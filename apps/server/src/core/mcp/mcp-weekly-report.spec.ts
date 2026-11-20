@@ -138,7 +138,7 @@ describe('Weekly report MCP integration', () => {
     }
   });
   it.each([
-    ['SSO', user, undefined],
+    ['SSO', user],
     [
       'Agent',
       withApiKeyAccess(user, {
@@ -146,22 +146,19 @@ describe('Weekly report MCP integration', () => {
         keyType: ApiKeyType.AGENT,
         personalSpaceId: null,
       }),
-      { delegatedUserId: 'user-1' },
     ],
     [
       'legacy untyped key',
       withApiKeyAccess(user, { apiKeyId: 'old', personalSpaceId: 'cached' }),
-      undefined,
     ],
   ])(
     'registers all four tools but rejects %s before domain access',
-    async (_name, currentUser, agentAccess) => {
+    async (_name, currentUser) => {
       const { service, templateService, weeklyReportService, spaceRepo } =
         subject();
       const { handlers, server } = registered(service, {
         user: currentUser,
         workspace,
-        agentAccess,
       });
       for (const name of [
         'list_templates',

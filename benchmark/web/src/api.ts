@@ -1,5 +1,6 @@
 import type {
   AkashaModelsView,
+  AkashaSpace,
   AttributionDetail,
   CompileDoc,
   CompileEmbedding,
@@ -25,6 +26,7 @@ import type {
   SampleList,
   Task,
   TaskDetail,
+  TaskPurgeResult,
   TaskTree,
 } from './types'
 
@@ -111,8 +113,15 @@ export const api = {
       `/api/datasets/import${query({ name, overwrite })}`,
       { method: 'POST', body: file, headers: { 'Content-Type': 'application/zip' } },
     ),
-  deleteDataset: (name: string) =>
-    del<{ deleted: number }>(`/api/datasets/${encodeURIComponent(name)}`),
+  akashaSpaces: () => request<{ spaces: AkashaSpace[] }>('/api/akasha/spaces'),
+  importAkashaSpace: (name: string, spaceId: string, overwrite = false) =>
+    post<{ dataset: string; docs: number }>(
+      `/api/datasets/import-akasha${query({ name, space_id: spaceId, overwrite })}`,
+    ),
+  deleteDataset: (name: string, params: { remove_files?: boolean } = {}) =>
+    del<{ deleted: number; files_removed: number }>(
+      `/api/datasets/${encodeURIComponent(name)}${query(params)}`,
+    ),
   rawSamples: (
     name: string,
     params: { kind?: 'qa' | 'corpus'; q?: string; limit?: number; offset?: number } = {},
@@ -181,7 +190,7 @@ export const api = {
   pauseTask: (id: number) => post<Task>(`/api/tasks/${id}/pause`),
   resumeTask: (id: number) => post<Task>(`/api/tasks/${id}/resume`),
   deleteTask: (id: number) => del<{ deleted: number }>(`/api/tasks/${id}`),
-  cleanupTasks: () => post<{ deleted: number }>('/api/tasks/cleanup/inactive'),
+  cleanupTasks: () => post<TaskPurgeResult>('/api/tasks/cleanup/inactive'),
   audit: (stage?: string, limit = 200) =>
     request<TaskDetail['logs']>(`/api/audit${query({ stage, limit })}`),
 }

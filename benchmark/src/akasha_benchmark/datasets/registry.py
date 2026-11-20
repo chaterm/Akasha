@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
+from typing import Any
 
+from ..io_utils import load_json
 from .base import DatasetAdapter
 from .hotpotqa import HotpotQAAdapter
 from .local import LocalAdapter
@@ -19,7 +20,7 @@ _LOOKUP: dict[str, type[DatasetAdapter]] = {
 }
 DATASET_NAMES: tuple[str, ...] = tuple(_LOOKUP)
 
-LOCAL_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
+MAX_LOCAL_NAME_LENGTH = 63
 _CORPUS_SUFFIX = "_corpus.json"
 
 
@@ -28,7 +29,13 @@ def dataset_dir() -> Path:
 
 
 def is_local_name(name: str) -> bool:
-    return bool(LOCAL_NAME.fullmatch(name)) and name not in _LOOKUP
+    return (
+        isinstance(name, str)
+        and 1 <= len(name) <= MAX_LOCAL_NAME_LENGTH
+        and name[0].isalnum()
+        and all(char.isalnum() or char == "-" for char in name)
+        and name not in _LOOKUP
+    )
 
 
 def local_names(directory: Path | None = None) -> tuple[str, ...]:
@@ -49,6 +56,13 @@ def get_adapter(name: str) -> DatasetAdapter:
     if is_local_name(name):
         return LocalAdapter(name)
     raise KeyError(f"unknown dataset {name!r}. Known: {', '.join(dataset_names())}")
+
+
+def source_space(name: str) -> dict[str, Any] | None:
+    if not is_local_name(name):
+        return None
+    path = DATASET_DIR / LocalAdapter(name).space_filename
+    return load_json(path) if path.is_file() else None
 
 
 def all_adapters() -> tuple[DatasetAdapter, ...]:

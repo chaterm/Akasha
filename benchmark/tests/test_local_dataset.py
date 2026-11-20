@@ -7,6 +7,7 @@ import zipfile
 import pytest
 from conftest import make_compile_run, make_context
 from fastapi.testclient import TestClient
+from test_akasha import FakeClient
 
 from akasha_benchmark.datasets import (
     DataDependency,
@@ -16,11 +17,12 @@ from akasha_benchmark.datasets import (
     local_names,
     registry,
 )
-from akasha_benchmark.datasets.space_export import parse_space_export
+from akasha_benchmark.datasets.space_export import parse_space_export, space_page_ids
 from akasha_benchmark.judge.client import JudgeProvider, JudgeReply
 from akasha_benchmark.metrics import registry as metric_registry
 from akasha_benchmark.stages import compile, download, generate
 from akasha_benchmark.store import compile_store, config_store, data_store
+from akasha_benchmark.task import execute
 from akasha_platform.main import create_app
 from akasha_platform.settings import Settings
 
@@ -85,9 +87,9 @@ def test_markdown_does_not_repeat_existing_heading(local_normalized):
 
 
 def test_local_names_skip_builtin_and_bad_names(tmp_path):
-    for stem in ("kb", "hotpotqa", "Bad_Name", "my-space"):
+    for stem in ("kb", "hotpotqa", "Bad_Name", "my-space", "知识库"):
         (tmp_path / f"{stem}_corpus.json").write_text("[]", encoding="utf-8")
-    assert local_names(tmp_path) == ("kb", "my-space")
+    assert local_names(tmp_path) == ("kb", "my-space", "知识库")
     with pytest.raises(KeyError):
         get_adapter("Bad_Name")
 
@@ -192,3 +194,53 @@ def test_download_only_verifies_local_dataset(db, local_dataset_dir, monkeypatch
     (local_dataset_dir / "kb.json").unlink()
     with pytest.raises(RuntimeError, match="校验失败"):
         download.run(ctx)
+
+
+def test_space_page_ids_match_corpus_ids():
+    archive = _zip(
+        {
+            "akasha-metadata.json": json.dumps(
+                {
+                    "pages": {
+                        "A%20B.md": {"pageId": "p1"},
+                        "dir/%E6%97%A0%E6%A0%87%E9%A2%98.md": {"pageId": "p2"},
+                    }
+                }
+            ),
+            "A B.md": "# A B\n\nalpha",
+            "dir/无标题.md": "正文",
+        }
+    )
+    ids = {row["id"] for row in parse_space_export(archive)}
+    assert space_page_ids(archive) == {"A B": "p1", "dir_无标题": "p2"}
+    assert ids == set(space_page_ids(archive))
+
+
+def test_compile_reuses_source_space(local_normalized, local_dataset_dir, monkeypatch):
+    monkeypatch.setattr(registry, "DATASET_DIR", local_dataset_dir)
+    (local_dataset_dir / "kb_space.json").write_text(
+        json.dumps(
+            {
+                "space_id": "src-space",
+                "space_name": "kb",
+                "workspace_id": "w",
+                "page_ids": {"doc_001": "p1", "doc_002": "p2", "doc_003": "p3"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_store.update_connection(local_normalized, base_url="http://x", email="e@x", password="p")
+    fake = FakeClient()
+    fake.create_space = lambda *a, **k: pytest.fail("不应新建空间")
+    monkeypatch.setattr(compile, "AkashaClient", lambda config: fake)
+
+    ctx = make_context(local_normalized, {"datasets": ["kb"], "run_id": "r1", "full_corpus": False})
+    execute(compile.run, ctx)
+
+    run = compile_store.compile_run_by_run_id(local_normalized, "r1")
+    assert run["space_id"] == "src-space"
+    docs = compile_store.compile_docs(local_normalized, int(run["id"]))
+    assert {d["doc_id"]: d["page_id"] for d in docs} == {"doc_001": "p1", "doc_002": "p2", "doc_003": "p3"}
+    assert fake.imported == []
+    with pytest.raises(ValueError, match="只能单独编译"):
+        execute(compile.run, make_context(local_normalized, {"datasets": ["kb", "hotpotqa"]}))

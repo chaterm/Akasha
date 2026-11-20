@@ -4,8 +4,10 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
 
+import httpx
 from fastapi import HTTPException, Request
 
+from akasha_benchmark.akasha_client import AkashaClient, AkashaError
 from akasha_benchmark.config import AkashaConfig, load_config
 from akasha_benchmark.store import connect, run_store, task_store
 
@@ -36,6 +38,25 @@ def writable(request: Request) -> Iterator[sqlite3.Connection]:
 def config_of(request: Request) -> AkashaConfig:
     with db(request) as connection:
         return load_config(connection)
+
+
+def require_credentials(config: AkashaConfig) -> None:
+    try:
+        config.require_credentials()
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@contextmanager
+def akasha_session(config: AkashaConfig, rejected: str = "") -> Iterator[AkashaClient]:
+    try:
+        with AkashaClient(config) as client:
+            client.login()
+            yield client
+    except AkashaError as exc:
+        raise HTTPException(502, f"{rejected}{exc}") from exc
+    except (httpx.RequestError, OSError) as exc:
+        raise HTTPException(502, f"连不上 {config.base_url}：{exc}") from exc
 
 
 def reject_if_busy(connection: sqlite3.Connection, kind: str, target_id: int) -> None:

@@ -1,117 +1,131 @@
-# Chaterm Contributing Guide
+# Contributing to Akasha
 
-We warmly welcome your contributions! This guide will help you understand how to effectively contribute to the Chaterm project.
+Thanks for your interest in improving Akasha. This guide covers how to set up the
+repository, run the checks maintainers expect, and submit a change that fits the
+codebase.
 
-## Ways to Contribute
+## Ways to contribute
 
-- 🐛 **Report Bugs** - Help us identify and fix issues
-- 💬 **Discuss Code** - Participate in technical discussions
-- 🔧 **Submit Fixes** - Fix bugs and improve existing features
-- ✨ **Propose Features** - Suggest new features
-- 📖 **Improve Documentation** - Enhance documentation and guides
-- 🧪 **Add Tests** - Improve test coverage
+- Report bugs with reproduction steps and the affected version.
+- Propose features or design changes in an issue before writing code.
+- Fix bugs, add tests, or improve documentation.
+- Improve retrieval, compilation, or benchmark quality with measurable results.
 
-We use GitHub to host code, track issues and feature requests, and accept Pull Requests.
+## Before you start
 
-### Contributor Workflow
+- Read [`docs/development.md`](./docs/development.md) for the full local setup.
+- Bug fixes and features should reference an issue when one exists.
+- Security issues must follow [`SECURITY.md`](./SECURITY.md) and must not be filed
+  as public issues.
 
-1. Fork this repository to your personal account
-2. Create your development branch from the `main` branch
-3. Develop in your forked repository
-4. Submit a Pull Request to the `main` branch of the original repository when done
-5. Mention the fixed Issue in the PR description (if applicable)
-6. After approval from at least one maintainer, the PR will be merged
+## Workflow
 
-## Local Development Environment Setup
+1. Fork <https://github.com/chaterm/Akasha> and clone your fork.
+2. Create a topic branch from `beta`, for example `fix/page-move-cycle`.
+3. Make the change, run the checks listed below, and keep the diff focused.
+4. Open a pull request against `beta`. `main` is the release branch that
+   maintainers update from `beta`; do not target it directly.
+5. Link the issue in the pull request description and describe the behaviour
+   before and after the change.
 
-1. Clone the repository:
+## Local setup
 
-   ```bash
-   # Fork the repository on GitHub, then clone your fork
-   git clone https://github.com/YOUR_USERNAME/Chaterm.git
-   cd Chaterm
-   ```
-
-2. Install necessary development tools:
-   - Install [Node.js](https://nodejs.org/) (recommended to use the latest LTS version)
-
-3. Install Electron:
-
-   ```bash
-   npm i electron -D
-   ```
-
-4. Install project dependencies:
-
-   ```bash
-   node scripts/patch-package-lock.js
-   npm install
-   ```
-
-5. Start the development server:
-
-   ```bash
-   npm run dev
-   ```
-
-## Project Structure
-
-```
-Chaterm/
-├── src/
-│   ├── main/          # Electron main process
-│   ├── preload/       # Preload scripts
-│   └── renderer/      # Vue.js frontend
-├── scripts/           # Build and development scripts
-├── resources/         # Application resources (icons, etc.)
-├── tests/            # Test files
-└── docs/             # Documentation
-```
-
-## Code Quality Standards
-
-### Code Style
-
-- **ESLint**: JavaScript/TypeScript code checking
-- **Prettier**: Code formatting
-- **TypeScript**: Strong typing recommended
-
-### Quality Checks
+Requirements: Node.js 22 or later, pnpm 10.4.0 (the version pinned in
+`package.json`), Docker, and Python 3 only if you package the agent skills.
 
 ```bash
-# Format code
-npm run format
+pnpm install
+cp .env.example .env
+openssl rand -hex 32       # write the result into APP_SECRET
 
-# Check for code issues
-npm run lint
+docker compose up -d db    # PostgreSQL 18 + pgvector + pg_jieba
+docker run -d --name akasha-redis -p 6379:6379 redis:7
 
-# Build verification
-npm run build
+pnpm --filter ./apps/server run migration:latest
+pnpm run dev               # client on :3000, server on :8080
 ```
 
-### Commit Messages
+Real-time collaboration is served by the API process itself, so `pnpm run dev` is
+enough. `pnpm run collab:dev` runs the optional standalone collaboration server; see
+[`docs/development.md`](./docs/development.md#collaboration-server).
 
-Use conventional commit format:
+## Repository layout
 
+| Path | Contents |
+| --- | --- |
+| `apps/server` | NestJS API, MCP endpoint, knowledge compilation and retrieval, collaboration server |
+| `apps/client` | React 18 + Vite + Mantine web client |
+| `packages/editor-ext` | Tiptap editor extensions shared by client and server |
+| `benchmark` | Local evaluation platform (FastAPI + React) for retrieval and answer quality |
+| `akasha-plugin` | Agent skills, host metadata, and the offline skill package |
+| `docs` | Development setup and API references |
+
+## Checks
+
+Run the checks that cover the area you changed. All of them should pass before a
+pull request is reviewed.
+
+```bash
+pnpm run build                                  # all workspace projects
+pnpm --filter ./apps/server run lint
+pnpm --filter ./apps/server run test            # jest
+pnpm --filter ./apps/client run lint
+pnpm --filter ./apps/client run test            # vitest
+(cd benchmark && make test)                     # pytest for the evaluation platform
 ```
-feat: add new feature
-fix: fix bug in component
-docs: update README
-refactor: improve code structure
-test: add unit tests
+
+Formatting uses Prettier; `pnpm --filter ./apps/server run format` and
+`pnpm --filter ./apps/client run format` rewrite source files in place.
+
+## Code conventions
+
+- TypeScript in both applications. Follow the types used by the surrounding
+  module instead of widening to `any`, and keep new code compatible with the
+  existing `tsconfig` settings rather than relaxing them.
+- Server logging passes a leading object and a constant message. Template
+  literals as the first argument are rejected by ESLint
+  (`apps/server/eslint.config.mjs`):
+
+  ```ts
+  logger.warn({ pageId, err }, 'Failed to update page');
+  ```
+
+- Database changes go in `apps/server/src/database/migrations` as ordered SQL
+  migrations. Run `migration:create` to scaffold one and `migration:latest` to
+  apply it; do not edit migrations that have already shipped.
+- Changes to the addressable node types
+  (`packages/editor-ext/src/lib/unique-id/addressable-types.ts`) must be
+  regenerated on both sides: run
+  `pnpm --filter ./apps/server run skill:node-reference` and commit the updated
+  `akasha-plugin/skills/akasha-pages/references/node-reference.md`.
+- Changes under `akasha-plugin/skills` must be packaged:
+  `make skills-zip` (or `python3 akasha-plugin/scripts/package-skills.py`) and
+  `make skills-verify` before committing.
+
+## Commit messages
+
+Use Conventional Commits. Scope is optional but encouraged:
+
+```text
+feat(mcp): add edit_page for node-level page edits
+fix(llm-wiki): stop showing a stale error on a settled run page
+docs: document the pg_jieba requirement
+test(client): raise testing-library asyncUtilTimeout
 ```
 
-## Getting Help
+## Documentation
 
-- 📝 **Documentation**: Check existing documentation first
-- 💬 **Discussions**: Use GitHub Discussions to ask questions
-- 🐛 **Issues**: Report bugs through issues with detailed information
-- 💡 **Ideas**: Propose feature suggestions through issues
+Keep documentation in sync with behaviour:
 
-## Questions?
-
-If you have any questions about contributing, please create an issue using the "question" label.
+- Local setup, prerequisites, and troubleshooting: `docs/development.md`.
+- iself integration API contracts: `docs/iself-agent-api-key.yaml` and
+  `docs/iself-llm-wiki-query.yaml`.
+- Skill behaviour, tool contracts, and packaging: `akasha-plugin/README.md` and
+  the relevant `SKILL.md`.
+- Benchmark pipeline and data model: `benchmark/docs/architecture.md`.
 
 ## License
 
-By contributing to Chaterm, you agree that your contributions will be licensed under the same terms as the project.
+By contributing, you agree that your contributions are licensed under the
+GNU Affero General Public License v3.0, the same terms as the project
+([`LICENSE`](./LICENSE)).

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
@@ -9,6 +10,7 @@ from akasha_benchmark.akasha_client import AkashaClient, AkashaError
 from akasha_benchmark.config import load_config
 from akasha_benchmark.stages import STAGES, chain, clean_params
 from akasha_benchmark.store import connect, query_store, task_store
+from akasha_benchmark.store.db import database_bytes
 from akasha_benchmark.task import Paused, TaskContext, execute
 
 from .compile_control import CompileRemoteService
@@ -35,6 +37,7 @@ class TaskRunner:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self._pauses: dict[int, threading.Event] = {}
+        self._cancellers: dict[int, set[Any]] = {}
         self._timers: dict[int, threading.Timer] = {}
         self._lock = threading.Lock()
         self._compile_remote = CompileRemoteService()
@@ -236,6 +239,16 @@ class TaskRunner:
             if task["status"] not in task_store.ACTIVE:
                 raise TaskRejected(f"任务 #{task_id} 当前是 {task['status']}，不在运行")
             self._cancel_schedule(task_id)
+            with self._lock:
+                event = self._pauses.get(task_id)
+                cancellers = list(self._cancellers.get(task_id, ()))
+            if event is not None:
+                event.set()
+                for cancel in cancellers:
+                    try:
+                        cancel()
+                    except Exception:
+                        pass
             remote_results = self._cancel_remote_compile(
                 connection, task, "Akasha-Benchmark task paused"
             )
@@ -256,13 +269,10 @@ class TaskRunner:
                 )
                 connection.commit()
                 return task
-            with self._lock:
-                event = self._pauses.get(task_id)
             if event is None:
                 task_store.transition(connection, task_id, task_store.PAUSED)
                 connection.commit()
             else:
-                event.set()
                 task_store.log(
                     connection,
                     task_id=task_id,
@@ -275,31 +285,64 @@ class TaskRunner:
         finally:
             connection.close()
 
-    def cleanup(self, task_id: int | None) -> dict[str, int]:
+    def cleanup(self, task_id: int | None) -> dict[str, Any]:
         connection = connect(self.settings.db_path)
         try:
+            if task_id is None:
+                return self._purge_finished(connection)
             try:
-                targets = (
-                    [task_store.get_task(connection, task_id)]
-                    if task_id is not None
-                    else task_store.list_tasks(connection, limit=500)
-                )
-                for task in targets:
-                    if task and task["status"] not in task_store.ACTIVE:
-                        self._cancel_remote_compile(
-                            connection, task, "Akasha-Benchmark task cleaned up"
-                        )
-                deleted = (
-                    task_store.delete_task(connection, task_id)
-                    if task_id is not None
-                    else task_store.delete_inactive_tasks(connection)
-                )
+                task = task_store.get_task(connection, task_id)
+                if task and task["status"] not in task_store.ACTIVE:
+                    self._cancel_remote_compile(
+                        connection, task, "Akasha-Benchmark task cleaned up"
+                    )
+                deleted = task_store.delete_task(connection, task_id)
             except ValueError as exc:
                 raise TaskRejected(str(exc)) from exc
             connection.commit()
             return {"deleted": deleted}
         finally:
             connection.close()
+
+    def _purge_finished(self, connection: sqlite3.Connection) -> dict[str, Any]:
+        """删掉所有已结束的运行链路与任务记录；暂停中的任务与其运行保留。"""
+        before = database_bytes(connection)
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            counts = task_store.purge_finished(connection)
+            task_store.log(
+                connection,
+                task_id=None,
+                stage="task",
+                level="info",
+                message=(
+                    f"清理已结束：删除 {counts['runs']} 条运行"
+                    f"（编译 {counts['compiles']}、查询 {counts['queries']}、"
+                    f"评测 {counts['evals']}、归因 {counts['attributions']}）"
+                    f"和 {counts['tasks']} 个任务记录；已终态的远端 Run 不再取消"
+                ),
+            )
+        except BaseException:
+            connection.rollback()
+            raise
+        connection.commit()
+        return {
+            "deleted_tasks": counts["tasks"],
+            "deleted_runs": {
+                key: counts[key] for key in ("compiles", "queries", "evals", "attributions")
+            },
+            "reclaimed_bytes": self._reclaim_space(connection, before),
+        }
+
+    @staticmethod
+    def _reclaim_space(connection: sqlite3.Connection, before: int) -> int:
+        try:
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            connection.execute("VACUUM")
+        except sqlite3.OperationalError:
+            # 有任务正在写库时 VACUUM 会拿不到锁，删除本身已经提交，下轮清理再回收
+            pass
+        return max(0, before - database_bytes(connection))
 
     def _cancel_remote_compile(
         self, connection, task: dict[str, Any], reason: str
@@ -591,6 +634,7 @@ class TaskRunner:
         event = threading.Event()
         with self._lock:
             self._pauses[task_id] = event
+            self._cancellers[task_id] = set()
         threading.Thread(
             target=self._run,
             args=(task_id, stage, params, event, already_running),
@@ -617,6 +661,7 @@ class TaskRunner:
                 params=params,
                 connection=connection,
                 pause_event=event,
+                register_canceller=lambda callback: self._register_canceller(task_id, callback),
             )
             ctx.log(f"开始 {STAGES[stage].label}：{params}")
             try:
@@ -645,9 +690,29 @@ class TaskRunner:
                 connection, task_id=task_id, stage=stage, level="info", message="任务完成"
             )
             connection.commit()
-            self._advance_chain(connection, task_id, stage)
+            if not event.is_set():
+                self._advance_chain(connection, task_id, stage)
         finally:
             connection.close()
             with self._lock:
                 if self._pauses.get(task_id) is event:
                     self._pauses.pop(task_id, None)
+                    self._cancellers.pop(task_id, None)
+
+    def _register_canceller(self, task_id: int, callback: Any) -> Any:
+        with self._lock:
+            callbacks = self._cancellers.get(task_id)
+            event = self._pauses.get(task_id)
+            if callbacks is None or event is None:
+                return lambda: None
+            callbacks.add(callback)
+
+        def unregister() -> None:
+            with self._lock:
+                current = self._cancellers.get(task_id)
+                if current is not None:
+                    current.discard(callback)
+
+        if event.is_set():
+            callback()
+        return unregister

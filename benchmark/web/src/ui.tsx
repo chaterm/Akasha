@@ -707,11 +707,63 @@ export function DatasetPicker({
   all,
   selected,
   onChange,
+  variant = 'checkbox',
 }: {
   all: string[]
   selected: string[]
   onChange: (next: string[]) => void
+  variant?: 'checkbox' | 'select'
 }) {
+  if (variant === 'select') {
+    const [open, setOpen] = useState(false)
+    const allSelected = all.length > 0 && all.every((name) => selected.includes(name))
+    const partiallySelected = selected.length > 0 && !allSelected
+
+    return (
+      <div className="dataset-picker-dropdown">
+        <button
+          type="button"
+          className="action small"
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+        >
+          {allSelected ? '全部数据集' : partiallySelected ? `已选 ${selected.length} 组 -` : '选择数据集'}
+          <span aria-hidden="true"> ▾</span>
+        </button>
+        {open && (
+          <div className="dataset-picker-menu">
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                ref={(element) => {
+                  if (element) element.indeterminate = partiallySelected
+                }}
+                onChange={() => onChange(allSelected ? [] : all)}
+              />
+              全部数据集
+            </label>
+            {all.map((name) => (
+              <label key={name} className="check">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(name)}
+                  onChange={() =>
+                    onChange(
+                      selected.includes(name)
+                        ? selected.filter((item) => item !== name)
+                        : [...selected, name],
+                    )
+                  }
+                />
+                {name}
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
   return (
     <div className="row tight">
       {all.map((name) => (
@@ -733,7 +785,6 @@ export function DatasetPicker({
     </div>
   )
 }
-
 export function Field({
   label,
   children,

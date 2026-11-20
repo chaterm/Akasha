@@ -10,14 +10,15 @@ from akasha_benchmark.datasets import (
     dataset_dir,
     get_adapter,
     is_local_name,
+    source_space,
 )
-from akasha_benchmark.datasets.space_export import parse_space_export
+from akasha_benchmark.datasets.space_export import parse_space_export, space_page_ids
 from akasha_benchmark.io_utils import load_json, write_json
 from akasha_benchmark.metrics import registry
 from akasha_benchmark.stages import download
 from akasha_benchmark.store import data_store
 
-from ._common import db, writable
+from ._common import akasha_session, config_of, db, require_credentials, writable
 
 router = APIRouter(prefix="/api")
 
@@ -33,6 +34,17 @@ def _contains_text(value: Any, needle: str) -> bool:
     return value is not None and needle in str(value).lower()
 
 
+def _space_label(space: dict[str, Any] | None) -> str | None:
+    return space and (space.get("space_name") or space.get("space_id"))
+
+
+def _imported_at(adapter: Any) -> float:
+    if not isinstance(adapter, LocalAdapter):
+        return 0.0
+    path = dataset_dir() / adapter.corpus_filename
+    return path.stat().st_mtime if path.is_file() else 0.0
+
+
 @router.get("/datasets")
 def datasets(request: Request) -> dict[str, Any]:
     with db(request) as connection:
@@ -43,8 +55,9 @@ def datasets(request: Request) -> dict[str, Any]:
         files.setdefault(str(entry["dataset"]), []).append(entry)
 
     entries = []
-    for adapter in all_adapters():
+    for adapter in sorted(all_adapters(), key=_imported_at, reverse=True):
         record = normalized.get(adapter.name)
+        space = source_space(adapter.name)
         present = all(f["present"] and not f["error"] for f in files[adapter.name])
         entries.append(
             {
@@ -55,6 +68,8 @@ def datasets(request: Request) -> dict[str, Any]:
                 "subset_strategy": adapter.subset_strategy.value,
 
                 "downloadable": adapter.downloadable,
+                "source_space": _space_label(space),
+                "space_id": (space or {}).get("space_id"),
                 "expected_qa_rows": adapter.expected_qa_rows(),
                 "files": files[adapter.name],
                 "files_ready": present,
@@ -67,34 +82,94 @@ def datasets(request: Request) -> dict[str, Any]:
     return {"datasets": entries, "dataset_dir": str(dataset_dir())}
 
 
-@router.post("/datasets/import")
-async def import_space(request: Request, name: str, overwrite: bool = False) -> dict[str, Any]:
+def _corpus_target(name: str, overwrite: bool) -> LocalAdapter:
     if not is_local_name(name):
-        raise HTTPException(422, "名称只能用小写字母、数字和连字符，且不能与内置数据集同名")
+        raise HTTPException(422, "名称只能包含 UTF-8 字母、数字和连字符，且不能与内置数据集同名")
+    adapter = LocalAdapter(name)
+    if (dataset_dir() / adapter.corpus_filename).exists() and not overwrite:
+        raise HTTPException(409, f"{name} 已存在")
+    return adapter
+
+
+def _write_corpus(
+    adapter: LocalAdapter, archive: bytes, space: dict[str, Any] | None = None
+) -> dict[str, Any]:
     try:
-        rows = parse_space_export(await request.body())
+        rows = parse_space_export(archive)
+        if space is not None:
+            space = {**space, "page_ids": space_page_ids(archive)}
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-
-    adapter = LocalAdapter(name)
-    corpus_path = dataset_dir() / adapter.corpus_filename
-    if corpus_path.exists() and not overwrite:
-        raise HTTPException(409, f"{name} 已存在")
-    write_json(corpus_path, rows)
+    write_json(dataset_dir() / adapter.corpus_filename, rows)
     (dataset_dir() / adapter.qa_filename).unlink(missing_ok=True)
-    return {"dataset": name, "docs": len(rows)}
+    space_path = dataset_dir() / adapter.space_filename
+    if space is None:
+        space_path.unlink(missing_ok=True)
+    else:
+        write_json(space_path, space)
+    return {"dataset": adapter.name, "docs": len(rows)}
+
+
+@router.post("/datasets/import")
+async def import_space(request: Request, name: str, overwrite: bool = False) -> dict[str, Any]:
+    adapter = _corpus_target(name, overwrite)
+    return _write_corpus(adapter, await request.body())
+
+
+@router.get("/akasha/spaces")
+def akasha_spaces(request: Request) -> dict[str, Any]:
+    config = config_of(request)
+    require_credentials(config)
+    with akasha_session(config) as client:
+        spaces = client.list_spaces()
+    return {
+        "spaces": [
+            {"id": s.get("id"), "name": s.get("name"), "slug": s.get("slug")} for s in spaces
+        ]
+    }
+
+
+@router.post("/datasets/import-akasha")
+def import_akasha_space(
+    request: Request, name: str, space_id: str, overwrite: bool = False
+) -> dict[str, Any]:
+    adapter = _corpus_target(name, overwrite)
+    config = config_of(request)
+    require_credentials(config)
+    with akasha_session(config, "Akasha 拒绝导出：") as client:
+        info = client.space_info(space_id)
+        archive = client.export_space(space_id)
+    space = {
+        "space_id": space_id,
+        "space_name": info.get("slug") or info.get("name"),
+        "workspace_id": info.get("workspaceId"),
+    }
+    return _write_corpus(adapter, archive, space)
 
 
 @router.delete("/datasets/{name}")
-def delete_dataset(request: Request, name: str) -> dict[str, Any]:
+def delete_dataset(
+    request: Request, name: str, remove_files: bool = False
+) -> dict[str, Any]:
     with writable(request) as connection:
         try:
             deleted = data_store.delete_dataset(connection, name)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
-    if not deleted:
-        raise HTTPException(404, f"{name} 还没归一化")
-    return {"deleted": deleted, "dataset": name}
+    removed = 0
+    if remove_files:
+        try:
+            adapter = get_adapter(name)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        for filename in (adapter.qa_filename, adapter.corpus_filename, adapter.space_filename):
+            path = dataset_dir() / filename
+            if path.is_file():
+                path.unlink()
+                removed += 1
+    if not deleted and not removed:
+        raise HTTPException(404, f"{name} 没有可删除的数据")
+    return {"deleted": deleted, "dataset": name, "files_removed": removed}
 
 
 @router.get("/datasets/{name}/raw")

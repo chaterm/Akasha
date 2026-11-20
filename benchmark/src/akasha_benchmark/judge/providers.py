@@ -18,8 +18,6 @@ def resolve_provider(
         record = candidates[0]
     if record["purpose"] != purpose:
         raise JudgeConfigError(f"模型端点 {record['label']!r} 的用途不是 {purpose}")
-    if not (record["api_key"] or "").strip():
-        raise JudgeConfigError(f"模型端点 {record['label']!r} 没有 api key。")
     return JudgeProvider(
         provider_id=record["id"],
         base_url=record["base_url"],

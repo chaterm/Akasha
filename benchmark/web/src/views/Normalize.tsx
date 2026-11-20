@@ -101,7 +101,12 @@ export function Normalize({ onOpenTasks }: { onOpenTasks: () => void }) {
         <tbody>
           {data.datasets.map((entry) => (
             <tr key={entry.name} className={open?.dataset === entry.name ? 'selected' : ''}>
-              <td>{entry.name}</td>
+              <td>
+                {entry.name}{' '}
+                <span className={`tag ${entry.downloadable ? '' : 'accent'}`}>
+                  {entry.downloadable ? '公开' : '空间'}
+                </span>
+              </td>
               <td className="small mono muted">{entry.adapter}</td>
               <td>
                 {entry.provides.map((d) => (

@@ -51,17 +51,14 @@ export class AgentSpaceBindingService {
 
   async replaceBindings(input: {
     workspace: Workspace;
+    user: User;
     agentAccess: AgentAccessContext;
     spaceIds: string[];
   }) {
-    const delegatedUser = input.agentAccess.delegatedUser;
-    if (!delegatedUser) {
-      throw new UnauthorizedException('SSO credential is required');
-    }
     const spaceIds = [...new Set(input.spaceIds)];
 
     const manageableSpaces = await this.getManageableSpaces(
-      delegatedUser,
+      input.user,
       input.workspace.id,
     );
     const manageableIds = new Set(manageableSpaces.map((space) => space.id));
