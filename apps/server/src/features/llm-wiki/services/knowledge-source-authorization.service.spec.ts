@@ -86,6 +86,63 @@ describe('KnowledgeSourceAuthorizationService', () => {
     });
   });
 
+  it('treats a supplemental space as readable without asking for the space role', async () => {
+    const pagePermissionRepo = {
+      filterAccessiblePageIds: jest.fn().mockResolvedValue(['page-2']),
+    };
+    const spaceAuthorization = {
+      filterReadableSpaceIds: jest.fn().mockResolvedValue([]),
+    };
+    const service = createService({
+      pages: [pageRef('page-2', 'space-2')],
+      pagePermissionRepo,
+      spaceAuthorization,
+      user: { id: 'user-1', role: UserRole.MEMBER, workspaceId: 'workspace-1' },
+    });
+
+    await expect(
+      service.filterReadableSources({
+        workspaceId: 'workspace-1',
+        userId: 'user-1',
+        supplementalSpaceIds: ['space-2'],
+        sourcePageIds: ['page-2'],
+      }),
+    ).resolves.toEqual(['page-2']);
+
+    expect(spaceAuthorization.filterReadableSpaceIds).toHaveBeenCalledWith({
+      user: expect.anything(),
+      spaceIds: [],
+    });
+    expect(pagePermissionRepo.filterAccessiblePageIds).toHaveBeenCalledWith({
+      pageIds: ['page-2'],
+      userId: 'user-1',
+      spaceId: 'space-2',
+    });
+  });
+
+  it('still applies page restrictions inside a supplemental space', async () => {
+    const pagePermissionRepo = {
+      filterAccessiblePageIds: jest.fn().mockResolvedValue([]),
+    };
+    const service = createService({
+      pages: [pageRef('page-2', 'space-2')],
+      pagePermissionRepo,
+      spaceAuthorization: {
+        filterReadableSpaceIds: jest.fn().mockResolvedValue([]),
+      },
+      user: { id: 'user-1', role: UserRole.MEMBER, workspaceId: 'workspace-1' },
+    });
+
+    await expect(
+      service.filterReadableSources({
+        workspaceId: 'workspace-1',
+        userId: 'user-1',
+        supplementalSpaceIds: ['space-2'],
+        sourcePageIds: ['page-2'],
+      }),
+    ).resolves.toEqual([]);
+  });
+
   it('fails closed when a read-decision dependency throws', async () => {
     const service = createService({
       pageRepo: {

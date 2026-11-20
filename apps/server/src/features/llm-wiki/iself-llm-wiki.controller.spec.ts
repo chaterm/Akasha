@@ -189,6 +189,7 @@ describe('IsElfLlmWikiController', () => {
     expect(chatService.chat).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       userId: 'user-1',
+      supplementalSpaceIds: ['space-1'],
       query: 'How do we use Kafka?',
       spaceIds: ['space-1'],
       labelNames: ['项目计划', 'kafka'],
