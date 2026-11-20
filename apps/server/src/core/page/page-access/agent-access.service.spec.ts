@@ -27,6 +27,7 @@ function subject(overrides: Record<string, any> = {}) {
     validateCanViewWithPermissions: jest
       .fn()
       .mockResolvedValue({ canEdit: true, hasRestriction: false }),
+    validateCanEdit: jest.fn().mockResolvedValue({ hasRestriction: false }),
     ...overrides.pageAccessService,
   };
   const service = new AgentAccessService(
@@ -70,6 +71,64 @@ describe('AgentAccessService', () => {
 
     await expect(
       service.assertPageReadable(context, page, user),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('writes a bound page through the caller own edit permission', async () => {
+    const { service, pageAccessService } = subject();
+
+    await expect(
+      service.assertPageWritable(context, page, user),
+    ).resolves.toEqual({ hasRestriction: false });
+    expect(pageAccessService.validateCanEdit).toHaveBeenCalledWith(page, user);
+  });
+
+  it('rejects a write to a space outside the key scope', async () => {
+    const { service, pageAccessService } = subject();
+
+    await expect(
+      service.assertPageWritable({ ...context, spaceIds: [] }, page, user),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(pageAccessService.validateCanEdit).not.toHaveBeenCalled();
+  });
+
+  it('propagates the rejection when the caller cannot edit a bound page', async () => {
+    const { service } = subject({
+      pageAccessService: {
+        validateCanEdit: jest.fn().mockRejectedValue(new ForbiddenException()),
+      },
+    });
+
+    await expect(
+      service.assertPageWritable(context, page, user),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('checks the parent page is writable when creating below it', async () => {
+    const { service, pageAccessService } = subject();
+
+    await expect(
+      service.assertCanCreate(context, 'sp-1', user, page),
+    ).resolves.toBeUndefined();
+    expect(pageAccessService.validateCanEdit).toHaveBeenCalledWith(page, user);
+  });
+
+  it('rejects creating in a space outside the key scope', async () => {
+    const { service } = subject();
+
+    await expect(
+      service.assertCanCreate(context, 'sp-other', user),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('rejects a parent page from a different space', async () => {
+    const { service } = subject();
+
+    await expect(
+      service.assertCanCreate(context, 'sp-1', user, {
+        ...page,
+        spaceId: 'sp-2',
+      }),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 

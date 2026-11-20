@@ -24,6 +24,11 @@ import * as bytes from 'bytes';
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
 import { AuthWorkspace } from '../../common/decorators/auth-workspace.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { AgentCallable } from '../../common/decorators/agent-callable.decorator';
+import { AgentCapability } from '../../common/auth/agent-capability';
+import { AgentAccess } from '../../common/decorators/agent-access.decorator';
+import type { AgentAccessContext } from '../../common/auth/agent-access-context';
+import { AgentAccessService } from '../page/page-access/agent-access.service';
 import { Attachment, User, Workspace } from '@akasha/db/types/entity.types';
 import { StorageService } from '../../integrations/storage/storage.service';
 import {
@@ -83,6 +88,7 @@ export class AttachmentController {
     private readonly environmentService: EnvironmentService,
     private readonly tokenService: TokenService,
     private readonly pageAccessService: PageAccessService,
+    private readonly agentAccessService: AgentAccessService,
     private readonly domainService: DomainService,
     @Inject(AUDIT_SERVICE) private readonly auditService: IAuditService,
   ) {}
@@ -90,12 +96,14 @@ export class AttachmentController {
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @Post('files/upload')
+  @AgentCallable(AgentCapability.ATTACHMENT_UPLOAD)
   @UseInterceptors(FileInterceptor)
   async uploadFile(
     @Req() req: any,
     @Res() res: FastifyReply,
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
+    @AgentAccess() agentAccess?: AgentAccessContext,
   ) {
     const maxFileSize = bytes(this.environmentService.getFileUploadSizeLimit());
 
@@ -133,7 +141,11 @@ export class AttachmentController {
       throw new NotFoundException('Page not found');
     }
 
-    await this.pageAccessService.validateCanEdit(page, user);
+    if (agentAccess) {
+      await this.agentAccessService.assertPageWritable(agentAccess, page, user);
+    } else {
+      await this.pageAccessService.validateCanEdit(page, user);
+    }
 
     const spaceId = page.spaceId;
 

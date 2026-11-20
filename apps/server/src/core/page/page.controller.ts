@@ -670,11 +670,16 @@ export class PageController {
 
   @HttpCode(HttpStatus.OK)
   @Post('create')
+  @AgentCallable(AgentCapability.PAGE_CREATE)
   async create(
     @Body() createPageDto: CreatePageDto,
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
+    @AgentAccess() agentAccess?: AgentAccessContext,
   ) {
+    if (agentAccess && !createPageDto.spaceId) {
+      throw new BadRequestException('spaceId is required');
+    }
     if (createPageDto.parentPageId) {
       const parentPage = await this.pageRepo.findById(
         createPageDto.parentPageId,
@@ -686,8 +691,24 @@ export class PageController {
       ) {
         throw new NotFoundException('Parent page not found');
       }
-      await this.pageAccessService.validateCanEdit(parentPage, user);
+      if (agentAccess) {
+        await this.agentAccessService.assertCanCreate(
+          agentAccess,
+          createPageDto.spaceId,
+          user,
+          parentPage,
+        );
+      } else {
+        await this.pageAccessService.validateCanEdit(parentPage, user);
+      }
     } else {
+      if (agentAccess) {
+        await this.agentAccessService.assertCanCreate(
+          agentAccess,
+          createPageDto.spaceId,
+          user,
+        );
+      }
       const ability = await this.spaceAbility.createForUser(
         user,
         createPageDto.spaceId,
@@ -738,20 +759,34 @@ export class PageController {
 
   @HttpCode(HttpStatus.OK)
   @Post('update')
+  @AgentCallable(AgentCapability.PAGE_CONTENT_UPDATE)
   async update(
     @Body() updatePageDto: UpdatePageDto,
     @AuthUser() user: User,
+    @AgentAccess() agentAccess?: AgentAccessContext,
   ) {
+    if (
+      agentAccess &&
+      (updatePageDto.spaceId !== undefined ||
+        updatePageDto.parentPageId !== undefined)
+    ) {
+      throw new BadRequestException(
+        'Agent API keys cannot change Page location',
+      );
+    }
     const page = await this.pageRepo.findById(updatePageDto.pageId);
 
     if (!page) {
       throw new NotFoundException('Page not found');
     }
 
-    const { hasRestriction } = await this.pageAccessService.validateCanEdit(
-      page,
-      user,
-    );
+    const { hasRestriction } = agentAccess
+      ? await this.agentAccessService.assertPageWritable(
+          agentAccess,
+          page,
+          user,
+        )
+      : await this.pageAccessService.validateCanEdit(page, user);
 
     const updatedPage = await this.pageService.update(
       page,

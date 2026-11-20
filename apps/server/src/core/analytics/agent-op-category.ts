@@ -17,6 +17,7 @@ const API_CATEGORIES: Record<string, AgentOpCategory> = {
   'page.tree.read': 'read',
   'page.create': 'write',
   'page.content.update': 'write',
+  'attachment.upload': 'write',
 };
 
 const MCP_EXACT: Record<string, AgentOpCategory> = {

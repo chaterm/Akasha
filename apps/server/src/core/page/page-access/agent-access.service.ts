@@ -40,4 +40,35 @@ export class AgentAccessService {
 
     return this.pageAccessService.validateCanViewWithPermissions(page, user);
   }
+
+  async assertPageWritable(
+    context: AgentAccessContext,
+    page: Page,
+    user: User,
+  ): Promise<{ hasRestriction: boolean }> {
+    if (page.workspaceId !== context.workspace.id || page.deletedAt) {
+      throw new ForbiddenException();
+    }
+    await this.assertSpaceBound(context, page.spaceId);
+
+    return this.pageAccessService.validateCanEdit(page, user);
+  }
+
+  async assertCanCreate(
+    context: AgentAccessContext,
+    spaceId: string,
+    user: User,
+    parentPage?: Page,
+  ): Promise<void> {
+    await this.assertSpaceBound(context, spaceId);
+    if (!parentPage) return;
+    if (
+      parentPage.workspaceId !== context.workspace.id ||
+      parentPage.spaceId !== spaceId ||
+      parentPage.deletedAt
+    ) {
+      throw new ForbiddenException();
+    }
+    await this.assertPageWritable(context, parentPage, user);
+  }
 }
