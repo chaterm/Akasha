@@ -1077,8 +1077,10 @@ export class PageController {
         spaceId,
         pagination,
         pageId,
-        user.id,
-        false,
+        user.role === UserRole.OWNER ? undefined : user.id,
+        user.role === UserRole.OWNER
+          ? true
+          : await this.agentAccessService.canUserEditSpace(user, spaceId),
       );
     }
 

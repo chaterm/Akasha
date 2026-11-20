@@ -31,24 +31,59 @@ function subject(overrides: Record<string, any> = {}) {
     }),
     ...overrides.pagePermissionRepo,
   };
+  const spaceAbility = {
+    createForUser: jest.fn().mockResolvedValue({
+      can: jest.fn().mockReturnValue(true),
+    }),
+    ...overrides.spaceAbility,
+  };
   const service = new AgentAccessService(
     apiKeyRepo as any,
     pagePermissionRepo as any,
+    spaceAbility as any,
   );
-  return { service, apiKeyRepo, pagePermissionRepo };
+  return { service, apiKeyRepo, pagePermissionRepo, spaceAbility };
 }
 
 describe('AgentAccessService', () => {
-  it('reads an unrestricted page in a bound space without granting edit', async () => {
+  it('keeps the human own edit right on an unrestricted page', async () => {
     const { service, pagePermissionRepo } = subject();
 
     await expect(
       service.assertPageReadable(context, page, user),
-    ).resolves.toEqual({ canEdit: false, hasRestriction: false });
+    ).resolves.toEqual({ canEdit: true, hasRestriction: false });
     expect(pagePermissionRepo.canUserEditPage).toHaveBeenCalledWith(
       'human-1',
       'page-1',
     );
+  });
+
+  it('reports no edit right when the human is not a member of the bound space', async () => {
+    const { service } = subject({
+      spaceAbility: {
+        createForUser: jest
+          .fn()
+          .mockRejectedValue(new Error('Space permissions not found')),
+      },
+    });
+
+    await expect(
+      service.assertPageReadable(context, page, user),
+    ).resolves.toEqual({ canEdit: false, hasRestriction: false });
+  });
+
+  it('reports no edit right when the human is only a reader', async () => {
+    const { service } = subject({
+      spaceAbility: {
+        createForUser: jest.fn().mockResolvedValue({
+          can: jest.fn().mockReturnValue(false),
+        }),
+      },
+    });
+
+    await expect(
+      service.assertPageReadable(context, page, user),
+    ).resolves.toEqual({ canEdit: false, hasRestriction: false });
   });
 
   it('uses the scope resolved at authentication instead of re-querying', async () => {
@@ -93,7 +128,24 @@ describe('AgentAccessService', () => {
 
     await expect(
       service.assertPageReadable(context, page, user),
+    ).resolves.toEqual({ canEdit: true, hasRestriction: true });
+  });
+
+  it('honours the page-level grant on a restricted page, not the space role', async () => {
+    const { service, spaceAbility } = subject({
+      pagePermissionRepo: {
+        canUserEditPage: jest.fn().mockResolvedValue({
+          hasAnyRestriction: true,
+          canAccess: true,
+          canEdit: false,
+        }),
+      },
+    });
+
+    await expect(
+      service.assertPageReadable(context, page, user),
     ).resolves.toEqual({ canEdit: false, hasRestriction: true });
+    expect(spaceAbility.createForUser).not.toHaveBeenCalled();
   });
 
   it('rejects a restricted page the human cannot access, even in a bound space', async () => {
