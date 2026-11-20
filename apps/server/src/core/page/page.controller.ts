@@ -130,7 +130,7 @@ export class PageController {
     }
 
     const { canEdit, hasRestriction } = agentAccess
-      ? await this.agentAccessService.assertPageReadable(agentAccess, page)
+      ? await this.agentAccessService.assertPageReadable(agentAccess, page, user)
       : await this.pageAccessService.validateCanReadSourceWithPermissions(
           page,
           user,
@@ -172,11 +172,11 @@ export class PageController {
 
     if (agentAccess) {
       await this.agentAccessService.assertSpaceBound(agentAccess, spaceId);
-    }
-
-    const ability = await this.spaceAbility.createForUser(user, spaceId);
-    if (ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page)) {
-      throw new ForbiddenException();
+    } else {
+      const ability = await this.spaceAbility.createForUser(user, spaceId);
+      if (ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page)) {
+        throw new ForbiddenException();
+      }
     }
 
     const pages = await this.pageRepo.searchPagesInSpace({
@@ -188,9 +188,7 @@ export class PageController {
     const accessiblePageIds =
       await this.pagePermissionRepo.filterAccessiblePageIds({
         pageIds: pages.map((page) => page.id),
-        userId: agentAccess
-          ? this.agentAccessService.pagePermissionUserId(agentAccess)
-          : user.id,
+        userId: user.id,
         spaceId,
       });
     const accessibleSet = new Set(accessiblePageIds);
@@ -672,16 +670,11 @@ export class PageController {
 
   @HttpCode(HttpStatus.OK)
   @Post('create')
-  @AgentCallable(AgentCapability.PAGE_CREATE)
   async create(
     @Body() createPageDto: CreatePageDto,
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
-    @AgentAccess() agentAccess?: AgentAccessContext,
   ) {
-    if (agentAccess && !createPageDto.spaceId) {
-      throw new BadRequestException('spaceId is required');
-    }
     if (createPageDto.parentPageId) {
       const parentPage = await this.pageRepo.findById(
         createPageDto.parentPageId,
@@ -693,15 +686,7 @@ export class PageController {
       ) {
         throw new NotFoundException('Parent page not found');
       }
-      if (agentAccess) {
-        await this.agentAccessService.assertCanCreate(
-          agentAccess,
-          createPageDto.spaceId,
-          parentPage,
-        );
-      } else {
-        await this.pageAccessService.validateCanEdit(parentPage, user);
-      }
+      await this.pageAccessService.validateCanEdit(parentPage, user);
     } else {
       const ability = await this.spaceAbility.createForUser(
         user,
@@ -709,12 +694,6 @@ export class PageController {
       );
       if (ability.cannot(SpaceCaslAction.Create, SpaceCaslSubject.Page)) {
         throw new ForbiddenException();
-      }
-      if (agentAccess) {
-        await this.agentAccessService.assertCanCreate(
-          agentAccess,
-          createPageDto.spaceId,
-        );
       }
     }
 
@@ -759,38 +738,20 @@ export class PageController {
 
   @HttpCode(HttpStatus.OK)
   @Post('update')
-  @AgentCallable(AgentCapability.PAGE_CONTENT_UPDATE)
   async update(
     @Body() updatePageDto: UpdatePageDto,
     @AuthUser() user: User,
-    @AgentAccess() agentAccess?: AgentAccessContext,
   ) {
-    if (
-      agentAccess &&
-      (updatePageDto.spaceId !== undefined ||
-        updatePageDto.parentPageId !== undefined)
-    ) {
-      throw new BadRequestException(
-        'Agent API keys cannot change Page location',
-      );
-    }
-    if (
-      agentAccess &&
-      updatePageDto.title === undefined &&
-      updatePageDto.icon === undefined &&
-      updatePageDto.content === undefined
-    ) {
-      throw new BadRequestException('At least one Page field is required');
-    }
     const page = await this.pageRepo.findById(updatePageDto.pageId);
 
     if (!page) {
       throw new NotFoundException('Page not found');
     }
 
-    const { hasRestriction } = agentAccess
-      ? await this.agentAccessService.assertPageWritable(agentAccess, page)
-      : await this.pageAccessService.validateCanEdit(page, user);
+    const { hasRestriction } = await this.pageAccessService.validateCanEdit(
+      page,
+      user,
+    );
 
     const updatedPage = await this.pageService.update(
       page,
@@ -1101,12 +1062,24 @@ export class PageController {
       spaceId = page.spaceId;
       pageId = page.id;
       if (agentAccess) {
-        await this.agentAccessService.assertPageReadable(agentAccess, page);
+        await this.agentAccessService.assertPageReadable(
+          agentAccess,
+          page,
+          user,
+        );
       }
     }
 
     if (agentAccess) {
       await this.agentAccessService.assertSpaceBound(agentAccess, spaceId);
+
+      return this.pageService.getSidebarPages(
+        spaceId,
+        pagination,
+        pageId,
+        user.id,
+        false,
+      );
     }
 
     const ability = await this.spaceAbility.createForUser(user, spaceId);
@@ -1123,11 +1096,7 @@ export class PageController {
       spaceId,
       pagination,
       pageId,
-      user.role === UserRole.OWNER
-        ? undefined
-        : agentAccess
-          ? this.agentAccessService.pagePermissionUserId(agentAccess)
-          : user.id,
+      user.role === UserRole.OWNER ? undefined : user.id,
       user.role === UserRole.OWNER ? true : spaceCanEdit,
     );
   }

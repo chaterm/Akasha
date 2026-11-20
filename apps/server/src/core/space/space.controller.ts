@@ -81,25 +81,22 @@ export class SpaceController {
       return emptyCursorPaginationResult<Space>(pagination.limit, 0);
     }
 
-    let allowedSpaceIds: string[] | undefined;
     if (agentAccess) {
       if (!this.agentAccessService) {
         throw new ForbiddenException('Agent space authorization unavailable');
       }
-      allowedSpaceIds =
+      const boundSpaceIds =
         await this.agentAccessService.getBoundSpaceIds(agentAccess);
+      return this.spaceService.getWorkspaceSpaces(
+        workspace.id,
+        pagination,
+        boundSpaceIds,
+      );
     }
+
     const result = useAdminView
-      ? await this.spaceService.getWorkspaceSpaces(
-          workspace.id,
-          pagination,
-          allowedSpaceIds,
-        )
-      : await this.spaceMemberService.getUserSpaces(
-          user.id,
-          pagination,
-          allowedSpaceIds,
-        );
+      ? await this.spaceService.getWorkspaceSpaces(workspace.id, pagination)
+      : await this.spaceMemberService.getUserSpaces(user.id, pagination);
 
     if (result.items.length > 0) {
       if (useAdminView) {
@@ -168,7 +165,10 @@ export class SpaceController {
     }
 
     const ability = await this.spaceAbility.createForUser(user, space.id);
-    if (ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Settings)) {
+    if (
+      !agentAccess &&
+      ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Settings)
+    ) {
       throw new ForbiddenException();
     }
 

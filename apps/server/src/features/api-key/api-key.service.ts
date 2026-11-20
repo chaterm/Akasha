@@ -18,11 +18,7 @@ import { TokenService } from '../../core/auth/services/token.service';
 import { JwtApiKeyPayload, JwtType } from '../../core/auth/dto/jwt-payload';
 import { UserRole } from '../../common/helpers/types/permission';
 import { PaginationOptions } from '@akasha/db/pagination/pagination-options';
-import {
-  getApiKeyAccess,
-  isAgentApiKeyAccess,
-  withApiKeyAccess,
-} from '../../common/auth/api-key-access';
+import { withApiKeyAccess } from '../../common/auth/api-key-access';
 import { ApiKeyType } from '../../common/auth/api-key-type';
 import { UserType } from '../../common/auth/user-type';
 import { isUserDisabled } from '../../common/helpers';
@@ -482,34 +478,15 @@ export class ApiKeyService {
         workspace,
       );
     }
-    if (key.keyType !== ApiKeyType.AGENT) {
-      throw new UnauthorizedException('Unsupported API key type');
+    if (key.keyType === ApiKeyType.AGENT) {
+      throw new UnauthorizedException(
+        'Agent API keys cannot authenticate a request; send one in the x-akasha-public-key header alongside a user credential',
+      );
     }
-    if (
-      !key.agentUserId ||
-      payload.sub !== key.agentUserId ||
-      payload.credentialVersion === undefined ||
-      Number(key.credentialVersion) !== payload.credentialVersion
-    ) {
-      throw new UnauthorizedException('Agent API key is no longer valid');
-    }
-
-    const user = await this.userRepo.findById(key.agentUserId, workspace.id);
-    if (!user || user.userType !== UserType.AGENT || isUserDisabled(user)) {
-      throw new UnauthorizedException('Agent user is unavailable');
-    }
-
-    const authenticatedUser = withApiKeyAccess(user, {
-      apiKeyId: key.id,
-      personalSpaceId: null,
-      keyType: ApiKeyType.AGENT,
-      credentialVersion: payload.credentialVersion,
-    });
-    this.trackLastUsed(key.id);
-    return { user: authenticatedUser, workspace };
+    throw new UnauthorizedException('Unsupported API key type');
   }
 
-  async validatePublicApiKey(token: string, workspaceId: string) {
+  async validateAgentApiKeyScope(token: string, workspaceId: string) {
     let payload: JwtApiKeyPayload;
     try {
       payload = await this.tokenService.verifyJwt(token, JwtType.API_KEY);
@@ -520,20 +497,46 @@ export class ApiKeyService {
       throw new UnauthorizedException('API key workspace does not match');
     }
 
-    const result = await this.validateApiKey(payload);
-    const access = getApiKeyAccess(result.user);
-    if (!isAgentApiKeyAccess(access)) {
+    const key = await this.apiKeyRepo.findById(payload.apiKeyId, workspaceId);
+    if (!key) {
+      throw new UnauthorizedException('API key not found or deleted');
+    }
+    if (key.keyType !== ApiKeyType.AGENT) {
       throw new UnauthorizedException('An Agent API key is required');
     }
-    const spaceIds = await this.apiKeyRepo.findSpaceIdsByApiKeyId(
-      access.apiKeyId,
-    );
-    return {
-      ...result,
-      apiKeyId: access.apiKeyId,
+    if (
+      !key.agentUserId ||
+      payload.sub !== key.agentUserId ||
+      payload.credentialVersion === undefined ||
+      Number(key.credentialVersion) !== payload.credentialVersion
+    ) {
+      throw new UnauthorizedException('Agent API key is no longer valid');
+    }
+
+    const workspace = await this.workspaceRepo.findById(workspaceId);
+    if (!workspace) {
+      throw new UnauthorizedException();
+    }
+    const agentUser = await this.userRepo.findById(
+      key.agentUserId,
       workspaceId,
+    );
+    if (
+      !agentUser ||
+      agentUser.userType !== UserType.AGENT ||
+      isUserDisabled(agentUser)
+    ) {
+      throw new UnauthorizedException('Agent user is unavailable');
+    }
+
+    const spaceIds = await this.apiKeyRepo.findSpaceIdsByApiKeyId(key.id);
+    this.trackLastUsed(key.id);
+    return {
+      apiKeyId: key.id,
+      credentialVersion: payload.credentialVersion,
+      agentUser,
+      workspace,
       spaceIds,
-      payload,
     };
   }
 

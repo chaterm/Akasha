@@ -15,11 +15,7 @@ import { extractBearerTokenFromHeader, isUserDisabled } from '../helpers';
 import { AUTH_CREDENTIAL_POLICY } from '../decorators/auth-credentials.decorator';
 import { AuthCredentialPolicy } from '../auth/auth-credential-policy';
 import { AGENT_CAPABILITY } from '../decorators/agent-callable.decorator';
-import {
-  getAgentAccessContext,
-  setAgentAccessContext,
-} from '../auth/agent-access-context';
-import { getApiKeyAccess, isAgentApiKeyAccess } from '../auth/api-key-access';
+import { setAgentAccessContext } from '../auth/agent-access-context';
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
@@ -73,70 +69,30 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       (Array.isArray(agentHeader) ? agentHeader[0] : agentHeader)?.trim() ===
       '1';
 
-    let agentAuthenticated = false;
-    let ssoAuthenticated = false;
-
-    if (publicKey) {
-      await this.authenticateAgentApiKey(request, publicKey);
-      agentAuthenticated = true;
-    } else if (policy === AuthCredentialPolicy.DEFAULT && ssoToken) {
-      await this.authenticateSso(request, ssoToken, isAgentRequest);
-      ssoAuthenticated = true;
-    } else if (bearerToken || !ssoToken) {
-      await (super.canActivate(context) as Promise<boolean>);
-      agentAuthenticated =
-        this.attachAgentContextFromAuthenticatedUser(request);
-    }
-
-    if (ssoToken && agentAuthenticated) {
-      const agentPrincipal = (request as any).user;
-      await this.authenticateSso(request, ssoToken, isAgentRequest);
-      const delegatedUser = (request as any).user?.user;
-      (request as any).user = agentPrincipal;
-      const agentAccess = getAgentAccessContext(request as any);
-      if (!agentAccess || !delegatedUser) {
-        throw new UnauthorizedException();
-      }
-      if (delegatedUser.workspaceId !== agentAccess.workspace.id) {
-        throw new UnauthorizedException('Workspace does not match');
-      }
-      agentAccess.delegatedUser = delegatedUser;
-      ssoAuthenticated = true;
-    } else if (
-      ssoToken &&
-      policy === AuthCredentialPolicy.SSO_OR_AGENT &&
-      !bearerToken
-    ) {
-      await this.authenticateSso(request, ssoToken, isAgentRequest);
-      ssoAuthenticated = true;
-    } else if (ssoToken && bearerToken && !agentAuthenticated) {
+    if (ssoToken && bearerToken) {
       throw new UnauthorizedException('Unsupported credential combination');
     }
 
-    if (
-      policy === AuthCredentialPolicy.SSO_OR_AGENT &&
-      !agentAuthenticated &&
-      !ssoAuthenticated
-    ) {
-      throw new UnauthorizedException();
-    }
-    if (
-      (policy === AuthCredentialPolicy.AGENT_WITH_OPTIONAL_SSO ||
-        policy === AuthCredentialPolicy.AGENT_AND_SSO) &&
-      !agentAuthenticated
-    ) {
-      throw new UnauthorizedException('Agent API key is required');
-    }
-    if (policy === AuthCredentialPolicy.AGENT_AND_SSO && !ssoAuthenticated) {
-      throw new UnauthorizedException('SSO credential is required');
+    let ssoAuthenticated = false;
+    if (ssoToken) {
+      await this.authenticateSso(request, ssoToken, isAgentRequest);
+      ssoAuthenticated = true;
+    } else {
+      await (super.canActivate(context) as Promise<boolean>);
     }
 
-    if (agentAuthenticated) {
+    if (publicKey) {
+      await this.attachAgentScope(request, publicKey);
+    } else if (policy === AuthCredentialPolicy.AGENT_SCOPE_REQUIRED) {
+      throw new UnauthorizedException('Agent API key is required');
+    }
+
+    if (publicKey) {
       const capability = this.reflector.getAllAndOverride(AGENT_CAPABILITY, [
         context.getHandler(),
         context.getClass(),
       ]);
-      if (!capability && policy === AuthCredentialPolicy.DEFAULT) {
+      if (!capability) {
         throw new ForbiddenException('Agent API key cannot call this endpoint');
       }
     } else if (ssoAuthenticated) {
@@ -146,39 +102,30 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     return true;
   }
 
-  private async authenticateAgentApiKey(
+  private async attachAgentScope(
     request: FastifyRequest,
     token: string,
   ): Promise<void> {
-    const workspace =
-      (request.raw as any)?.workspace ?? (request as any).workspace;
-    if (!workspace?.id) {
-      throw new UnauthorizedException('Workspace is required');
-    }
-
-    const result = await this.validateAgentApiKey(token, workspace.id);
-    (request as any).user = { user: result.user, workspace: result.workspace };
-    (request.raw as any).workspace = result.workspace;
-    if (!this.attachAgentContextFromAuthenticatedUser(request)) {
-      throw new UnauthorizedException('An Agent API key is required');
-    }
-  }
-
-  private async validateAgentApiKey(token: string, workspaceId?: string) {
-    if (!workspaceId) {
-      throw new UnauthorizedException('Workspace is required');
+    const principal = (request as any).user;
+    if (!principal?.user || !principal?.workspace) {
+      throw new UnauthorizedException();
     }
 
     let apiKeyService: {
-      validatePublicApiKey: (
+      validateAgentApiKeyScope: (
         token: string,
         workspaceId: string,
-      ) => Promise<{ user: any; workspace: any }>;
+      ) => Promise<{
+        apiKeyId: string;
+        credentialVersion: number;
+        agentUser: any;
+        workspace: any;
+      }>;
     };
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const {
         ApiKeyService,
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
       } = require('../../features/api-key/api-key.service');
       apiKeyService = this.moduleRef.get(ApiKeyService, { strict: false });
     } catch {
@@ -191,29 +138,12 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
         'Agent API key authentication unavailable',
       );
     }
-    return apiKeyService.validatePublicApiKey(token, workspaceId);
-  }
 
-  private attachAgentContextFromAuthenticatedUser(
-    request: FastifyRequest,
-  ): boolean {
-    const principal = (request as any).user;
-    const access = getApiKeyAccess(principal?.user);
-    if (
-      !principal?.user ||
-      !principal?.workspace ||
-      !isAgentApiKeyAccess(access)
-    ) {
-      return false;
-    }
-
-    setAgentAccessContext(request as any, {
-      apiKeyId: access.apiKeyId,
-      credentialVersion: access.credentialVersion,
-      agentUser: principal.user,
-      workspace: principal.workspace,
-    });
-    return true;
+    const scope = await apiKeyService.validateAgentApiKeyScope(
+      token,
+      principal.workspace.id,
+    );
+    setAgentAccessContext(request as any, scope);
   }
 
   private async authenticateSso(
@@ -354,9 +284,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       throw err || new UnauthorizedException();
     }
 
-    if (!isAgentApiKeyAccess(getApiKeyAccess(user.user))) {
-      this.setJoinedWorkspacesCookie(user, ctx);
-    }
+    this.setJoinedWorkspacesCookie(user, ctx);
     return user;
   }
 

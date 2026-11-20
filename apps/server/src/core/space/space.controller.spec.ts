@@ -180,7 +180,6 @@ describe('SpaceController effective space access', () => {
       expect(spaceService.getWorkspaceSpaces).toHaveBeenCalledWith(
         workspace.id,
         options,
-        undefined,
       );
       expect(spaceMemberService.getUserSpaces).not.toHaveBeenCalled();
       expect(spaceMemberRepo.getUserRolesForSpaces).not.toHaveBeenCalled();
@@ -201,7 +200,6 @@ describe('SpaceController effective space access', () => {
       expect(spaceService.getWorkspaceSpaces).toHaveBeenCalledWith(
         workspace.id,
         options,
-        undefined,
       );
     },
   );
@@ -239,7 +237,6 @@ describe('SpaceController effective space access', () => {
     expect(spaceMemberService.getUserSpaces).toHaveBeenCalledWith(
       'user-1',
       options,
-      undefined,
     );
   });
 

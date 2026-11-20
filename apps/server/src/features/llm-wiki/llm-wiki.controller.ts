@@ -5,7 +5,6 @@ import {
   Controller,
   ForbiddenException,
   Get,
-  Headers,
   HttpCode,
   HttpStatus,
   Inject,
@@ -87,7 +86,6 @@ import {
 import { KnowledgeAdminSpaceAction } from './types/knowledge-queue.types';
 import { getPageTitle } from '../../common/helpers';
 import { jsonToMarkdown } from '../../collaboration/collaboration.util';
-import { ApiKeyService } from '../api-key/api-key.service';
 import { getApiKeyAccess } from '../../common/auth/api-key-access';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
 import { AgentCallable } from '../../common/decorators/agent-callable.decorator';
@@ -138,7 +136,6 @@ export class LlmWikiController {
     private readonly pageAccessService: PageAccessService,
     private readonly aiModelConfigService: AiModelConfigService,
     private readonly aiModelConfigTestService: AiModelConfigTestService,
-    private readonly apiKeyService: ApiKeyService,
     @Optional() private readonly environmentService?: EnvironmentService,
     @Optional() private readonly agentAccessService?: AgentAccessService,
     @Inject(CACHE_MANAGER) private readonly cacheManager?: Cache,
@@ -171,11 +168,12 @@ export class LlmWikiController {
 
   @HttpCode(HttpStatus.OK)
   @Post('query')
+  @AgentCallable(AgentCapability.KNOWLEDGE_QUERY)
   async queryKnowledge(
     @Body() dto: QueryKnowledgeDto,
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
-    @Headers('x-akasha-public-key') publicApiKey?: string,
+    @AgentAccess() agentAccess?: AgentAccessContext,
   ) {
     if (!this.chatService.isEnabledForWorkspace(workspace)) {
       throw new ForbiddenException(
@@ -195,22 +193,23 @@ export class LlmWikiController {
           'Robot queries require a personal API key',
         );
       }
-      if (publicApiKey) {
-        const publicAccess = await this.apiKeyService.validatePublicApiKey(
-          publicApiKey,
-          workspace.id,
+      if (agentAccess) {
+        if (!this.agentAccessService) {
+          throw new ForbiddenException('Agent authorization unavailable');
+        }
+        const allowedSpaceIds = new Set(
+          await this.agentAccessService.getBoundSpaceIds(agentAccess),
         );
-        const allowedSpaceIds = new Set(publicAccess.spaceIds);
         if (dto.spaceIds.some((spaceId) => !allowedSpaceIds.has(spaceId))) {
           throw new ForbiddenException(
-            'Requested Spaces are outside the Public API key scope',
+            'Requested Spaces are outside the Agent API key scope',
           );
         }
-        publicApiKeyId = publicAccess.apiKeyId;
+        publicApiKeyId = agentAccess.apiKeyId;
       }
-    } else if (publicApiKey !== undefined) {
+    } else if (agentAccess) {
       throw new BadRequestException(
-        'Public API keys are only valid for robot queries',
+        'Agent API keys are only valid for robot queries',
       );
     }
 
@@ -395,7 +394,7 @@ export class LlmWikiController {
       if (!this.agentAccessService) {
         throw new ForbiddenException('Agent page authorization unavailable');
       }
-      await this.agentAccessService.assertPageReadable(agentAccess, page);
+      await this.agentAccessService.assertPageReadable(agentAccess, page, user);
     } else {
       await this.pageAccessService.validateCanReadCitationSourceWithPermissions(
         page,

@@ -12,9 +12,6 @@ function subject(page: Record<string, any> | null = null) {
   const pageAccessService = {
     validateCanEdit: jest.fn().mockResolvedValue({ hasRestriction: false }),
   };
-  const agentAccessService = {
-    assertPageWritable: jest.fn().mockResolvedValue({ hasRestriction: false }),
-  };
   const attachmentService = {
     uploadFile: jest.fn().mockResolvedValue({
       id: 'att-1',
@@ -33,7 +30,6 @@ function subject(page: Record<string, any> | null = null) {
         ),
     },
     pageAccessService,
-    agentAccessService,
     attachmentService,
     environmentService: {
       getFileUploadSizeLimit: jest.fn().mockReturnValue('200mb'),
@@ -44,7 +40,6 @@ function subject(page: Record<string, any> | null = null) {
   return {
     controller,
     pageAccessService,
-    agentAccessService,
     attachmentService,
   };
 }
@@ -61,8 +56,8 @@ function request() {
 const reply = () => ({ send: jest.fn((value) => value) }) as any;
 
 describe('AttachmentController.uploadFile', () => {
-  it('validates page edit permission for a regular credential', async () => {
-    const { controller, pageAccessService, agentAccessService } = subject();
+  it('validates page edit permission for every credential', async () => {
+    const { controller, pageAccessService } = subject();
 
     await controller.uploadFile(request(), reply(), user, workspace);
 
@@ -70,26 +65,6 @@ describe('AttachmentController.uploadFile', () => {
       expect.objectContaining({ id: pageId }),
       user,
     );
-    expect(agentAccessService.assertPageWritable).not.toHaveBeenCalled();
-  });
-
-  it('applies the agent space-binding check for an agent API key', async () => {
-    const { controller, pageAccessService, agentAccessService } = subject();
-    const agentAccess = { apiKeyId: 'key-1' } as any;
-
-    await controller.uploadFile(
-      request(),
-      reply(),
-      user,
-      workspace,
-      agentAccess,
-    );
-
-    expect(agentAccessService.assertPageWritable).toHaveBeenCalledWith(
-      agentAccess,
-      expect.objectContaining({ id: pageId }),
-    );
-    expect(pageAccessService.validateCanEdit).not.toHaveBeenCalled();
   });
 
   it('rejects a page that belongs to another workspace', async () => {
