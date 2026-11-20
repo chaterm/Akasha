@@ -172,11 +172,11 @@ export class PageController {
 
     if (agentAccess) {
       await this.agentAccessService.assertSpaceBound(agentAccess, spaceId);
-    } else {
-      const ability = await this.spaceAbility.createForUser(user, spaceId);
-      if (ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page)) {
-        throw new ForbiddenException();
-      }
+    }
+
+    const ability = await this.spaceAbility.createForUser(user, spaceId);
+    if (ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page)) {
+      throw new ForbiddenException();
     }
 
     const pages = await this.pageRepo.searchPagesInSpace({
@@ -1072,16 +1072,6 @@ export class PageController {
 
     if (agentAccess) {
       await this.agentAccessService.assertSpaceBound(agentAccess, spaceId);
-
-      return this.pageService.getSidebarPages(
-        spaceId,
-        pagination,
-        pageId,
-        user.role === UserRole.OWNER ? undefined : user.id,
-        user.role === UserRole.OWNER
-          ? true
-          : await this.agentAccessService.canUserEditSpace(user, spaceId),
-      );
     }
 
     const ability = await this.spaceAbility.createForUser(user, spaceId);

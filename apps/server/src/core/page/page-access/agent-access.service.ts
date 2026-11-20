@@ -1,30 +1,15 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import type { Page, User } from '@akasha/db/types/entity.types';
 import { ApiKeyRepo } from '@akasha/db/repos/api-key/api-key.repo';
-import { PagePermissionRepo } from '@akasha/db/repos/page/page-permission.repo';
 import type { AgentAccessContext } from '../../../common/auth/agent-access-context';
-import SpaceAbilityFactory from '../../casl/abilities/space-ability.factory';
-import {
-  SpaceCaslAction,
-  SpaceCaslSubject,
-} from '../../casl/interfaces/space-ability.type';
+import { PageAccessService } from './page-access.service';
 
 @Injectable()
 export class AgentAccessService {
   constructor(
     private readonly apiKeyRepo: ApiKeyRepo,
-    private readonly pagePermissionRepo: PagePermissionRepo,
-    private readonly spaceAbility: SpaceAbilityFactory,
+    private readonly pageAccessService: PageAccessService,
   ) {}
-
-  async canUserEditSpace(user: User, spaceId: string): Promise<boolean> {
-    try {
-      const ability = await this.spaceAbility.createForUser(user, spaceId);
-      return ability.can(SpaceCaslAction.Edit, SpaceCaslSubject.Page);
-    } catch {
-      return false;
-    }
-  }
 
   async getBoundSpaceIds(context: AgentAccessContext): Promise<string[]> {
     return (
@@ -53,17 +38,6 @@ export class AgentAccessService {
     }
     await this.assertSpaceBound(context, page.spaceId);
 
-    const { hasAnyRestriction, canAccess, canEdit } =
-      await this.pagePermissionRepo.canUserEditPage(user.id, page.id);
-    if (hasAnyRestriction && !canAccess) {
-      throw new ForbiddenException();
-    }
-
-    return {
-      canEdit: hasAnyRestriction
-        ? canEdit
-        : await this.canUserEditSpace(user, page.spaceId),
-      hasRestriction: hasAnyRestriction,
-    };
+    return this.pageAccessService.validateCanViewWithPermissions(page, user);
   }
 }
