@@ -8,6 +8,7 @@ const context = {
   credentialVersion: 1,
   agentUser: { id: 'agent-1' },
   workspace: { id: 'ws-1' },
+  spaceIds: ['sp-1'],
 } as unknown as AgentAccessContext;
 
 const page = {
@@ -50,14 +51,33 @@ describe('AgentAccessService', () => {
     );
   });
 
-  it('rejects a space outside the key scope', async () => {
-    const { service } = subject({
-      apiKeyRepo: { findSpaceIdsByApiKeyId: jest.fn().mockResolvedValue([]) },
-    });
+  it('uses the scope resolved at authentication instead of re-querying', async () => {
+    const { service, apiKeyRepo } = subject();
 
     await expect(
-      service.assertPageReadable(context, page, user),
+      service.getBoundSpaceIds({ ...context, spaceIds: ['sp-9'] }),
+    ).resolves.toEqual(['sp-9']);
+    expect(apiKeyRepo.findSpaceIdsByApiKeyId).not.toHaveBeenCalled();
+  });
+
+  it('rejects a space outside the key scope', async () => {
+    const { service } = subject();
+
+    await expect(
+      service.assertPageReadable({ ...context, spaceIds: [] }, page, user),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('falls back to the repo when the context carries no scope', async () => {
+    const { service, apiKeyRepo } = subject();
+
+    await expect(
+      service.getBoundSpaceIds({
+        ...context,
+        spaceIds: undefined as never,
+      }),
+    ).resolves.toEqual(['sp-1']);
+    expect(apiKeyRepo.findSpaceIdsByApiKeyId).toHaveBeenCalledWith('key-1');
   });
 
   it('allows a restricted page the human has its own grant for', async () => {

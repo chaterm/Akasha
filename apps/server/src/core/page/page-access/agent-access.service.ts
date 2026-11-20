@@ -11,8 +11,11 @@ export class AgentAccessService {
     private readonly pagePermissionRepo: PagePermissionRepo,
   ) {}
 
-  getBoundSpaceIds(context: AgentAccessContext): Promise<string[]> {
-    return this.apiKeyRepo.findSpaceIdsByApiKeyId(context.apiKeyId);
+  async getBoundSpaceIds(context: AgentAccessContext): Promise<string[]> {
+    return (
+      context.spaceIds ??
+      this.apiKeyRepo.findSpaceIdsByApiKeyId(context.apiKeyId)
+    );
   }
 
   async assertSpaceBound(

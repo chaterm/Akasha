@@ -5,6 +5,7 @@ export type AgentAccessContext = {
   credentialVersion: number;
   agentUser: User;
   workspace: Workspace;
+  spaceIds: string[];
 };
 
 type RequestWithAgentAccess = {

@@ -120,6 +120,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
         credentialVersion: number;
         agentUser: any;
         workspace: any;
+        spaceIds: string[];
       }>;
     };
     try {
