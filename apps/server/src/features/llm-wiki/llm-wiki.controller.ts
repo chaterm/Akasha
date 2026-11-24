@@ -441,7 +441,6 @@ export class LlmWikiController {
       workspaceId: workspace.id,
       userId: user.id,
       spaceId: dto.spaceId,
-      limit: dto.limit,
     });
   }
 

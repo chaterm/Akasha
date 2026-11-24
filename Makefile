@@ -41,7 +41,7 @@ skills-verify:
 
 # 生产
 prod:
-	cd apps/server && pnpm run build && node dist/database/migrate.js latest && pnpm exec cross-env DOTENV_CONFIG_PATH=../../.env DOTENV_CONFIG_QUIET=true NODE_OPTIONS=--require=dotenv/config pnpm run start:prod
+	pnpm run client:build && cd apps/server && pnpm run build && node dist/database/migrate.js latest && pnpm exec cross-env DOTENV_CONFIG_PATH=../../.env DOTENV_CONFIG_QUIET=true NODE_OPTIONS=--require=dotenv/config pnpm run start:prod
 
 prod-migrate-dry-run:
 	cd apps/server && pnpm run build && node dist/database/migrate.js latest --dry-run

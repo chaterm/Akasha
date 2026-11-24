@@ -500,10 +500,28 @@ describe("KnowledgeGraphWebgl", () => {
       />,
     );
 
-    expect(sigmaMocks.Sigma).toHaveBeenCalledTimes(1);
     expect(forceAtlasMocks.Worker).toHaveBeenCalledTimes(1);
-    const sigma = sigmaMocks.instances[0];
     const worker = forceAtlasMocks.instances[0];
+    expect(worker.start).toHaveBeenCalledTimes(1);
+    expect(worker.params).toEqual({
+      settings: forceAtlasMocks.inferredSettings,
+    });
+    expect(sigmaMocks.Sigma).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(PRELAYOUT_SETTLE_MS - 1);
+    });
+    expect(worker.stop).not.toHaveBeenCalled();
+    expect(sigmaMocks.Sigma).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(worker.stop).toHaveBeenCalledTimes(1);
+    expect(worker.kill).toHaveBeenCalledTimes(1);
+    expect(sigmaMocks.Sigma).toHaveBeenCalledTimes(1);
+
+    const sigma = sigmaMocks.instances[0];
     const settings = sigma.settings as Partial<Settings>;
 
     expect(settings).toMatchObject({
@@ -522,33 +540,15 @@ describe("KnowledgeGraphWebgl", () => {
     );
     expect(forceAtlasMocks.inferSettings).toHaveBeenCalledWith(sigma.graph);
     expect(worker.graph).toBe(sigma.graph);
-    expect(worker.params).toEqual({
-      settings: forceAtlasMocks.inferredSettings,
-    });
-    expect(worker.start).toHaveBeenCalledTimes(1);
-
-    sigma.renderer.getNodeDisplayData.mockImplementation((node: string) =>
-      node === "page-anchor" ? { x: 0.73, y: 0.31 } : { x: 0.1, y: 0.2 },
-    );
-    runNextAnimationFrame();
-
     expect(sigma.renderer.getNodeDisplayData).toHaveBeenCalledWith(
       "page-anchor",
     );
+    const anchor = sigma.graph.getNodeAttributes("page-anchor");
     expect(sigma.camera.setState).toHaveBeenCalledWith({
-      x: 0.73,
-      y: 0.31,
+      x: anchor.x,
+      y: anchor.y,
       ratio: 0.12,
     });
-
-    act(() => {
-      vi.advanceTimersByTime(3_999);
-    });
-    expect(worker.stop).not.toHaveBeenCalled();
-    act(() => {
-      vi.advanceTimersByTime(1);
-    });
-    expect(worker.stop).toHaveBeenCalledTimes(1);
     expect(sigma.camera.setState).toHaveBeenCalledTimes(1);
 
     view.unmount();
@@ -560,7 +560,6 @@ describe("KnowledgeGraphWebgl", () => {
       "updated",
       expect.any(Function),
     );
-    expect(cancelAnimationFrame).toHaveBeenCalled();
   });
 
   it("falls back to the highest-degree node when no page exists", () => {
@@ -589,7 +588,7 @@ describe("KnowledgeGraphWebgl", () => {
       />,
     );
 
-    runNextAnimationFrame();
+    settleLayout();
 
     expect(
       sigmaMocks.instances[0].renderer.getNodeDisplayData,
@@ -613,6 +612,7 @@ describe("KnowledgeGraphWebgl", () => {
       />,
     );
 
+    settleLayout();
     const sigma = sigmaMocks.instances[0];
     act(() => {
       ref.current?.zoomIn();
@@ -681,6 +681,7 @@ describe("KnowledgeGraphWebgl", () => {
         onFocusNode={vi.fn()}
       />,
     );
+    settleLayout();
     const sigma = sigmaMocks.instances[0];
     const edgeReducer = (sigma.settings as Partial<Settings>)
       .edgeReducer as NonNullable<Settings["edgeReducer"]>;
@@ -795,18 +796,20 @@ describe("KnowledgeGraphWebgl", () => {
         onFocusNode={vi.fn()}
       />,
     );
+    settleLayout();
     const sigma = sigmaMocks.instances[0];
     const updateCamera = sigma.cameraListeners.get("updated");
 
     sigma.renderer.refresh.mockClear();
     act(() => {
-      updateCamera?.({ x: 0.5, y: 0.5, angle: 0, ratio: 0.9 });
+      updateCamera?.({ x: 0.5, y: 0.5, angle: 0, ratio: 0.5 });
+      updateCamera?.({ x: 0.5, y: 0.5, angle: 0, ratio: 0.6 });
     });
     expect(sigma.renderer.refresh).not.toHaveBeenCalled();
 
     act(() => {
-      updateCamera?.({ x: 0.5, y: 0.5, angle: 0, ratio: 0.6 });
-      updateCamera?.({ x: 0.5, y: 0.5, angle: 0, ratio: 0.5 });
+      updateCamera?.({ x: 0.5, y: 0.5, angle: 0, ratio: 0.8 });
+      updateCamera?.({ x: 0.5, y: 0.5, angle: 0, ratio: 0.9 });
     });
     expect(sigma.renderer.refresh).toHaveBeenCalledTimes(1);
     expect(sigma.renderer.refresh).toHaveBeenNthCalledWith(1, {
@@ -816,8 +819,8 @@ describe("KnowledgeGraphWebgl", () => {
     });
 
     act(() => {
-      updateCamera?.({ x: 0.5, y: 0.5, angle: 0, ratio: 0.8 });
-      updateCamera?.({ x: 0.5, y: 0.5, angle: 0, ratio: 0.9 });
+      updateCamera?.({ x: 0.5, y: 0.5, angle: 0, ratio: 0.6 });
+      updateCamera?.({ x: 0.5, y: 0.5, angle: 0, ratio: 0.5 });
     });
     expect(sigma.renderer.refresh).toHaveBeenCalledTimes(2);
     expect(sigma.renderer.refresh).toHaveBeenNthCalledWith(2, {
@@ -827,7 +830,7 @@ describe("KnowledgeGraphWebgl", () => {
     });
   });
 
-  it("keeps the initial camera when the layout timer stops", () => {
+  it("focuses the anchor node exactly once when the layout settles", () => {
     render(
       <KnowledgeGraphWebgl
         nodes={buildLargeGraphNodes()}
@@ -837,16 +840,17 @@ describe("KnowledgeGraphWebgl", () => {
         onFocusNode={vi.fn()}
       />,
     );
-    const sigma = sigmaMocks.instances[0];
     const worker = forceAtlasMocks.instances[0];
-    sigma.renderer.getNodeDisplayData
-      .mockReturnValueOnce({ x: 0.2, y: 0.3 })
-      .mockReturnValue({ x: 0.81, y: 0.64 });
 
-    runNextAnimationFrame();
+    settleLayout();
+
+    const sigma = sigmaMocks.instances[0];
+    expect(worker.stop).toHaveBeenCalledTimes(1);
+    expect(sigma.renderer.getNodeDisplayData).toHaveBeenCalledTimes(1);
+    expect(sigma.camera.setState).toHaveBeenCalledTimes(1);
     expect(sigma.camera.setState).toHaveBeenLastCalledWith({
-      x: 0.2,
-      y: 0.3,
+      x: expect.any(Number),
+      y: expect.any(Number),
       ratio: 0.12,
     });
 
@@ -854,12 +858,11 @@ describe("KnowledgeGraphWebgl", () => {
       vi.advanceTimersByTime(4_000);
     });
 
-    expect(worker.stop).toHaveBeenCalledTimes(1);
-    expect(sigma.renderer.getNodeDisplayData).toHaveBeenCalledTimes(1);
     expect(sigma.camera.setState).toHaveBeenCalledTimes(1);
+    expect(sigma.renderer.getNodeDisplayData).toHaveBeenCalledTimes(1);
   });
 
-  it("does not refocus at layout stop after the user moves the camera", () => {
+  it("does not refocus after the user moves the camera", () => {
     render(
       <KnowledgeGraphWebgl
         nodes={buildLargeGraphNodes()}
@@ -869,9 +872,12 @@ describe("KnowledgeGraphWebgl", () => {
         onFocusNode={vi.fn()}
       />,
     );
-    const sigma = sigmaMocks.instances[0];
 
-    runNextAnimationFrame();
+    settleLayout();
+    const sigma = sigmaMocks.instances[0];
+    sigma.camera.setState.mockClear();
+    sigma.renderer.getNodeDisplayData.mockClear();
+
     act(() => {
       sigma.camera.setState({
         x: 0.8,
@@ -881,7 +887,6 @@ describe("KnowledgeGraphWebgl", () => {
       });
     });
     sigma.camera.setState.mockClear();
-    sigma.renderer.getNodeDisplayData.mockClear();
 
     act(() => {
       vi.advanceTimersByTime(4_000);
@@ -903,6 +908,7 @@ describe("KnowledgeGraphWebgl", () => {
         onFocusNode={vi.fn()}
       />,
     );
+    settleLayout();
     const sigma = sigmaMocks.instances[0];
     const settings = sigma.settings as Partial<Settings>;
     const nodeReducer = settings.nodeReducer as NonNullable<
@@ -1094,6 +1100,7 @@ describe("KnowledgeGraphWebgl", () => {
       />,
     );
 
+    settleLayout();
     view.rerender(
       <KnowledgeGraphWebgl
         nodes={filteredNodes}
@@ -1103,6 +1110,7 @@ describe("KnowledgeGraphWebgl", () => {
         onFocusNode={vi.fn()}
       />,
     );
+    settleLayout();
     const renderer = sigmaMocks.instances.at(-1)?.renderer;
     expect(renderer).toBeDefined();
     renderer?.refresh.mockClear();
@@ -1208,7 +1216,7 @@ describe("KnowledgeGraphWebgl", () => {
         onFocusNode={vi.fn()}
       />,
     );
-    runNextAnimationFrame();
+    settleLayout();
     const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
     vi.mocked(cancelAnimationFrame).mockClear();
 
@@ -1257,6 +1265,14 @@ function buildLargeGraphNodes(): KnowledgeGraphNode[] {
       degree: index % 10,
     })),
   ];
+}
+
+const PRELAYOUT_SETTLE_MS = 320;
+
+function settleLayout() {
+  act(() => {
+    vi.advanceTimersByTime(PRELAYOUT_SETTLE_MS);
+  });
 }
 
 function runNextAnimationFrame() {

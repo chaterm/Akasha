@@ -24,6 +24,7 @@ import {
   Title,
   Tooltip,
 } from "@mantine/core";
+import { useDebouncedValue } from "@mantine/hooks";
 import { useQuery } from "@tanstack/react-query";
 import { Helmet } from "react-helmet-async";
 import {
@@ -58,10 +59,8 @@ import type {
 import classes from "../styles/knowledge-graph.module.css";
 import { getErrorMessage } from "@/lib/errors";
 
-const GRAPH_NODE_LIMIT = 10_000;
-const OVERVIEW_NODE_LIMIT = 10_000;
 const SPACE_LIST_LIMIT = 2_036;
-const HIGH_DENSITY_NODE_THRESHOLD = 500;
+const HIGH_DENSITY_NODE_THRESHOLD = 240;
 const GRAPH_WIDTH = 1600;
 const COMPACT_SVG_NODE_THRESHOLD = 24;
 const GRAPH_HEIGHT = 680;
@@ -71,6 +70,16 @@ const ZOOM_STEP = 1.2;
 const SECTION_MARKER_SIZE = 18;
 const SECTION_CARD_HEIGHT = 32;
 const ENABLE_GRAPH_ANIMATION = import.meta.env.MODE !== "test";
+const SEARCH_DEBOUNCE_MS = import.meta.env.MODE === "test" ? 0 : 250;
+const SIMULATION_ALPHA_DECAY = 0.04;
+const SIMULATION_ALPHA_MIN = 0.005;
+const SIMULATION_MAX_TICKS = 240;
+const SIMULATION_REHEAT_ALPHA = 0.35;
+const LAYOUT_PADDING = 72;
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+const NODE_SPACING = 66;
+const MIN_LAYOUT_RADIUS = 160;
+const RADIAL_BOUNDARY_PULL = 0.05;
 const EMPTY_GRAPH: KnowledgeGraphResult = {
   nodes: [],
   edges: [],
@@ -117,6 +126,7 @@ export default function KnowledgeGraphPage() {
   const { spaceSlug } = useParams();
   const [spaceId, setSpaceId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [debouncedSearch] = useDebouncedValue(search, SEARCH_DEBOUNCE_MS);
   const [edgeTypes, setEdgeTypes] = useState<KnowledgeGraphEdge["type"][]>([
     "link",
     "semantic",
@@ -151,26 +161,45 @@ export default function KnowledgeGraphPage() {
 
   const graphQuery = useQuery({
     queryKey: ["knowledge-graph", spaceId],
-    queryFn: () =>
-      getKnowledgeGraph({
-        spaceId: spaceId as string,
-        limit: GRAPH_NODE_LIMIT,
-      }),
+    queryFn: () => getKnowledgeGraph({ spaceId: spaceId as string }),
     enabled: Boolean(spaceId),
   });
 
   const graph = graphQuery.data ?? EMPTY_GRAPH;
-  const selectedNode = graph.nodes.find((node) => node.id === selectedNodeId);
-  const visibleGraph = useMemo(
-    () => filterGraph(graph, search, edgeTypes, focusPageId, showIsolated),
-    [edgeTypes, focusPageId, graph, search, showIsolated],
+  const selectedNode = useMemo(
+    () => graph.nodes.find((node) => node.id === selectedNodeId),
+    [graph.nodes, selectedNodeId],
   );
-  const visiblePageCount = visibleGraph.nodes.filter(
-    (node) => node.kind !== "section",
-  ).length;
-  const totalPageCount = graph.nodes.filter(
-    (node) => node.kind !== "section",
-  ).length;
+  const visibleGraph = useMemo(
+    () =>
+      filterGraph(graph, debouncedSearch, edgeTypes, focusPageId, showIsolated),
+    [edgeTypes, focusPageId, graph, debouncedSearch, showIsolated],
+  );
+  const graphCounts = useMemo(() => {
+    let visiblePageCount = 0;
+    let visibleSectionCount = 0;
+    for (const node of visibleGraph.nodes) {
+      if (node.kind === "section") visibleSectionCount += 1;
+      else visiblePageCount += 1;
+    }
+    let visibleLinkCount = 0;
+    let visibleSemanticCount = 0;
+    for (const edge of visibleGraph.edges) {
+      if (edge.type === "link") visibleLinkCount += 1;
+      else if (edge.type === "semantic") visibleSemanticCount += 1;
+    }
+    return {
+      visiblePageCount,
+      visibleSectionCount,
+      visibleLinkCount,
+      visibleSemanticCount,
+    };
+  }, [visibleGraph.edges, visibleGraph.nodes]);
+  const totalPageCount = useMemo(
+    () => graph.nodes.reduce((a, n) => (n.kind === "section" ? a : a + 1), 0),
+    [graph.nodes],
+  );
+  const { visiblePageCount } = graphCounts;
   const useHighDensityRenderer =
     graph.nodes.length > HIGH_DENSITY_NODE_THRESHOLD &&
     visibleGraph.nodes.length > COMPACT_SVG_NODE_THRESHOLD;
@@ -209,6 +238,7 @@ export default function KnowledgeGraphPage() {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const animationRef = useRef<number | null>(null);
   const simulationTickRef = useRef(0);
+  const simulationAlphaRef = useRef(1);
   const [positions, setPositions] = useState<Map<string, SimulatedNode>>(() =>
     useHighDensityRenderer
       ? new Map()
@@ -252,10 +282,11 @@ export default function KnowledgeGraphPage() {
   }, [positions, useHighDensityRenderer, visibleGraph.nodes]);
 
   useEffect(() => {
+    simulationTickRef.current = 0;
+    simulationAlphaRef.current = 1;
     if (useHighDensityRenderer) {
       positionsRef.current = new Map();
       setPositions(new Map());
-      simulationTickRef.current = 0;
       return;
     }
     const nextPositions = initializeSimulation(
@@ -266,7 +297,6 @@ export default function KnowledgeGraphPage() {
     positionsRef.current = nextPositions;
     setPositions(nextPositions);
     setTransform(fitGraphTransform(visibleGraph.nodes, initialLayout));
-    simulationTickRef.current = 0;
   }, [focusPageId, initialLayout, useHighDensityRenderer, visibleGraph.nodes]);
 
   useEffect(() => {
@@ -276,25 +306,29 @@ export default function KnowledgeGraphPage() {
       cancelAnimationFrame(animationRef.current);
     }
 
+    const extent = layoutExtent(positionsRef.current.size);
     const animate = () => {
       if (nodeDragState) {
         animationRef.current = requestAnimationFrame(animate);
         return;
       }
 
-      simulationTickRef.current += 1;
+      const alpha = simulationAlphaRef.current;
       const nextPositions = simulateGraphStep({
         current: positionsRef.current,
         edges: visibleGraph.edges,
-        width: GRAPH_WIDTH,
-        height: GRAPH_HEIGHT,
+        width: extent.width,
+        height: extent.height,
+        alpha,
       });
       positionsRef.current = nextPositions;
+      simulationAlphaRef.current = alpha - alpha * SIMULATION_ALPHA_DECAY;
+      simulationTickRef.current += 1;
       setPositions(nextPositions);
 
       if (
-        simulationTickRef.current < 60 ||
-        !simulationIsSettled(nextPositions)
+        simulationAlphaRef.current > SIMULATION_ALPHA_MIN &&
+        simulationTickRef.current < SIMULATION_MAX_TICKS
       ) {
         animationRef.current = requestAnimationFrame(animate);
       } else {
@@ -401,8 +435,13 @@ export default function KnowledgeGraphPage() {
 
   const handlePointerEnd = useCallback(() => {
     setDragState(null);
-    setNodeDragState(null);
-    simulationTickRef.current = 0;
+    setNodeDragState((current) => {
+      if (current) {
+        simulationTickRef.current = 0;
+        simulationAlphaRef.current = SIMULATION_REHEAT_ALPHA;
+      }
+      return null;
+    });
   }, []);
 
   const handleNodePointerDown = useCallback(
@@ -509,22 +548,13 @@ export default function KnowledgeGraphPage() {
               {visiblePageCount < totalPageCount ? ` / ${totalPageCount}` : ""}
             </Badge>
             <Badge variant="light" color="violet">
-              {t("Sections")}:{" "}
-              {
-                visibleGraph.nodes.filter((node) => node.kind === "section")
-                  .length
-              }
+              {t("Sections")}: {graphCounts.visibleSectionCount}
             </Badge>
             <Badge variant="light">
-              {t("Links")}:{" "}
-              {visibleGraph.edges.filter((edge) => edge.type === "link").length}
+              {t("Links")}: {graphCounts.visibleLinkCount}
             </Badge>
             <Badge variant="light" color="green">
-              {t("Semantic")}:{" "}
-              {
-                visibleGraph.edges.filter((edge) => edge.type === "semantic")
-                  .length
-              }
+              {t("Semantic")}: {graphCounts.visibleSemanticCount}
             </Badge>
             <Badge variant="dot" color={focusPageId ? "blue" : "gray"}>
               {focusPageId ? t("Focused neighborhood") : t("Overview")}
@@ -862,17 +892,28 @@ function fitGraphTransform(
 ): GraphTransform {
   if (nodes.length === 0) return { x: 0, y: 0, scale: 1 };
 
-  const points = nodes
-    .map((node) => layout.get(node.id))
-    .filter((point): point is GraphPoint => Boolean(point));
+  let seen = 0;
+  let boundsMinX = Number.POSITIVE_INFINITY;
+  let boundsMaxX = Number.NEGATIVE_INFINITY;
+  let boundsMinY = Number.POSITIVE_INFINITY;
+  let boundsMaxY = Number.NEGATIVE_INFINITY;
+  for (const node of nodes) {
+    const point = layout.get(node.id);
+    if (!point) continue;
+    seen += 1;
+    if (point.x < boundsMinX) boundsMinX = point.x;
+    if (point.x > boundsMaxX) boundsMaxX = point.x;
+    if (point.y < boundsMinY) boundsMinY = point.y;
+    if (point.y > boundsMaxY) boundsMaxY = point.y;
+  }
 
-  if (points.length === 0) return { x: 0, y: 0, scale: 1 };
+  if (seen === 0) return { x: 0, y: 0, scale: 1 };
 
   const padding = 90;
-  const minX = Math.min(...points.map((point) => point.x)) - padding;
-  const maxX = Math.max(...points.map((point) => point.x)) + padding;
-  const minY = Math.min(...points.map((point) => point.y)) - padding;
-  const maxY = Math.max(...points.map((point) => point.y)) + padding;
+  const minX = boundsMinX - padding;
+  const maxX = boundsMaxX + padding;
+  const minY = boundsMinY - padding;
+  const maxY = boundsMaxY + padding;
   const width = Math.max(maxX - minX, 1);
   const height = Math.max(maxY - minY, 1);
   const scale = clamp(
@@ -960,15 +1001,7 @@ function filterGraph(
       showIsolated || connectedPageNodes.length === 0
         ? pageNodes
         : connectedPageNodes;
-    overviewCandidates
-      .sort((a, b) => {
-        const degreeDelta =
-          (relationshipDegree.get(b.id) ?? 0) -
-          (relationshipDegree.get(a.id) ?? 0);
-        return degreeDelta || a.title.localeCompare(b.title);
-      })
-      .slice(0, OVERVIEW_NODE_LIMIT)
-      .forEach((node) => visibleNodeIds.add(node.id));
+    for (const node of overviewCandidates) visibleNodeIds.add(node.id);
     for (const node of graph.nodes) {
       if (
         node.kind === "section" &&
@@ -1060,51 +1093,69 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+export function layoutExtent(nodeCount: number): {
+  width: number;
+  height: number;
+  centerX: number;
+  centerY: number;
+  radius: number;
+} {
+  const radius = Math.max(
+    MIN_LAYOUT_RADIUS,
+    Math.sqrt(Math.max(nodeCount, 1) / Math.PI) * NODE_SPACING,
+  );
+  const side = Math.max(GRAPH_HEIGHT, radius * 2 + LAYOUT_PADDING * 2);
+  return {
+    width: side,
+    height: side,
+    centerX: side / 2,
+    centerY: side / 2,
+    radius,
+  };
+}
+
 function buildInitialGraphLayout(
   nodes: KnowledgeGraphNode[],
   edges: KnowledgeGraphEdge[],
   expandedSections = false,
 ): Map<string, GraphPoint> {
-  const connected = new Set(edges.flatMap((edge) => [edge.from, edge.to]));
+  const connected = new Set<string>();
+  for (const edge of edges) {
+    connected.add(edge.from);
+    connected.add(edge.to);
+  }
   const pageNodes = nodes.filter((node) => node.kind !== "section");
   const sectionNodes = nodes.filter((node) => node.kind === "section");
   const sortedNodes = [...pageNodes].sort((a, b) => {
+    const connectedDelta =
+      Number(connected.has(b.id)) - Number(connected.has(a.id));
+    if (connectedDelta !== 0) return connectedDelta;
     const degreeDelta = b.degree - a.degree;
     if (degreeDelta !== 0) return degreeDelta;
     return a.title.localeCompare(b.title);
   });
   const layout = new Map<string, GraphPoint>();
-  const centerX = GRAPH_WIDTH / 2;
-  const centerY = GRAPH_HEIGHT / 2;
-  const connectedNodes = sortedNodes.filter((node) => connected.has(node.id));
-  const isolatedNodes = sortedNodes.filter((node) => !connected.has(node.id));
+  const extent = layoutExtent(nodes.length);
 
-  connectedNodes.forEach((node, index) => {
-    const angle = (index / Math.max(connectedNodes.length, 1)) * Math.PI * 2;
-    const radius = 120 + (index % 3) * 92;
+  sortedNodes.forEach((node, index) => {
+    const angle = index * GOLDEN_ANGLE;
+    const radius =
+      Math.sqrt((index + 0.5) / Math.max(sortedNodes.length, 1)) *
+      extent.radius;
     layout.set(node.id, {
-      x: centerX + Math.cos(angle) * radius,
-      y: centerY + Math.sin(angle) * radius,
-    });
-  });
-
-  isolatedNodes.forEach((node, index) => {
-    const columns = 8;
-    const column = index % columns;
-    const row = Math.floor(index / columns);
-    layout.set(node.id, {
-      x: 96 + column * 130,
-      y: 72 + row * 105,
+      x: extent.centerX + Math.cos(angle) * radius,
+      y: extent.centerY + Math.sin(angle) * radius,
     });
   });
 
   const sectionIndexByPage = new Map<string, number>();
   for (const section of sectionNodes) {
     const parentId = section.parentPageId ?? "";
-    const parentPoint = layout.get(parentId) ?? graphCenter();
+    const parentPoint =
+      layout.get(parentId) ?? ({ x: extent.centerX, y: extent.centerY } as const);
     const sectionIndex = sectionIndexByPage.get(parentId) ?? 0;
     sectionIndexByPage.set(parentId, sectionIndex + 1);
-    const angle = sectionIndex * Math.PI * 0.68 - Math.PI * 0.8;
+    const angle = sectionIndex * GOLDEN_ANGLE;
     const ring =
       (expandedSections ? 138 : 76) + Math.floor(sectionIndex / 7) * 70;
     layout.set(section.id, {
@@ -1146,14 +1197,16 @@ function simulateGraphStep(input: {
   edges: KnowledgeGraphEdge[];
   width: number;
   height: number;
+  alpha?: number;
 }): Map<string, SimulatedNode> {
   const next = clonePositions(input.current);
-  const nodes = [...next.entries()];
+  const alpha = input.alpha ?? 1;
+  const nodes = [...next.values()];
 
   for (let i = 0; i < nodes.length; i += 1) {
-    const [, a] = nodes[i];
+    const a = nodes[i];
     for (let j = i + 1; j < nodes.length; j += 1) {
-      const [, b] = nodes[j];
+      const b = nodes[j];
       const dx = b.x - a.x || 0.01;
       const dy = b.y - a.y || 0.01;
       const distance = Math.max(Math.hypot(dx, dy), 1);
@@ -1161,7 +1214,7 @@ function simulateGraphStep(input: {
       const minimumDistance = a.collisionRadius + b.collisionRadius;
       const overlapForce =
         distance < minimumDistance ? (minimumDistance - distance) * 0.065 : 0;
-      const force = 5200 / distanceSq + overlapForce;
+      const force = (5200 / distanceSq + overlapForce) * alpha;
       const fx = (dx / distance) * force;
       const fy = (dy / distance) * force;
 
@@ -1182,7 +1235,7 @@ function simulateGraphStep(input: {
     const distance = Math.max(Math.hypot(dx, dy), 1);
     const targetDistance =
       edge.type === "semantic" ? 175 : edge.type === "contains" ? 110 : 125;
-    const force = (distance - targetDistance) * 0.014;
+    const force = (distance - targetDistance) * 0.014 * alpha;
     const fx = (dx / distance) * force;
     const fy = (dy / distance) * force;
 
@@ -1192,31 +1245,39 @@ function simulateGraphStep(input: {
     to.vy -= fy;
   }
 
-  const center = graphCenter();
-  for (const [, node] of nodes) {
-    node.vx += (center.x - node.x) * 0.002;
-    node.vy += (center.y - node.y) * 0.002;
-    const margin = Math.max(36, node.collisionRadius + 8);
-    if (node.x < margin) node.vx += (margin - node.x) * 0.018;
-    if (node.x > input.width - margin) {
-      node.vx -= (node.x - (input.width - margin)) * 0.018;
+  const centerX = input.width / 2;
+  const centerY = input.height / 2;
+  const boundaryRadius = Math.min(input.width, input.height) / 2;
+  for (const node of nodes) {
+    node.vx += (centerX - node.x) * 0.002 * alpha;
+    node.vy += (centerY - node.y) * 0.002 * alpha;
+
+    const offsetX = node.x - centerX;
+    const offsetY = node.y - centerY;
+    const distance = Math.hypot(offsetX, offsetY);
+    const limit =
+      boundaryRadius - Math.max(node.visualHalfWidth, node.visualHalfHeight) - 8;
+    if (distance > limit && distance > 0) {
+      const unitX = offsetX / distance;
+      const unitY = offsetY / distance;
+      const overshoot = distance - limit;
+      node.vx -= unitX * overshoot * RADIAL_BOUNDARY_PULL * alpha;
+      node.vy -= unitY * overshoot * RADIAL_BOUNDARY_PULL * alpha;
     }
-    if (node.y < margin) node.vy += (margin - node.y) * 0.018;
-    if (node.y > input.height - margin) {
-      node.vy -= (node.y - (input.height - margin)) * 0.018;
-    }
+
     node.vx *= 0.78;
     node.vy *= 0.78;
-    node.x = clamp(
-      node.x + node.vx,
-      node.visualHalfWidth + 8,
-      input.width - node.visualHalfWidth - 8,
-    );
-    node.y = clamp(
-      node.y + node.vy,
-      node.visualHalfHeight + 8,
-      input.height - node.visualHalfHeight - 8,
-    );
+    node.x += node.vx;
+    node.y += node.vy;
+
+    const nextOffsetX = node.x - centerX;
+    const nextOffsetY = node.y - centerY;
+    const nextDistance = Math.hypot(nextOffsetX, nextOffsetY);
+    if (nextDistance > limit && nextDistance > 0) {
+      const scale = limit / nextDistance;
+      node.x = centerX + nextOffsetX * scale;
+      node.y = centerY + nextOffsetY * scale;
+    }
   }
 
   return next;
@@ -1228,13 +1289,6 @@ function clonePositions(
   return new Map(
     [...positions.entries()].map(([id, node]) => [id, { ...node }]),
   );
-}
-
-function simulationIsSettled(positions: Map<string, SimulatedNode>): boolean {
-  for (const node of positions.values()) {
-    if (Math.hypot(node.vx, node.vy) >= 0.05) return false;
-  }
-  return true;
 }
 
 function nodeRadius(node: KnowledgeGraphNode): number {

@@ -707,11 +707,7 @@ describe('LlmWikiController', () => {
     const controller = createController({ graphService });
 
     await expect(
-      controller.getGraph(
-        { spaceId: 'space-1', limit: 200 },
-        user(),
-        workspace(),
-      ),
+      controller.getGraph({ spaceId: 'space-1' }, user(), workspace()),
     ).resolves.toEqual({
       nodes: [{ id: 'kp-1', title: 'Kafka', spaceId: 'space-1', degree: 1 }],
       edges: [],
@@ -721,7 +717,6 @@ describe('LlmWikiController', () => {
       workspaceId: 'workspace-1',
       userId: 'user-1',
       spaceId: 'space-1',
-      limit: 200,
     });
   });
 

@@ -217,7 +217,9 @@ type KnowledgeGraphWebglProps = {
 
 const CAMERA_ANIMATION_DURATION = 180;
 const INITIAL_CAMERA_RATIO = 0.12;
-const LAYOUT_DURATION = 4_000;
+const PRELAYOUT_MIN_DURATION = 320;
+const PRELAYOUT_MAX_DURATION = 2_200;
+const PRELAYOUT_NS_PER_NODE = 0.22;
 const CONTAINS_EDGE_HIDE_RATIO = 0.7;
 const SELECTED_NODE_COLOR = "#f59f00";
 const MOTION_FRAME_INTERVAL = 50;
@@ -328,60 +330,8 @@ const KnowledgeGraphWebgl = forwardRef<
       .filter((edge) => edge.type === "contains" && graph.hasEdge(edge.id))
       .map((edge) => edge.id);
     let hoveredNodeId: string | null = null;
-    const renderer = new Sigma<WebglNodeAttributes, WebglEdgeAttributes>(
-      graph,
-      container,
-      {
-        hideEdgesOnMove: true,
-        hideLabelsOnMove: true,
-        renderEdgeLabels: true,
-        labelDensity: 0.08,
-        labelGridCellSize: 120,
-        labelRenderedSizeThreshold: 8,
-        minCameraRatio: 0.03,
-        maxCameraRatio: 3.2,
-        nodeProgramClasses: {
-          square: NodeHollowDiamondProgram,
-        },
-        edgeProgramClasses: {
-          arrow: EdgeArrowProgram,
-        },
-        defaultDrawNodeHover: drawSelectedNodeHover,
-        nodeReducer: (node, data) => {
-          if (node !== selectedNodeIdRef.current) return { ...data };
-          if (data.type === "square") {
-            return {
-              ...data,
-              color: SELECTED_NODE_COLOR,
-              highlighted: true,
-            };
-          }
-          return { ...data, highlighted: true };
-        },
-        edgeReducer: (edge, data) => {
-          const isHoveredEdge =
-            hoveredNodeId !== null && graph.hasExtremity(edge, hoveredNodeId);
-          return {
-            ...data,
-            color: isHoveredEdge
-              ? HOVER_EDGE_COLORS[data.relationType]
-              : data.color,
-            size: isHoveredEdge
-              ? HOVER_EDGE_SIZES[data.relationType]
-              : data.size,
-            label: isHoveredEdge ? data.label : "",
-            forceLabel: isHoveredEdge,
-            hidden:
-              !isHoveredEdge &&
-              data.relationType === "contains" &&
-              cameraRatioRef.current > CONTAINS_EDGE_HIDE_RATIO,
-          };
-        },
-      },
-    );
-    rendererRef.current = renderer;
+    let renderer: Sigma<WebglNodeAttributes, WebglEdgeAttributes> | null = null;
 
-    const camera = renderer.getCamera();
     const focusNode = findInitialFocusNode(nodes);
     let cameraTouched = false;
     let programmaticCameraUpdate = false;
@@ -402,13 +352,15 @@ const KnowledgeGraphWebgl = forwardRef<
       context.clearRect(0, 0, overlayWidth, overlayHeight);
     };
     const refreshVisibleNodes = () => {
-      const dimensions = renderer.getDimensions();
+      const activeRenderer = renderer;
+      if (!activeRenderer) return;
+      const dimensions = activeRenderer.getDimensions();
       const width = overlayWidth || dimensions.width;
       const height = overlayHeight || dimensions.height;
       const next: MotionNode[] = [];
       const nextById = new Map<string, MotionNode>();
       graph.forEachNode((id, attributes) => {
-        const point = renderer.graphToViewport({
+        const point = activeRenderer.graphToViewport({
           x: attributes.x,
           y: attributes.y,
         });
@@ -431,19 +383,14 @@ const KnowledgeGraphWebgl = forwardRef<
         nextById.set(id, node);
       });
       const nextContainsEdges: MotionEdge[] = [];
-      const seenEdges = new Set<string>();
-      for (const node of next) {
-        for (const edge of graph.edges(node.id)) {
-          if (seenEdges.has(edge)) continue;
-          seenEdges.add(edge);
-          if (graph.getEdgeAttribute(edge, "relationType") !== "contains") {
-            continue;
-          }
-          const source = nextById.get(graph.source(edge));
-          const target = nextById.get(graph.target(edge));
-          if (source && target) nextContainsEdges.push({ source, target });
-        }
-      }
+      graph.forEachEdge((edge, attributes, source, target) => {
+        if (attributes.relationType !== "contains") return;
+        const sourceNode = nextById.get(source);
+        if (!sourceNode) return;
+        const targetNode = nextById.get(target);
+        if (!targetNode) return;
+        nextContainsEdges.push({ source: sourceNode, target: targetNode });
+      });
       visibleNodes = next;
       visibleContainsEdges = nextContainsEdges;
       cameraMoving = false;
@@ -475,12 +422,17 @@ const KnowledgeGraphWebgl = forwardRef<
         : null;
     resizeObserver?.observe(container);
 
+    const hasMotionWork = () =>
+      cameraRatioRef.current <= CONTAINS_EDGE_HIDE_RATIO ||
+      cameraRatioRef.current <= MOTION_NODE_HIDE_RATIO;
     const drawMotion = (time: number) => {
+      if (!context || document.hidden || (!layoutRunning && !hasMotionWork())) {
+        motionFrame = null;
+        return;
+      }
       if (
-        context &&
         !layoutRunning &&
         !cameraMoving &&
-        !document.hidden &&
         time - lastMotionDraw >= MOTION_FRAME_INTERVAL
       ) {
         lastMotionDraw = time;
@@ -545,14 +497,13 @@ const KnowledgeGraphWebgl = forwardRef<
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
-    cameraRatioRef.current = camera.getState().ratio;
     const focusCamera = () => {
-      if (!focusNode) return;
+      if (!focusNode || !renderer) return;
       const displayData = renderer.getNodeDisplayData(focusNode.id);
       if (!displayData) return;
       programmaticCameraUpdate = true;
       try {
-        camera.setState({
+        renderer.getCamera().setState({
           x: displayData.x,
           y: displayData.y,
           ratio: INITIAL_CAMERA_RATIO,
@@ -571,16 +522,18 @@ const KnowledgeGraphWebgl = forwardRef<
         containsEdgesWereHidden !== containsEdgesAreHidden &&
         containsEdgeIds.length > 0
       ) {
-        renderer.refresh({
+        renderer?.refresh({
           partialGraph: { edges: containsEdgeIds },
           schedule: true,
           skipIndexation: true,
         });
       }
       clearMotionOverlay();
-      if (!layoutRunning) scheduleVisibleNodes();
+      if (!layoutRunning) {
+        scheduleVisibleNodes();
+        startMotion();
+      }
     };
-    camera.on("updated", handleCameraUpdate);
 
     const nodesById = new Map(nodes.map((node) => [node.id, node]));
     const updateHoveredNode = (nodeId: string | null) => {
@@ -591,7 +544,7 @@ const KnowledgeGraphWebgl = forwardRef<
       }
       hoveredNodeId = nodeId;
       if (changedEdges.size === 0) return;
-      renderer.refresh({
+      renderer?.refresh({
         partialGraph: { edges: [...changedEdges] },
         schedule: true,
         skipIndexation: true,
@@ -620,11 +573,68 @@ const KnowledgeGraphWebgl = forwardRef<
       const originalNode = nodesById.get(node);
       if (originalNode) onFocusNodeRef.current(originalNode);
     };
-    renderer.on("enterNode", handleEnterNode);
-    renderer.on("leaveNode", handleLeaveNode);
-    renderer.on("clickNode", handleClickNode);
-    renderer.on("clickStage", handleClickStage);
-    renderer.on("doubleClickNode", handleDoubleClickNode);
+    const attachRenderer = () => {
+      renderer = new Sigma<WebglNodeAttributes, WebglEdgeAttributes>(
+        graph,
+        container,
+        {
+          hideEdgesOnMove: true,
+          hideLabelsOnMove: true,
+          renderEdgeLabels: true,
+          labelDensity: 0.08,
+          labelGridCellSize: 120,
+          labelRenderedSizeThreshold: 8,
+          minCameraRatio: 0.03,
+          maxCameraRatio: 3.2,
+          nodeProgramClasses: {
+            square: NodeHollowDiamondProgram,
+          },
+          edgeProgramClasses: {
+            arrow: EdgeArrowProgram,
+          },
+          defaultDrawNodeHover: drawSelectedNodeHover,
+          nodeReducer: (node, data) => {
+            if (node !== selectedNodeIdRef.current) return { ...data };
+            if (data.type === "square") {
+              return {
+                ...data,
+                color: SELECTED_NODE_COLOR,
+                highlighted: true,
+              };
+            }
+            return { ...data, highlighted: true };
+          },
+          edgeReducer: (edge, data) => {
+            const isHoveredEdge =
+              hoveredNodeId !== null && graph.hasExtremity(edge, hoveredNodeId);
+            return {
+              ...data,
+              color: isHoveredEdge
+                ? HOVER_EDGE_COLORS[data.relationType]
+                : data.color,
+              size: isHoveredEdge
+                ? HOVER_EDGE_SIZES[data.relationType]
+                : data.size,
+              label: isHoveredEdge ? data.label : "",
+              forceLabel: isHoveredEdge,
+              hidden:
+                !isHoveredEdge &&
+                data.relationType === "contains" &&
+                cameraRatioRef.current > CONTAINS_EDGE_HIDE_RATIO,
+            };
+          },
+        },
+      );
+      rendererRef.current = renderer;
+      const camera = renderer.getCamera();
+      cameraRatioRef.current = camera.getState().ratio;
+      camera.on("updated", handleCameraUpdate);
+      renderer.on("enterNode", handleEnterNode);
+      renderer.on("leaveNode", handleLeaveNode);
+      renderer.on("clickNode", handleClickNode);
+      renderer.on("clickStage", handleClickStage);
+      renderer.on("doubleClickNode", handleDoubleClickNode);
+    };
 
     const layout = new ForceAtlas2Layout(graph, {
       settings: inferSettings(graph),
@@ -638,30 +648,34 @@ const KnowledgeGraphWebgl = forwardRef<
 
     const stopTimer = window.setTimeout(() => {
       stopLayout();
-      scheduleVisibleNodes();
-    }, LAYOUT_DURATION);
-    const initialFrame = window.requestAnimationFrame(() => {
+      layout.kill();
+      attachRenderer();
       if (!cameraTouched) focusCamera();
-    });
-    startMotion();
+      scheduleVisibleNodes();
+      startMotion();
+    }, preLayoutDuration(graph.order));
 
     return () => {
       window.clearTimeout(stopTimer);
       if (cameraIdleTimer !== null) window.clearTimeout(cameraIdleTimer);
-      window.cancelAnimationFrame(initialFrame);
       stopMotion();
       resizeObserver?.disconnect();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      camera.off("updated", handleCameraUpdate);
-      renderer.off("enterNode", handleEnterNode);
-      renderer.off("leaveNode", handleLeaveNode);
-      renderer.off("clickNode", handleClickNode);
-      renderer.off("clickStage", handleClickStage);
-      renderer.off("doubleClickNode", handleDoubleClickNode);
+      if (renderer) {
+        renderer.getCamera().off("updated", handleCameraUpdate);
+        renderer.off("enterNode", handleEnterNode);
+        renderer.off("leaveNode", handleLeaveNode);
+        renderer.off("clickNode", handleClickNode);
+        renderer.off("clickStage", handleClickStage);
+        renderer.off("doubleClickNode", handleDoubleClickNode);
+      }
+      const wasRunning = layoutRunning;
       stopLayout();
-      layout.kill();
-      renderer.kill();
-      if (rendererRef.current === renderer) rendererRef.current = null;
+      if (wasRunning) layout.kill();
+      renderer?.kill();
+      if (renderer && rendererRef.current === renderer) {
+        rendererRef.current = null;
+      }
     };
   }, [edges, nodes]);
 
@@ -697,6 +711,13 @@ const KnowledgeGraphWebgl = forwardRef<
 });
 
 export default KnowledgeGraphWebgl;
+
+function preLayoutDuration(nodeCount: number): number {
+  return Math.min(
+    PRELAYOUT_MAX_DURATION,
+    Math.max(PRELAYOUT_MIN_DURATION, nodeCount * PRELAYOUT_NS_PER_NODE),
+  );
+}
 
 function findInitialFocusNode(
   nodes: KnowledgeGraphNode[],

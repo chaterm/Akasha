@@ -47,10 +47,19 @@ export type UpsertCompiledArtifactInput = {
   links?: InsertableKnowledgeLink[];
   linkSources?: InsertableKnowledgeLinkSource[];
 };
+export type KnowledgeGraphPage = Pick<
+  KnowledgePage,
+  'id' | 'title' | 'spaceId' | 'pageType'
+>;
+export type KnowledgeGraphParentSection = Pick<
+  KnowledgeParentSection,
+  'id' | 'knowledgePageId' | 'spaceId' | 'headingPath' | 'text'
+>;
+export const GRAPH_SECTION_TEXT_LIMIT = 512;
 export type KnowledgeGraphCandidates = {
-  pages: KnowledgePage[];
+  pages: KnowledgeGraphPage[];
   pageSources: KnowledgePageSource[];
-  parentSections: KnowledgeParentSection[];
+  parentSections: KnowledgeGraphParentSection[];
   parentSectionSources: KnowledgeParentSectionSource[];
   links: KnowledgeLink[];
   linkSources: KnowledgeLinkSource[];
@@ -1144,7 +1153,7 @@ export class KnowledgeCapsuleRepo {
     const db = dbOrTx(this.db, trx);
     let pageQuery = db
       .selectFrom('knowledgePages')
-      .selectAll()
+      .select(['id', 'title', 'spaceId', 'pageType'])
       .where('workspaceId', '=', input.workspaceId)
       .where('spaceId', '=', input.spaceId)
       .where('staleAt', 'is', null)
@@ -1156,6 +1165,9 @@ export class KnowledgeCapsuleRepo {
       );
     if (input.readableSourcePageIds) {
       const readable = input.readableSourcePageIds;
+      const readableArray = readable.length
+        ? sql`ARRAY[${sql.join(readable)}]::uuid[]`
+        : sql`ARRAY[]::uuid[]`;
       pageQuery = pageQuery.where((eb) =>
         eb.not(
           eb.exists(
@@ -1167,7 +1179,13 @@ export class KnowledgeCapsuleRepo {
               .where((inner) =>
                 readable.length === 0
                   ? inner.val(true)
-                  : inner('quotaSource.sourcePageId', 'not in', readable),
+                  : inner.not(
+                      inner(
+                        'quotaSource.sourcePageId',
+                        '=',
+                        sql<string>`ANY(${readableArray})`,
+                      ),
+                    ),
               ),
           ),
         ),
@@ -1199,14 +1217,21 @@ export class KnowledgeCapsuleRepo {
         .execute(),
       db
         .selectFrom('knowledgeParentSections')
-        .selectAll()
+        .select([
+          'id',
+          'knowledgePageId',
+          'spaceId',
+          'headingPath',
+          sql<string>`left(text, ${sql.lit(GRAPH_SECTION_TEXT_LIMIT)})`.as(
+            'text',
+          ),
+        ])
         .where('workspaceId', '=', input.workspaceId)
         .where('spaceId', '=', input.spaceId)
         .where('knowledgePageId', 'in', pageIds)
         .where('staleAt', 'is', null)
         .orderBy('knowledgePageId')
         .orderBy('startOffset')
-        .limit(input.limit * 8)
         .execute(),
       db
         .selectFrom('knowledgeLinks')
