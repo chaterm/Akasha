@@ -66,7 +66,7 @@ export default function UserApiKeys() {
         />
         {" "}
         {t(
-          "API keys and Akasha Skills follow your existing space and page permissions, including public/shared spaces you can edit. Page edits use normal version history and can be rolled back in Akasha.",
+          "API keys authenticate the MCP endpoint only; they are rejected on every other HTTP endpoint. They follow your existing space and page permissions, including public/shared spaces you can edit. Page edits use normal version history and can be rolled back in Akasha.",
         )}
       </Text>
       {canCreate ? (

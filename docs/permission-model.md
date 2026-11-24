@@ -6,13 +6,14 @@
 
 ## 判定链
 
-一次请求依次经过五层，任一层不通过即拒绝：
+一次请求依次经过六层，任一层不通过即拒绝：
 
 ```
-凭证 → 身份 → 端点白名单 → 空间范围 → 空间角色 → 页面限制
+凭证 → 凭证适用范围 → 身份 → 端点白名单 → 空间范围 → 空间角色 → 页面限制
 ```
 
 - **凭证**：请求携带的身份证明
+- **凭证适用范围**：该凭证是否被当前接口接受。个人密钥只对 `/mcp` 有效，MCP 附件令牌只对两个附件接口有效
 - **身份**：凭证解析出的主体，**恒为真实用户**
 - **端点白名单**：带 Agent 密钥时，该接口是否对 Agent 密钥开放（读写均可开放）
 - **空间范围**：Agent 密钥的绑定集合。普通接口与本人空间关系取**交集**，知识查询接口取**并集**
@@ -21,14 +22,35 @@
 
 ## 凭证
 
-| 凭证 | 作用 | 位置 |
-| --- | --- | --- |
-| 会话凭证 | 身份：真实用户 | Cookie |
-| 个人 API 密钥 | 身份：真实用户，可设过期时间 | `Authorization: Bearer` |
-| SSO 令牌 | 身份：真实用户（含数字员工） | `x-token` |
-| Agent API 密钥 | **不构成身份**，只提供空间范围 | `x-akasha-public-key` |
+| 凭证 | 作用 | 位置 | 适用范围 |
+| --- | --- | --- | --- |
+| 会话凭证 | 身份：真实用户 | Cookie | 全部 HTTP 接口 |
+| SSO 令牌 | 身份：真实用户（含数字员工） | `x-token` | 全部 HTTP 接口 |
+| 个人 API 密钥 | 身份：真实用户，过期时间可选 | `Authorization: Bearer` | **仅 `/mcp`** |
+| MCP 附件令牌 | 身份：真实用户 | `Authorization: Bearer` | 仅两个附件接口 |
+| Agent API 密钥 | **不构成身份**，只提供空间范围 | `x-akasha-public-key` | 白名单接口 |
 
-**Agent 密钥不是凭证意义上的身份来源。** 它不过期、可轮换，轮换后旧密钥立即失效。放进 `Authorization` 头会被明确拒绝（`Agent API keys cannot authenticate a request`），只有专用请求头会被接受。请求头位置在这里是机制，不是约定。
+### 个人 API 密钥
+
+只能认证 `/mcp`，在其他任何 HTTP 接口都返回 401（`Personal API keys are only valid for the MCP endpoint`）。
+
+- 过期时间可选，不设则永不过期
+- 不可轮换。`api_keys_agent_fields_check` 约束要求 `key_type = 'personal'` 的行 `credential_version IS NULL`，轮换机制只对 Agent 密钥存在
+- 失效手段只有撤销（软删密钥行）。密钥创建者本人、工作区所有者和管理员均可撤销
+
+### MCP 附件令牌
+
+MCP 的 `upload_attachment` 和 `download_attachment` 工具在校验完权限后签发，供 Agent 在本地直接发 HTTP 请求传输文件字节。
+
+- 10 分钟有效
+- 上传令牌绑定单个页面（替换附件时还绑定该附件 ID），下载令牌绑定单个附件
+- 只在声明了 `MCP_COMPANION_ALLOWED` 的接口上被识别，即 `POST /api/files/upload` 和 `GET /api/files/:fileId/:fileName`；其他接口上落到常规 Bearer 校验并被拒绝
+- 范围不符返回 403，接口内仍按令牌解析出的用户重新执行空间角色与页面限制判定
+- 不可与 Agent 密钥同时使用
+
+### Agent API 密钥
+
+**不是凭证意义上的身份来源。** 不过期、可轮换，轮换后旧密钥立即失效。放进 `Authorization` 头会被明确拒绝（`Agent API keys cannot authenticate a request`），只有专用请求头会被接受。请求头位置在这里是机制，不是约定。
 
 密钥不携带页面级权限，只携带空间范围。除知识查询外，带密钥的请求能做什么完全由本人的权限决定；密钥决定的是在哪些空间内、通过哪些接口。
 
@@ -36,10 +58,12 @@
 
 | 组合 | 结果 |
 | --- | --- |
-| 仅会话／个人密钥／SSO 令牌 | 真实用户身份 |
+| 仅会话／SSO 令牌 | 真实用户身份 |
+| 会话／SSO 令牌 + Agent 密钥 | 真实用户身份 + 空间范围 |
 | 仅 Agent 密钥 | **401**，没有身份可用 |
-| 个人密钥 + Agent 密钥 | 真实用户身份 + 空间范围 |
-| SSO 令牌 + Agent 密钥 | 真实用户身份 + 空间范围 |
+| 仅个人密钥（HTTP 接口） | **401**，个人密钥只对 `/mcp` 有效 |
+| 仅 MCP 附件令牌（两个附件接口） | 真实用户身份，收窄到令牌范围 |
+| MCP 附件令牌 + Agent 密钥 | **401** |
 | 个人密钥 + SSO 令牌 | **401**（`Unsupported credential combination`） |
 
 身份槽（会话／Bearer／`x-token`）与范围槽（`x-akasha-public-key`）互不冲突，但身份槽内部互斥：`x-token` 和 `Authorization` 同时出现直接拒绝。
@@ -83,7 +107,7 @@ SSO 令牌有两种验证路径：普通用户令牌，以及带 `x-iself-agent:
 | `POST /api/files/upload` | `attachment.upload` |
 | `POST /api/spaces/` | `space.read` |
 | `POST /api/spaces/info` | `space.read` |
-| `POST /api/llm-wiki/query` | `knowledge.query`（仅 robot 模式） |
+| `POST /api/llm-wiki/query` | `knowledge.query`（robot 模式必须带，见下） |
 | `POST /api/llm-wiki/citation-page` | `page.read` |
 | `POST /api/iself/space` | `space.read` |
 | `POST /api/iself/llm-wiki/query` ※ | `knowledge.query` |
@@ -91,11 +115,13 @@ SSO 令牌有两种验证路径：普通用户令牌，以及带 `x-iself-agent:
 
 ※ = 必须携带 Agent 密钥。
 
+`POST /api/llm-wiki/query` 带 `type=robot` 时**必须**携带 Agent 密钥，缺少返回 401（`Robot queries require an Agent API key in the x-akasha-public-key header`）。该模式与 `/api/iself/llm-wiki/query` 等价：SSO 令牌提供身份，Agent 密钥提供空间范围。默认的 `type=user` 模式反之，带 Agent 密钥会返回 400。
+
 **MCP（`/mcp`）不接受 Agent 密钥**，连接时即返回 401。MCP 只支持个人密钥和 SSO 令牌。
 
 白名单之外的接口（含 `pages/delete`、`pages/restore`、`pages/move-to-space`、`pages/move`、`pages/duplicate`、页面权限管理、评论等）带 Agent 密钥一律 403。
 
-> 带 Agent 密钥是**整个请求**降到白名单内，不是「只有 Agent 相关逻辑受限」。同一个人用个人密钥能调 `pages/delete`，加上 Agent 密钥后同一请求会 403。客户端若把密钥固定配在所有请求上，会连本人原有的能力一起失去；要混用必须按接口决定是否发送该头。
+> 带 Agent 密钥是**整个请求**降到白名单内，不是「只有 Agent 相关逻辑受限」。同一个人用会话能调 `pages/delete`，加上 Agent 密钥后同一请求会 403。客户端若把密钥固定配在所有请求上，会连本人原有的能力一起失去；要混用必须按接口决定是否发送该头。
 
 > 守卫只检查声明是否存在，不校验能力名与接口实际行为是否一致。能力名只进使用统计的 `op` 字段。
 
@@ -164,8 +190,21 @@ SSO 令牌有两种验证路径：普通用户令牌，以及带 `x-iself-agent:
 
 带 Agent 密钥时，这一层的判定主体仍是本人，与不带密钥时相同。受限页面本人有编辑授权即可写入，密钥不额外收紧。接口返回的 `canEdit` 描述的是本人的真实编辑权限。
 
+带 MCP 附件令牌时同理：判定主体是令牌 `sub` 指向的用户，签发时校验过的权限在请求时重新校验一遍。
+
+## 使用统计归因
+
+`analytics_events` 的 `agent_op` 事件按通道区分凭证：
+
+| 通道 | 凭证类型 | `op` |
+| --- | --- | --- |
+| `api` | 恒为 `agent` | 接口声明的能力名 |
+| `mcp` | `personal` 或 `sso` | `mcp:<工具名>` |
+
+`api` 通道只记录带 Agent 密钥的请求，而带密钥必然命中声明了能力名的白名单接口，所以该通道的 `op` 恒为能力名之一。能力名缺失意味着守卫约束被绕过，此时记一条告警并跳过，不编造 op。
+
+历史数据中存在 `api` 通道 + `personal` 凭证类型的记录，来自个人密钥仍可认证 HTTP 接口的版本；筛选器保留这些取值以便查阅。
+
 ## 已知不一致
 
-**`/api/llm-wiki/query` 的 robot 模式要求个人密钥。** 该接口检查调用方是否带 API 密钥标记，SSO 用户没有这个标记，因此 `SSO 令牌 + Agent 密钥` 组合会返回 401（`Robot queries require a personal API key`）。`/api/iself/llm-wiki/query` 没有这个限制。
-
-**能力名不参与判定。** 见上文端点白名单。
+**能力名不参与判定。** 守卫只检查 `@AgentCallable` 声明是否存在，不校验能力名与接口实际行为是否一致。能力名只用于使用统计。

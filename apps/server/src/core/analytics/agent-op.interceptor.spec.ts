@@ -73,7 +73,7 @@ describe('AgentOpInterceptor', () => {
     );
   });
 
-  it('records personal API-key REST calls with their route and user', async () => {
+  it('ignores a personal API key, which can no longer authenticate HTTP', async () => {
     const user = withApiKeyAccess({ id: 'human-1' } as any, {
       apiKeyId: 'personal-1',
       personalSpaceId: null,
@@ -87,16 +87,17 @@ describe('AgentOpInterceptor', () => {
     await lastValueFrom(
       interceptor.intercept(context, { handle: () => of(1) }),
     );
-    expect(repo.insertAgentOp).toHaveBeenCalledWith(
-      expect.objectContaining({
-        agentUserId: 'human-1',
-        apiKeyId: 'personal-1',
-        keyType: 'personal',
-        channel: 'api',
-        op: 'POST /api/pages/info',
-        outcome: 'ok',
-      }),
+    expect(repo.insertAgentOp).not.toHaveBeenCalled();
+  });
+
+  it('skips an agent-scoped call on an endpoint with no capability', async () => {
+    const { interceptor, repo, context } = setup(agentScopedRequest);
+
+    await lastValueFrom(
+      interceptor.intercept(context, { handle: () => of(1) }),
     );
+
+    expect(repo.insertAgentOp).not.toHaveBeenCalled();
   });
 
   it('does not record ordinary browser sessions', async () => {

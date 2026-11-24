@@ -29,6 +29,10 @@ import { AgentCapability } from '../../common/auth/agent-capability';
 import { AgentAccess } from '../../common/decorators/agent-access.decorator';
 import type { AgentAccessContext } from '../../common/auth/agent-access-context';
 import { AgentAccessService } from '../page/page-access/agent-access.service';
+import { AuthCredentials } from '../../common/decorators/auth-credentials.decorator';
+import { AuthCredentialPolicy } from '../../common/auth/auth-credential-policy';
+import { McpCompanion } from '../../common/decorators/mcp-companion.decorator';
+import type { McpCompanionContext } from '../../common/auth/mcp-companion-context';
 import { Attachment, User, Workspace } from '@akasha/db/types/entity.types';
 import { StorageService } from '../../integrations/storage/storage.service';
 import {
@@ -97,6 +101,7 @@ export class AttachmentController {
   @HttpCode(HttpStatus.OK)
   @Post('files/upload')
   @AgentCallable(AgentCapability.ATTACHMENT_UPLOAD)
+  @AuthCredentials(AuthCredentialPolicy.MCP_COMPANION_ALLOWED)
   @UseInterceptors(FileInterceptor)
   async uploadFile(
     @Req() req: any,
@@ -104,6 +109,7 @@ export class AttachmentController {
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
     @AgentAccess() agentAccess?: AgentAccessContext,
+    @McpCompanion() mcpCompanion?: McpCompanionContext,
   ) {
     const maxFileSize = bytes(this.environmentService.getFileUploadSizeLimit());
 
@@ -154,6 +160,17 @@ export class AttachmentController {
       throw new BadRequestException('Invalid attachment id');
     }
 
+    if (mcpCompanion) {
+      if (mcpCompanion.pageId !== page.id) {
+        throw new ForbiddenException('MCP token is not scoped to this Page');
+      }
+      if ((mcpCompanion.attachmentId ?? undefined) !== (attachmentId || undefined)) {
+        throw new ForbiddenException(
+          'MCP token is not scoped to this attachment',
+        );
+      }
+    }
+
     try {
       const fileResponse = await this.attachmentService.uploadFile({
         filePromise: file,
@@ -197,6 +214,7 @@ export class AttachmentController {
 
   @UseGuards(JwtAuthGuard)
   @Get('/files/:fileId/:fileName')
+  @AuthCredentials(AuthCredentialPolicy.MCP_COMPANION_ALLOWED)
   async getFile(
     @Req() req: FastifyRequest,
     @Res() res: FastifyReply,
@@ -204,9 +222,14 @@ export class AttachmentController {
     @AuthWorkspace() workspace: Workspace,
     @Param('fileId') fileId: string,
     @Param('fileName') fileName?: string,
+    @McpCompanion() mcpCompanion?: McpCompanionContext,
   ) {
     if (!isValidUUID(fileId)) {
       throw new NotFoundException('Invalid file id');
+    }
+
+    if (mcpCompanion && mcpCompanion.attachmentId !== fileId) {
+      throw new ForbiddenException('MCP token is not scoped to this file');
     }
 
     const attachment = await this.attachmentRepo.findById(fileId);

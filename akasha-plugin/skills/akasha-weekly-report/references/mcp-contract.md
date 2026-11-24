@@ -1,6 +1,6 @@
 # MCP 契约
 
-通过当前实例 `/mcp` 的 Streamable HTTP 连接，凭据由宿主的 MCP 设置管理：`Authorization: Bearer <个人 API Key>`。Key 或 Token 不写入 Skill 或报告。模板和上级页面通过工具参数选择，无需本地配置文件。工具的实际发现 schema 是调用依据；缺工具或 schema 与下列契约不符时提示升级/核对服务端，不猜参数。
+通过当前实例 `/mcp` 的 Streamable HTTP 连接，凭据由宿主的 MCP 设置管理：`Authorization: Bearer <个人 API Key>`。个人 Key 只能用于 `/mcp`。返回 `AUTH_REQUIRED` 且用户确认配置未改动时，提示 Key 可能已过期或被撤销，需在 API keys 页面重建后更新宿主配置。Key 或 Token 不写入 Skill 或报告。模板和上级页面通过工具参数选择，无需本地配置文件。工具的实际发现 schema 是调用依据；缺工具或 schema 与下列契约不符时提示升级/核对服务端，不猜参数。
 
 用户可在同一 MCP 连接的 `headers` 一次配置 `X-Akasha-Weekly-Template-Id`（模板 UUID）和 `X-Akasha-Weekly-Parent-Page-Id`（页面 UUID 或十位短标识）；不支持自定义请求头的宿主改用工具参数传入。例如 `MJ3eqsj1Ac` 和带链接分隔符的 `-MJ3eqsj1Ac` 都可使用。短标识在同一数据库内有唯一约束；服务端查到页面并校验工作区、ACL、锁定后才使用内部 UUID。这些值不授予权限。
 

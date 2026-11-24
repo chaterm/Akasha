@@ -18,7 +18,6 @@ import { TokenService } from '../../core/auth/services/token.service';
 import { JwtApiKeyPayload, JwtType } from '../../core/auth/dto/jwt-payload';
 import { UserRole } from '../../common/helpers/types/permission';
 import { PaginationOptions } from '@akasha/db/pagination/pagination-options';
-import { withApiKeyAccess } from '../../common/auth/api-key-access';
 import { ApiKeyType } from '../../common/auth/api-key-type';
 import { UserType } from '../../common/auth/user-type';
 import { isUserDisabled } from '../../common/helpers';
@@ -77,7 +76,10 @@ export class ApiKeyService {
     }
 
     const expiresDate = expiresAt ? new Date(expiresAt) : null;
-    if (expiresDate && expiresDate <= new Date()) {
+    if (
+      expiresDate &&
+      (Number.isNaN(expiresDate.getTime()) || expiresDate <= new Date())
+    ) {
       throw new BadRequestException(
         errorBody(
           ErrorCode.API_KEY_EXPIRATION_IN_PAST,
@@ -471,11 +473,8 @@ export class ApiKeyService {
     if (!workspace) throw new UnauthorizedException();
 
     if (key.keyType === ApiKeyType.PERSONAL) {
-      return this.validatePersonalApiKey(
-        payload,
-        key.id,
-        key.expiresAt,
-        workspace,
+      throw new UnauthorizedException(
+        'Personal API keys are only valid for the MCP endpoint',
       );
     }
     if (key.keyType === ApiKeyType.AGENT) {
@@ -538,32 +537,6 @@ export class ApiKeyService {
       workspace,
       spaceIds,
     };
-  }
-
-  private async validatePersonalApiKey(
-    payload: JwtApiKeyPayload,
-    apiKeyId: string,
-    expiresAt: Date | null,
-    workspace: Workspace,
-  ): Promise<{ user: User; workspace: Workspace }> {
-    if (expiresAt && expiresAt <= new Date()) {
-      throw new UnauthorizedException('API key has expired');
-    }
-    const user = await this.userRepo.findById(payload.sub, workspace.id);
-    if (!user || user.userType === UserType.AGENT || isUserDisabled(user)) {
-      throw new UnauthorizedException();
-    }
-    const personalSpace = await this.spaceRepo.findPersonalSpaceForUser({
-      userId: user.id,
-      workspaceId: workspace.id,
-    });
-    const authenticatedUser = withApiKeyAccess(user, {
-      apiKeyId,
-      personalSpaceId: personalSpace?.id ?? null,
-      keyType: ApiKeyType.PERSONAL,
-    });
-    this.trackLastUsed(apiKeyId);
-    return { user: authenticatedUser, workspace };
   }
 
   private async requireWorkspaceOwner(userId: string, workspaceId: string) {

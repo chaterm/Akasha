@@ -86,7 +86,6 @@ import {
 import { KnowledgeAdminSpaceAction } from './types/knowledge-queue.types';
 import { getPageTitle } from '../../common/helpers';
 import { jsonToMarkdown } from '../../collaboration/collaboration.util';
-import { getApiKeyAccess } from '../../common/auth/api-key-access';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
 import { AgentCallable } from '../../common/decorators/agent-callable.decorator';
 import { AgentCapability } from '../../common/auth/agent-capability';
@@ -188,27 +187,23 @@ export class LlmWikiController {
     let publicApiKeyId: string | undefined;
     let boundSpaceIds: string[] | undefined;
     if (queryType === KnowledgeQueryType.ROBOT) {
-      const personalApiKeyAccess = getApiKeyAccess(user);
-      if (!personalApiKeyAccess) {
+      if (!agentAccess) {
         throw new UnauthorizedException(
-          'Robot queries require a personal API key',
+          'Robot queries require an Agent API key in the x-akasha-public-key header',
         );
       }
-      if (agentAccess) {
-        if (!this.agentAccessService) {
-          throw new ForbiddenException('Agent authorization unavailable');
-        }
-        boundSpaceIds =
-          await this.agentAccessService.getBoundSpaceIds(agentAccess);
-        publicApiKeyId = agentAccess.apiKeyId;
+      if (!this.agentAccessService) {
+        throw new ForbiddenException('Agent authorization unavailable');
       }
+      boundSpaceIds =
+        await this.agentAccessService.getBoundSpaceIds(agentAccess);
+      publicApiKeyId = agentAccess.apiKeyId;
     } else if (agentAccess) {
       throw new BadRequestException(
         'Agent API keys are only valid for robot queries',
       );
     }
 
-    const personalApiKeyId = getApiKeyAccess(user)?.apiKeyId;
     const result = await this.chatService.chat({
       workspaceId: workspace.id,
       userId: user.id,
@@ -259,7 +254,6 @@ export class LlmWikiController {
         requestedSpaceIds,
         effectiveSpaceIds,
         publicScopeValidated,
-        ...(personalApiKeyId ? { personalApiKeyId } : {}),
         ...(publicApiKeyId ? { publicApiKeyId } : {}),
         citationCount: response.citations.length,
       },
@@ -280,7 +274,6 @@ export class LlmWikiController {
         requestedSpaceIds,
         effectiveSpaceIds,
         publicScopeValidated,
-        ...(personalApiKeyId ? { personalApiKeyId } : {}),
         ...(publicApiKeyId ? { publicApiKeyId } : {}),
         ...buildKnowledgeQueryAuditMetadata({
           answerMode: response.answerMode,

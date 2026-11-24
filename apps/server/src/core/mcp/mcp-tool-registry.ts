@@ -6,6 +6,7 @@ export type McpToolContext = {
   user: User;
   workspace: Workspace;
   weeklyReportDefaults?: { templateId?: string; parentPageId?: string };
+  skillVersion?: string;
 };
 
 export type McpToolResult = {
