@@ -164,7 +164,9 @@ export class AttachmentController {
       if (mcpCompanion.pageId !== page.id) {
         throw new ForbiddenException('MCP token is not scoped to this Page');
       }
-      if ((mcpCompanion.attachmentId ?? undefined) !== (attachmentId || undefined)) {
+      if (
+        (mcpCompanion.attachmentId ?? undefined) !== (attachmentId || undefined)
+      ) {
         throw new ForbiddenException(
           'MCP token is not scoped to this attachment',
         );
@@ -214,6 +216,7 @@ export class AttachmentController {
 
   @UseGuards(JwtAuthGuard)
   @Get('/files/:fileId/:fileName')
+  @AgentCallable(AgentCapability.ATTACHMENT_READ)
   @AuthCredentials(AuthCredentialPolicy.MCP_COMPANION_ALLOWED)
   async getFile(
     @Req() req: FastifyRequest,
@@ -223,6 +226,7 @@ export class AttachmentController {
     @Param('fileId') fileId: string,
     @Param('fileName') fileName?: string,
     @McpCompanion() mcpCompanion?: McpCompanionContext,
+    @AgentAccess() agentAccess?: AgentAccessContext,
   ) {
     if (!isValidUUID(fileId)) {
       throw new NotFoundException('Invalid file id');
@@ -238,6 +242,11 @@ export class AttachmentController {
     }
 
     if (attachment.aiChatId) {
+      if (agentAccess) {
+        throw new ForbiddenException(
+          'AI chat attachments are outside the Agent API key scope',
+        );
+      }
       if (attachment.creatorId !== user.id) {
         throw new NotFoundException();
       }
@@ -251,7 +260,15 @@ export class AttachmentController {
         throw new NotFoundException();
       }
 
-      await this.pageAccessService.validateCanView(page, user);
+      if (agentAccess) {
+        await this.agentAccessService.assertPageReadable(
+          agentAccess,
+          page,
+          user,
+        );
+      } else {
+        await this.pageAccessService.validateCanView(page, user);
+      }
     }
 
     try {
@@ -448,10 +465,12 @@ export class AttachmentController {
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @Post('files/info')
+  @AgentCallable(AgentCapability.ATTACHMENT_READ)
   async getAttachmentInfo(
     @Body() dto: AttachmentInfoDto,
     @AuthWorkspace() workspace: Workspace,
     @AuthUser() user: User,
+    @AgentAccess() agentAccess?: AgentAccessContext,
   ) {
     const attachment = await this.attachmentRepo.findById(dto.attachmentId);
     if (
@@ -468,7 +487,11 @@ export class AttachmentController {
       throw new NotFoundException('File not found');
     }
 
-    await this.pageAccessService.validateCanView(page, user);
+    if (agentAccess) {
+      await this.agentAccessService.assertPageReadable(agentAccess, page, user);
+    } else {
+      await this.pageAccessService.validateCanView(page, user);
+    }
 
     return { ...attachment, url: this.buildFileUrl(workspace, attachment) };
   }
@@ -476,18 +499,24 @@ export class AttachmentController {
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @Post('pages/attachments')
+  @AgentCallable(AgentCapability.ATTACHMENT_READ)
   async getPageAttachments(
     @Body() dto: PageIdDto,
     @Body() pagination: PaginationOptions,
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
+    @AgentAccess() agentAccess?: AgentAccessContext,
   ) {
     const page = await this.pageRepo.findById(dto.pageId);
     if (!page || page.workspaceId !== workspace.id) {
       throw new NotFoundException('Page not found');
     }
 
-    await this.pageAccessService.validateCanView(page, user);
+    if (agentAccess) {
+      await this.agentAccessService.assertPageReadable(agentAccess, page, user);
+    } else {
+      await this.pageAccessService.validateCanView(page, user);
+    }
 
     const result = await this.attachmentRepo.findPageAttachments(
       page.id,

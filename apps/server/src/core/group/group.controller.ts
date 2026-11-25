@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   ForbiddenException,
+  Optional,
 } from '@nestjs/common';
 import { GroupService } from './services/group.service';
 import { CreateGroupDto } from './dto/create-group.dto';
@@ -18,6 +19,12 @@ import { AddGroupUserDto } from './dto/add-group-user.dto';
 import { RemoveGroupUserDto } from './dto/remove-group-user.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { AgentCallable } from '../../common/decorators/agent-callable.decorator';
+import { AgentCapability } from '../../common/auth/agent-capability';
+import { AgentAccess } from '../../common/decorators/agent-access.decorator';
+import type { AgentAccessContext } from '../../common/auth/agent-access-context';
+import { AgentAccessService } from '../page/page-access/agent-access.service';
+import { GroupUserRepo } from '@akasha/db/repos/group/group-user.repo';
 import { User, Workspace } from '@akasha/db/types/entity.types';
 import WorkspaceAbilityFactory from '../casl/abilities/workspace-ability.factory';
 import {
@@ -32,6 +39,8 @@ export class GroupController {
     private readonly groupService: GroupService,
     private readonly groupUserService: GroupUserService,
     private readonly workspaceAbility: WorkspaceAbilityFactory,
+    @Optional() private readonly agentAccessService?: AgentAccessService,
+    @Optional() private readonly groupUserRepo?: GroupUserRepo,
   ) {}
 
   @HttpCode(HttpStatus.OK)
@@ -51,10 +60,7 @@ export class GroupController {
 
   @HttpCode(HttpStatus.OK)
   @Post('tree')
-  getGroupTree(
-    @AuthUser() user: User,
-    @AuthWorkspace() workspace: Workspace,
-  ) {
+  getGroupTree(@AuthUser() user: User, @AuthWorkspace() workspace: Workspace) {
     const ability = this.workspaceAbility.createForUser(user, workspace);
     if (ability.cannot(WorkspaceCaslAction.Read, WorkspaceCaslSubject.Group)) {
       throw new ForbiddenException();
@@ -112,15 +118,21 @@ export class GroupController {
 
   @HttpCode(HttpStatus.OK)
   @Post('members')
-  getGroupMembers(
+  @AgentCallable(AgentCapability.GROUP_MEMBER_READ)
+  async getGroupMembers(
     @Body() groupIdDto: GroupIdDto,
     @Body() pagination: PaginationOptions,
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
+    @AgentAccess() agentAccess?: AgentAccessContext,
   ) {
     const ability = this.workspaceAbility.createForUser(user, workspace);
     if (ability.cannot(WorkspaceCaslAction.Read, WorkspaceCaslSubject.Group)) {
       throw new ForbiddenException();
+    }
+
+    if (agentAccess) {
+      await this.assertGroupGrantedInScope(agentAccess, groupIdDto.groupId);
     }
 
     return this.groupUserService.getGroupUsers(
@@ -128,6 +140,27 @@ export class GroupController {
       workspace.id,
       pagination,
     );
+  }
+
+  private async assertGroupGrantedInScope(
+    agentAccess: AgentAccessContext,
+    groupId: string,
+  ): Promise<void> {
+    if (!this.agentAccessService || !this.groupUserRepo) {
+      throw new ForbiddenException('Agent authorization unavailable');
+    }
+
+    const boundSpaceIds =
+      await this.agentAccessService.getBoundSpaceIds(agentAccess);
+    const granted = await this.groupUserRepo.hasGrantInSpaces(
+      groupId,
+      boundSpaceIds,
+    );
+    if (!granted) {
+      throw new ForbiddenException(
+        'Group has no grant in any space bound to the Agent API key',
+      );
+    }
   }
 
   @HttpCode(HttpStatus.OK)

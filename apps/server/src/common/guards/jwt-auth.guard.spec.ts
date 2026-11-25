@@ -213,6 +213,8 @@ describe('JwtAuthGuard agent key scope', () => {
     workspace: { id: 'ws-1' },
     spaceIds: ['sp-1'],
   };
+  const combinedScope = { ...scope, standalone: false };
+  const standaloneScope = { ...scope, standalone: true };
 
   const reflector = { getAllAndOverride: jest.fn() };
   const environmentService = {
@@ -274,19 +276,90 @@ describe('JwtAuthGuard agent key scope', () => {
       user: activeUser,
       workspace: { id: 'ws-1' },
     });
-    expect(request.agentAccess).toEqual(scope);
+    expect(request.agentAccess).toEqual(combinedScope);
     expect(apiKeyService.validateAgentApiKeyScope).toHaveBeenCalledWith(
       'agent-token',
       'ws-1',
     );
   });
 
-  it('resolves no identity from the key alone, so the bearer strategy runs', async () => {
+  it('authenticates the key alone as its agent user', async () => {
+    const { context, request } = makeContext({
+      'x-akasha-public-key': 'agent-token',
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(hoidcService.verifyToken).not.toHaveBeenCalled();
+    expect(apiKeyService.validateAgentApiKeyScope).toHaveBeenCalledWith(
+      'agent-token',
+      'ws-1',
+    );
+    expect(request.user).toEqual({
+      user: scope.agentUser,
+      workspace: scope.workspace,
+    });
+    expect(request.agentAccess).toEqual(standaloneScope);
+  });
+
+  it('forbids the key alone on an endpoint that declares no capability', async () => {
+    capability(undefined);
     const { context } = makeContext({ 'x-akasha-public-key': 'agent-token' });
 
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      'Agent API key cannot call this endpoint',
+    );
+  });
+
+  it('forbids the key alone on an endpoint that requires a user identity', async () => {
+    reflector.getAllAndOverride.mockImplementation((key: string) => {
+      if (key === 'agentCapability') return 'space.binding.update';
+      if (key === 'userIdentityRequired') return true;
+      return false;
+    });
+    const { context } = makeContext({ 'x-akasha-public-key': 'agent-token' });
+
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      'This endpoint requires a user credential alongside the Agent API key',
+    );
+  });
+
+  it('allows the key alongside a user identity on a UserIdentityRequired endpoint', async () => {
+    reflector.getAllAndOverride.mockImplementation((key: string) => {
+      if (key === 'agentCapability') return 'space.binding.update';
+      if (key === 'userIdentityRequired') return true;
+      return false;
+    });
+    const { context, request } = makeContext({
+      'x-token': 'sso-token',
+      'x-akasha-public-key': 'agent-token',
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(request.user).toEqual({
+      user: activeUser,
+      workspace: { id: 'ws-1' },
+    });
+  });
+
+  it('treats a session cookie plus the key as the combined mode', async () => {
+    const { context, request } = makeContext({
+      'x-akasha-public-key': 'agent-token',
+    });
+    (request as any).cookies = { authToken: 'session-token' };
+
     await expect(guard.canActivate(context)).rejects.toThrow();
-    expect(hoidcService.verifyToken).not.toHaveBeenCalled();
     expect(apiKeyService.validateAgentApiKeyScope).not.toHaveBeenCalled();
+  });
+
+  it('rejects the key alone when the workspace is unresolved', async () => {
+    const { context, request } = makeContext({
+      'x-akasha-public-key': 'agent-token',
+    });
+    request.raw = {};
+
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      'Workspace is required',
+    );
   });
 
   it('rejects an SSO token combined with a bearer token', async () => {

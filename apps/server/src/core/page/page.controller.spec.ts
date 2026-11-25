@@ -140,7 +140,13 @@ describe('PageController', () => {
         {} as any,
       );
 
-      return { controller, pageRepo, pagePermissionRepo, spaceAbility, pageAccessService };
+      return {
+        controller,
+        pageRepo,
+        pagePermissionRepo,
+        spaceAbility,
+        pageAccessService,
+      };
     };
 
     it('uses the source-read policy for page info', async () => {
@@ -232,5 +238,106 @@ describe('PageController', () => {
 
       expect(pageRepo.searchPagesInSpace).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('PageController permission reads for agent keys', () => {
+  const user = { id: 'user-1', role: UserRole.MEMBER } as any;
+  const agentAccess = { apiKeyId: 'key-1', spaceIds: ['space-1'] } as any;
+
+  const createSubject = () => {
+    const pageRepo = {
+      findById: jest
+        .fn()
+        .mockResolvedValue({ id: 'page-1', spaceId: 'space-1' }),
+    };
+    const pagePermissionRepo = {
+      findPageAccessByPageId: jest.fn().mockResolvedValue(null),
+      findRestrictedAncestor: jest.fn().mockResolvedValue(null),
+      getPagePermissionsPaginated: jest
+        .fn()
+        .mockResolvedValue({ items: [], meta: {} }),
+    };
+    const pageAccessService = {
+      validateCanView: jest.fn().mockResolvedValue(undefined),
+      validateCanViewWithPermissions: jest
+        .fn()
+        .mockResolvedValue({ canEdit: true, hasRestriction: false }),
+    };
+    const agentAccessService = {
+      assertPageReadable: jest
+        .fn()
+        .mockResolvedValue({ canEdit: true, hasRestriction: false }),
+    };
+    const controller = new PageController(
+      {} as any,
+      pageRepo as any,
+      pagePermissionRepo as any,
+      {} as any,
+      {} as any,
+      pageAccessService as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      agentAccessService as any,
+    );
+    return {
+      controller,
+      pagePermissionRepo,
+      pageAccessService,
+      agentAccessService,
+    };
+  };
+
+  it('narrows permission-info to the key scope', async () => {
+    const { controller, pageAccessService, agentAccessService } =
+      createSubject();
+
+    const result = await controller.getPagePermissionInfo(
+      { pageId: 'page-1' } as any,
+      user,
+      agentAccess,
+    );
+
+    expect(agentAccessService.assertPageReadable).toHaveBeenCalledWith(
+      agentAccess,
+      expect.objectContaining({ id: 'page-1' }),
+      user,
+    );
+    expect(
+      pageAccessService.validateCanViewWithPermissions,
+    ).not.toHaveBeenCalled();
+    expect(result.userAccess.canEdit).toBe(true);
+  });
+
+  it('narrows permissions to the key scope', async () => {
+    const { controller, pageAccessService, agentAccessService } =
+      createSubject();
+
+    await controller.getPagePermissions(
+      { pageId: 'page-1' } as any,
+      { limit: 20 } as any,
+      user,
+      agentAccess,
+    );
+
+    expect(agentAccessService.assertPageReadable).toHaveBeenCalledWith(
+      agentAccess,
+      expect.objectContaining({ id: 'page-1' }),
+      user,
+    );
+    expect(pageAccessService.validateCanView).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the user check without a key', async () => {
+    const { controller, pageAccessService, agentAccessService } =
+      createSubject();
+
+    await controller.getPagePermissionInfo({ pageId: 'page-1' } as any, user);
+
+    expect(pageAccessService.validateCanViewWithPermissions).toHaveBeenCalled();
+    expect(agentAccessService.assertPageReadable).not.toHaveBeenCalled();
   });
 });

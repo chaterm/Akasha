@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { SpaceMemberRepo } from '@akasha/db/repos/space/space-member.repo';
 import { SpaceRepo } from '@akasha/db/repos/space/space.repo';
@@ -259,6 +260,78 @@ describe('SpaceController effective space access', () => {
       expect(spaceMemberRepo.getUserSpaceRoles).not.toHaveBeenCalled();
     },
   );
+
+  it('refuses a member listing for a space outside the key scope', async () => {
+    const spaceMemberService = { getSpaceMembers: jest.fn() };
+    const agentAccessService = {
+      assertSpaceBound: jest
+        .fn()
+        .mockRejectedValue(
+          new ForbiddenException('Space is outside the Agent API key scope'),
+        ),
+    };
+    const controller = new SpaceController(
+      {} as any,
+      spaceMemberService as any,
+      {} as any,
+      {} as any,
+      { createForUser: jest.fn() } as any,
+      {} as any,
+      agentAccessService as any,
+    );
+
+    await expect(
+      controller.getSpaceMembers(
+        { spaceId: 'space-1' } as any,
+        { limit: 20 } as any,
+        user(UserRole.MEMBER),
+        workspace,
+        { apiKeyId: 'key-1', spaceIds: ['space-2'] } as any,
+      ),
+    ).rejects.toThrow('Space is outside the Agent API key scope');
+    expect(spaceMemberService.getSpaceMembers).not.toHaveBeenCalled();
+  });
+
+  it('lists members of a bound space for an agent request', async () => {
+    const spaceMemberService = {
+      getSpaceMembers: jest.fn().mockResolvedValue({ items: [], meta: {} }),
+    };
+    const agentAccessService = {
+      assertSpaceBound: jest.fn().mockResolvedValue(undefined),
+    };
+    const controller = new SpaceController(
+      {} as any,
+      spaceMemberService as any,
+      {} as any,
+      {} as any,
+      {
+        createForUser: jest
+          .fn()
+          .mockResolvedValue({ cannot: jest.fn().mockReturnValue(false) }),
+      } as any,
+      {} as any,
+      agentAccessService as any,
+    );
+    const agentAccess = { apiKeyId: 'key-1', spaceIds: ['space-1'] } as any;
+
+    await controller.getSpaceMembers(
+      { spaceId: 'space-1' } as any,
+      { limit: 20 } as any,
+      user(UserRole.MEMBER),
+      workspace,
+      agentAccess,
+    );
+
+    expect(agentAccessService.assertSpaceBound).toHaveBeenCalledWith(
+      agentAccess,
+      'space-1',
+    );
+    expect(spaceMemberService.getSpaceMembers).toHaveBeenCalledWith(
+      'space-1',
+      workspace.id,
+      { limit: 20 },
+    );
+  });
 
   it('preserves bound-space limits for agent requests', async () => {
     const { controller, spaceService } = createSubject();

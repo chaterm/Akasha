@@ -360,12 +360,10 @@ describe('ApiKeyService', () => {
           .fn()
           .mockResolvedValue(['space-1', 'space-2']),
         replaceAgentSpaceBindings: jest.fn().mockResolvedValue(undefined),
-        findBoundSpaces: jest
-          .fn()
-          .mockResolvedValue([
-            { id: 'space-1', name: 'A' },
-            { id: 'space-2', name: 'B' },
-          ]),
+        findBoundSpaces: jest.fn().mockResolvedValue([
+          { id: 'space-1', name: 'A' },
+          { id: 'space-2', name: 'B' },
+        ]),
       },
     });
     userRepo.findById.mockResolvedValue({
@@ -397,6 +395,45 @@ describe('ApiKeyService', () => {
         { id: 'space-2', name: 'B' },
       ],
     });
+  });
+
+  it('个人空间可以绑定', async () => {
+    const { service, userRepo, apiKeyRepo } = makeService({
+      apiKeyRepo: {
+        findByIdForUpdate: jest.fn().mockResolvedValue({
+          id: 'agent-key-1',
+          keyType: ApiKeyType.AGENT,
+          agentUserId: 'agent-user-1',
+        }),
+        findBindableSpaceIds: jest.fn().mockResolvedValue(['personal-1']),
+        replaceAgentSpaceBindings: jest.fn().mockResolvedValue(undefined),
+        findBoundSpaces: jest
+          .fn()
+          .mockResolvedValue([{ id: 'personal-1', name: '吴静(wu@x.com)' }]),
+      },
+    });
+    userRepo.findById.mockResolvedValue({
+      id: 'owner-1',
+      role: UserRole.OWNER,
+      userType: UserType.NORMAL,
+      deletedAt: null,
+      deactivatedAt: null,
+    });
+
+    const result = await service.updateAgentSpaces({
+      apiKeyId: 'agent-key-1',
+      userId: 'owner-1',
+      workspaceId: 'workspace-1',
+      spaceIds: ['personal-1'],
+    });
+
+    expect(apiKeyRepo.replaceAgentSpaceBindings).toHaveBeenCalledWith(
+      expect.objectContaining({ spaceIds: ['personal-1'] }),
+      expect.anything(),
+    );
+    expect(result.spaces).toEqual([
+      { id: 'personal-1', name: '吴静(wu@x.com)' },
+    ]);
   });
 
   it('非 owner 调用 updateAgentSpaces 被拒', async () => {
