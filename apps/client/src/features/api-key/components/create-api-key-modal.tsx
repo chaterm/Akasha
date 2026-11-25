@@ -48,8 +48,7 @@ export function CreateApiKeyModal({
       return undefined;
     }
     if (expirationOption === "custom") {
-      const custom = form.values.expiresAt;
-      return custom ? new Date(custom).toISOString() : undefined;
+      return form.values.expiresAt;
     }
     const days = parseInt(expirationOption);
     const date = new Date();
@@ -74,24 +73,20 @@ export function CreateApiKeyModal({
     { value: "90", label: getExpirationLabel(90) },
     { value: "365", label: getExpirationLabel(365) },
     { value: "custom", label: t("Custom") },
-    { value: "never", label: t("Never expires") },
+    { value: "never", label: t("No expiration") },
   ];
 
   const handleSubmit = async (data: {
     name?: string;
     expiresAt?: string | Date;
   }) => {
-    const expiresAt = getExpirationDate();
-    if (expirationOption === "custom" && !expiresAt) {
-      form.setFieldError("expiresAt", t("Select expiration date"));
-      return;
-    }
+    const groupData = {
+      name: data.name,
+      expiresAt: getExpirationDate(),
+    };
 
     try {
-      const createdKey = await createApiKeyMutation.mutateAsync({
-        name: data.name,
-        expiresAt,
-      });
+      const createdKey = await createApiKeyMutation.mutateAsync(groupData);
       onSuccess(createdKey);
       form.reset();
       onClose();
@@ -126,9 +121,6 @@ export function CreateApiKeyModal({
 
           <Select
             label={t("Expiration")}
-            description={t(
-              "API keys authenticate the MCP endpoint only. Keys without an expiration stay valid until revoked.",
-            )}
             data={expirationOptions}
             value={expirationOption}
             onChange={(value) => setExpirationOption(value || "30")}

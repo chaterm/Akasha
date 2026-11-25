@@ -118,24 +118,14 @@ description: Read and write Akasha Pages, Spaces, Comments and attachments, incl
 
 ## 附件
 
-文件字节不经过 MCP 请求，两个附件工具只做权限校验并签发一次性令牌，由你在本地直接发 HTTP 请求。
-令牌均为 10 分钟有效，用 `Authorization: Bearer <令牌>` 发送；过期后重新调用对应工具取新的。令牌值
-不要复述给用户、不要写进页面正文或日志，发请求时从工具响应里直接取用。MCP 的 API Key 在这两个端点
-上会被拒绝。
+上传分两步：先用 `upload_attachment` 校验页面写权限并取得 `uploadUrl`，再在本地用一次
+`multipart/form-data` 请求把文件 POST 上去，字段为 `file`、`pageId`（替换附件时加 `attachmentId`）。
+`upload_attachment` 不接收文件内容，不要传 base64。上传请求携带宿主中已配置的 Bearer 凭据，从环境
+变量读取，不回显到输出或日志。页面内容里引用文件用相对路径 `/api/files/<attachmentId>/<fileName>`，
+不要用上传响应里的绝对 `url`：PDF 与音频节点只接受相对路径，绝对地址会被清空导致文件不显示。
 
-上传分两步：
-
-1. `upload_attachment` 校验页面写权限，返回 `uploadUrl` 和 `uploadToken`。该工具不接收文件内容，
-   不要传 base64。
-2. 在本地发一次 `multipart/form-data` POST，字段为 `file`、`pageId`，替换附件时加 `attachmentId`。
-   `uploadToken` 只对这一个页面有效（替换时还绑定该附件），范围不符返回 403。
-
-下载用 `download_attachment` 取 `downloadUrl` 和 `downloadToken`，令牌只对这一个附件有效。
-
-页面内容里引用文件用相对路径 `/api/files/<attachmentId>/<fileName>`，不要用上传响应里的绝对 `url`：
-PDF 与音频节点只接受相对路径，绝对地址会被清空导致文件不显示。
-
-无法在本地发起 HTTP 请求或读写文件时，明确说明只提供上传或下载地址，不声称已经上传或下载。
+`download_attachment` 返回受 ACL 保护的 URL，下载时要带宿主里的 Bearer 凭据。无法在本地发起 HTTP
+请求或读写文件时，明确说明只提供上传或下载地址，不声称已经上传或下载。
 
 源文档含图片、截图、图表、扫描件等非文字内容（常见于 docx、pdf、pptx、带图 Markdown）时，先把文字
 和图片分离，不要把图片当作文字写进页面：
@@ -156,13 +146,9 @@ PDF 与音频节点只接受相对路径，绝对地址会被清空导致文件�
 | `INVALID_CONTENT` | 内容不合 schema 或会丢数据。按 `details.path` 修正，不靠删节点过关 |
 | `PAGE_DRAFT_LOCKED` | 页面被锁。请用户解锁，不绕过 |
 | `FILE_TOO_LARGE` | 文件超出上传上限。停止上传，引导用户在页面里用编辑器拖拽上传 |
-| `AUTH_REQUIRED` | 配置未改动时多为个人 Key 已过期或被撤销。提示用户在 API keys 页面重建后更新宿主配置 |
 
 `FILE_TOO_LARGE` 可能来自上传接口（超过 `upload_attachment` 返回的 `maxFileSize`）或 MCP 传输层
 413，两者都表示这个文件超出上限。不要重试同一请求，不要把文件切段分别上传，也不要换接口绕过。
-
-附件端点返回 401 或 403 时，表示令牌已过期或范围不符。重新调用对应的附件工具取新令牌，不要改用
-API Key 重试。
 
 同一错误第二次出现或无法可靠修正时停下来解释，不连续重发。整批不写是服务端保证，`edit_page`
 失败后不需要补偿操作。

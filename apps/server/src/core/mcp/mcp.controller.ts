@@ -18,15 +18,6 @@ import { buildMcpAgentOps } from '../analytics/agent-op-category';
 import { getApiKeyAccess } from '../../common/auth/api-key-access';
 import { readWeeklyReportDefaults } from '../weekly-report/weekly-report-defaults';
 
-function readSkillVersion(
-  headers: Record<string, string | string[] | undefined>,
-): string | undefined {
-  const value = headers['x-akasha-skill-version'];
-  if (value === undefined) return undefined;
-  const raw = (Array.isArray(value) ? value[0] : value).trim();
-  return raw || undefined;
-}
-
 @Controller('mcp')
 export class McpController {
   private readonly logger = new Logger(McpController.name);
@@ -76,7 +67,6 @@ export class McpController {
     ctx = {
       ...ctx,
       weeklyReportDefaults: readWeeklyReportDefaults(req.headers),
-      skillVersion: readSkillVersion(req.headers),
     };
     this.recordAgentToolCalls(ctx, body);
 

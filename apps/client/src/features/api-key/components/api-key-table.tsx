@@ -120,7 +120,7 @@ export function ApiKeyTable({
                     )
                   ) : (
                     <Text fz="sm" style={{ whiteSpace: "nowrap" }}>
-                      {t("Never expires")}
+                      {t("Never")}
                     </Text>
                   )}
                 </Table.Td>

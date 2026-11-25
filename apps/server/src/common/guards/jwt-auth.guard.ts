@@ -16,13 +16,6 @@ import { AUTH_CREDENTIAL_POLICY } from '../decorators/auth-credentials.decorator
 import { AuthCredentialPolicy } from '../auth/auth-credential-policy';
 import { AGENT_CAPABILITY } from '../decorators/agent-callable.decorator';
 import { setAgentAccessContext } from '../auth/agent-access-context';
-import { setMcpCompanionContext } from '../auth/mcp-companion-context';
-import { TokenService } from '../../core/auth/services/token.service';
-import {
-  JwtMcpDownloadPayload,
-  JwtMcpUploadPayload,
-  JwtType,
-} from '../../core/auth/dto/jwt-payload';
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
@@ -31,7 +24,6 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     private environmentService: EnvironmentService,
     private readonly moduleRef: ModuleRef,
     private readonly userRepo: UserRepo,
-    private readonly tokenService: TokenService,
   ) {
     super();
   }
@@ -81,15 +73,6 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       throw new UnauthorizedException('Unsupported credential combination');
     }
 
-    if (
-      policy === AuthCredentialPolicy.MCP_COMPANION_ALLOWED &&
-      bearerToken &&
-      !publicKey &&
-      (await this.authenticateMcpCompanion(request, bearerToken))
-    ) {
-      return true;
-    }
-
     let ssoAuthenticated = false;
     if (ssoToken) {
       await this.authenticateSso(request, ssoToken, isAgentRequest);
@@ -116,56 +99,6 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       this.setJoinedWorkspacesCookie((request as any).user, context);
     }
 
-    return true;
-  }
-
-  private async authenticateMcpCompanion(
-    request: FastifyRequest,
-    token: string,
-  ): Promise<boolean> {
-    const decoded = this.tokenService.decodeJwt(token);
-    const type = decoded?.type;
-    if (type !== JwtType.MCP_UPLOAD && type !== JwtType.MCP_DOWNLOAD) {
-      return false;
-    }
-
-    let payload: JwtMcpUploadPayload | JwtMcpDownloadPayload;
-    try {
-      payload = await this.tokenService.verifyJwt(token, type);
-    } catch {
-      throw new UnauthorizedException('Expired or invalid MCP token');
-    }
-
-    const workspace =
-      (request.raw as any)?.workspace ?? (request as any).workspace;
-    if (!workspace?.id || workspace.id !== payload.workspaceId) {
-      throw new UnauthorizedException('Workspace does not match');
-    }
-
-    const user = await this.userRepo.findById(payload.sub, payload.workspaceId);
-    if (!user || isUserDisabled(user)) {
-      throw new UnauthorizedException();
-    }
-
-    (request as any).user = { user, workspace };
-    (request.raw as any).workspace = workspace;
-    setMcpCompanionContext(request as any, {
-      type,
-      userId: payload.sub,
-      workspaceId: payload.workspaceId,
-      ...(type === JwtType.MCP_UPLOAD
-        ? {
-            pageId: (payload as JwtMcpUploadPayload).pageId,
-            ...((payload as JwtMcpUploadPayload).attachmentId
-              ? {
-                  attachmentId: (payload as JwtMcpUploadPayload).attachmentId,
-                }
-              : {}),
-          }
-        : {
-            attachmentId: (payload as JwtMcpDownloadPayload).attachmentId,
-          }),
-    });
     return true;
   }
 

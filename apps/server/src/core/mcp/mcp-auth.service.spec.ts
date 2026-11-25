@@ -109,27 +109,4 @@ describe('McpAuthService', () => {
       } as any),
     ).rejects.toBeInstanceOf(UnauthorizedException);
   });
-
-  it('rejects an Agent key sent as the bearer credential', async () => {
-    tokenService.verifyJwt.mockResolvedValue({
-      type: JwtType.API_KEY,
-      apiKeyId: 'key-1',
-      sub: 'agent-1',
-      workspaceId: 'workspace-1',
-    });
-    apiKeyRepo.findById.mockResolvedValue({
-      id: 'key-1',
-      expiresAt: null,
-      credentialVersion: null,
-      keyType: 'agent',
-    });
-    workspaceRepo.findById.mockResolvedValue({ id: 'workspace-1' });
-
-    await expect(
-      service.authenticate({
-        headers: { authorization: 'Bearer token' },
-        raw: { workspaceId: 'workspace-1' },
-      } as any),
-    ).rejects.toBeInstanceOf(UnauthorizedException);
-  });
 });
