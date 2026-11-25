@@ -36,31 +36,6 @@ export class GroupUserRepo {
       .executeTakeFirst();
   }
 
-  async hasGrantInSpaces(
-    groupId: string,
-    spaceIds: string[],
-  ): Promise<boolean> {
-    if (spaceIds.length === 0) return false;
-
-    const spaceGrant = await this.db
-      .selectFrom('spaceMembers')
-      .select('id')
-      .where('groupId', '=', groupId)
-      .where('spaceId', 'in', spaceIds)
-      .where('deletedAt', 'is', null)
-      .executeTakeFirst();
-    if (spaceGrant) return true;
-
-    const pageGrant = await this.db
-      .selectFrom('pagePermissions as pp')
-      .innerJoin('pageAccess as pa', 'pa.id', 'pp.pageAccessId')
-      .select('pp.id')
-      .where('pp.groupId', '=', groupId)
-      .where('pa.spaceId', 'in', spaceIds)
-      .executeTakeFirst();
-    return Boolean(pageGrant);
-  }
-
   async insertGroupUser(
     insertableGroupUser: InsertableGroupUser,
     trx?: KyselyTransaction,
@@ -73,7 +48,10 @@ export class GroupUserRepo {
       .executeTakeFirst();
   }
 
-  async getGroupUsersPaginated(groupId: string, pagination: PaginationOptions) {
+  async getGroupUsersPaginated(
+    groupId: string,
+    pagination: PaginationOptions,
+  ) {
     let query = this.db
       .selectFrom('groupUsers')
       .innerJoin('users', 'users.id', 'groupUsers.userId')

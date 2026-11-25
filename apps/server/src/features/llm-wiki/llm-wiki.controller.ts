@@ -183,11 +183,7 @@ export class LlmWikiController {
       );
     }
 
-    const queryType =
-      dto.type ??
-      (agentAccess?.standalone
-        ? KnowledgeQueryType.ROBOT
-        : KnowledgeQueryType.USER);
+    const queryType = dto.type ?? KnowledgeQueryType.USER;
     let publicApiKeyId: string | undefined;
     let boundSpaceIds: string[] | undefined;
     if (queryType === KnowledgeQueryType.ROBOT) {

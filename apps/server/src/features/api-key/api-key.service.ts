@@ -479,7 +479,7 @@ export class ApiKeyService {
     }
     if (key.keyType === ApiKeyType.AGENT) {
       throw new UnauthorizedException(
-        'Agent API keys are not accepted in the Authorization header; send one in the x-akasha-public-key header',
+        'Agent API keys cannot authenticate a request; send one in the x-akasha-public-key header alongside a user credential',
       );
     }
     throw new UnauthorizedException('Unsupported API key type');

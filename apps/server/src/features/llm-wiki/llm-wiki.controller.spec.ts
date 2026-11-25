@@ -518,58 +518,6 @@ describe('LlmWikiController', () => {
     expect(chatService.chat).not.toHaveBeenCalled();
   });
 
-  it('treats an omitted type as a robot query for a standalone key', async () => {
-    const chatService = {
-      isEnabledForWorkspace: jest.fn().mockReturnValue(true),
-      chat: jest.fn().mockResolvedValue({
-        answer: 'answer',
-        answerMode: 'knowledge',
-        citations: [],
-      }),
-    };
-    const agentAccessService = {
-      getBoundSpaceIds: jest.fn().mockResolvedValue(['space-1']),
-    };
-    const queryAuditRepo = {
-      recordQuery: jest.fn().mockResolvedValue(undefined),
-    };
-    const controller = createController({
-      chatService,
-      agentAccessService,
-      queryAuditRepo,
-    });
-
-    await controller.queryKnowledge(
-      { query: 'No explicit type' } as any,
-      user(),
-      workspace(),
-      agentAccess({ standalone: true }),
-    );
-
-    expect(agentAccessService.getBoundSpaceIds).toHaveBeenCalled();
-    expect(chatService.chat).toHaveBeenCalledWith(
-      expect.objectContaining({ supplementalSpaceIds: ['space-1'] }),
-    );
-  });
-
-  it('still defaults to a user query when the key rides on a user credential', async () => {
-    const chatService = {
-      isEnabledForWorkspace: jest.fn().mockReturnValue(true),
-      chat: jest.fn(),
-    };
-    const controller = createController({ chatService });
-
-    await expect(
-      controller.queryKnowledge(
-        { query: 'No explicit type' } as any,
-        user(),
-        workspace(),
-        agentAccess(),
-      ),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    expect(chatService.chat).not.toHaveBeenCalled();
-  });
-
   it('rejects an Agent API key on user queries', async () => {
     const chatService = {
       isEnabledForWorkspace: jest.fn().mockReturnValue(true),
@@ -2240,16 +2188,12 @@ function createController(
   );
 }
 
-function agentAccess(
-  overrides: Partial<AgentAccessContext> = {},
-): AgentAccessContext {
+function agentAccess(): AgentAccessContext {
   return {
     apiKeyId: 'public-1',
     credentialVersion: 1,
     agentUser: { id: 'agent-1' },
     workspace: { id: 'workspace-1' },
-    standalone: false,
-    ...overrides,
   } as unknown as AgentAccessContext;
 }
 

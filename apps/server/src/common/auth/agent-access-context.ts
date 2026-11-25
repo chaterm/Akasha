@@ -6,7 +6,6 @@ export type AgentAccessContext = {
   agentUser: User;
   workspace: Workspace;
   spaceIds: string[];
-  standalone: boolean;
 };
 
 type RequestWithAgentAccess = {

@@ -11,7 +11,6 @@ import type { AgentAccessContext } from '../../common/auth/agent-access-context'
 import { AuthCredentialPolicy } from '../../common/auth/auth-credential-policy';
 import { AgentAccess } from '../../common/decorators/agent-access.decorator';
 import { AuthCredentials } from '../../common/decorators/auth-credentials.decorator';
-import { UserIdentityRequired } from '../../common/decorators/user-identity-required.decorator';
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
 import { AuthWorkspace } from '../../common/decorators/auth-workspace.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -46,7 +45,6 @@ export class IselfAgentSpaceController {
   @HttpCode(HttpStatus.OK)
   @AgentCallable(AgentCapability.SPACE_BINDING_UPDATE)
   @AuthCredentials(AuthCredentialPolicy.AGENT_SCOPE_REQUIRED)
-  @UserIdentityRequired()
   async replaceBindings(
     @Body() dto: UpdateAgentSpaceBindingsDto,
     @AuthUser() principal: User,
