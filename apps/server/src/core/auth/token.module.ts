@@ -1,9 +1,10 @@
-import { Module } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import type { StringValue } from 'ms';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
 import { TokenService } from './services/token.service';
 
+@Global()
 @Module({
   imports: [
     JwtModule.registerAsync({

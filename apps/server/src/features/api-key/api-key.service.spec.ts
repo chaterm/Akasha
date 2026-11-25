@@ -3,7 +3,6 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { getApiKeyAccess } from '../../common/auth/api-key-access';
 import { ApiKeyType } from '../../common/auth/api-key-type';
 import { UserType } from '../../common/auth/user-type';
 import { UserRole } from '../../common/helpers/types/permission';
@@ -67,7 +66,7 @@ describe('ApiKeyService', () => {
     };
   };
 
-  it('保留个人密钥现有的个人空间认证上下文', async () => {
+  it('拒绝用个人密钥认证 HTTP 请求，个人密钥只能用于 MCP', async () => {
     const { service, apiKeyRepo, userRepo } = makeService({
       spaceRepo: {
         findPersonalSpaceForUser: jest
@@ -80,25 +79,87 @@ describe('ApiKeyService', () => {
       keyType: ApiKeyType.PERSONAL,
       expiresAt: null,
     });
-    userRepo.findById.mockResolvedValue({
+
+    await expect(
+      service.validateApiKey({
+        sub: 'user-1',
+        workspaceId: 'workspace-1',
+        apiKeyId: 'key-1',
+        type: 'api_key',
+      }),
+    ).rejects.toThrow('Personal API keys are only valid for the MCP endpoint');
+    expect(userRepo.findById).not.toHaveBeenCalled();
+  });
+
+  const creatorSubject = () => {
+    const made = makeService();
+    made.userRepo.findById.mockResolvedValue({
       id: 'user-1',
       workspaceId: 'workspace-1',
       userType: UserType.NORMAL,
+      role: UserRole.MEMBER,
       deletedAt: null,
       deactivatedAt: null,
     });
+    made.apiKeyRepo.create.mockImplementation(async (data: any) => ({
+      id: 'key-1',
+      ...data,
+    }));
+    made.tokenService.generateApiToken.mockResolvedValue('token-1');
+    return made;
+  };
 
-    const result = await service.validateApiKey({
-      sub: 'user-1',
+  it('创建个人密钥时满足 agent 字段的 CHECK 约束', async () => {
+    const { service, apiKeyRepo, tokenService } = creatorSubject();
+
+    const created = await service.createApiKey({
+      name: 'k',
+      expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+      creatorId: 'user-1',
       workspaceId: 'workspace-1',
-      apiKeyId: 'key-1',
-      type: 'api_key',
     });
-    expect(getApiKeyAccess(result.user)).toEqual({
-      apiKeyId: 'key-1',
-      personalSpaceId: 'personal-1',
-      keyType: ApiKeyType.PERSONAL,
+
+    expect(created.token).toBe('token-1');
+    expect(apiKeyRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        keyType: ApiKeyType.PERSONAL,
+        agentUserId: null,
+        credentialVersion: null,
+      }),
+    );
+    expect(tokenService.generateApiToken).toHaveBeenCalledWith(
+      expect.not.objectContaining({ credentialVersion: expect.anything() }),
+    );
+  });
+
+  it('允许创建永不过期的个人密钥', async () => {
+    const { service, apiKeyRepo, tokenService } = creatorSubject();
+
+    await service.createApiKey({
+      name: 'k',
+      creatorId: 'user-1',
+      workspaceId: 'workspace-1',
     });
+
+    expect(apiKeyRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ expiresAt: null }),
+    );
+    expect(tokenService.generateApiToken).toHaveBeenCalledWith(
+      expect.objectContaining({ expiresIn: undefined }),
+    );
+  });
+
+  it('拒绝已经过去的过期时间', async () => {
+    const { service } = creatorSubject();
+
+    await expect(
+      service.createApiKey({
+        name: 'k',
+        expiresAt: new Date(Date.now() - 1000).toISOString(),
+        creatorId: 'user-1',
+        workspaceId: 'workspace-1',
+      }),
+    ).rejects.toThrow('Expiration date must be in the future');
   });
 
   it('拒绝用智能体密钥作为 Bearer 凭证认证请求', async () => {
@@ -299,12 +360,10 @@ describe('ApiKeyService', () => {
           .fn()
           .mockResolvedValue(['space-1', 'space-2']),
         replaceAgentSpaceBindings: jest.fn().mockResolvedValue(undefined),
-        findBoundSpaces: jest
-          .fn()
-          .mockResolvedValue([
-            { id: 'space-1', name: 'A' },
-            { id: 'space-2', name: 'B' },
-          ]),
+        findBoundSpaces: jest.fn().mockResolvedValue([
+          { id: 'space-1', name: 'A' },
+          { id: 'space-2', name: 'B' },
+        ]),
       },
     });
     userRepo.findById.mockResolvedValue({
@@ -336,6 +395,45 @@ describe('ApiKeyService', () => {
         { id: 'space-2', name: 'B' },
       ],
     });
+  });
+
+  it('个人空间可以绑定', async () => {
+    const { service, userRepo, apiKeyRepo } = makeService({
+      apiKeyRepo: {
+        findByIdForUpdate: jest.fn().mockResolvedValue({
+          id: 'agent-key-1',
+          keyType: ApiKeyType.AGENT,
+          agentUserId: 'agent-user-1',
+        }),
+        findBindableSpaceIds: jest.fn().mockResolvedValue(['personal-1']),
+        replaceAgentSpaceBindings: jest.fn().mockResolvedValue(undefined),
+        findBoundSpaces: jest
+          .fn()
+          .mockResolvedValue([{ id: 'personal-1', name: '吴静(wu@x.com)' }]),
+      },
+    });
+    userRepo.findById.mockResolvedValue({
+      id: 'owner-1',
+      role: UserRole.OWNER,
+      userType: UserType.NORMAL,
+      deletedAt: null,
+      deactivatedAt: null,
+    });
+
+    const result = await service.updateAgentSpaces({
+      apiKeyId: 'agent-key-1',
+      userId: 'owner-1',
+      workspaceId: 'workspace-1',
+      spaceIds: ['personal-1'],
+    });
+
+    expect(apiKeyRepo.replaceAgentSpaceBindings).toHaveBeenCalledWith(
+      expect.objectContaining({ spaceIds: ['personal-1'] }),
+      expect.anything(),
+    );
+    expect(result.spaces).toEqual([
+      { id: 'personal-1', name: '吴静(wu@x.com)' },
+    ]);
   });
 
   it('非 owner 调用 updateAgentSpaces 被拒', async () => {

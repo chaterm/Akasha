@@ -465,12 +465,8 @@ export async function cancelKnowledgeCompilationRun(params: {
 
 export async function getKnowledgeGraph(params: {
   spaceId: string;
-  limit?: number;
 }): Promise<KnowledgeGraphResult> {
   const searchParams = new URLSearchParams({ spaceId: params.spaceId });
-  if (params.limit) {
-    searchParams.set("limit", String(params.limit));
-  }
 
   const response = await fetch(
     `/api/llm-wiki/graph?${searchParams.toString()}`,

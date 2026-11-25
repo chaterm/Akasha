@@ -16,7 +16,7 @@ description: Answer questions from the locally configured Akasha company and per
 
 | code | 处理 |
 | --- | --- |
-| `AUTH_REQUIRED` | 提示在宿主 MCP 配置中设置 API Key 后重试 |
+| `AUTH_REQUIRED` | 提示在宿主 MCP 配置中设置 API Key 后重试。配置未改动时多为 Key 已过期或被撤销，提示重建后更新配置 |
 | `MCP_DISABLED` | 提示 workspace 未启用 MCP，停止 |
 | `FORBIDDEN` | 停止，不换账号或接口绕过权限 |
 | `NOT_FOUND` | 用工具返回的 ID 重新定位，不猜替代来源 |

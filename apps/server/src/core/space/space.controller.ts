@@ -252,13 +252,25 @@ export class SpaceController {
 
   @HttpCode(HttpStatus.OK)
   @Post('members')
+  @AgentCallable(AgentCapability.SPACE_MEMBER_READ)
   async getSpaceMembers(
     @Body() spaceIdDto: SpaceIdDto,
     @Body()
     pagination: PaginationOptions,
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
+    @AgentAccess() agentAccess?: AgentAccessContext,
   ) {
+    if (agentAccess) {
+      if (!this.agentAccessService) {
+        throw new ForbiddenException('Agent authorization unavailable');
+      }
+      await this.agentAccessService.assertSpaceBound(
+        agentAccess,
+        spaceIdDto.spaceId,
+      );
+    }
+
     const ability = await this.spaceAbility.createForUser(
       user,
       spaceIdDto.spaceId,

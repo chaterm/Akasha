@@ -27,7 +27,6 @@ import { SpaceAuthorizationService } from '../../core/space/services/space-autho
 import { PageAccessService } from '../../core/page/page-access/page-access.service';
 import { AgentAccessService } from '../../core/page/page-access/agent-access.service';
 import type { AgentAccessContext } from '../../common/auth/agent-access-context';
-import { withApiKeyAccess } from '../../common/auth/api-key-access';
 import { KnowledgeQueryType } from './dto/query-knowledge.dto';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
 
@@ -392,7 +391,7 @@ describe('LlmWikiController', () => {
     );
   });
 
-  it('requires and scopes both keys for robot queries', async () => {
+  it('scopes robot queries by the agent key bound to the SSO identity', async () => {
     const chatService = {
       isEnabledForWorkspace: jest.fn().mockReturnValue(true),
       chat: jest.fn().mockResolvedValue({
@@ -428,11 +427,6 @@ describe('LlmWikiController', () => {
       agentAccessService,
       queryAuditRepo,
     });
-    const personalUser = withApiKeyAccess(user(), {
-      apiKeyId: 'personal-1',
-      personalSpaceId: null,
-    });
-
     await expect(
       controller.queryKnowledge(
         {
@@ -440,7 +434,7 @@ describe('LlmWikiController', () => {
           query: 'Scoped query',
           spaceIds: ['space-1'],
         },
-        personalUser,
+        user(),
         workspace(),
         agentAccess(),
       ),
@@ -489,10 +483,7 @@ describe('LlmWikiController', () => {
         query: 'Space the caller is not a member of',
         spaceIds: ['space-2'],
       },
-      withApiKeyAccess(user(), {
-        apiKeyId: 'personal-1',
-        personalSpaceId: null,
-      }),
+      user(),
       workspace(),
       agentAccess(),
     );
@@ -506,21 +497,77 @@ describe('LlmWikiController', () => {
     );
   });
 
-  it('rejects robot queries authenticated only by a session', async () => {
-    const controller = createController();
+  it('rejects robot queries sent without an agent key', async () => {
+    const chatService = {
+      isEnabledForWorkspace: jest.fn().mockReturnValue(true),
+      chat: jest.fn(),
+    };
+    const controller = createController({ chatService });
 
     await expect(
       controller.queryKnowledge(
         {
           type: KnowledgeQueryType.ROBOT,
-          query: 'Session only',
+          query: 'No agent key',
           spaceIds: ['space-1'],
         },
         user(),
         workspace(),
-        agentAccess(),
       ),
     ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(chatService.chat).not.toHaveBeenCalled();
+  });
+
+  it('treats an omitted type as a robot query for a standalone key', async () => {
+    const chatService = {
+      isEnabledForWorkspace: jest.fn().mockReturnValue(true),
+      chat: jest.fn().mockResolvedValue({
+        answer: 'answer',
+        answerMode: 'knowledge',
+        citations: [],
+      }),
+    };
+    const agentAccessService = {
+      getBoundSpaceIds: jest.fn().mockResolvedValue(['space-1']),
+    };
+    const queryAuditRepo = {
+      recordQuery: jest.fn().mockResolvedValue(undefined),
+    };
+    const controller = createController({
+      chatService,
+      agentAccessService,
+      queryAuditRepo,
+    });
+
+    await controller.queryKnowledge(
+      { query: 'No explicit type' } as any,
+      user(),
+      workspace(),
+      agentAccess({ standalone: true }),
+    );
+
+    expect(agentAccessService.getBoundSpaceIds).toHaveBeenCalled();
+    expect(chatService.chat).toHaveBeenCalledWith(
+      expect.objectContaining({ supplementalSpaceIds: ['space-1'] }),
+    );
+  });
+
+  it('still defaults to a user query when the key rides on a user credential', async () => {
+    const chatService = {
+      isEnabledForWorkspace: jest.fn().mockReturnValue(true),
+      chat: jest.fn(),
+    };
+    const controller = createController({ chatService });
+
+    await expect(
+      controller.queryKnowledge(
+        { query: 'No explicit type' } as any,
+        user(),
+        workspace(),
+        agentAccess(),
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(chatService.chat).not.toHaveBeenCalled();
   });
 
   it('rejects an Agent API key on user queries', async () => {
@@ -707,11 +754,7 @@ describe('LlmWikiController', () => {
     const controller = createController({ graphService });
 
     await expect(
-      controller.getGraph(
-        { spaceId: 'space-1', limit: 200 },
-        user(),
-        workspace(),
-      ),
+      controller.getGraph({ spaceId: 'space-1' }, user(), workspace()),
     ).resolves.toEqual({
       nodes: [{ id: 'kp-1', title: 'Kafka', spaceId: 'space-1', degree: 1 }],
       edges: [],
@@ -721,7 +764,6 @@ describe('LlmWikiController', () => {
       workspaceId: 'workspace-1',
       userId: 'user-1',
       spaceId: 'space-1',
-      limit: 200,
     });
   });
 
@@ -2198,12 +2240,16 @@ function createController(
   );
 }
 
-function agentAccess(): AgentAccessContext {
+function agentAccess(
+  overrides: Partial<AgentAccessContext> = {},
+): AgentAccessContext {
   return {
     apiKeyId: 'public-1',
     credentialVersion: 1,
     agentUser: { id: 'agent-1' },
     workspace: { id: 'workspace-1' },
+    standalone: false,
+    ...overrides,
   } as unknown as AgentAccessContext;
 }
 

@@ -15,7 +15,18 @@ import { extractBearerTokenFromHeader, isUserDisabled } from '../helpers';
 import { AUTH_CREDENTIAL_POLICY } from '../decorators/auth-credentials.decorator';
 import { AuthCredentialPolicy } from '../auth/auth-credential-policy';
 import { AGENT_CAPABILITY } from '../decorators/agent-callable.decorator';
-import { setAgentAccessContext } from '../auth/agent-access-context';
+import { USER_IDENTITY_REQUIRED } from '../decorators/user-identity-required.decorator';
+import {
+  AgentAccessContext,
+  setAgentAccessContext,
+} from '../auth/agent-access-context';
+import { setMcpCompanionContext } from '../auth/mcp-companion-context';
+import { TokenService } from '../../core/auth/services/token.service';
+import {
+  JwtMcpDownloadPayload,
+  JwtMcpUploadPayload,
+  JwtType,
+} from '../../core/auth/dto/jwt-payload';
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
@@ -24,6 +35,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     private environmentService: EnvironmentService,
     private readonly moduleRef: ModuleRef,
     private readonly userRepo: UserRepo,
+    private readonly tokenService: TokenService,
   ) {
     super();
   }
@@ -73,6 +85,26 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       throw new UnauthorizedException('Unsupported credential combination');
     }
 
+    if (
+      policy === AuthCredentialPolicy.MCP_COMPANION_ALLOWED &&
+      bearerToken &&
+      !publicKey &&
+      (await this.authenticateMcpCompanion(request, bearerToken))
+    ) {
+      return true;
+    }
+
+    const sessionCookie = (request as any).cookies?.authToken;
+    const hasIdentityCredential = Boolean(
+      ssoToken || bearerToken || sessionCookie,
+    );
+
+    if (publicKey && !hasIdentityCredential) {
+      await this.authenticateAgentKey(request, publicKey);
+      this.assertAgentCallable(context, { standalone: true });
+      return true;
+    }
+
     let ssoAuthenticated = false;
     if (ssoToken) {
       await this.authenticateSso(request, ssoToken, isAgentRequest);
@@ -83,22 +115,114 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
 
     if (publicKey) {
       await this.attachAgentScope(request, publicKey);
-    } else if (policy === AuthCredentialPolicy.AGENT_SCOPE_REQUIRED) {
+      this.assertAgentCallable(context, { standalone: false });
+      return true;
+    }
+
+    if (policy === AuthCredentialPolicy.AGENT_SCOPE_REQUIRED) {
       throw new UnauthorizedException('Agent API key is required');
     }
 
-    if (publicKey) {
-      const capability = this.reflector.getAllAndOverride(AGENT_CAPABILITY, [
-        context.getHandler(),
-        context.getClass(),
-      ]);
-      if (!capability) {
-        throw new ForbiddenException('Agent API key cannot call this endpoint');
-      }
-    } else if (ssoAuthenticated) {
+    if (ssoAuthenticated) {
       this.setJoinedWorkspacesCookie((request as any).user, context);
     }
 
+    return true;
+  }
+
+  private assertAgentCallable(
+    context: ExecutionContext,
+    opts: { standalone: boolean },
+  ): void {
+    const capability = this.reflector.getAllAndOverride(AGENT_CAPABILITY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (!capability) {
+      throw new ForbiddenException('Agent API key cannot call this endpoint');
+    }
+
+    if (!opts.standalone) {
+      return;
+    }
+
+    const userIdentityRequired = this.reflector.getAllAndOverride<boolean>(
+      USER_IDENTITY_REQUIRED,
+      [context.getHandler(), context.getClass()],
+    );
+    if (userIdentityRequired) {
+      throw new ForbiddenException(
+        'This endpoint requires a user credential alongside the Agent API key',
+      );
+    }
+  }
+
+  private async authenticateAgentKey(
+    request: FastifyRequest,
+    token: string,
+  ): Promise<void> {
+    const workspace =
+      (request.raw as any)?.workspace ?? (request as any).workspace;
+    if (!workspace?.id) {
+      throw new UnauthorizedException('Workspace is required');
+    }
+
+    const scope = await this.resolveAgentScope(token, workspace.id);
+    (request as any).user = {
+      user: scope.agentUser,
+      workspace: scope.workspace,
+    };
+    (request.raw as any).workspace = scope.workspace;
+    setAgentAccessContext(request as any, { ...scope, standalone: true });
+  }
+
+  private async authenticateMcpCompanion(
+    request: FastifyRequest,
+    token: string,
+  ): Promise<boolean> {
+    const decoded = this.tokenService.decodeJwt(token);
+    const type = decoded?.type;
+    if (type !== JwtType.MCP_UPLOAD && type !== JwtType.MCP_DOWNLOAD) {
+      return false;
+    }
+
+    let payload: JwtMcpUploadPayload | JwtMcpDownloadPayload;
+    try {
+      payload = await this.tokenService.verifyJwt(token, type);
+    } catch {
+      throw new UnauthorizedException('Expired or invalid MCP token');
+    }
+
+    const workspace =
+      (request.raw as any)?.workspace ?? (request as any).workspace;
+    if (!workspace?.id || workspace.id !== payload.workspaceId) {
+      throw new UnauthorizedException('Workspace does not match');
+    }
+
+    const user = await this.userRepo.findById(payload.sub, payload.workspaceId);
+    if (!user || isUserDisabled(user)) {
+      throw new UnauthorizedException();
+    }
+
+    (request as any).user = { user, workspace };
+    (request.raw as any).workspace = workspace;
+    setMcpCompanionContext(request as any, {
+      type,
+      userId: payload.sub,
+      workspaceId: payload.workspaceId,
+      ...(type === JwtType.MCP_UPLOAD
+        ? {
+            pageId: (payload as JwtMcpUploadPayload).pageId,
+            ...((payload as JwtMcpUploadPayload).attachmentId
+              ? {
+                  attachmentId: (payload as JwtMcpUploadPayload).attachmentId,
+                }
+              : {}),
+          }
+        : {
+            attachmentId: (payload as JwtMcpDownloadPayload).attachmentId,
+          }),
+    });
     return true;
   }
 
@@ -111,6 +235,14 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       throw new UnauthorizedException();
     }
 
+    const scope = await this.resolveAgentScope(token, principal.workspace.id);
+    setAgentAccessContext(request as any, { ...scope, standalone: false });
+  }
+
+  private async resolveAgentScope(
+    token: string,
+    workspaceId: string,
+  ): Promise<Omit<AgentAccessContext, 'standalone'>> {
     let apiKeyService: {
       validateAgentApiKeyScope: (
         token: string,
@@ -140,11 +272,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       );
     }
 
-    const scope = await apiKeyService.validateAgentApiKeyScope(
-      token,
-      principal.workspace.id,
-    );
-    setAgentAccessContext(request as any, scope);
+    return apiKeyService.validateAgentApiKeyScope(token, workspaceId);
   }
 
   private async authenticateSso(

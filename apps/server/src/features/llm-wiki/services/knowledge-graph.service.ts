@@ -4,10 +4,8 @@ import * as louvainModule from 'graphology-communities-louvain';
 import { KnowledgeCapsuleRepo } from '@akasha/db/repos/llm-wiki/knowledge-capsule.repo';
 import { UserRepo } from '@akasha/db/repos/user/user.repo';
 import { SpaceAuthorizationService } from '../../../core/space/services/space-authorization.service';
-import {
-  DEFAULT_GRAPH_NODE_LIMIT,
-  MAX_GRAPH_NODE_LIMIT,
-} from '../knowledge-graph.constants';
+import { MAX_GRAPH_PAGE_LIMIT } from '../knowledge-graph.constants';
+import { KnowledgeAuthorizationCache } from './knowledge-source-authorization.cache';
 import { KnowledgeSourceAuthorizationService } from './knowledge-source-authorization.service';
 
 const runLouvain = (louvainModule.default ??
@@ -67,9 +65,14 @@ export class KnowledgeGraphService {
     workspaceId: string;
     userId: string;
     spaceId: string;
-    limit?: number;
   }): Promise<KnowledgeGraphResult> {
-    const user = await this.userRepo.findById(input.userId, input.workspaceId);
+    const authorizationCache = new KnowledgeAuthorizationCache({
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+    });
+    const user = await authorizationCache.getUser(() =>
+      this.userRepo.findById(input.userId, input.workspaceId),
+    );
     if (!user) {
       return emptyGraph();
     }
@@ -82,6 +85,10 @@ export class KnowledgeGraphService {
     if (!readableSpaceIds.includes(input.spaceId)) {
       return emptyGraph();
     }
+    authorizationCache.recordSpaces(
+      [input.spaceId],
+      new Set(readableSpaceIds),
+    );
 
     const spaceSourcePageIds = await this.capsuleRepo.findSpacePageSourceIds({
       workspaceId: input.workspaceId,
@@ -92,11 +99,12 @@ export class KnowledgeGraphService {
         workspaceId: input.workspaceId,
         userId: input.userId,
         sourcePageIds: spaceSourcePageIds,
+        cache: authorizationCache,
       });
     const graph = await this.capsuleRepo.findGraphCandidatesForSpace({
       workspaceId: input.workspaceId,
       spaceId: input.spaceId,
-      limit: clampLimit(input.limit),
+      limit: MAX_GRAPH_PAGE_LIMIT,
       readableSourcePageIds: readableSpaceSourcePageIds,
     });
 
@@ -110,6 +118,7 @@ export class KnowledgeGraphService {
         workspaceId: input.workspaceId,
         userId: input.userId,
         sourcePageIds: allSourcePageIds,
+        cache: authorizationCache,
       });
     const readableSourceSet = new Set(readableSourcePageIds);
 
@@ -253,7 +262,7 @@ export class KnowledgeGraphService {
 }
 
 const MAX_DERIVED_SEMANTIC_NEIGHBORS = 6;
-const MAX_DERIVED_SEMANTIC_CANDIDATES = 250_000;
+const MAX_DERIVED_SEMANTIC_CANDIDATES = 100_000;
 
 const TYPE_AFFINITY: Record<string, Record<string, number>> = {
   entity: {
@@ -303,10 +312,12 @@ function buildDerivedSemanticEdges<
   const pageIdsBySourceId = new Map<string, string[]>();
   for (const [pageId, sourceIds] of sourceIdsByPageId) {
     for (const sourceId of sourceIds) {
-      pageIdsBySourceId.set(sourceId, [
-        ...(pageIdsBySourceId.get(sourceId) ?? []),
-        pageId,
-      ]);
+      const existing = pageIdsBySourceId.get(sourceId);
+      if (existing) {
+        existing.push(pageId);
+      } else {
+        pageIdsBySourceId.set(sourceId, [pageId]);
+      }
     }
   }
 
@@ -503,14 +514,6 @@ function emptyGraph(): KnowledgeGraphResult {
     edges: [],
     insights: { isolatedNodeIds: [], bridgeNodeIds: [], communityCount: 0 },
   };
-}
-
-function clampLimit(limit?: number): number {
-  if (!limit || limit <= 0) {
-    return DEFAULT_GRAPH_NODE_LIMIT;
-  }
-
-  return Math.min(limit, MAX_GRAPH_NODE_LIMIT);
 }
 
 function allSourcesReadable<T extends { sourcePageId: string }>(

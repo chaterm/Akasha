@@ -10,7 +10,6 @@ import { Observable, tap } from 'rxjs';
 import { AnalyticsEventRepo } from '@akasha/db/repos/analytics/analytics-event.repo';
 import { getAgentAccessContext } from '../../common/auth/agent-access-context';
 import { AGENT_CAPABILITY } from '../../common/decorators/agent-callable.decorator';
-import { getApiKeyAccess } from '../../common/auth/api-key-access';
 
 @Injectable()
 export class AgentOpInterceptor implements NestInterceptor {
@@ -26,31 +25,30 @@ export class AgentOpInterceptor implements NestInterceptor {
 
     const request = context.switchToHttp().getRequest();
     const agentAccess = getAgentAccessContext(request);
+    if (!agentAccess) return next.handle();
+
+    const op = this.reflector.getAllAndOverride<string>(AGENT_CAPABILITY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (!op) {
+      this.logger.warn(
+        { route: request.routeOptions?.url },
+        'Agent-scoped request reached an endpoint with no declared capability',
+      );
+      return next.handle();
+    }
+
     const principal = request.user;
-    const access = principal?.user
-      ? getApiKeyAccess(principal.user)
-      : undefined;
-    const personal = !agentAccess && access?.apiKeyId && principal?.workspace;
-    if (!agentAccess && !personal) return next.handle();
-
-    const capability = this.reflector.getAllAndOverride<string>(
-      AGENT_CAPABILITY,
-      [context.getHandler(), context.getClass()],
-    );
-    const op =
-      capability ??
-      `${request.method ?? 'HTTP'} ${request.routeOptions?.url ?? 'other'}`;
-
     const record = (outcome: 'ok' | 'error') => {
       this.analyticsEventRepo
         .insertAgentOp({
-          workspaceId: agentAccess?.workspace.id ?? principal.workspace.id,
-          agentUserId: agentAccess?.agentUser.id ?? principal.user.id,
+          workspaceId: agentAccess.workspace.id,
+          agentUserId: agentAccess.agentUser.id,
           op,
           channel: 'api',
-          apiKeyId: agentAccess?.apiKeyId ?? access.apiKeyId,
-          ...(personal ? { keyType: 'personal' as const } : {}),
-          delegatedUserId: agentAccess ? principal.user.id : undefined,
+          apiKeyId: agentAccess.apiKeyId,
+          delegatedUserId: principal?.user?.id ?? null,
           outcome,
         })
         .catch((error) =>

@@ -130,7 +130,11 @@ export class PageController {
     }
 
     const { canEdit, hasRestriction } = agentAccess
-      ? await this.agentAccessService.assertPageReadable(agentAccess, page, user)
+      ? await this.agentAccessService.assertPageReadable(
+          agentAccess,
+          page,
+          user,
+        )
       : await this.pageAccessService.validateCanReadSourceWithPermissions(
           page,
           user,
@@ -258,14 +262,24 @@ export class PageController {
 
   @HttpCode(HttpStatus.OK)
   @Post('permission-info')
-  async getPagePermissionInfo(@Body() dto: PageIdDto, @AuthUser() user: User) {
+  @AgentCallable(AgentCapability.PAGE_PERMISSION_READ)
+  async getPagePermissionInfo(
+    @Body() dto: PageIdDto,
+    @AuthUser() user: User,
+    @AgentAccess() agentAccess?: AgentAccessContext,
+  ) {
     const page = await this.pageRepo.findById(dto.pageId);
     if (!page) {
       throw new NotFoundException('Page not found');
     }
 
-    const permissions =
-      await this.pageAccessService.validateCanViewWithPermissions(page, user);
+    const permissions = agentAccess
+      ? await this.agentAccessService.assertPageReadable(
+          agentAccess,
+          page,
+          user,
+        )
+      : await this.pageAccessService.validateCanViewWithPermissions(page, user);
     const pageAccess = await this.pagePermissionRepo.findPageAccessByPageId(
       page.id,
     );
@@ -303,17 +317,23 @@ export class PageController {
 
   @HttpCode(HttpStatus.OK)
   @Post('permissions')
+  @AgentCallable(AgentCapability.PAGE_PERMISSION_READ)
   async getPagePermissions(
     @Body() dto: PageIdDto,
     @Body() pagination: PaginationOptions,
     @AuthUser() user: User,
+    @AgentAccess() agentAccess?: AgentAccessContext,
   ) {
     const page = await this.pageRepo.findById(dto.pageId);
     if (!page) {
       throw new NotFoundException('Page not found');
     }
 
-    await this.pageAccessService.validateCanView(page, user);
+    if (agentAccess) {
+      await this.agentAccessService.assertPageReadable(agentAccess, page, user);
+    } else {
+      await this.pageAccessService.validateCanView(page, user);
+    }
 
     const pageAccess = await this.pagePermissionRepo.findPageAccessByPageId(
       page.id,

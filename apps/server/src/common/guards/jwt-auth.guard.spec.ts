@@ -17,12 +17,14 @@ describe('JwtAuthGuard SSO / iself-agent auth', () => {
   };
   const moduleRef = { get: jest.fn() };
   const userRepo = { findByEmail: jest.fn() };
+  const tokenService = { decodeJwt: jest.fn(), verifyJwt: jest.fn() };
 
   const guard = new JwtAuthGuard(
     reflector as any,
     environmentService as any,
     moduleRef as any,
     userRepo as any,
+    tokenService as any,
   );
 
   const activeUser = { id: 'u1', deletedAt: null, deactivatedAt: null };
@@ -211,6 +213,8 @@ describe('JwtAuthGuard agent key scope', () => {
     workspace: { id: 'ws-1' },
     spaceIds: ['sp-1'],
   };
+  const combinedScope = { ...scope, standalone: false };
+  const standaloneScope = { ...scope, standalone: true };
 
   const reflector = { getAllAndOverride: jest.fn() };
   const environmentService = {
@@ -222,12 +226,14 @@ describe('JwtAuthGuard agent key scope', () => {
   const apiKeyService = { validateAgentApiKeyScope: jest.fn() };
   const moduleRef = { get: jest.fn() };
   const userRepo = { findByEmail: jest.fn() };
+  const tokenService = { decodeJwt: jest.fn(), verifyJwt: jest.fn() };
 
   const guard = new JwtAuthGuard(
     reflector as any,
     environmentService as any,
     moduleRef as any,
     userRepo as any,
+    tokenService as any,
   );
 
   const makeContext = (headers: Record<string, string>) => {
@@ -270,19 +276,90 @@ describe('JwtAuthGuard agent key scope', () => {
       user: activeUser,
       workspace: { id: 'ws-1' },
     });
-    expect(request.agentAccess).toEqual(scope);
+    expect(request.agentAccess).toEqual(combinedScope);
     expect(apiKeyService.validateAgentApiKeyScope).toHaveBeenCalledWith(
       'agent-token',
       'ws-1',
     );
   });
 
-  it('resolves no identity from the key alone, so the bearer strategy runs', async () => {
+  it('authenticates the key alone as its agent user', async () => {
+    const { context, request } = makeContext({
+      'x-akasha-public-key': 'agent-token',
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(hoidcService.verifyToken).not.toHaveBeenCalled();
+    expect(apiKeyService.validateAgentApiKeyScope).toHaveBeenCalledWith(
+      'agent-token',
+      'ws-1',
+    );
+    expect(request.user).toEqual({
+      user: scope.agentUser,
+      workspace: scope.workspace,
+    });
+    expect(request.agentAccess).toEqual(standaloneScope);
+  });
+
+  it('forbids the key alone on an endpoint that declares no capability', async () => {
+    capability(undefined);
     const { context } = makeContext({ 'x-akasha-public-key': 'agent-token' });
 
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      'Agent API key cannot call this endpoint',
+    );
+  });
+
+  it('forbids the key alone on an endpoint that requires a user identity', async () => {
+    reflector.getAllAndOverride.mockImplementation((key: string) => {
+      if (key === 'agentCapability') return 'space.binding.update';
+      if (key === 'userIdentityRequired') return true;
+      return false;
+    });
+    const { context } = makeContext({ 'x-akasha-public-key': 'agent-token' });
+
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      'This endpoint requires a user credential alongside the Agent API key',
+    );
+  });
+
+  it('allows the key alongside a user identity on a UserIdentityRequired endpoint', async () => {
+    reflector.getAllAndOverride.mockImplementation((key: string) => {
+      if (key === 'agentCapability') return 'space.binding.update';
+      if (key === 'userIdentityRequired') return true;
+      return false;
+    });
+    const { context, request } = makeContext({
+      'x-token': 'sso-token',
+      'x-akasha-public-key': 'agent-token',
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(request.user).toEqual({
+      user: activeUser,
+      workspace: { id: 'ws-1' },
+    });
+  });
+
+  it('treats a session cookie plus the key as the combined mode', async () => {
+    const { context, request } = makeContext({
+      'x-akasha-public-key': 'agent-token',
+    });
+    (request as any).cookies = { authToken: 'session-token' };
+
     await expect(guard.canActivate(context)).rejects.toThrow();
-    expect(hoidcService.verifyToken).not.toHaveBeenCalled();
     expect(apiKeyService.validateAgentApiKeyScope).not.toHaveBeenCalled();
+  });
+
+  it('rejects the key alone when the workspace is unresolved', async () => {
+    const { context, request } = makeContext({
+      'x-akasha-public-key': 'agent-token',
+    });
+    request.raw = {};
+
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      'Workspace is required',
+    );
   });
 
   it('rejects an SSO token combined with a bearer token', async () => {
@@ -320,5 +397,118 @@ describe('JwtAuthGuard agent key scope', () => {
     await expect(guard.canActivate(context)).rejects.toThrow(
       'Agent API key is required',
     );
+  });
+});
+
+describe('JwtAuthGuard MCP companion tokens', () => {
+  const activeUser = { id: 'u1', deletedAt: null, deactivatedAt: null };
+  const reflector = { getAllAndOverride: jest.fn() };
+  const environmentService = {
+    getHoidcSsoApi: jest.fn().mockReturnValue('https://sso.example'),
+    getHoidcPlatformId: jest.fn().mockReturnValue('platform-1'),
+    isCloud: jest.fn().mockReturnValue(false),
+  };
+  const moduleRef = { get: jest.fn() };
+  const userRepo = { findByEmail: jest.fn(), findById: jest.fn() };
+  const tokenService = { decodeJwt: jest.fn(), verifyJwt: jest.fn() };
+
+  const guard = new JwtAuthGuard(
+    reflector as any,
+    environmentService as any,
+    moduleRef as any,
+    userRepo as any,
+    tokenService as any,
+  );
+
+  const makeContext = (headers: Record<string, string>) => {
+    const request: any = { headers, raw: { workspace: { id: 'ws-1' } } };
+    const context = {
+      getHandler: () => undefined,
+      getClass: () => undefined,
+      switchToHttp: () => ({
+        getRequest: () => request,
+        getResponse: () => ({ setCookie: jest.fn() }),
+      }),
+    } as unknown as ExecutionContext;
+    return { context, request };
+  };
+
+  const policy = (value: unknown) =>
+    reflector.getAllAndOverride.mockImplementation((key: string) =>
+      key === 'authCredentialPolicy' ? value : false,
+    );
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    policy(AuthCredentialPolicy.MCP_COMPANION_ALLOWED);
+    userRepo.findById.mockResolvedValue(activeUser);
+  });
+
+  it('authenticates an upload token and records its scope', async () => {
+    tokenService.decodeJwt.mockReturnValue({ type: 'mcp_upload' });
+    tokenService.verifyJwt.mockResolvedValue({
+      type: 'mcp_upload',
+      sub: 'u1',
+      workspaceId: 'ws-1',
+      pageId: 'page-1',
+    });
+    const { context, request } = makeContext({
+      authorization: 'Bearer upload-token',
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(request.user).toEqual({
+      user: activeUser,
+      workspace: { id: 'ws-1' },
+    });
+    expect(request.mcpCompanion).toEqual({
+      type: 'mcp_upload',
+      userId: 'u1',
+      workspaceId: 'ws-1',
+      pageId: 'page-1',
+    });
+  });
+
+  it('rejects an upload token minted for another workspace', async () => {
+    tokenService.decodeJwt.mockReturnValue({ type: 'mcp_upload' });
+    tokenService.verifyJwt.mockResolvedValue({
+      type: 'mcp_upload',
+      sub: 'u1',
+      workspaceId: 'ws-2',
+      pageId: 'page-1',
+    });
+    const { context } = makeContext({ authorization: 'Bearer upload-token' });
+
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      'Workspace does not match',
+    );
+  });
+
+  it('ignores companion tokens on endpoints that do not opt in', async () => {
+    policy(AuthCredentialPolicy.DEFAULT);
+    tokenService.decodeJwt.mockReturnValue({ type: 'mcp_upload' });
+    const { context } = makeContext({ authorization: 'Bearer upload-token' });
+
+    await expect(guard.canActivate(context)).rejects.toThrow();
+    expect(tokenService.verifyJwt).not.toHaveBeenCalled();
+  });
+
+  it('falls through to the bearer strategy for non-companion tokens', async () => {
+    tokenService.decodeJwt.mockReturnValue({ type: 'api_key' });
+    const { context } = makeContext({ authorization: 'Bearer api-key-token' });
+
+    await expect(guard.canActivate(context)).rejects.toThrow();
+    expect(tokenService.verifyJwt).not.toHaveBeenCalled();
+  });
+
+  it('refuses a companion token paired with an agent key', async () => {
+    tokenService.decodeJwt.mockReturnValue({ type: 'mcp_upload' });
+    const { context } = makeContext({
+      authorization: 'Bearer upload-token',
+      'x-akasha-public-key': 'agent-token',
+    });
+
+    await expect(guard.canActivate(context)).rejects.toThrow();
+    expect(tokenService.verifyJwt).not.toHaveBeenCalled();
   });
 });

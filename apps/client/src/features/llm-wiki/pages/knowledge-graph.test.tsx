@@ -200,10 +200,7 @@ describe("KnowledgeGraphPage", () => {
       screen.getByRole("link", { name: "Kafka" }).getAttribute("href"),
     ).toBe("/p/page-1");
     await waitFor(() => {
-      expect(getKnowledgeGraph).toHaveBeenCalledWith({
-        spaceId: "space-1",
-        limit: 10000,
-      });
+      expect(getKnowledgeGraph).toHaveBeenCalledWith({ spaceId: "space-1" });
     });
   });
 
@@ -238,7 +235,6 @@ describe("KnowledgeGraphPage", () => {
     await waitFor(() => {
       expect(getKnowledgeGraph).toHaveBeenCalledWith({
         spaceId: "space-current",
-        limit: 10000,
       });
     });
   });
@@ -361,7 +357,7 @@ describe("KnowledgeGraphPage", () => {
       target: { value: "Kafka" },
     });
 
-    expect(screen.getByText("Kafka")).toBeTruthy();
+    expect(await screen.findByText("Kafka")).toBeTruthy();
   });
 
   it("focuses a page neighborhood and reveals its structural sections", async () => {
@@ -501,17 +497,19 @@ describe("KnowledgeGraphPage", () => {
     fireEvent.change(screen.getByLabelText("Search"), {
       target: { value: "Page 501" },
     });
+    expect(await screen.findByTestId("knowledge-graph-viewport")).toBeTruthy();
     expect(screen.queryByTestId("knowledge-graph-webgl")).toBeNull();
-    expect(screen.getByTestId("knowledge-graph-viewport")).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("Search"), {
       target: { value: "Page 1" },
     });
-    expect(
-      screen
-        .getByTestId("knowledge-graph-webgl")
-        .getAttribute("data-node-count"),
-    ).toBe("111");
+    await waitFor(() =>
+      expect(
+        screen
+          .getByTestId("knowledge-graph-webgl")
+          .getAttribute("data-node-count"),
+      ).toBe("111"),
+    );
     expect(webglMocks.props.mock.lastCall?.[0].nodes).toHaveLength(111);
     expect(screen.queryByTestId("knowledge-graph-viewport")).toBeNull();
 

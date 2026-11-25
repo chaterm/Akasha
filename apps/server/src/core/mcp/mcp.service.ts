@@ -55,6 +55,8 @@ import { DomainService } from '../../integrations/environment/domain.service';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
 import { SpaceRepo } from '@akasha/db/repos/space/space.repo';
 import { ApiKeyType } from '../../common/auth/api-key-type';
+import { TokenService } from '../auth/services/token.service';
+import { buildSkillUpdateNotice } from '../../common/helpers/skill-version';
 import { TemplateService } from '../template/template.service';
 import { WeeklyReportService } from '../weekly-report/weekly-report.service';
 import {
@@ -121,6 +123,7 @@ export class McpService {
     private readonly attachmentRepo: AttachmentRepo,
     private readonly domainService: DomainService,
     private readonly environmentService: EnvironmentService,
+    private readonly tokenService: TokenService,
     @InjectKysely() private readonly db: KyselyDB,
     @Optional() private readonly templateService?: TemplateService,
     @Optional() private readonly weeklyReportService?: WeeklyReportService,
@@ -833,9 +836,21 @@ export class McpService {
     args: { attachmentId: string },
   ) {
     const info = await this.getAttachmentInfo(ctx, args);
+    const token = await this.tokenService.generateMcpDownloadToken({
+      userId: ctx.user.id,
+      workspaceId: ctx.workspace.id,
+      attachmentId: info.attachmentId,
+    });
+    const downloadUrl = `${this.domainService.getUrl(ctx.workspace.hostname)}${info.url}`;
     return {
       ...info,
-      downloadUrl: info.url,
+      downloadUrl,
+      auth: 'Send the downloadToken as `Authorization: Bearer <downloadToken>`. It is scoped to this one file, expires in 10 minutes, and is not the MCP API Key. Do not echo it into user-visible output or logs.',
+      downloadToken: token,
+      expiresInSeconds: 600,
+      instructions:
+        'Fetch the file yourself with one local GET request carrying the downloadToken as a Bearer credential. Do not reuse the MCP API Key for the download.',
+      curlExample: `curl -L "${downloadUrl}" -H "Authorization: Bearer $AKASHA_MCP_DOWNLOAD_TOKEN" -o "<local-file-path>"`,
     };
   }
 
@@ -865,6 +880,12 @@ export class McpService {
       ...(args.attachmentId ? [`-F "attachmentId=${args.attachmentId}"`] : []),
       '-F "file=@<local-file-path>"',
     ].join(' ');
+    const token = await this.tokenService.generateMcpUploadToken({
+      userId: ctx.user.id,
+      workspaceId: ctx.workspace.id,
+      pageId: page.id,
+      ...(args.attachmentId ? { attachmentId: args.attachmentId } : {}),
+    });
 
     return {
       pageId: page.id,
@@ -873,11 +894,13 @@ export class McpService {
       method: 'POST',
       contentType: 'multipart/form-data',
       fields,
-      auth: 'Send the Akasha API Key already configured for this MCP endpoint as `Authorization: Bearer <key>`. Read it from the environment; never print it.',
+      auth: 'Send the uploadToken as `Authorization: Bearer <uploadToken>`. It is scoped to this one Page, expires in 10 minutes, and is not the MCP API Key. Do not echo it into user-visible output or logs.',
+      uploadToken: token,
+      expiresInSeconds: 600,
       maxFileSize: this.environmentService.getFileUploadSizeLimit(),
       instructions:
-        'Upload the file yourself with one local multipart request. The response contains attachmentId, fileName, mimeType and fileSize. Reference the file in Page content by the relative path `/api/files/<attachmentId>/<fileName>`, not by the absolute url in the response: PDF and audio nodes only accept relative paths and blank out absolute ones. If you cannot make local HTTP requests, give the user the uploadUrl and say the file has not been uploaded.',
-      curlExample: `curl -X POST "${uploadUrl}" -H "Authorization: Bearer $AKASHA_API_KEY" ${curlFields}`,
+        'Upload the file yourself with one local multipart request carrying the uploadToken as a Bearer credential. Do not reuse the MCP API Key: it is rejected on this endpoint. The response contains attachmentId, fileName, mimeType and fileSize. Reference the file in Page content by the relative path `/api/files/<attachmentId>/<fileName>`, not by the absolute url in the response: PDF and audio nodes only accept relative paths and blank out absolute ones. If you cannot make local HTTP requests, give the user the uploadUrl and say the file has not been uploaded.',
+      curlExample: `curl -X POST "${uploadUrl}" -H "Authorization: Bearer $AKASHA_MCP_UPLOAD_TOKEN" ${curlFields}`,
       replaces: args.attachmentId ?? null,
     };
   }
@@ -1530,6 +1553,10 @@ export class McpService {
             workspaceId: ctx.workspace.id,
           })
         : undefined;
+    const skillUpdateNotice = buildSkillUpdateNotice(
+      ctx.workspace.settings as Record<string, any> | null,
+      ctx.skillVersion,
+    );
     return {
       credentialType,
       timezone: ctx.user.timezone ?? null,
@@ -1542,6 +1569,7 @@ export class McpService {
         plan: ctx.workspace.plan,
         settings: ctx.workspace.settings,
       },
+      ...(skillUpdateNotice ? { skillUpdateNotice } : {}),
     };
   }
 

@@ -2,6 +2,7 @@ import { KnowledgeCapsuleRepo } from '@akasha/db/repos/llm-wiki/knowledge-capsul
 import { UserRepo } from '@akasha/db/repos/user/user.repo';
 import { UserRole } from '../../../common/helpers/types/permission';
 import { SpaceAuthorizationService } from '../../../core/space/services/space-authorization.service';
+import { KnowledgeAuthorizationCache } from './knowledge-source-authorization.cache';
 import { KnowledgeSourceAuthorizationService } from './knowledge-source-authorization.service';
 import { KnowledgeGraphService } from './knowledge-graph.service';
 
@@ -89,13 +90,14 @@ describe('KnowledgeGraphService', () => {
     expect(capsuleRepo.findGraphCandidatesForSpace).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       spaceId: 'space-1',
-      limit: 3000,
+      limit: 5000,
       readableSourcePageIds: ['source-1', 'source-2'],
     });
     expect(sourceAuthorization.filterReadableSources).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       userId: 'user-1',
       sourcePageIds: ['source-1', 'source-2', 'source-hidden'],
+      cache: expect.any(KnowledgeAuthorizationCache),
     });
   });
 

@@ -90,7 +90,7 @@ export default function McpSettings() {
           </Text>
           <Text size="sm" c="dimmed" mt={4}>
             {t(
-              "API keys, MCP clients, and Akasha Skills can read or edit public/shared spaces only according to the key owner's existing space and page permissions. Page edits use normal version history and can be rolled back in Akasha.",
+              "API keys authenticate this endpoint only; they are rejected on every other HTTP endpoint. MCP clients and Akasha Skills can read or edit public/shared spaces only according to the key owner's existing space and page permissions. Page edits use normal version history and can be rolled back in Akasha.",
             )}
           </Text>
 
