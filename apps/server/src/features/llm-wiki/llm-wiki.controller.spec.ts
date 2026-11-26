@@ -1,3 +1,4 @@
+import { KnowledgeQueryService } from './services/knowledge-query.service';
 import {
   BadRequestException,
   ConflictException,
@@ -27,6 +28,8 @@ import { SpaceAuthorizationService } from '../../core/space/services/space-autho
 import { PageAccessService } from '../../core/page/page-access/page-access.service';
 import { AgentAccessService } from '../../core/page/page-access/agent-access.service';
 import type { AgentAccessContext } from '../../common/auth/agent-access-context';
+import { withApiKeyAccess } from '../../common/auth/api-key-access';
+import { ApiKeyType } from '../../common/auth/api-key-type';
 import { KnowledgeQueryType } from './dto/query-knowledge.dto';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
 
@@ -173,6 +176,7 @@ describe('LlmWikiController', () => {
       resourceType: AuditResource.KNOWLEDGE,
       resourceId: 'workspace-1',
       metadata: {
+        origin: 'knowledge_query',
         queryHash: expect.stringMatching(/^sha256:/),
         spaceIds: ['space-1'],
         requestedSpaceIds: ['space-1'],
@@ -391,7 +395,7 @@ describe('LlmWikiController', () => {
     );
   });
 
-  it('scopes robot queries by the agent key bound to the SSO identity', async () => {
+  it('requires and scopes both keys for robot queries', async () => {
     const chatService = {
       isEnabledForWorkspace: jest.fn().mockReturnValue(true),
       chat: jest.fn().mockResolvedValue({
@@ -427,6 +431,11 @@ describe('LlmWikiController', () => {
       agentAccessService,
       queryAuditRepo,
     });
+    const personalUser = withApiKeyAccess(user(), {
+      apiKeyId: 'personal-1',
+      personalSpaceId: null,
+    });
+
     await expect(
       controller.queryKnowledge(
         {
@@ -434,7 +443,7 @@ describe('LlmWikiController', () => {
           query: 'Scoped query',
           spaceIds: ['space-1'],
         },
-        user(),
+        personalUser,
         workspace(),
         agentAccess(),
       ),
@@ -460,7 +469,7 @@ describe('LlmWikiController', () => {
     );
   });
 
-  it('passes the bound spaces as a supplemental scope on robot queries', async () => {
+  it('uses a scoped session or SSO identity for robot queries', async () => {
     const agentAccessService = {
       getBoundSpaceIds: jest.fn().mockResolvedValue(['space-1', 'space-2']),
     };
@@ -497,77 +506,54 @@ describe('LlmWikiController', () => {
     );
   });
 
-  it('rejects robot queries sent without an agent key', async () => {
+  it('allows a robot query with a personal API key and no Agent key', async () => {
     const chatService = {
       isEnabledForWorkspace: jest.fn().mockReturnValue(true),
-      chat: jest.fn(),
+      chat: jest.fn().mockResolvedValue({
+        answer: 'Personal-key answer',
+        citations: [],
+      }),
     };
     const controller = createController({ chatService });
+    const personalUser = withApiKeyAccess(user(), {
+      apiKeyId: 'personal-1',
+      personalSpaceId: null,
+      keyType: ApiKeyType.PERSONAL,
+    });
 
     await expect(
       controller.queryKnowledge(
         {
           type: KnowledgeQueryType.ROBOT,
-          query: 'No agent key',
+          query: 'Personal key only',
+          spaceIds: ['space-1'],
+        },
+        personalUser,
+        workspace(),
+      ),
+    ).resolves.toEqual(
+      expect.objectContaining({ answer: 'Personal-key answer' }),
+    );
+    expect(chatService.chat).toHaveBeenCalledWith(
+      expect.objectContaining({ supplementalSpaceIds: undefined }),
+    );
+  });
+
+  it('rejects a session-only robot query', async () => {
+    const controller = createController();
+
+    await expect(
+      controller.queryKnowledge(
+        {
+          type: KnowledgeQueryType.ROBOT,
+          query: 'Session only',
           spaceIds: ['space-1'],
         },
         user(),
         workspace(),
+        undefined,
       ),
     ).rejects.toBeInstanceOf(UnauthorizedException);
-    expect(chatService.chat).not.toHaveBeenCalled();
-  });
-
-  it('treats an omitted type as a robot query for a standalone key', async () => {
-    const chatService = {
-      isEnabledForWorkspace: jest.fn().mockReturnValue(true),
-      chat: jest.fn().mockResolvedValue({
-        answer: 'answer',
-        answerMode: 'knowledge',
-        citations: [],
-      }),
-    };
-    const agentAccessService = {
-      getBoundSpaceIds: jest.fn().mockResolvedValue(['space-1']),
-    };
-    const queryAuditRepo = {
-      recordQuery: jest.fn().mockResolvedValue(undefined),
-    };
-    const controller = createController({
-      chatService,
-      agentAccessService,
-      queryAuditRepo,
-    });
-
-    await controller.queryKnowledge(
-      { query: 'No explicit type' } as any,
-      user(),
-      workspace(),
-      agentAccess({ standalone: true }),
-    );
-
-    expect(agentAccessService.getBoundSpaceIds).toHaveBeenCalled();
-    expect(chatService.chat).toHaveBeenCalledWith(
-      expect.objectContaining({ supplementalSpaceIds: ['space-1'] }),
-    );
-  });
-
-  it('still defaults to a user query when the key rides on a user credential', async () => {
-    const chatService = {
-      isEnabledForWorkspace: jest.fn().mockReturnValue(true),
-      chat: jest.fn(),
-    };
-    const controller = createController({ chatService });
-
-    await expect(
-      controller.queryKnowledge(
-        { query: 'No explicit type' } as any,
-        user(),
-        workspace(),
-        agentAccess(),
-      ),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    expect(chatService.chat).not.toHaveBeenCalled();
   });
 
   it('rejects an Agent API key on user queries', async () => {
@@ -2140,23 +2126,43 @@ function createController(
     pageIndexSettingsRepo?: { resolveMode: jest.Mock; setMode?: jest.Mock };
   } = {},
 ) {
+  const chatService = {
+    isEnabledForWorkspace: jest.fn().mockReturnValue(true),
+    chat: jest.fn(),
+    ...overrides.chatService,
+  } as unknown as AiKnowledgeChatService;
+  const images = {
+    resolveImagesForCitations: jest.fn(
+      async ({ citations }: { citations: Array<Record<string, unknown>> }) =>
+        citations.map((citation) => ({ ...citation, images: [] })),
+    ),
+    ...overrides.citationImageResolver,
+  } as unknown as KnowledgeCitationImageResolverService;
+  const audit = {
+    log: jest.fn(),
+    ...overrides.auditService,
+  } as unknown as IAuditService;
+  const queryAudit = {
+    recordQuery: jest.fn(),
+    ...overrides.queryAuditRepo,
+  } as unknown as KnowledgeQueryAuditRepo;
+  const agentAccess = {
+    getBoundSpaceIds: jest.fn().mockResolvedValue([]),
+    assertSpaceBound: jest.fn(),
+    assertPageReadable: jest.fn(),
+    ...overrides.agentAccessService,
+  } as unknown as AgentAccessService;
   return new LlmWikiController(
-    {
-      isEnabledForWorkspace: jest.fn().mockReturnValue(true),
-      chat: jest.fn(),
-      ...overrides.chatService,
-    } as unknown as AiKnowledgeChatService,
-    {
-      resolveImagesForCitations: jest.fn(
-        async ({ citations }: { citations: Array<Record<string, unknown>> }) =>
-          citations.map((citation) => ({ ...citation, images: [] })),
-      ),
-      ...overrides.citationImageResolver,
-    } as unknown as KnowledgeCitationImageResolverService,
-    {
-      log: jest.fn(),
-      ...overrides.auditService,
-    } as unknown as IAuditService,
+    chatService,
+    new KnowledgeQueryService(
+      chatService,
+      images,
+      queryAudit,
+      agentAccess,
+      audit,
+      overrides.environmentService as EnvironmentService,
+    ),
+    audit,
     {
       findWorkspaceSpaceIds: jest.fn().mockResolvedValue([]),
       getRunDiagnosticsSummary: jest.fn(),
@@ -2177,10 +2183,6 @@ function createController(
       getSpaceGraph: jest.fn(),
       ...overrides.graphService,
     } as unknown as KnowledgeGraphService,
-    {
-      recordQuery: jest.fn(),
-      ...overrides.queryAuditRepo,
-    } as unknown as KnowledgeQueryAuditRepo,
     {
       add: jest.fn(),
       ...overrides.knowledgeQueue,
@@ -2229,27 +2231,18 @@ function createController(
       ...overrides.aiModelConfigTestService,
     } as unknown as AiModelConfigTestService,
     overrides.environmentService as EnvironmentService | undefined,
-    {
-      getBoundSpaceIds: jest.fn().mockResolvedValue([]),
-      assertSpaceBound: jest.fn(),
-      assertPageReadable: jest.fn(),
-      ...overrides.agentAccessService,
-    } as unknown as AgentAccessService,
+    agentAccess,
     overrides.cacheManager as never,
     overrides.pageIndexSettingsRepo as never,
   );
 }
 
-function agentAccess(
-  overrides: Partial<AgentAccessContext> = {},
-): AgentAccessContext {
+function agentAccess(): AgentAccessContext {
   return {
     apiKeyId: 'public-1',
     credentialVersion: 1,
     agentUser: { id: 'agent-1' },
     workspace: { id: 'workspace-1' },
-    standalone: false,
-    ...overrides,
   } as unknown as AgentAccessContext;
 }
 

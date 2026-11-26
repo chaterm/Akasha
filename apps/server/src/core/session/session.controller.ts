@@ -16,6 +16,8 @@ import { User, Workspace } from '@akasha/db/types/entity.types';
 import { RevokeSessionDto } from './dto/revoke-session.dto';
 import { FastifyRequest } from 'fastify';
 import { ErrorCode, errorBody } from '../../common/errors/error-codes';
+import { AuthCredentials } from '../../common/decorators/auth-credentials.decorator';
+import { AuthCredentialPolicy } from '../../common/auth/auth-credential-policy';
 
 @UseGuards(JwtAuthGuard)
 @Controller('sessions')
@@ -39,6 +41,7 @@ export class SessionController {
   }
 
   @HttpCode(HttpStatus.OK)
+  @AuthCredentials(AuthCredentialPolicy.PERSONAL_API_KEY_FORBIDDEN)
   @Post('revoke')
   async revokeSession(
     @Body() dto: RevokeSessionDto,
@@ -63,6 +66,7 @@ export class SessionController {
   }
 
   @HttpCode(HttpStatus.OK)
+  @AuthCredentials(AuthCredentialPolicy.PERSONAL_API_KEY_FORBIDDEN)
   @Post('revoke-all')
   async revokeAllSessions(
     @AuthUser() user: User,

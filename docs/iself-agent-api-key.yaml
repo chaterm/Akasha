@@ -1,7 +1,7 @@
 api:
   name: iself Agent API Key 接口
-  description: 创建、管理 agent 用户及其空间绑定。管理接口仅允许工作区 owner 使用普通 SSO/JWT；绑定更新必须同时提供普通 SSO Token 和 agent API Key。
-  note: agent API Key 不构成身份，只圈定空间范围，必须与人类凭据（SSO Token 或个人 API Key）同时提供。单独提供返回 401。
+  description: 创建、管理 agent 用户及其空间绑定。管理接口仅允许工作区 owner 使用普通 SSO/JWT；绑定更新必须同时提供用户凭证和 agent API Key。
+  note: agent API Key 不构成身份，只圈定空间范围，必须与人类凭据（会话、SSO Token 或个人 API Key）同时提供。单独提供返回 401。
 
 authentication:
   owner:
@@ -34,10 +34,12 @@ endpoints:
     response: 当前用户可管理的空间列表；叠加 agent API Key 时额外返回该密钥已绑定的空间。
   - method: POST
     path: /api/iself/space-api-key/update
-    auth: agent + SSO
+    auth: agent + 用户凭证（会话、SSO Token 或个人 API Key）
     headers:
       x-akasha-public-key: agent API Key JWT
-      x-token: 普通 SSO Token
+      x-token: 使用 SSO 时提供
+      Authorization: 使用个人 API Key 时提供 Bearer 凭证
+      Cookie: 使用登录会话时提供
     body:
       spaceIds: uuid[]
     response: 更新后的绑定空间列表。
@@ -45,7 +47,7 @@ endpoints:
 errors:
   400: 空间 ID 无效、重复，或 agent API Key 名称、agent_id 为空。
   401: 凭据缺失、无效或 agent key 已轮换/删除；仅提供 agent API Key 而无人类凭据；agent API Key 放在 Authorization 头；SSO Token 与 Bearer 同时出现；平台密钥（x-iself-secret）缺失或不匹配。
-  403: 非 owner 管理 agent，或 SSO 用户没有目标空间管理员权限。
+  403: 非 owner 管理 agent，或操作者没有目标空间管理员权限。
   404: 平台创建时未找到工作区 owner。
   409: agent API Key 名称或 agent_id 已存在。
   503: 平台创建接口未配置（未设置 ISELF_API_KEY_SECRET）。

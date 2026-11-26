@@ -1,16 +1,17 @@
 api:
   name: iself 知识检索接口
   description: >-
-    为 iself 智能体检索 Akasha 知识。请求必须同时提供 SSO/HOIDC Token 和 agent API Key，
-    且只能检索该 agent API Key 已绑定的知识空间。
+    为 iself 智能体检索 Akasha 知识。请求须提供真实用户凭证和 agent API Key。
+    检索范围为用户可读空间与密钥绑定空间的并集，受限页面按该用户的页面授权过滤。
   method: POST
   path: /api/iself/llm-wiki/query
   contentType: application/json
 
 authentication:
+  identity: 提供 x-token、个人 API Key（Authorization Bearer）或登录会话 Cookie 中的一种。
   headers:
     x-token:
-      required: true
+      required: false
       type: string
       description: >-
         原始 SSO 访问 Token，不要添加 Bearer 前缀。系统会通过 HOIDC 校验 Token，
@@ -286,7 +287,7 @@ errors:
       请求参数校验失败，例如 UUID、布尔值格式错误，或 scoreThreshold 超出范围。
   401:
     description: >-
-      缺少或无效的 x-token、SSO 用户不是当前工作区成员，或 agent API Key 缺失/无效/
+      用户凭证缺失或无效、用户不是当前工作区成员，或 agent API Key 缺失/无效/
       已轮换。agent API Key 必须随人类凭据一同提供，单独提供不构成身份。
   403:
     description: >-

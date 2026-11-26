@@ -11,8 +11,6 @@ import {
   JwtAttachmentPayload,
   JwtCollabPayload,
   JwtExchangePayload,
-  JwtMcpDownloadPayload,
-  JwtMcpUploadPayload,
   JwtMfaTokenPayload,
   JwtPayload,
   JwtPdfExportDownloadPayload,
@@ -127,36 +125,6 @@ export class TokenService {
     return this.jwtService.sign(payload, { expiresIn });
   }
 
-  async generateMcpUploadToken(opts: {
-    userId: string;
-    workspaceId: string;
-    pageId: string;
-    attachmentId?: string;
-  }): Promise<string> {
-    const payload: JwtMcpUploadPayload = {
-      sub: opts.userId,
-      workspaceId: opts.workspaceId,
-      pageId: opts.pageId,
-      ...(opts.attachmentId ? { attachmentId: opts.attachmentId } : {}),
-      type: JwtType.MCP_UPLOAD,
-    };
-    return this.jwtService.sign(payload, { expiresIn: '10m' });
-  }
-
-  async generateMcpDownloadToken(opts: {
-    userId: string;
-    workspaceId: string;
-    attachmentId: string;
-  }): Promise<string> {
-    const payload: JwtMcpDownloadPayload = {
-      sub: opts.userId,
-      workspaceId: opts.workspaceId,
-      attachmentId: opts.attachmentId,
-      type: JwtType.MCP_DOWNLOAD,
-    };
-    return this.jwtService.sign(payload, { expiresIn: '10m' });
-  }
-
   async generatePdfRenderToken(
     pageId: string,
     workspaceId: string,
@@ -181,18 +149,9 @@ export class TokenService {
     return this.jwtService.sign(payload, { expiresIn: '1h' });
   }
 
-  decodeJwt(token: string): { type?: string } | null {
-    try {
-      return this.jwtService.decode(token) as { type?: string } | null;
-    } catch {
-      return null;
-    }
-  }
-
   async verifyJwt(token: string, tokenType: string) {
     const payload = await this.jwtService.verifyAsync(token, {
       secret: this.environmentService.getAppSecret(),
-      issuer: 'Akasha',
     });
 
     if (payload.type !== tokenType) {

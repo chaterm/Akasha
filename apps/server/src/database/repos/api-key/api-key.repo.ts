@@ -194,6 +194,7 @@ export class ApiKeyRepo {
       .where('workspaceId', '=', workspaceId)
       .where('id', 'in', spaceIds)
       .where('deletedAt', 'is', null)
+      .where('personalOwnerId', 'is', null)
       .execute();
     return rows.map((row) => row.id);
   }
@@ -201,9 +202,10 @@ export class ApiKeyRepo {
   async findBindableSpaces(workspaceId: string) {
     return this.db
       .selectFrom('spaces')
-      .select(['id', 'name', 'personalOwnerId'])
+      .select(['id', 'name'])
       .where('workspaceId', '=', workspaceId)
       .where('deletedAt', 'is', null)
+      .where('personalOwnerId', 'is', null)
       .orderBy('name', 'asc')
       .execute();
   }
@@ -248,6 +250,7 @@ export class ApiKeyRepo {
       .where('aks.apiKeyId', '=', apiKeyId)
       .where('s.workspaceId', '=', workspaceId)
       .where('s.deletedAt', 'is', null)
+      .where('s.personalOwnerId', 'is', null)
       .orderBy('s.name', 'asc')
       .execute();
   }
@@ -286,7 +289,7 @@ export class ApiKeyRepo {
         input.spaceIds.map((spaceId) => ({
           userId: input.agentUserId,
           spaceId,
-          role: SpaceRole.WRITER,
+          role: SpaceRole.READER,
         })),
       )
       .execute();

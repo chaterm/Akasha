@@ -7,8 +7,6 @@ export enum JwtType {
   API_KEY = 'api_key',
   PDF_RENDER = 'pdf_render',
   PDF_EXPORT_DOWNLOAD = 'pdf_export_download',
-  MCP_UPLOAD = 'mcp_upload',
-  MCP_DOWNLOAD = 'mcp_download',
 }
 export type JwtPayload = {
   sub: string;
@@ -49,21 +47,6 @@ export type JwtApiKeyPayload = {
   apiKeyId: string;
   credentialVersion?: number;
   type: 'api_key';
-};
-
-export type JwtMcpUploadPayload = {
-  sub: string;
-  workspaceId: string;
-  pageId: string;
-  attachmentId?: string;
-  type: 'mcp_upload';
-};
-
-export type JwtMcpDownloadPayload = {
-  sub: string;
-  workspaceId: string;
-  attachmentId: string;
-  type: 'mcp_download';
 };
 
 export type JwtPdfRenderPayload = {

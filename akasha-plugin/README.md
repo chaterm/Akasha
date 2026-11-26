@@ -114,18 +114,10 @@ python3 akasha-plugin/scripts/package-skills.py --verify-only   # 校验已提�
 
 ## 认证与安全
 
-MCP 接口地址为部署实例的 `/mcp`，不应额外添加 `/api`。
-
-个人 API Key 仅对 `/mcp` 有效，用于其他任何 HTTP 端点均返回 401。Key 的过期时间由用户在创建时选择，
-可设为永不过期。Key 失效或泄露后须在个人设置的 API keys 页面撤销并重建，并同步更新宿主的 MCP 配置。
-
-附件字节不经过 MCP 请求：`upload_attachment` 与 `download_attachment` 返回一次性短时令牌，Agent 用
-该令牌在本地直接请求 `/api/files/*`。令牌有效期 10 分钟，分别绑定单个页面与单个附件。API Key 在这两
-个端点上同样被拒绝。
-
-Key 与令牌均不得写入 Skill、Plugin、代码仓库、对话内容或日志，仅可保存在宿主的本地安全配置中；发行
-包及仓库中只允许出现占位符。[`.mcp.template.json`](./.mcp.template.json) 为部署适配器使用的模板，
-占位符须在使用前替换，不得原样提供给 Agent。
+MCP 接口地址为部署实例的 `/mcp`，不应额外添加 `/api`。API Key 不得写入 Skill、Plugin、代码仓库、
+对话内容或日志，仅可保存在宿主的本地安全配置中；发行包及仓库中只允许出现占位符。
+[`.mcp.template.json`](./.mcp.template.json) 为部署适配器使用的模板，占位符须在使用前替换，不得
+原样提供给 Agent。
 
 ## 文件
 

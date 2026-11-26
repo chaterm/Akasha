@@ -55,6 +55,7 @@ export function UpdatePublicApiKeyModal({
     }
   }, [opened, apiKey]);
 
+
   const close = () => {
     form.reset();
     onClose();
@@ -94,9 +95,7 @@ export function UpdatePublicApiKeyModal({
             placeholder={t("Select spaces")}
             data={(spaces ?? []).map((space) => ({
               value: space.id,
-              label: space.personalOwnerId
-                ? `${space.name} · ${t("Personal space")}`
-                : space.name,
+              label: space.name,
             }))}
             searchable
             clearable

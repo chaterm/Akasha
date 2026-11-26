@@ -1,3 +1,4 @@
+import { KnowledgeQueryService } from './services/knowledge-query.service';
 import { Module } from '@nestjs/common';
 import { SpaceAuthorizationService } from '../../core/space/services/space-authorization.service';
 import { KnowledgeSourceAuthorizationService } from './services/knowledge-source-authorization.service';
@@ -77,6 +78,7 @@ import { KnowledgePageIndexSettingsRepo } from '../../database/repos/llm-wiki/kn
   ],
   controllers: [LlmWikiController, IsElfLlmWikiController],
   providers: [
+    KnowledgeQueryService,
     SpaceAuthorizationService,
     KnowledgeSourceAuthorizationService,
     KnowledgeSourceExporterService,

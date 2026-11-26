@@ -1,14 +1,11 @@
-# env & data
 .env
 .env.dev
 .env.prod
 data
-
 # compiled output
 /dist
 /node_modules
 .spec-workflow
-
 # Logs
 logs
 *.log
@@ -45,12 +42,8 @@ lerna-debug.log*
 .nx/installation
 .nx/cache
 
-# CodeGraph
+# CodeGraph (local index, per-machine)
 .codegraph/
 .vscode/
 .workbuddy
 .claude
-
-# docs
-AGENTS.md
-CLAUDE.md

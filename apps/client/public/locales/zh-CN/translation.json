@@ -732,7 +732,7 @@
   "Expires": "到期",
   "Last use": "上次使用",
   "No API keys found": "找不到API密钥",
-  "No expiration": "永不过期",
+  "No expiration": "无到期",
   "Revoked successfully": "撤销成功",
   "Select expiration date": "选择到期日期",
   "This action cannot be undone. Any applications using this API key will stop working.": "此操作无法撤销。使用此API密钥的任何应用程序将停止工作。",
@@ -2405,9 +2405,5 @@
   "Exit compare": "退出对比",
   "Failed to save version": "保存版本失败",
   "Changes are still syncing. Please try again.": "修改仍在同步中，请稍后重试。",
-  "No changes since the last version": "与上一个版本相比没有修改",
-  "Never expires": "永不过期",
-  "API keys authenticate the MCP endpoint only. Keys without an expiration stay valid until revoked.": "API 密钥仅用于 MCP 接口认证。未设过期时间的密钥在撤销前持续有效。",
-  "API keys authenticate the MCP endpoint only; they are rejected on every other HTTP endpoint. They follow your existing space and page permissions, including public/shared spaces you can edit. Page edits use normal version history and can be rolled back in Akasha.": "API 密钥仅能用于 MCP 接口认证，在其他所有 HTTP 接口都会被拒绝。密钥遵循你现有的空间和页面权限，包括你可以编辑的公开/共享空间。页面编辑会正常记录版本历史，可以在 Akasha 中回滚。",
-  "API keys authenticate this endpoint only; they are rejected on every other HTTP endpoint. MCP clients and Akasha Skills can read or edit public/shared spaces only according to the key owner's existing space and page permissions. Page edits use normal version history and can be rolled back in Akasha.": "API 密钥仅能用于此接口认证，在其他所有 HTTP 接口都会被拒绝。MCP 客户端和 Akasha Skill 只能按照密钥所有者现有的空间和页面权限读取或编辑公开/共享空间。页面编辑会正常记录版本历史，可以在 Akasha 中回滚。"
+  "No changes since the last version": "与上一个版本相比没有修改"
 }
