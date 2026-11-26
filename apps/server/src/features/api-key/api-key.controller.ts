@@ -26,8 +26,11 @@ import { UpdatePublicApiKeyDto } from './dto/update-public-api-key.dto';
 import { AgentApiKeyIdDto } from './dto/agent-api-key-id.dto';
 import { UserRole } from '../../common/helpers/types/permission';
 import { UpdateAgentSpacesDto } from './dto/update-agent-spaces.dto';
+import { AuthCredentials } from '../../common/decorators/auth-credentials.decorator';
+import { AuthCredentialPolicy } from '../../common/auth/auth-credential-policy';
 
 @UseGuards(JwtAuthGuard)
+@AuthCredentials(AuthCredentialPolicy.PERSONAL_API_KEY_FORBIDDEN)
 @Controller('api-keys')
 export class ApiKeyController {
   constructor(
@@ -74,7 +77,10 @@ export class ApiKeyController {
 
   @HttpCode(HttpStatus.OK)
   @Post('agent/spaces')
-  async listAgentSpaces(@AuthUser() user: User, @AuthWorkspace() workspace: Workspace) {
+  async listAgentSpaces(
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
     return this.apiKeyService.getAgentBindableSpaces(user.id, workspace.id);
   }
 

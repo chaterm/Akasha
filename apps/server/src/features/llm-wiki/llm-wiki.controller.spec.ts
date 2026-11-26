@@ -1,3 +1,4 @@
+import { KnowledgeQueryService } from './services/knowledge-query.service';
 import {
   BadRequestException,
   ConflictException,
@@ -28,6 +29,7 @@ import { PageAccessService } from '../../core/page/page-access/page-access.servi
 import { AgentAccessService } from '../../core/page/page-access/agent-access.service';
 import type { AgentAccessContext } from '../../common/auth/agent-access-context';
 import { withApiKeyAccess } from '../../common/auth/api-key-access';
+import { ApiKeyType } from '../../common/auth/api-key-type';
 import { KnowledgeQueryType } from './dto/query-knowledge.dto';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
 
@@ -174,6 +176,7 @@ describe('LlmWikiController', () => {
       resourceType: AuditResource.KNOWLEDGE,
       resourceId: 'workspace-1',
       metadata: {
+        origin: 'knowledge_query',
         queryHash: expect.stringMatching(/^sha256:/),
         spaceIds: ['space-1'],
         requestedSpaceIds: ['space-1'],
@@ -466,7 +469,7 @@ describe('LlmWikiController', () => {
     );
   });
 
-  it('passes the bound spaces as a supplemental scope on robot queries', async () => {
+  it('uses a scoped session or SSO identity for robot queries', async () => {
     const agentAccessService = {
       getBoundSpaceIds: jest.fn().mockResolvedValue(['space-1', 'space-2']),
     };
@@ -489,10 +492,7 @@ describe('LlmWikiController', () => {
         query: 'Space the caller is not a member of',
         spaceIds: ['space-2'],
       },
-      withApiKeyAccess(user(), {
-        apiKeyId: 'personal-1',
-        personalSpaceId: null,
-      }),
+      user(),
       workspace(),
       agentAccess(),
     );
@@ -506,7 +506,40 @@ describe('LlmWikiController', () => {
     );
   });
 
-  it('rejects robot queries authenticated only by a session', async () => {
+  it('allows a robot query with a personal API key and no Agent key', async () => {
+    const chatService = {
+      isEnabledForWorkspace: jest.fn().mockReturnValue(true),
+      chat: jest.fn().mockResolvedValue({
+        answer: 'Personal-key answer',
+        citations: [],
+      }),
+    };
+    const controller = createController({ chatService });
+    const personalUser = withApiKeyAccess(user(), {
+      apiKeyId: 'personal-1',
+      personalSpaceId: null,
+      keyType: ApiKeyType.PERSONAL,
+    });
+
+    await expect(
+      controller.queryKnowledge(
+        {
+          type: KnowledgeQueryType.ROBOT,
+          query: 'Personal key only',
+          spaceIds: ['space-1'],
+        },
+        personalUser,
+        workspace(),
+      ),
+    ).resolves.toEqual(
+      expect.objectContaining({ answer: 'Personal-key answer' }),
+    );
+    expect(chatService.chat).toHaveBeenCalledWith(
+      expect.objectContaining({ supplementalSpaceIds: undefined }),
+    );
+  });
+
+  it('rejects a session-only robot query', async () => {
     const controller = createController();
 
     await expect(
@@ -518,7 +551,7 @@ describe('LlmWikiController', () => {
         },
         user(),
         workspace(),
-        agentAccess(),
+        undefined,
       ),
     ).rejects.toBeInstanceOf(UnauthorizedException);
   });
@@ -2093,23 +2126,43 @@ function createController(
     pageIndexSettingsRepo?: { resolveMode: jest.Mock; setMode?: jest.Mock };
   } = {},
 ) {
+  const chatService = {
+    isEnabledForWorkspace: jest.fn().mockReturnValue(true),
+    chat: jest.fn(),
+    ...overrides.chatService,
+  } as unknown as AiKnowledgeChatService;
+  const images = {
+    resolveImagesForCitations: jest.fn(
+      async ({ citations }: { citations: Array<Record<string, unknown>> }) =>
+        citations.map((citation) => ({ ...citation, images: [] })),
+    ),
+    ...overrides.citationImageResolver,
+  } as unknown as KnowledgeCitationImageResolverService;
+  const audit = {
+    log: jest.fn(),
+    ...overrides.auditService,
+  } as unknown as IAuditService;
+  const queryAudit = {
+    recordQuery: jest.fn(),
+    ...overrides.queryAuditRepo,
+  } as unknown as KnowledgeQueryAuditRepo;
+  const agentAccess = {
+    getBoundSpaceIds: jest.fn().mockResolvedValue([]),
+    assertSpaceBound: jest.fn(),
+    assertPageReadable: jest.fn(),
+    ...overrides.agentAccessService,
+  } as unknown as AgentAccessService;
   return new LlmWikiController(
-    {
-      isEnabledForWorkspace: jest.fn().mockReturnValue(true),
-      chat: jest.fn(),
-      ...overrides.chatService,
-    } as unknown as AiKnowledgeChatService,
-    {
-      resolveImagesForCitations: jest.fn(
-        async ({ citations }: { citations: Array<Record<string, unknown>> }) =>
-          citations.map((citation) => ({ ...citation, images: [] })),
-      ),
-      ...overrides.citationImageResolver,
-    } as unknown as KnowledgeCitationImageResolverService,
-    {
-      log: jest.fn(),
-      ...overrides.auditService,
-    } as unknown as IAuditService,
+    chatService,
+    new KnowledgeQueryService(
+      chatService,
+      images,
+      queryAudit,
+      agentAccess,
+      audit,
+      overrides.environmentService as EnvironmentService,
+    ),
+    audit,
     {
       findWorkspaceSpaceIds: jest.fn().mockResolvedValue([]),
       getRunDiagnosticsSummary: jest.fn(),
@@ -2130,10 +2183,6 @@ function createController(
       getSpaceGraph: jest.fn(),
       ...overrides.graphService,
     } as unknown as KnowledgeGraphService,
-    {
-      recordQuery: jest.fn(),
-      ...overrides.queryAuditRepo,
-    } as unknown as KnowledgeQueryAuditRepo,
     {
       add: jest.fn(),
       ...overrides.knowledgeQueue,
@@ -2182,12 +2231,7 @@ function createController(
       ...overrides.aiModelConfigTestService,
     } as unknown as AiModelConfigTestService,
     overrides.environmentService as EnvironmentService | undefined,
-    {
-      getBoundSpaceIds: jest.fn().mockResolvedValue([]),
-      assertSpaceBound: jest.fn(),
-      assertPageReadable: jest.fn(),
-      ...overrides.agentAccessService,
-    } as unknown as AgentAccessService,
+    agentAccess,
     overrides.cacheManager as never,
     overrides.pageIndexSettingsRepo as never,
   );

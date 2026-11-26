@@ -16,6 +16,9 @@ import { AUTH_CREDENTIAL_POLICY } from '../decorators/auth-credentials.decorator
 import { AuthCredentialPolicy } from '../auth/auth-credential-policy';
 import { AGENT_CAPABILITY } from '../decorators/agent-callable.decorator';
 import { setAgentAccessContext } from '../auth/agent-access-context';
+import { getApiKeyAccess } from '../auth/api-key-access';
+import { ApiKeyType } from '../auth/api-key-type';
+import { ErrorCode, errorBody } from '../errors/error-codes';
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
@@ -85,6 +88,19 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       await this.attachAgentScope(request, publicKey);
     } else if (policy === AuthCredentialPolicy.AGENT_SCOPE_REQUIRED) {
       throw new UnauthorizedException('Agent API key is required');
+    }
+
+    if (
+      policy === AuthCredentialPolicy.PERSONAL_API_KEY_FORBIDDEN &&
+      getApiKeyAccess((request as any).user.user)?.keyType ===
+        ApiKeyType.PERSONAL
+    ) {
+      throw new ForbiddenException(
+        errorBody(
+          ErrorCode.PERSONAL_API_KEY_FORBIDDEN,
+          'Personal API keys cannot access this endpoint',
+        ),
+      );
     }
 
     if (publicKey) {

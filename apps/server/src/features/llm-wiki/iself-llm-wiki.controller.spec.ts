@@ -1,3 +1,4 @@
+import { KnowledgeQueryService } from './services/knowledge-query.service';
 import { AuditEvent, AuditResource } from '../../common/events/audit-events';
 import { UserRole } from '../../common/helpers/types/permission';
 import { AttachmentType } from '../../core/attachment/attachment.constants';
@@ -107,13 +108,15 @@ describe('IsElfLlmWikiController', () => {
       ]),
     };
     const controller = new IsElfLlmWikiController(
-      chatService as any,
-      citationImageResolver as any,
-      queryAuditRepo as any,
-      agentAccessService as any,
-      auditService as any,
-      environmentService as any,
-      attachmentResolver as any,
+      new KnowledgeQueryService(
+        chatService as any,
+        citationImageResolver as any,
+        queryAuditRepo as any,
+        agentAccessService as any,
+        auditService as any,
+        environmentService as any,
+        attachmentResolver as any,
+      ),
     );
     const user = {
       id: 'user-1',
@@ -195,6 +198,7 @@ describe('IsElfLlmWikiController', () => {
       labelNames: ['项目计划', 'kafka'],
       chatContext: ['Previous turn'],
       workspace,
+      collectTimings: true,
       generalKnowledgeEnabled: false,
     });
     expect(citationImageResolver.resolveImagesForCitations).toHaveBeenCalled();
@@ -424,15 +428,17 @@ describe('IsElfLlmWikiController', () => {
     );
 
     const controller = new IsElfLlmWikiController(
-      chatService as any,
-      {
-        resolveImagesForCitations: jest.fn().mockResolvedValue([]),
-      } as any,
-      { recordQuery: jest.fn().mockResolvedValue(undefined) } as any,
-      { getBoundSpaceIds: jest.fn().mockResolvedValue(['space-1']) } as any,
-      { log: jest.fn() } as any,
-      { getAppUrl: () => 'https://akasha.example.com' } as any,
-      resolver,
+      new KnowledgeQueryService(
+        chatService as any,
+        {
+          resolveImagesForCitations: jest.fn().mockResolvedValue([]),
+        } as any,
+        { recordQuery: jest.fn().mockResolvedValue(undefined) } as any,
+        { getBoundSpaceIds: jest.fn().mockResolvedValue(['space-1']) } as any,
+        { log: jest.fn() } as any,
+        { getAppUrl: () => 'https://akasha.example.com' } as any,
+        resolver,
+      ),
     );
 
     const user = {

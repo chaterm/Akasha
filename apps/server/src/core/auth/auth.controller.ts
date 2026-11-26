@@ -37,6 +37,8 @@ import {
   AUDIT_SERVICE,
   IAuditService,
 } from '../../integrations/audit/audit.service';
+import { AuthCredentials } from '../../common/decorators/auth-credentials.decorator';
+import { AuthCredentialPolicy } from '../../common/auth/auth-credential-policy';
 
 @SkipThrottle({ [AI_CHAT_THROTTLER]: true })
 @UseGuards(ThrottlerGuard)
@@ -118,6 +120,7 @@ export class AuthController {
 
   @SkipThrottle({ [AUTH_THROTTLER]: true })
   @UseGuards(JwtAuthGuard)
+  @AuthCredentials(AuthCredentialPolicy.PERSONAL_API_KEY_FORBIDDEN)
   @HttpCode(HttpStatus.OK)
   @Post('change-password')
   async changePassword(
@@ -180,6 +183,7 @@ export class AuthController {
 
   @SkipThrottle({ [AUTH_THROTTLER]: true })
   @UseGuards(JwtAuthGuard)
+  @AuthCredentials(AuthCredentialPolicy.PERSONAL_API_KEY_FORBIDDEN)
   @HttpCode(HttpStatus.OK)
   @Post('collab-token')
   async collabToken(

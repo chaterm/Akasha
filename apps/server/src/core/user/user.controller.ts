@@ -17,6 +17,8 @@ import { WorkspaceRepo } from '@akasha/db/repos/workspace/workspace.repo';
 import { SpaceRepo } from '@akasha/db/repos/space/space.repo';
 import { getApiKeyAccess } from '../../common/auth/api-key-access';
 import { UserRole } from '../../common/helpers/types/permission';
+import { AuthCredentials } from '../../common/decorators/auth-credentials.decorator';
+import { AuthCredentialPolicy } from '../../common/auth/auth-credential-policy';
 
 type StableVersion = [major: string, minor: string, patch: string];
 
@@ -119,6 +121,7 @@ export class UserController {
   }
 
   @HttpCode(HttpStatus.OK)
+  @AuthCredentials(AuthCredentialPolicy.PERSONAL_API_KEY_FORBIDDEN)
   @Post('update')
   async updateUser(
     @Body() updateUserDto: UpdateUserDto,

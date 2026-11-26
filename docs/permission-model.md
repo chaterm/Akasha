@@ -9,12 +9,12 @@
 一次请求依次经过五层，任一层不通过即拒绝：
 
 ```
-凭证 → 身份 → 端点白名单 → 空间范围 → 空间角色 → 页面限制
+凭证 → 身份 → 端点凭证策略 → 空间范围 → 空间角色 → 页面限制
 ```
 
 - **凭证**：请求携带的身份证明
 - **身份**：凭证解析出的主体，**恒为真实用户**
-- **端点白名单**：带 Agent 密钥时，该接口是否对 Agent 密钥开放（读写均可开放）
+- **端点凭证策略**：个人密钥受 HTTP 黑名单限制，带 Agent 密钥时还须通过 Agent 端点白名单。
 - **空间范围**：Agent 密钥的绑定集合。普通接口与本人空间关系取**交集**，知识查询接口取**并集**
 - **空间角色**：在某个空间内的角色，决定该空间的基础能力
 - **页面限制**：单个页面的额外收紧，可覆盖空间角色
@@ -67,7 +67,19 @@ SSO 令牌有两种验证路径：普通用户令牌，以及带 `x-iself-agent:
 
 空间绑定关系的权威来源是 `api_key_spaces` 表，不是这个用户行的成员关系。
 
-## 端点白名单
+## 个人 API 密钥的 HTTP 黑名单
+
+个人密钥可通过 Bearer 认证普通 HTTP 请求和 `/mcp`。HTTP 请求以持有者的用户身份执行，仍需通过各接口的资源授权。下列端点在进入业务处理前拒绝个人密钥，返回 403（`PERSONAL_API_KEY_FORBIDDEN`）。
+
+| HTTP 端点 | 受限操作 |
+| --- | --- |
+| `/api/api-keys` 管理控制器的全部端点 | 列出、创建、修改、轮换、撤销密钥，以及管理 Agent 的空间范围 |
+| `POST /api/auth/change-password` | 修改密码 |
+| `POST /api/auth/collab-token` | 签发协同令牌 |
+| `POST /api/sessions/revoke`、`POST /api/sessions/revoke-all` | 撤销会话 |
+| `POST /api/users/update` | 修改账号资料 |
+
+## Agent 端点白名单
 
 带 Agent 密钥的请求只能调用显式声明了 `@AgentCallable` 的接口，其余一律 403（`Agent API key cannot call this endpoint`）。守卫只检查声明是否存在，**不校验声明的能力名与接口实际行为是否一致**。
 
@@ -90,6 +102,17 @@ SSO 令牌有两种验证路径：普通用户令牌，以及带 `x-iself-agent:
 | `POST /api/iself/space-api-key/update` ※ | `space.binding.update` |
 
 ※ = 必须携带 Agent 密钥。
+
+### 知识查询凭证
+
+| 凭证 | `POST /api/llm-wiki/query` 的 `type=robot` | `POST /api/iself/llm-wiki/query` |
+| --- | --- | --- |
+| 仅个人密钥 | 本人可读空间 | 401，缺少 Agent 密钥 |
+| 仅会话或 SSO | 401，缺少 Agent 密钥 | 401，缺少 Agent 密钥 |
+| 会话、SSO 或个人密钥搭配 Agent 密钥 | 本人可读空间与绑定空间的并集 | 同左 |
+| 仅 Agent 密钥 | 401，缺少用户身份 | 401，缺少用户身份 |
+
+两个 robot 查询入口共用检索、页面授权、引用、附件与审计逻辑。通用知识兜底由请求字段 `generalKnowledgeEnabled` 显式开启。普通查询默认使用 `type=user`，携带 Agent 密钥时返回 400。
 
 **MCP（`/mcp`）不接受 Agent 密钥**，连接时即返回 401。MCP 只支持个人密钥和 SSO 令牌。
 
@@ -163,9 +186,3 @@ SSO 令牌有两种验证路径：普通用户令牌，以及带 `x-iself-agent:
 - 工作区所有者跳过全部页面检查。
 
 带 Agent 密钥时，这一层的判定主体仍是本人，与不带密钥时相同。受限页面本人有编辑授权即可写入，密钥不额外收紧。接口返回的 `canEdit` 描述的是本人的真实编辑权限。
-
-## 已知不一致
-
-**`/api/llm-wiki/query` 的 robot 模式要求个人密钥。** 该接口检查调用方是否带 API 密钥标记，SSO 用户没有这个标记，因此 `SSO 令牌 + Agent 密钥` 组合会返回 401（`Robot queries require a personal API key`）。`/api/iself/llm-wiki/query` 没有这个限制。
-
-**能力名不参与判定。** 见上文端点白名单。

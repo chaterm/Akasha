@@ -1,7 +1,19 @@
+import { Reflector } from '@nestjs/core';
+import { AuthGuard } from '@nestjs/passport';
+import { withApiKeyAccess } from '../auth/api-key-access';
+import { ApiKeyType } from '../auth/api-key-type';
+import { AuthController } from '../../core/auth/auth.controller';
+import { SessionController } from '../../core/session/session.controller';
+import { UserController } from '../../core/user/user.controller';
+import { ApiKeyController } from '../../features/api-key/api-key.controller';
+import { IselfAgentSpaceController } from '../../features/api-key/iself-agent-space.controller';
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { AuthCredentialPolicy } from '../auth/auth-credential-policy';
 
+jest.mock('../../core/auth/services/auth.service', () => ({
+  AuthService: class {},
+}));
 jest.mock('../../ee/sso/hoidc.service', () => ({ HoidcService: class {} }));
 
 describe('JwtAuthGuard SSO / iself-agent auth', () => {
@@ -320,5 +332,100 @@ describe('JwtAuthGuard agent key scope', () => {
     await expect(guard.canActivate(context)).rejects.toThrow(
       'Agent API key is required',
     );
+  });
+});
+
+describe('personal key HTTP endpoint policy', () => {
+  const sessionUser = {
+    id: 'u1',
+  } as import('@akasha/db/types/entity.types').User;
+  const user = withApiKeyAccess(sessionUser, {
+    apiKeyId: 'personal-1',
+    personalSpaceId: null,
+    keyType: ApiKeyType.PERSONAL,
+  });
+  const workspace = { id: 'ws-1' };
+  const validateAgentApiKeyScope = jest.fn().mockResolvedValue({
+    apiKeyId: 'agent-key',
+    workspace,
+    spaceIds: [],
+  });
+  const guard = new JwtAuthGuard(
+    new Reflector(),
+    { isCloud: () => false } as any,
+    { get: () => ({ validateAgentApiKeyScope }) } as any,
+    {} as any,
+  );
+
+  function authorize(
+    controller: Function,
+    handler: Function,
+    principal: typeof user,
+    agent = false,
+  ) {
+    const request = {
+      headers: agent ? { 'x-akasha-public-key': 'agent-token' } : {},
+      user: { user: principal, workspace },
+    };
+    const context = {
+      getHandler: () => handler,
+      getClass: () => controller,
+      switchToHttp: () => ({ getRequest: () => request }),
+    } as unknown as ExecutionContext;
+    return guard.canActivate(context);
+  }
+
+  beforeEach(() => {
+    jest
+      .spyOn(AuthGuard('jwt').prototype, 'canActivate')
+      .mockResolvedValue(true);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it.each([
+    [ApiKeyController, ApiKeyController.prototype.createApiKey],
+    [AuthController, AuthController.prototype.changePassword],
+    [AuthController, AuthController.prototype.collabToken],
+    [SessionController, SessionController.prototype.revokeSession],
+    [SessionController, SessionController.prototype.revokeAllSessions],
+    [UserController, UserController.prototype.updateUser],
+  ])(
+    'applies the blacklist before business logic',
+    async (controller, handler) => {
+      await expect(authorize(controller, handler, user)).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'PERSONAL_API_KEY_FORBIDDEN' },
+      });
+      await expect(authorize(controller, handler, sessionUser)).resolves.toBe(
+        true,
+      );
+    },
+  );
+
+  it('allows ordinary HTTP and scoped iself binding updates', async () => {
+    await expect(
+      authorize(
+        SessionController,
+        SessionController.prototype.listSessions,
+        user,
+      ),
+    ).resolves.toBe(true);
+    const update = IselfAgentSpaceController.prototype.replaceBindings;
+    await expect(
+      authorize(IselfAgentSpaceController, update, user),
+    ).rejects.toMatchObject({ status: 401 });
+    await expect(
+      authorize(IselfAgentSpaceController, update, user, true),
+    ).resolves.toBe(true);
+    await expect(
+      authorize(
+        ApiKeyController,
+        ApiKeyController.prototype.createApiKey,
+        user,
+        true,
+      ),
+    ).rejects.toMatchObject({
+      response: { code: 'PERSONAL_API_KEY_FORBIDDEN' },
+    });
   });
 });

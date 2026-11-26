@@ -1,3 +1,4 @@
+import { KnowledgeQueryService } from './services/knowledge-query.service';
 import {
   Body,
   BadRequestException,
@@ -8,7 +9,6 @@ import {
   HttpCode,
   HttpStatus,
   Inject,
-  Logger,
   NotFoundException,
   Optional,
   Param,
@@ -16,17 +16,14 @@ import {
   Post,
   Put,
   Query,
-  UnauthorizedException,
   HttpException,
   UseGuards,
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { InjectQueue } from '@nestjs/bullmq';
-import { createHash } from 'crypto';
 import { Queue } from 'bullmq';
 import { User, Workspace } from '@akasha/db/types/entity.types';
-import { KnowledgeQueryAuditRepo } from '@akasha/db/repos/llm-wiki/knowledge-query-audit.repo';
 import { PageRepo } from '@akasha/db/repos/page/page.repo';
 import { PageAccessService } from '../../core/page/page-access/page-access.service';
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
@@ -57,15 +54,8 @@ import { AdminKnowledgeRetryPagesDto } from './dto/admin-retry-pages.dto';
 import { KnowledgeGraphDto } from './dto/knowledge-graph.dto';
 import { KnowledgeSpaceOperationDto } from './dto/knowledge-space-operation.dto';
 import { QueryKnowledgeDto } from './dto/query-knowledge.dto';
-import { KnowledgeQueryType } from './dto/query-knowledge.dto';
 import { CitationPageDto } from './dto/citation-page.dto';
-import {
-  AiKnowledgeChatService,
-  AiKnowledgeChatResult,
-  isGeneralKnowledgeEnabledForUser,
-} from './services/ai-knowledge-chat.service';
-import { KnowledgeCitationImageResolverService } from './services/knowledge-citation-image-resolver.service';
-import { KnowledgeQueryCitation } from './services/knowledge-context-pack.service';
+import { AiKnowledgeChatService } from './services/ai-knowledge-chat.service';
 import { KnowledgeDiagnosticsService } from './services/knowledge-diagnostics.service';
 import { KnowledgeGraphService } from './services/knowledge-graph.service';
 import { KnowledgeSourceExporterService } from './services/knowledge-source-exporter.service';
@@ -74,7 +64,6 @@ import { KnowledgeSpaceResetService } from './services/knowledge-space-reset.ser
 import { AiModelConfigService } from './services/ai-model-config.service';
 import { AiModelConfigTestService } from './services/ai-model-config-test.service';
 import { AiModelConfigFeature } from '../../database/repos/llm-wiki/ai-model-config.repo';
-import { buildKnowledgeQueryAuditMetadata } from './services/knowledge-query-audit-metadata';
 import {
   TestAiModelConfigDto,
   UpdateAiModelConfigDto,
@@ -86,7 +75,6 @@ import {
 import { KnowledgeAdminSpaceAction } from './types/knowledge-queue.types';
 import { getPageTitle } from '../../common/helpers';
 import { jsonToMarkdown } from '../../collaboration/collaboration.util';
-import { getApiKeyAccess } from '../../common/auth/api-key-access';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
 import { AgentCallable } from '../../common/decorators/agent-callable.decorator';
 import { AgentCapability } from '../../common/auth/agent-capability';
@@ -111,7 +99,6 @@ import { ErrorCode, errorBody } from '../../common/errors/error-codes';
 @UseGuards(JwtAuthGuard)
 @Controller('llm-wiki')
 export class LlmWikiController {
-  private readonly logger = new Logger(LlmWikiController.name);
   private static readonly PUBLISH_COOLDOWN_MS = [
     10 * 60_000,
     30 * 60_000,
@@ -121,11 +108,10 @@ export class LlmWikiController {
 
   constructor(
     private readonly chatService: AiKnowledgeChatService,
-    private readonly citationImageResolver: KnowledgeCitationImageResolverService,
+    private readonly queries: KnowledgeQueryService,
     @Inject(AUDIT_SERVICE) private readonly auditService: IAuditService,
     private readonly diagnosticsService: KnowledgeDiagnosticsService,
     private readonly graphService: KnowledgeGraphService,
-    private readonly queryAuditRepo: KnowledgeQueryAuditRepo,
     @InjectQueue(QueueName.KNOWLEDGE_TEXT_QUEUE)
     private readonly knowledgeQueue: Queue,
     private readonly pageRepo: PageRepo,
@@ -175,193 +161,13 @@ export class LlmWikiController {
     @AuthWorkspace() workspace: Workspace,
     @AgentAccess() agentAccess?: AgentAccessContext,
   ) {
-    if (!this.chatService.isEnabledForWorkspace(workspace)) {
-      throw new ForbiddenException(
-        errorBody(
-          ErrorCode.AI_KNOWLEDGE_DISABLED,
-          'AI knowledge chat is disabled',
-        ),
-      );
-    }
-
-    const queryType = dto.type ?? KnowledgeQueryType.USER;
-    let publicApiKeyId: string | undefined;
-    let boundSpaceIds: string[] | undefined;
-    if (queryType === KnowledgeQueryType.ROBOT) {
-      const personalApiKeyAccess = getApiKeyAccess(user);
-      if (!personalApiKeyAccess) {
-        throw new UnauthorizedException(
-          'Robot queries require a personal API key',
-        );
-      }
-      if (agentAccess) {
-        if (!this.agentAccessService) {
-          throw new ForbiddenException('Agent authorization unavailable');
-        }
-        boundSpaceIds =
-          await this.agentAccessService.getBoundSpaceIds(agentAccess);
-        publicApiKeyId = agentAccess.apiKeyId;
-      }
-    } else if (agentAccess) {
-      throw new BadRequestException(
-        'Agent API keys are only valid for robot queries',
-      );
-    }
-
-    const personalApiKeyId = getApiKeyAccess(user)?.apiKeyId;
-    const result = await this.chatService.chat({
-      workspaceId: workspace.id,
-      userId: user.id,
-      supplementalSpaceIds: boundSpaceIds,
-      query: dto.query,
-      spaceIds: dto.spaceIds,
-      ...(dto.labels?.length ? { labelNames: dto.labels } : {}),
-      chatContext: dto.chatContext,
+    return this.queries.query(
+      dto,
+      user,
       workspace,
-      ...(isGeneralKnowledgeEnabledForUser(user)
-        ? {}
-        : { generalKnowledgeEnabled: false }),
-      collectTimings: true,
-      ...(dto.scoreThreshold !== undefined
-        ? { scoreThreshold: dto.scoreThreshold }
-        : {}),
-      ...(dto.rawResultsOnly === true ? { rawResultsOnly: true } : {}),
-      ...(dto.queryRewriteEnabled !== undefined
-        ? { queryRewriteEnabled: dto.queryRewriteEnabled }
-        : {}),
-    });
-    const queryHash = hashQuery(dto.query);
-    const {
-      retrievalDiagnostics,
-      retrievalScope,
-      attachmentHitContext,
-      timings,
-      queryObservation,
-      retrieval,
-      context,
-      ...response
-    } = result;
-    void attachmentHitContext;
-    const requestedSpaceIds = retrievalScope?.requestedSpaceIds ?? dto.spaceIds;
-    const effectiveSpaceIds =
-      retrievalScope?.effectiveSpaceIds ?? requestedSpaceIds;
-    const publicScopeValidated = Boolean(publicApiKeyId);
-
-    this.auditService.log({
-      event: AuditEvent.KNOWLEDGE_QUERY,
-      resourceType: AuditResource.KNOWLEDGE,
-      resourceId: workspace.id,
-      metadata: {
-        queryHash,
-        ...(queryType === KnowledgeQueryType.ROBOT ? { type: queryType } : {}),
-        spaceIds: dto.spaceIds,
-        ...(dto.labels?.length ? { labelCount: dto.labels.length } : {}),
-        requestedSpaceIds,
-        effectiveSpaceIds,
-        publicScopeValidated,
-        ...(personalApiKeyId ? { personalApiKeyId } : {}),
-        ...(publicApiKeyId ? { publicApiKeyId } : {}),
-        citationCount: response.citations.length,
-      },
-    });
-
-    await this.queryAuditRepo.recordQuery({
-      workspaceId: workspace.id,
-      userId: user.id,
-      queryHash,
-      retrievalMode: retrievalDiagnostics?.mode ?? 'general',
-      authorizedCapsuleCount: retrievalDiagnostics?.authorizedChunkCount ?? 0,
-      metadata: {
-        origin: 'knowledge_query',
-        ...(queryType === KnowledgeQueryType.ROBOT ? { type: queryType } : {}),
-        answerMode: response.answerMode,
-        spaceIds: dto.spaceIds,
-        ...(dto.labels?.length ? { labelCount: dto.labels.length } : {}),
-        requestedSpaceIds,
-        effectiveSpaceIds,
-        publicScopeValidated,
-        ...(personalApiKeyId ? { personalApiKeyId } : {}),
-        ...(publicApiKeyId ? { publicApiKeyId } : {}),
-        ...buildKnowledgeQueryAuditMetadata({
-          answerMode: response.answerMode,
-          queryObservation,
-          retrievalDiagnostics,
-          retrieval,
-          context,
-        }),
-        ...(timings ? { timings } : {}),
-      },
-    });
-
-    const citationsWithImages = await this.resolveCitationImages({
-      workspaceId: workspace.id,
-      answer: response.answer,
-      citations: response.citations,
-      citationEvidence: response.citationEvidence,
-    });
-    const appUrl = this.environmentService?.getAppUrl();
-
-    return {
-      ...response,
-      citations: mapCitationUrls(citationsWithImages, appUrl),
-      ...(Array.isArray(response.citationEvidence)
-        ? {
-            citationEvidence: mapCitationUrls(
-              response.citationEvidence,
-              appUrl,
-            ),
-          }
-        : {}),
-      ...(Array.isArray(response.retrievedSources)
-        ? {
-            retrievedSources: mapCitationUrls(
-              response.retrievedSources,
-              appUrl,
-            ),
-          }
-        : {}),
-      ...(Array.isArray(response.snippets)
-        ? {
-            snippets: response.snippets.map((snippet) => ({
-              ...snippet,
-              ...(Array.isArray(snippet.sourceWindows)
-                ? {
-                    sourceWindows: mapCitationUrls(
-                      snippet.sourceWindows,
-                      appUrl,
-                    ),
-                  }
-                : {}),
-            })),
-          }
-        : {}),
-    };
-  }
-
-  private async resolveCitationImages(input: {
-    workspaceId: string;
-    answer: string;
-    citations: AiKnowledgeChatResult['citations'];
-    citationEvidence: AiKnowledgeChatResult['citationEvidence'];
-  }): Promise<KnowledgeQueryCitation[]> {
-    const emptyImages = (): KnowledgeQueryCitation[] =>
-      input.citations.map((citation) => ({ ...citation, images: [] }));
-
-    try {
-      return await this.citationImageResolver.resolveImagesForCitations({
-        workspaceId: input.workspaceId,
-        citations: input.citations,
-        citationEvidence: input.citationEvidence,
-        answerText: input.answer,
-      });
-    } catch (err) {
-      this.logger.error(
-        `Citation image resolution failed for workspace ${input.workspaceId}; ` +
-          `degrading ${input.citations.length} citation(s) to images: []`,
-        err instanceof Error ? err.stack : undefined,
-      );
-      return emptyImages();
-    }
+      agentAccess,
+      'knowledge_query',
+    );
   }
 
   @HttpCode(HttpStatus.OK)
@@ -1516,10 +1322,6 @@ export class LlmWikiController {
   }
 }
 
-function hashQuery(query: string): string {
-  return `sha256:${createHash('sha256').update(query).digest('hex')}`;
-}
-
 function isModelConfigFeature(value: string): value is AiModelConfigFeature {
   return (
     value === 'compiler' ||
@@ -1527,16 +1329,6 @@ function isModelConfigFeature(value: string): value is AiModelConfigFeature {
     value === 'image' ||
     value === 'embedding'
   );
-}
-
-function mapCitationUrls<T extends { url: string }>(
-  citations: readonly T[],
-  appUrl?: string,
-): T[] {
-  return citations.map((citation) => ({
-    ...citation,
-    url: toAppCitationUrl(citation.url, appUrl),
-  }));
 }
 
 function toAppCitationUrl(url: string, appUrl?: string): string {
