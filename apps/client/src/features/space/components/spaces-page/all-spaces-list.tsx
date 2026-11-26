@@ -41,7 +41,7 @@ import clsx from "clsx";
 import { CustomAvatar } from "@/components/ui/custom-avatar.tsx";
 import { AvatarIconType } from "@/features/attachments/types/attachment.types.ts";
 import { AutoTooltipText } from "@/components/ui/auto-tooltip-text.tsx";
-import { SpaceType } from "@/features/space/types/space.types";
+import { SpaceFilterType } from "@/features/space/types/space.types";
 
 function WatchButton({
   spaceId,
@@ -95,8 +95,8 @@ interface AllSpacesListProps {
   onSearch: (query: string) => void;
   role?: string | null;
   onRoleChange?: (role: string | null) => void;
-  type?: SpaceType | null;
-  onTypeChange?: (type: SpaceType | null) => void;
+  type?: SpaceFilterType | null;
+  onTypeChange?: (type: SpaceFilterType | null) => void;
   hasPrevPage?: boolean;
   hasNextPage?: boolean;
   total?: number;
@@ -135,31 +135,36 @@ export default function AllSpacesList({
 
   return (
     <Box>
-      <Group align="center" gap="sm" wrap="wrap">
-        <Box style={{ flex: "1 1 200px", minWidth: 0 }}>
-          <SearchInput onSearch={onSearch} />
+      <Group align="center" gap="sm" wrap="wrap" justify="space-between">
+        <Box style={{ flex: "0 1 260px", minWidth: 0 }}>
+          <SearchInput onSearch={onSearch} inline />
         </Box>
-        <Select
-          data={[
-            { value: "public", label: t("Public space") },
-            { value: "personal", label: t("Personal space") },
-          ]}
-          value={type ?? null}
-          onChange={(value) => onTypeChange?.(value as SpaceType | null)}
-          placeholder={t("All space types")}
-          aria-label={t("Filter by space type")}
-          clearable
-          w={160}
-        />
-        <Select
-          data={roleFilterData}
-          value={role ?? null}
-          onChange={(value) => onRoleChange?.(value)}
-          placeholder={t("All permissions")}
-          aria-label={t("Filter by permission")}
-          clearable
-          w={160}
-        />
+        <Group gap="sm" wrap="wrap">
+          <Select
+            data={[
+              { value: "public", label: t("Public spaces") },
+              { value: "personal", label: t("Personal spaces") },
+              { value: "owned-personal", label: t("My personal spaces") },
+            ]}
+            value={type ?? null}
+            onChange={(value) =>
+              onTypeChange?.(value as SpaceFilterType | null)
+            }
+            placeholder={t("All space types")}
+            aria-label={t("Filter by space type")}
+            clearable
+            w={160}
+          />
+          <Select
+            data={roleFilterData}
+            value={role ?? null}
+            onChange={(value) => onRoleChange?.(value)}
+            placeholder={t("All permissions")}
+            aria-label={t("Filter by permission")}
+            clearable
+            w={160}
+          />
+        </Group>
       </Group>
 
       <Space h="md" />

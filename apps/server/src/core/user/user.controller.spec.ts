@@ -8,9 +8,9 @@ describe('UserController', () => {
       getActiveUserCount: jest.fn().mockResolvedValue(3),
     };
     const spaceRepo = {
-      findPersonalSpaceForUser: jest
+      findPersonalSpacesForUser: jest
         .fn()
-        .mockResolvedValue({ id: 'personal-1' }),
+        .mockResolvedValue([{ id: 'personal-1' }]),
     };
     const controller = new UserController(
       {} as any,
@@ -43,7 +43,7 @@ describe('UserController', () => {
       policy: 'ordinary-user',
     });
     expect(result.workspace).not.toHaveProperty('licenseKey');
-    expect(spaceRepo.findPersonalSpaceForUser).toHaveBeenCalledWith({
+    expect(spaceRepo.findPersonalSpacesForUser).toHaveBeenCalledWith({
       userId: 'user-1',
       workspaceId: 'workspace-1',
     });

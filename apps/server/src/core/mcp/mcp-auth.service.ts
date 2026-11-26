@@ -100,13 +100,17 @@ export class McpAuthService {
     if (!user || user.userType === UserType.AGENT || isUserDisabled(user)) {
       throw new UnauthorizedException('User not found');
     }
-    const personalSpace = await this.spaceRepo.findPersonalSpaceForUser({
+    const personalSpaceOptions = {
       userId: user.id,
       workspaceId: workspace.id,
-    });
+    };
+    const personalSpaces = await this.spaceRepo.findPersonalSpacesForUser(
+      personalSpaceOptions,
+    );
     const authenticatedUser = withApiKeyAccess(user, {
       apiKeyId: key.id,
-      personalSpaceId: personalSpace?.id ?? null,
+      personalSpaceId: personalSpaces[0]?.id ?? null,
+      personalSpaceIds: personalSpaces.filter(Boolean).map((space) => space.id),
       keyType: ApiKeyType.PERSONAL,
     });
     this.trackLastUsed(key.id);

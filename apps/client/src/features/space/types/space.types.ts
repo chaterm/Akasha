@@ -8,9 +8,10 @@ import type { KnowledgeSpaceIndexMode } from "@/features/page/services/page-serv
 import { QueryParams } from "@/lib/types.ts";
 
 export type SpaceType = "public" | "personal";
+export type SpaceFilterType = SpaceType | "owned-personal";
 
 export interface SpaceQueryParams extends QueryParams {
-  type?: SpaceType;
+  type?: SpaceFilterType;
 }
 
 export interface ISpaceSharingSettings {
@@ -49,6 +50,13 @@ export interface ISpace {
   disablePublicSharing?: boolean;
   allowViewerComments?: boolean;
   knowledgeIndexMode?: KnowledgeSpaceIndexMode;
+}
+
+export interface ICreateSpace {
+  name: string;
+  slug: string;
+  description?: string;
+  type: SpaceType;
 }
 
 interface IMembership {

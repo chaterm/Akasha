@@ -51,6 +51,15 @@ export class SpaceRepo {
     workspaceId: string;
     trx?: KyselyTransaction;
   }): Promise<Space | undefined> {
+    const spaces = await this.findPersonalSpacesForUser(opts);
+    return spaces[0];
+  }
+
+  async findPersonalSpacesForUser(opts: {
+    userId: string;
+    workspaceId: string;
+    trx?: KyselyTransaction;
+  }): Promise<Space[]> {
     const db = dbOrTx(this.db, opts.trx);
 
     return db
@@ -59,7 +68,19 @@ export class SpaceRepo {
       .where('workspaceId', '=', opts.workspaceId)
       .where('personalOwnerId', '=', opts.userId)
       .where('deletedAt', 'is', null)
-      .executeTakeFirst();
+      .orderBy('createdAt', 'asc')
+      .orderBy('id', 'asc')
+      .execute();
+  }
+
+  async lockPersonalSpacesForUser(
+    userId: string,
+    workspaceId: string,
+    trx: KyselyTransaction,
+  ): Promise<void> {
+    await sql`SELECT pg_advisory_xact_lock(hashtext(${workspaceId}), hashtext(${userId}))`.execute(
+      trx,
+    );
   }
 
   async insertPersonalSpace(
@@ -70,9 +91,6 @@ export class SpaceRepo {
     return db
       .insertInto('spaces')
       .values(insertableSpace)
-      .onConflict((oc) =>
-        oc.columns(['workspaceId', 'personalOwnerId']).doNothing(),
-      )
       .returningAll()
       .executeTakeFirst();
   }
@@ -218,7 +236,9 @@ export class SpaceRepo {
     if (allowedSpaceIds) {
       query = query.where('id', 'in', allowedSpaceIds);
     }
-    if (pagination.type) {
+    if (pagination.type === 'owned-personal') {
+      query = query.where('personalOwnerId', '=', pagination.ownerId);
+    } else if (pagination.type) {
       query = query.where(
         'personalOwnerId',
         pagination.type === 'personal' ? 'is not' : 'is',

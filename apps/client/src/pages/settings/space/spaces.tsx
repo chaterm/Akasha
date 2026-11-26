@@ -21,7 +21,11 @@ export default function Spaces() {
       <SettingsTitle title={t("Spaces")} />
 
       <Group my="md" justify="flex-end">
-        {isAdmin && <CreateSpaceModal />}
+        {isAdmin ? (
+          <CreateSpaceModal type="public" />
+        ) : (
+          <CreateSpaceModal type="personal" />
+        )}
       </Group>
 
       <SpaceList />

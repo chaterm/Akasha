@@ -35,7 +35,7 @@ describe('ApiKeyService', () => {
       ...overrides.workspaceRepo,
     };
     const spaceRepo = {
-      findPersonalSpaceForUser: jest.fn(),
+      findPersonalSpacesForUser: jest.fn().mockResolvedValue([]),
       ...overrides.spaceRepo,
     };
     const agentUserService = {
@@ -70,9 +70,9 @@ describe('ApiKeyService', () => {
   it('保留个人密钥现有的个人空间认证上下文', async () => {
     const { service, apiKeyRepo, userRepo } = makeService({
       spaceRepo: {
-        findPersonalSpaceForUser: jest
+        findPersonalSpacesForUser: jest
           .fn()
-          .mockResolvedValue({ id: 'personal-1' }),
+          .mockResolvedValue([{ id: 'personal-1' }]),
       },
     });
     apiKeyRepo.findById.mockResolvedValue({
@@ -97,6 +97,7 @@ describe('ApiKeyService', () => {
     expect(getApiKeyAccess(result.user)).toEqual({
       apiKeyId: 'key-1',
       personalSpaceId: 'personal-1',
+      personalSpaceIds: ['personal-1'],
       keyType: ApiKeyType.PERSONAL,
     });
   });

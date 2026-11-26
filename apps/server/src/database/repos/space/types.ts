@@ -1,7 +1,8 @@
 import { PaginationOptions } from '../../pagination/pagination-options';
 
 export interface SpaceListOptions extends PaginationOptions {
-  type?: 'public' | 'personal';
+  type?: 'public' | 'personal' | 'owned-personal';
+  ownerId?: string;
 }
 
 export interface UserSpaceRole {

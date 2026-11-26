@@ -41,9 +41,9 @@ function subject() {
     save: jest.fn().mockResolvedValue({ status: 'created' }),
   };
   const spaceRepo = {
-    findPersonalSpaceForUser: jest
+    findPersonalSpacesForUser: jest
       .fn()
-      .mockResolvedValue({ id: 'actual-space' }),
+      .mockResolvedValue([{ id: 'actual-space' }]),
   };
   Object.assign(service, {
     templateService,
@@ -238,7 +238,7 @@ describe('Weekly report MCP integration', () => {
       user: personalUser(),
       workspace,
     });
-    expect(spaceRepo.findPersonalSpaceForUser).toHaveBeenCalledWith({
+    expect(spaceRepo.findPersonalSpacesForUser).toHaveBeenCalledWith({
       userId: user.id,
       workspaceId: workspace.id,
     });
@@ -248,7 +248,7 @@ describe('Weekly report MCP integration', () => {
       personalSpaceId: 'actual-space',
     });
     expect(JSON.stringify(result)).not.toContain('never-output-key');
-    spaceRepo.findPersonalSpaceForUser.mockResolvedValue(undefined);
+    spaceRepo.findPersonalSpacesForUser.mockResolvedValue([]);
     expect(
       (await service.getCurrentUser({ user: personalUser(), workspace }))
         .personalSpaceId,
@@ -279,7 +279,7 @@ describe('Weekly report MCP integration', () => {
         personalSpaceId: null,
       });
       expect(result.isError).toBeUndefined();
-      expect(spaceRepo.findPersonalSpaceForUser).not.toHaveBeenCalled();
+      expect(spaceRepo.findPersonalSpacesForUser).not.toHaveBeenCalled();
       await server.close();
     },
   );

@@ -1,4 +1,4 @@
-import { PartialType } from '@nestjs/mapped-types';
+import { OmitType, PartialType } from '@nestjs/mapped-types';
 import { CreateSpaceDto } from './create-space.dto';
 import {
   IsBoolean,
@@ -10,7 +10,9 @@ import {
 } from 'class-validator';
 import { KnowledgeSpaceIndexMode } from '@akasha/db/types/knowledge-index-mode.types';
 
-export class UpdateSpaceDto extends PartialType(CreateSpaceDto) {
+export class UpdateSpaceDto extends PartialType(
+  OmitType(CreateSpaceDto, ['type'] as const),
+) {
   @IsString()
   @IsNotEmpty()
   @IsUUID()

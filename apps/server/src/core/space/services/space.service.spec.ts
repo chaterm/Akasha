@@ -17,6 +17,29 @@ describe('SpaceService personal spaces', () => {
   } as any;
   const trx = {} as any;
 
+  it('marks newly created spaces as personal only when requested', async () => {
+    const service = Object.create(SpaceService.prototype) as any;
+    service.spaceRepo = {
+      slugExists: jest.fn().mockResolvedValue(false),
+      insertSpace: jest.fn().mockResolvedValue({ id: 'space-1' }),
+    };
+
+    await service.create(user.id, workspaceId, {
+      name: 'Notes',
+      slug: 'notes',
+      type: 'personal',
+    });
+
+    expect(service.spaceRepo.insertSpace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        creatorId: user.id,
+        personalOwnerId: user.id,
+        workspaceId,
+      }),
+      undefined,
+    );
+  });
+
   function createService(overrides?: {
     existingSpace?: any;
     insertedSpace?: any;
@@ -28,6 +51,7 @@ describe('SpaceService personal spaces', () => {
     };
     const service = Object.create(SpaceService.prototype) as any;
     service.spaceRepo = {
+      lockPersonalSpacesForUser: jest.fn().mockResolvedValue(undefined),
       findPersonalSpaceForUser: jest
         .fn()
         .mockResolvedValueOnce(existingSpace)
@@ -116,15 +140,13 @@ describe('SpaceService personal spaces', () => {
 
     await service.deleteSpace('team-1', workspaceId, user.id);
 
-    expect(service.analyticsEventRepo.insertSpaceDeleted).toHaveBeenCalledWith(
-      {
-        workspaceId,
-        userId: user.id,
-        spaceId: 'team-1',
-        spaceCreatedAt: createdAt,
-        name: 'Team',
-      },
-    );
+    expect(service.analyticsEventRepo.insertSpaceDeleted).toHaveBeenCalledWith({
+      workspaceId,
+      userId: user.id,
+      spaceId: 'team-1',
+      spaceCreatedAt: createdAt,
+      name: 'Team',
+    });
   });
 
   it('stores the Space-wide knowledge publish mode and audits the change', async () => {

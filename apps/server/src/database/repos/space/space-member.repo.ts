@@ -438,7 +438,9 @@ export class SpaceMemberRepo {
     if (allowedSpaceIds) {
       query = query.where('id', 'in', allowedSpaceIds);
     }
-    if (pagination.type) {
+    if (pagination.type === 'owned-personal') {
+      query = query.where('personalOwnerId', '=', pagination.ownerId);
+    } else if (pagination.type) {
       query = query.where(
         'personalOwnerId',
         pagination.type === 'personal' ? 'is not' : 'is',

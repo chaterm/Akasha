@@ -18,7 +18,7 @@ describe('McpAuthService', () => {
     findById: jest.fn(),
   };
   const spaceRepo = {
-    findPersonalSpaceForUser: jest.fn(),
+    findPersonalSpacesForUser: jest.fn(),
   };
 
   const service = new McpAuthService(
@@ -56,9 +56,9 @@ describe('McpAuthService', () => {
     });
     workspaceRepo.findById.mockResolvedValue(workspace);
     userRepo.findById.mockResolvedValue(user);
-    spaceRepo.findPersonalSpaceForUser.mockResolvedValue({
-      id: 'personal-space-1',
-    });
+    spaceRepo.findPersonalSpacesForUser.mockResolvedValue([
+      { id: 'personal-space-1' },
+    ]);
 
     const result = await service.authenticate({
       headers: { authorization: 'Bearer token' },
@@ -68,6 +68,7 @@ describe('McpAuthService', () => {
     expect(getApiKeyAccess(result.user)).toEqual({
       apiKeyId: 'key-1',
       personalSpaceId: 'personal-space-1',
+      personalSpaceIds: ['personal-space-1'],
       keyType: 'personal',
     });
     expect(tokenService.verifyJwt).toHaveBeenCalledWith(

@@ -35,12 +35,14 @@ interface SpaceMembersProps {
   spaceId: string;
   personalOwnerId?: string | null;
   readOnly?: boolean;
+  action?: React.ReactNode;
 }
 
 export default function SpaceMembersList({
   spaceId,
   personalOwnerId,
   readOnly,
+  action,
 }: SpaceMembersProps) {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
@@ -137,7 +139,17 @@ export default function SpaceMembersList({
 
   return (
     <>
-      <SearchInput onSearch={handleSearch} />
+      <Group
+        justify="space-between"
+        align="center"
+        gap="sm"
+        mt="md"
+        mb="sm"
+        wrap="wrap"
+      >
+        <SearchInput onSearch={handleSearch} withMargin={false} />
+        {action}
+      </Group>
       <ScrollArea h={450} viewportRef={viewportRef}>
         <Table.ScrollContainer minWidth={500}>
           <Table highlightOnHover verticalSpacing={8}>

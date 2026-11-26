@@ -8,6 +8,8 @@ export interface SearchInputProps {
   placeholder?: string;
   ariaLabel?: string;
   debounceDelay?: number;
+  inline?: boolean;
+  withMargin?: boolean;
   onSearch: (value: string) => void;
 }
 
@@ -15,6 +17,8 @@ export function SearchInput({
   placeholder,
   ariaLabel,
   debounceDelay = 500,
+  inline = false,
+  withMargin = true,
   onSearch,
 }: SearchInputProps) {
   const { t } = useTranslation();
@@ -26,7 +30,7 @@ export function SearchInput({
   }, [debouncedValue, onSearch]);
 
   return (
-    <Group mb="sm">
+    <Group mb={inline || !withMargin ? 0 : "sm"} grow={inline}>
       <TextInput
         size="sm"
         placeholder={placeholder || t("Search...")}

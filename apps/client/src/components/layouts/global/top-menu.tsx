@@ -38,7 +38,6 @@ export default function TopMenu() {
 
   const user = currentUser?.user;
   const workspace = currentUser?.workspace;
-  const personalSpaceId = currentUser?.personalSpaceId;
 
   if (!user || !workspace) {
     return <></>;
@@ -65,15 +64,13 @@ export default function TopMenu() {
       <Menu.Dropdown>
         <Menu.Label>{t("Workspace")}</Menu.Label>
 
-        {personalSpaceId && (
-          <Menu.Item
-            component={Link}
-            to={`/s/${personalSpaceId}`}
-            leftSection={<IconHome size={16} />}
-          >
-            {t("Personal space")}
-          </Menu.Item>
-        )}
+        <Menu.Item
+          component={Link}
+          to="/spaces?type=owned-personal"
+          leftSection={<IconHome size={16} />}
+        >
+          {t("My personal spaces")}
+        </Menu.Item>
 
         {isOwner && (
           <Menu.Item

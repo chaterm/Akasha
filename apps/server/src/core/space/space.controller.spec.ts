@@ -88,6 +88,65 @@ describe('SpaceController knowledge publish mode', () => {
   });
 });
 
+describe('SpaceController space creation', () => {
+  const workspace = { id: 'workspace-1' } as any;
+
+  function createController(canManageSpaces: boolean) {
+    const spaceService = { createSpace: jest.fn().mockResolvedValue({}) };
+    const workspaceAbility = {
+      createForUser: jest.fn().mockReturnValue({
+        can: jest.fn().mockReturnValue(canManageSpaces),
+      }),
+    };
+    const controller = Object.create(SpaceController.prototype) as any;
+    controller.spaceService = spaceService;
+    controller.workspaceAbility = workspaceAbility;
+    return { controller, spaceService };
+  }
+
+  it('allows workspace members to create personal spaces', async () => {
+    const { controller, spaceService } = createController(false);
+    const user = { id: 'user-1', role: UserRole.MEMBER } as any;
+    const dto = { name: 'Notes', slug: 'notes', type: 'personal' };
+
+    await controller.createSpace(dto, user, workspace);
+
+    expect(spaceService.createSpace).toHaveBeenCalledWith(
+      user,
+      workspace.id,
+      dto,
+    );
+  });
+
+  it('requires workspace space-management permission to create public spaces', async () => {
+    const { controller, spaceService } = createController(false);
+    const user = { id: 'user-1', role: UserRole.MEMBER } as any;
+
+    expect(() =>
+      controller.createSpace(
+        { name: 'Team', slug: 'team', type: 'public' },
+        user,
+        workspace,
+      ),
+    ).toThrow('Forbidden');
+    expect(spaceService.createSpace).not.toHaveBeenCalled();
+  });
+
+  it('keeps the existing default creation type public for workspace admins', async () => {
+    const { controller, spaceService } = createController(true);
+    const user = { id: 'user-1', role: UserRole.ADMIN } as any;
+    const dto = { name: 'Team', slug: 'team' };
+
+    await controller.createSpace(dto, user, workspace);
+
+    expect(spaceService.createSpace).toHaveBeenCalledWith(
+      user,
+      workspace.id,
+      dto,
+    );
+  });
+});
+
 describe('SpaceController effective space access', () => {
   const createSubject = () => {
     const spaces = [{ id: 'space-1' }, { id: 'space-2' }];

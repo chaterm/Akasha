@@ -1,5 +1,6 @@
 import { Container, Title, Text, Group, Box } from "@mantine/core";
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Helmet } from "react-helmet-async";
 import { getAppName } from "@/lib/config";
@@ -9,7 +10,7 @@ import { AllSpacesList } from "@/features/space/components/spaces-page";
 import FavoriteSpacesGrid from "@/features/space/components/spaces-page/favorite-spaces-grid";
 import { usePaginateAndSearch } from "@/hooks/use-paginate-and-search";
 import useUserRole from "@/hooks/use-user-role";
-import { SpaceType } from "@/features/space/types/space.types";
+import { SpaceFilterType } from "@/features/space/types/space.types";
 
 export default function Spaces() {
   const { t } = useTranslation();
@@ -17,10 +18,23 @@ export default function Spaces() {
   const { search, cursor, goNext, goPrev, handleSearch, resetCursor } =
     usePaginateAndSearch();
   const [role, setRole] = useState<string | null>(null);
-  const [type, setType] = useState<SpaceType | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedType = searchParams.get("type");
+  const type: SpaceFilterType | null =
+    selectedType === "personal" ||
+    selectedType === "public" ||
+    selectedType === "owned-personal"
+      ? selectedType
+      : null;
 
-  const handleTypeChange = (value: SpaceType | null) => {
-    setType(value);
+  const handleTypeChange = (value: SpaceFilterType | null) => {
+    const nextSearchParams = new URLSearchParams(searchParams);
+    if (value) {
+      nextSearchParams.set("type", value);
+    } else {
+      nextSearchParams.delete("type");
+    }
+    setSearchParams(nextSearchParams, { replace: true });
     resetCursor();
   };
 
@@ -50,7 +64,13 @@ export default function Spaces() {
           <Title order={1} size="h3">
             {t("Spaces")}
           </Title>
-          {isAdmin && <CreateSpaceModal />}
+          <Group gap="xs">
+            {isAdmin ? (
+              <CreateSpaceModal type="public" />
+            ) : (
+              <CreateSpaceModal type="personal" />
+            )}
+          </Group>
         </Group>
 
         <FavoriteSpacesGrid />

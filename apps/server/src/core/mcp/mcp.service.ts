@@ -1523,17 +1523,20 @@ export class McpService {
         : keyType === ApiKeyType.AGENT
           ? 'agent_key'
           : 'other';
-    const personalSpace =
+    const personalSpaceOptions = {
+      userId: ctx.user.id,
+      workspaceId: ctx.workspace.id,
+    };
+    const personalSpaces =
       keyType === ApiKeyType.PERSONAL
-        ? await this.spaceRepo?.findPersonalSpaceForUser({
-            userId: ctx.user.id,
-            workspaceId: ctx.workspace.id,
-          })
+        ? await this.spaceRepo?.findPersonalSpacesForUser(personalSpaceOptions)
         : undefined;
     return {
       credentialType,
       timezone: ctx.user.timezone ?? null,
-      personalSpaceId: personalSpace?.id ?? null,
+      personalSpaceId: personalSpaces?.[0]?.id ?? null,
+      personalSpaceIds:
+        personalSpaces?.filter(Boolean).map((space) => space.id) ?? [],
       user: ctx.user,
       workspace: {
         id: ctx.workspace.id,

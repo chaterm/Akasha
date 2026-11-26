@@ -78,7 +78,7 @@ describe("TopMenu", () => {
     expect(screen.queryByText("知识库")).toBeNull();
   });
 
-  it("shows a personal space shortcut for the current user", async () => {
+  it("links to owned personal spaces while keeping the original label", async () => {
     render(
       <MantineProvider>
         <MemoryRouter>
@@ -90,9 +90,11 @@ describe("TopMenu", () => {
     fireEvent.click(screen.getByRole("button", { name: /name001/ }));
 
     const personalSpace = await screen.findByRole("menuitem", {
-      name: "Personal space",
+      name: "My personal spaces",
     });
 
-    expect(personalSpace.getAttribute("href")).toBe("/s/personal-1");
+    expect(personalSpace.getAttribute("href")).toBe(
+      "/spaces?type=owned-personal",
+    );
   });
 });

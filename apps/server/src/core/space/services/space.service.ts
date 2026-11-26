@@ -123,6 +123,7 @@ export class SpaceService {
         name: createSpaceDto.name ?? 'untitled space',
         description: createSpaceDto.description ?? '',
         creatorId: userId,
+        personalOwnerId: createSpaceDto.type === 'personal' ? userId : null,
         workspaceId: workspaceId,
         slug: createSpaceDto.slug,
       },
@@ -354,18 +355,23 @@ export class SpaceService {
     workspaceId: string,
     trx?: KyselyTransaction,
   ): Promise<Space> {
-    const existingSpace = await this.spaceRepo.findPersonalSpaceForUser({
-      userId: user.id,
-      workspaceId,
-      trx,
-    });
-    if (existingSpace) {
-      return existingSpace;
-    }
-
     return executeTx(
       this.db,
       async (activeTrx) => {
+        await this.spaceRepo.lockPersonalSpacesForUser(
+          user.id,
+          workspaceId,
+          activeTrx,
+        );
+        const existingSpace = await this.spaceRepo.findPersonalSpaceForUser({
+          userId: user.id,
+          workspaceId,
+          trx: activeTrx,
+        });
+        if (existingSpace) {
+          return existingSpace;
+        }
+
         const space = await this.spaceRepo.insertPersonalSpace(
           {
             name: user.name ? `${user.name}(${user.email})` : user.email,

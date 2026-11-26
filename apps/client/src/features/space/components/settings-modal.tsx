@@ -1,4 +1,4 @@
-import { Modal, Tabs, rem, Group, ScrollArea, Text } from "@mantine/core";
+import { Modal, Tabs, rem, ScrollArea, Text } from "@mantine/core";
 import SpaceMembersList from "@/features/space/components/space-members.tsx";
 import AddSpaceMembersModal from "@/features/space/components/add-space-members-modal.tsx";
 import React from "react";
@@ -86,13 +86,6 @@ export default function SpaceSettingsModal({
                 </Tabs.Panel>
 
                 <Tabs.Panel value="members">
-                  <Group my="md" justify="flex-end">
-                    {spaceAbility.can(
-                      SpaceCaslAction.Manage,
-                      SpaceCaslSubject.Member,
-                    ) && <AddSpaceMembersModal spaceId={space?.id} />}
-                  </Group>
-
                   <SpaceMembersList
                     spaceId={space?.id}
                     personalOwnerId={space?.personalOwnerId}
@@ -100,6 +93,14 @@ export default function SpaceSettingsModal({
                       SpaceCaslAction.Manage,
                       SpaceCaslSubject.Member,
                     )}
+                    action={
+                      spaceAbility.can(
+                        SpaceCaslAction.Manage,
+                        SpaceCaslSubject.Member,
+                      ) ? (
+                        <AddSpaceMembersModal spaceId={space?.id} />
+                      ) : undefined
+                    }
                   />
                 </Tabs.Panel>
 

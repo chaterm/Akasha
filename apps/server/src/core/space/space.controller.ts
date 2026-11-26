@@ -90,15 +90,20 @@ export class SpaceController {
         await this.agentAccessService.getBoundSpaceIds(agentAccess);
     }
 
+    const listOptions =
+      pagination.type === 'owned-personal'
+        ? { ...pagination, ownerId: user.id }
+        : pagination;
+
     const result = useAdminView
       ? await this.spaceService.getWorkspaceSpaces(
           workspace.id,
-          pagination,
+          listOptions,
           allowedSpaceIds,
         )
       : await this.spaceMemberService.getUserSpaces(
           user.id,
-          pagination,
+          listOptions,
           allowedSpaceIds,
         );
 
@@ -196,10 +201,11 @@ export class SpaceController {
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
   ) {
-    const ability = this.workspaceAbility.createForUser(user, workspace);
-    if (
-      ability.cannot(WorkspaceCaslAction.Manage, WorkspaceCaslSubject.Space)
-    ) {
+    const type = createSpaceDto.type ?? 'public';
+    const canManageSpaces = this.workspaceAbility
+      .createForUser(user, workspace)
+      .can(WorkspaceCaslAction.Manage, WorkspaceCaslSubject.Space);
+    if (type === 'public' && !canManageSpaces) {
       throw new ForbiddenException();
     }
     return this.spaceService.createSpace(user, workspace.id, createSpaceDto);

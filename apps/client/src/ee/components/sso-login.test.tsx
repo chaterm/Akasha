@@ -25,11 +25,12 @@ const workspaceData = {
 };
 
 let currentUser: unknown = null;
+let publicWorkspace: typeof workspaceData | undefined;
 
 vi.mock("@/features/workspace/queries/workspace-query.ts", () => ({
   useWorkspacePublicDataQuery: () => ({
-    data: workspaceData,
-    isLoading: false,
+    data: publicWorkspace,
+    isLoading: publicWorkspace === undefined,
   }),
 }));
 
@@ -47,7 +48,7 @@ vi.mock("@/ee/security/sso.utils.ts", () => ({
 
 function renderSsoLogin(path: string) {
   window.history.pushState({}, "", path);
-  render(
+  return render(
     <MantineProvider>
       <SsoLogin />
     </MantineProvider>,
@@ -75,6 +76,7 @@ describe("SsoLogin", () => {
   });
 
   beforeEach(() => {
+    publicWorkspace = workspaceData;
     currentUser = null;
     sessionStorage.clear();
     assignedHref = "";
@@ -104,6 +106,21 @@ describe("SsoLogin", () => {
       configurable: true,
       value: originalLocation,
     });
+  });
+
+  it("waits for workspace data before showing SSO on an invitation", () => {
+    publicWorkspace = undefined;
+    const view = renderSsoLogin("/invites/example");
+    expect(screen.queryByRole("button", { name: "HOIDC" })).toBeNull();
+
+    publicWorkspace = workspaceData;
+    view.rerender(
+      <MantineProvider>
+        <SsoLogin />
+      </MantineProvider>,
+    );
+    expect(screen.getByRole("button", { name: "HOIDC" })).toBeTruthy();
+    expect(assignedHref).toBe("");
   });
 
   it("auto redirects /login to HOIDC with /home as the post-login redirect", async () => {
