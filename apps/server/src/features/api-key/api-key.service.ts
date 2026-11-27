@@ -553,13 +553,17 @@ export class ApiKeyService {
     if (!user || user.userType === UserType.AGENT || isUserDisabled(user)) {
       throw new UnauthorizedException();
     }
-    const personalSpace = await this.spaceRepo.findPersonalSpaceForUser({
+    const personalSpaceOptions = {
       userId: user.id,
       workspaceId: workspace.id,
-    });
+    };
+    const personalSpaces =
+      await this.spaceRepo.findPersonalSpacesForUser(personalSpaceOptions);
     const authenticatedUser = withApiKeyAccess(user, {
       apiKeyId,
-      personalSpaceId: personalSpace?.id ?? null,
+      personalSpaceId:
+        personalSpaces.find((space) => space.isDefaultPersonal)?.id ?? null,
+      personalSpaceIds: personalSpaces.filter(Boolean).map((space) => space.id),
       keyType: ApiKeyType.PERSONAL,
     });
     this.trackLastUsed(apiKeyId);

@@ -48,7 +48,7 @@ export default function Paginate({
             onClick={onNext}
             disabled={!hasNextPage}
           >
-            {t("Next")}
+            {t("Next page")}
           </Button>
         </Group>
       )}

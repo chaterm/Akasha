@@ -20,7 +20,9 @@ import { Space, User, Workspace } from '@akasha/db/types/entity.types';
 import { AddSpaceMembersDto } from './dto/add-space-members.dto';
 import { RemoveSpaceMemberDto } from './dto/remove-space-member.dto';
 import { UpdateSpaceMemberRoleDto } from './dto/update-space-member-role.dto';
-import SpaceAbilityFactory from '../casl/abilities/space-ability.factory';
+import SpaceAbilityFactory, {
+  getSpaceMetadataPermissions,
+} from '../casl/abilities/space-ability.factory';
 import {
   SpaceCaslAction,
   SpaceCaslSubject,
@@ -72,6 +74,14 @@ export class SpaceController {
     @AgentAccess() agentAccess?: AgentAccessContext,
   ) {
     const useAdminView = isWorkspaceAdmin(user.role);
+    const isPersonalListing = pagination.type === 'personal';
+    if (
+      (pagination.personalKind !== undefined && !isPersonalListing) ||
+      (pagination.ownerQuery !== undefined &&
+        (!isPersonalListing || !useAdminView))
+    ) {
+      throw new ForbiddenException();
+    }
 
     if (
       useAdminView &&
@@ -90,15 +100,22 @@ export class SpaceController {
         await this.agentAccessService.getBoundSpaceIds(agentAccess);
     }
 
+    const listOptions =
+      pagination.type === 'created-personal'
+        ? { ...pagination, ownerId: user.id }
+        : pagination.type === 'favorites'
+          ? { ...pagination, favoriteUserId: user.id }
+          : pagination;
+
     const result = useAdminView
       ? await this.spaceService.getWorkspaceSpaces(
           workspace.id,
-          pagination,
+          listOptions,
           allowedSpaceIds,
         )
       : await this.spaceMemberService.getUserSpaces(
           user.id,
-          pagination,
+          listOptions,
           allowedSpaceIds,
         );
 
@@ -186,7 +203,13 @@ export class SpaceController {
       permissions: ability.rules,
     };
 
-    return { ...space, membership };
+    const metadataPermissions = getSpaceMetadataPermissions(
+      space,
+      user,
+      !agentAccess &&
+        !ability.cannot(SpaceCaslAction.Manage, SpaceCaslSubject.Settings),
+    );
+    return { ...space, membership, metadataPermissions };
   }
 
   @HttpCode(HttpStatus.OK)
@@ -196,10 +219,11 @@ export class SpaceController {
     @AuthUser() user: User,
     @AuthWorkspace() workspace: Workspace,
   ) {
-    const ability = this.workspaceAbility.createForUser(user, workspace);
-    if (
-      ability.cannot(WorkspaceCaslAction.Manage, WorkspaceCaslSubject.Space)
-    ) {
+    const type = createSpaceDto.type ?? 'public';
+    const canManageSpaces = this.workspaceAbility
+      .createForUser(user, workspace)
+      .can(WorkspaceCaslAction.Manage, WorkspaceCaslSubject.Space);
+    if (type === 'public' && !canManageSpaces) {
       throw new ForbiddenException();
     }
     return this.spaceService.createSpace(user, workspace.id, createSpaceDto);
@@ -225,6 +249,19 @@ export class SpaceController {
       if (ability.cannot(SpaceCaslAction.Manage, SpaceCaslSubject.Settings)) {
         throw new ForbiddenException();
       }
+      const metadataFields = (['name', 'slug', 'description'] as const).filter(
+        (field) => updateSpaceDto[field] !== undefined,
+      );
+      if (metadataFields.length) {
+        const space = await this.spaceRepo.findById(spaceId, workspace.id);
+        if (!space) {
+          throw new NotFoundException('Space not found');
+        }
+        const permissions = getSpaceMetadataPermissions(space, user, true);
+        if (metadataFields.some((field) => !permissions[field])) {
+          throw new ForbiddenException();
+        }
+      }
     }
     return this.spaceService.updateSpace(updateSpaceDto, workspace.id);
   }
@@ -246,7 +283,7 @@ export class SpaceController {
     return this.spaceService.deleteSpace(
       spaceIdDto.spaceId,
       workspace.id,
-      user.id,
+      user,
     );
   }
 

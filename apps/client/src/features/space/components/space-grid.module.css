@@ -16,6 +16,18 @@
     background: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6));
 }
 
+.cardLink::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+}
+
+.cardLink:focus-visible::after {
+    outline: 2px solid var(--mantine-primary-color-filled);
+    outline-offset: -2px;
+    border-radius: inherit;
+}
+
 .starButton {
     position: absolute;
     top: 4px;

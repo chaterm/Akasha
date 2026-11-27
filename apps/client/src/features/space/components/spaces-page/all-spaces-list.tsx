@@ -4,12 +4,16 @@ import {
   Group,
   ActionIcon,
   Box,
-  Space,
   Menu,
   Anchor,
   Tooltip,
   VisuallyHidden,
-  Select,
+  Badge,
+  Card,
+  Center,
+  Loader,
+  SimpleGrid,
+  Stack,
 } from "@mantine/core";
 import {
   IconDots,
@@ -28,12 +32,9 @@ import { useTranslation } from "react-i18next";
 import React, { useState } from "react";
 import { useDisclosure } from "@mantine/hooks";
 import { formatMemberCount } from "@/lib";
-import { SpaceRole } from "@/lib/types";
 import { getSpaceUrl } from "@/lib/config";
 import { prefetchSpace } from "@/features/space/queries/space-query";
-import { SearchInput } from "@/components/common/search-input";
 import Paginate from "@/components/common/paginate";
-import NoTableResults from "@/components/common/no-table-results";
 import SpaceSettingsModal from "@/features/space/components/settings-modal";
 import classes from "./all-spaces-list.module.css";
 import rowClasses from "@/components/ui/clickable-table-row.module.css";
@@ -41,7 +42,7 @@ import clsx from "clsx";
 import { CustomAvatar } from "@/components/ui/custom-avatar.tsx";
 import { AvatarIconType } from "@/features/attachments/types/attachment.types.ts";
 import { AutoTooltipText } from "@/components/ui/auto-tooltip-text.tsx";
-import { SpaceType } from "@/features/space/types/space.types";
+import { ISpace, SpaceView } from "@/features/space/types/space.types";
 
 function WatchButton({
   spaceId,
@@ -90,13 +91,60 @@ function WatchButton({
   );
 }
 
+function SpaceLink({ space, inTable }: { space: ISpace; inTable?: boolean }) {
+  return (
+    <Anchor
+      size="sm"
+      underline="never"
+      className={clsx(classes.spaceLink, inTable && rowClasses.link)}
+      component={Link}
+      to={getSpaceUrl(space.slug)}
+      aria-label={space.name}
+      onMouseEnter={() => prefetchSpace(space.slug, space.id)}
+    >
+      <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+        <CustomAvatar
+          name={space.name}
+          avatarUrl={space.logo}
+          type={AvatarIconType.SPACE_ICON}
+          color="initials"
+          variant="filled"
+          size="md"
+        />
+        <AutoTooltipText fz="sm" fw={500} lineClamp={1} style={{ minWidth: 0 }}>
+          {space.name}
+        </AutoTooltipText>
+      </Group>
+    </Anchor>
+  );
+}
+
+function SpaceTypeBadge({ space }: { space: ISpace }) {
+  const { t } = useTranslation();
+  const label = !space.personalOwnerId
+    ? t("Public space")
+    : space.isDefaultPersonal
+      ? t("Default personal space")
+      : t("Private space");
+
+  return (
+    <Badge
+      variant="light"
+      color={space.personalOwnerId ? "gray" : "blue"}
+      size="sm"
+      title={label}
+    >
+      {label}
+    </Badge>
+  );
+}
+
 interface AllSpacesListProps {
-  spaces: any[];
-  onSearch: (query: string) => void;
-  role?: string | null;
-  onRoleChange?: (role: string | null) => void;
-  type?: SpaceType | null;
-  onTypeChange?: (type: SpaceType | null) => void;
+  spaces: ISpace[];
+  view: SpaceView;
+  isLoading: boolean;
+  isError: boolean;
+  emptyMessage: string;
   hasPrevPage?: boolean;
   hasNextPage?: boolean;
   total?: number;
@@ -106,11 +154,10 @@ interface AllSpacesListProps {
 
 export default function AllSpacesList({
   spaces,
-  onSearch,
-  role,
-  onRoleChange,
-  type,
-  onTypeChange,
+  view,
+  isLoading,
+  isError,
+  emptyMessage,
   hasPrevPage,
   hasNextPage,
   total,
@@ -118,164 +165,126 @@ export default function AllSpacesList({
   onPrev,
 }: AllSpacesListProps) {
   const { t } = useTranslation();
-  const roleFilterData = [
-    { value: SpaceRole.ADMIN, label: t("Full access") },
-    { value: SpaceRole.WRITER, label: t("Can edit") },
-    { value: SpaceRole.READER, label: t("Can view") },
-  ];
   const watchedIds = useWatchedSpaceIds();
   const [settingsOpened, { open: openSettings, close: closeSettings }] =
     useDisclosure(false);
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
 
-  const handleOpenSettings = (spaceId: string) => {
-    setSelectedSpaceId(spaceId);
-    openSettings();
-  };
+  const renderActions = (space: ISpace) => (
+    <Group gap={4} justify="flex-end" wrap="nowrap" style={{ flexShrink: 0 }}>
+      <StarButton type="space" spaceId={space.id} name={space.name} size={16} />
+      <WatchButton spaceId={space.id} watchedIds={watchedIds} />
+      <Menu position="bottom-end">
+        <Menu.Target>
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            aria-label={t("Space menu")}
+          >
+            <IconDots size={16} />
+          </ActionIcon>
+        </Menu.Target>
+        <Menu.Dropdown>
+          <Menu.Item
+            leftSection={<IconSettings size={16} />}
+            onClick={() => {
+              setSelectedSpaceId(space.id);
+              openSettings();
+            }}
+          >
+            {t("Space settings")}
+          </Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
+    </Group>
+  );
+
+  if (isLoading) {
+    return (
+      <Center py="xl" role="status" aria-label={t("Loading spaces")}>
+        <Loader size="sm" />
+      </Center>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Text py="xl" ta="center" role="alert">
+        {t("Failed to load spaces")}
+      </Text>
+    );
+  }
 
   return (
     <Box>
-      <Group align="center" gap="sm" wrap="wrap">
-        <Box style={{ flex: "1 1 200px", minWidth: 0 }}>
-          <SearchInput onSearch={onSearch} />
-        </Box>
-        <Select
-          data={[
-            { value: "public", label: t("Public space") },
-            { value: "personal", label: t("Personal space") },
-          ]}
-          value={type ?? null}
-          onChange={(value) => onTypeChange?.(value as SpaceType | null)}
-          placeholder={t("All space types")}
-          aria-label={t("Filter by space type")}
-          clearable
-          w={160}
-        />
-        <Select
-          data={roleFilterData}
-          value={role ?? null}
-          onChange={(value) => onRoleChange?.(value)}
-          placeholder={t("All permissions")}
-          aria-label={t("Filter by permission")}
-          clearable
-          w={160}
-        />
-      </Group>
-
-      <Space h="md" />
-
-      <Table.ScrollContainer minWidth={500}>
-        <Table highlightOnHover verticalSpacing="sm">
-          <Table.Caption>
-            <VisuallyHidden>
-              {t("List of spaces in this workspace")}
-            </VisuallyHidden>
-          </Table.Caption>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>{t("Space")}</Table.Th>
-              <Table.Th>{t("Members")}</Table.Th>
-              <Table.Th w={130}>
-                <VisuallyHidden>{t("Action")}</VisuallyHidden>
-              </Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-
-          <Table.Tbody>
-            {spaces.length > 0 ? (
-              spaces.map((space) => (
+      {spaces.length === 0 ? (
+        <Text py="xl" ta="center" c="dimmed">
+          {emptyMessage}
+        </Text>
+      ) : view === "cards" ? (
+        <SimpleGrid cols={{ base: 1, xs: 2, sm: 3 }}>
+          {spaces.map((space) => (
+            <Card key={space.id} withBorder radius="md" padding="md">
+              <Stack gap="sm" h="100%">
+                <SpaceLink space={space} />
+                {space.description && (
+                  <Text size="sm" c="dimmed" lineClamp={2}>
+                    {space.description}
+                  </Text>
+                )}
+                <Group
+                  mt="auto"
+                  justify="space-between"
+                  align="center"
+                  gap="xs"
+                  wrap="nowrap"
+                >
+                  <SpaceTypeBadge space={space} />
+                  {renderActions(space)}
+                </Group>
+              </Stack>
+            </Card>
+          ))}
+        </SimpleGrid>
+      ) : (
+        <Table.ScrollContainer minWidth={530}>
+          <Table highlightOnHover verticalSpacing="sm">
+            <Table.Caption>
+              <VisuallyHidden>
+                {t("List of spaces in this workspace")}
+              </VisuallyHidden>
+            </Table.Caption>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>{t("Space")}</Table.Th>
+                <Table.Th>{t("Type")}</Table.Th>
+                <Table.Th>{t("Members")}</Table.Th>
+                <Table.Th w={116}>
+                  <VisuallyHidden>{t("Action")}</VisuallyHidden>
+                </Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {spaces.map((space) => (
                 <Table.Tr key={space.id} className={rowClasses.row}>
                   <Table.Td>
-                    <Anchor
-                      size="sm"
-                      underline="never"
-                      style={{
-                        cursor: "pointer",
-                        color: "var(--mantine-color-text)",
-                      }}
-                      className={clsx(classes.spaceLink, rowClasses.link)}
-                      component={Link}
-                      to={getSpaceUrl(space.slug)}
-                    >
-                      <Group
-                        gap="sm"
-                        wrap="nowrap"
-                        onMouseEnter={() => prefetchSpace(space.slug, space.id)}
-                      >
-                        <CustomAvatar
-                          name={space.name}
-                          avatarUrl={space.logo}
-                          type={AvatarIconType.SPACE_ICON}
-                          color="initials"
-                          variant="filled"
-                          size="md"
-                        />
-                        <div
-                          style={{
-                            minWidth: 0,
-                            overflow: "hidden",
-                            maxWidth: 350,
-                          }}
-                        >
-                          <AutoTooltipText fz="sm" fw={500} lineClamp={1}>
-                            {space.name}
-                          </AutoTooltipText>
-                          {space.description && (
-                            <Text fz="xs" c="dimmed" lineClamp={2}>
-                              {space.description}
-                            </Text>
-                          )}
-                        </div>
-                      </Group>
-                    </Anchor>
+                    <SpaceLink space={space} inTable />
+                  </Table.Td>
+                  <Table.Td>
+                    <SpaceTypeBadge space={space} />
                   </Table.Td>
                   <Table.Td>
                     <Text size="sm" style={{ whiteSpace: "nowrap" }}>
                       {formatMemberCount(space.memberCount, t)}
                     </Text>
                   </Table.Td>
-                  <Table.Td>
-                    <Group gap="xs" justify="flex-end" wrap="nowrap">
-                      <StarButton
-                        type="space"
-                        spaceId={space.id}
-                        name={space.name}
-                        size={16}
-                      />
-                      <WatchButton
-                        spaceId={space.id}
-                        watchedIds={watchedIds}
-                        size={16}
-                      />
-                      <Menu position="bottom-end">
-                        <Menu.Target>
-                          <ActionIcon
-                            variant="subtle"
-                            color="gray"
-                            aria-label={t("Space menu")}
-                          >
-                            <IconDots size={16} />
-                          </ActionIcon>
-                        </Menu.Target>
-                        <Menu.Dropdown>
-                          <Menu.Item
-                            leftSection={<IconSettings size={16} />}
-                            onClick={() => handleOpenSettings(space.id)}
-                          >
-                            {t("Space settings")}
-                          </Menu.Item>
-                        </Menu.Dropdown>
-                      </Menu>
-                    </Group>
-                  </Table.Td>
+                  <Table.Td>{renderActions(space)}</Table.Td>
                 </Table.Tr>
-              ))
-            ) : (
-              <NoTableResults colSpan={3} />
-            )}
-          </Table.Tbody>
-        </Table>
-      </Table.ScrollContainer>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
+      )}
 
       {total !== undefined && (
         <Paginate

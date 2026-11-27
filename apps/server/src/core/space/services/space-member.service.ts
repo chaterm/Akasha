@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -110,6 +111,11 @@ export class SpaceMemberService {
     const space = await this.spaceRepo.findById(dto.spaceId, workspaceId);
     if (!space) {
       throw new NotFoundException('Space not found');
+    }
+    if (space.personalOwnerId && !space.isDefaultPersonal) {
+      throw new ForbiddenException(
+        'Members cannot be invited to a self-created personal space',
+      );
     }
 
     const validUsersQuery = this.db

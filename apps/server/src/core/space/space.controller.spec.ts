@@ -88,6 +88,126 @@ describe('SpaceController knowledge publish mode', () => {
   });
 });
 
+describe('SpaceController metadata updates', () => {
+  const workspace = { id: 'workspace-1' };
+  const member = { id: 'owner', role: UserRole.MEMBER };
+
+  it('returns field permissions and rejects a mixed update with a read-only field', async () => {
+    const space = {
+      id: 'space-1',
+      personalOwnerId: member.id,
+      creatorId: 'original-creator',
+      isDefaultPersonal: true,
+    };
+    const controller = Object.create(SpaceController.prototype) as any;
+    controller.spaceService = {
+      getSpaceInfo: jest.fn().mockResolvedValue(space),
+      updateSpace: jest.fn().mockResolvedValue(space),
+    };
+    controller.spaceRepo = { findById: jest.fn().mockResolvedValue(space) };
+    controller.spaceAbility = {
+      createForUser: jest
+        .fn()
+        .mockResolvedValue({ cannot: () => false, rules: [] }),
+    };
+    controller.spaceMemberRepo = {
+      getUserSpaceRoles: jest
+        .fn()
+        .mockResolvedValue([{ role: SpaceRole.ADMIN }]),
+    };
+
+    const result = await controller.getSpaceInfo(
+      { spaceId: space.id },
+      member,
+      workspace,
+    );
+    expect(result.metadataPermissions).toEqual({
+      icon: true,
+      name: true,
+      slug: false,
+      description: true,
+    });
+    await expect(
+      controller.updateSpace(
+        { spaceId: space.id, name: 'New name', slug: 'newslug' },
+        member,
+        workspace,
+      ),
+    ).rejects.toThrow('Forbidden');
+    expect(controller.spaceService.updateSpace).not.toHaveBeenCalled();
+
+    const dto = {
+      spaceId: space.id,
+      name: 'New name',
+      description: 'New description',
+    };
+    await controller.updateSpace(dto, member, workspace);
+    expect(controller.spaceService.updateSpace).toHaveBeenCalledWith(
+      dto,
+      workspace.id,
+    );
+  });
+});
+
+describe('SpaceController space creation', () => {
+  const workspace = { id: 'workspace-1' } as any;
+
+  function createController(canManageSpaces: boolean) {
+    const spaceService = { createSpace: jest.fn().mockResolvedValue({}) };
+    const workspaceAbility = {
+      createForUser: jest.fn().mockReturnValue({
+        can: jest.fn().mockReturnValue(canManageSpaces),
+      }),
+    };
+    const controller = Object.create(SpaceController.prototype) as any;
+    controller.spaceService = spaceService;
+    controller.workspaceAbility = workspaceAbility;
+    return { controller, spaceService };
+  }
+
+  it('allows workspace members to create personal spaces', async () => {
+    const { controller, spaceService } = createController(false);
+    const user = { id: 'user-1', role: UserRole.MEMBER } as any;
+    const dto = { name: 'Notes', slug: 'notes', type: 'personal' };
+
+    await controller.createSpace(dto, user, workspace);
+
+    expect(spaceService.createSpace).toHaveBeenCalledWith(
+      user,
+      workspace.id,
+      dto,
+    );
+  });
+
+  it('requires workspace space-management permission to create public spaces', async () => {
+    const { controller, spaceService } = createController(false);
+    const user = { id: 'user-1', role: UserRole.MEMBER } as any;
+
+    expect(() =>
+      controller.createSpace(
+        { name: 'Team', slug: 'team', type: 'public' },
+        user,
+        workspace,
+      ),
+    ).toThrow('Forbidden');
+    expect(spaceService.createSpace).not.toHaveBeenCalled();
+  });
+
+  it('keeps the existing default creation type public for workspace admins', async () => {
+    const { controller, spaceService } = createController(true);
+    const user = { id: 'user-1', role: UserRole.ADMIN } as any;
+    const dto = { name: 'Team', slug: 'team' };
+
+    await controller.createSpace(dto, user, workspace);
+
+    expect(spaceService.createSpace).toHaveBeenCalledWith(
+      user,
+      workspace.id,
+      dto,
+    );
+  });
+});
+
 describe('SpaceController effective space access', () => {
   const createSubject = () => {
     const spaces = [{ id: 'space-1' }, { id: 'space-2' }];
@@ -238,6 +358,72 @@ describe('SpaceController effective space access', () => {
     expect(spaceService.getWorkspaceSpaces).not.toHaveBeenCalled();
     expect(spaceMemberService.getUserSpaces).toHaveBeenCalledWith(
       'user-1',
+      options,
+      undefined,
+    );
+  });
+
+  it.each([UserRole.ADMIN, UserRole.MEMBER])(
+    'scopes favorite spaces to the signed-in %s',
+    async (role) => {
+      const { controller, spaceService, spaceMemberService } = createSubject();
+      const options = { ...pagination(), type: 'favorites' } as const;
+      await controller.getWorkspaceSpaces(options, user(role), workspace);
+      const scoped = { ...options, favoriteUserId: 'user-1' };
+      if (role === UserRole.ADMIN) {
+        expect(spaceService.getWorkspaceSpaces).toHaveBeenCalledWith(
+          workspace.id,
+          scoped,
+          undefined,
+        );
+      } else {
+        expect(spaceMemberService.getUserSpaces).toHaveBeenCalledWith(
+          'user-1',
+          scoped,
+          undefined,
+        );
+      }
+    },
+  );
+
+  it('lets members filter accessible personal spaces by kind', async () => {
+    const { controller, spaceService, spaceMemberService } = createSubject();
+    const options = {
+      ...pagination(SpaceRole.WRITER),
+      type: 'personal',
+      personalKind: 'created',
+    } as const;
+
+    await controller.getWorkspaceSpaces(options, user(UserRole.MEMBER), workspace);
+    expect(spaceMemberService.getUserSpaces).toHaveBeenCalledWith(
+      'user-1',
+      options,
+      undefined,
+    );
+    expect(spaceService.getWorkspaceSpaces).not.toHaveBeenCalled();
+  });
+
+  it('limits personal-space owner search to workspace administrators', async () => {
+    const { controller, spaceService, spaceMemberService } = createSubject();
+    const options = {
+      ...pagination(),
+      type: 'personal',
+      personalKind: 'created',
+      ownerQuery: 'jane@example.com',
+    } as const;
+
+    await expect(
+      controller.getWorkspaceSpaces(options, user(UserRole.MEMBER), workspace),
+    ).rejects.toThrow('Forbidden');
+    expect(spaceMemberService.getUserSpaces).not.toHaveBeenCalled();
+
+    await controller.getWorkspaceSpaces(
+      options,
+      user(UserRole.ADMIN),
+      workspace,
+    );
+    expect(spaceService.getWorkspaceSpaces).toHaveBeenCalledWith(
+      workspace.id,
       options,
       undefined,
     );

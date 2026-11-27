@@ -22,16 +22,12 @@ export class FavoriteRepo {
   constructor(@InjectKysely() private readonly db: KyselyDB) {}
 
   async insert(favorite: InsertableFavorite): Promise<Favorite | undefined> {
-    try {
-      return await this.db
-        .insertInto('favorites')
-        .values(favorite)
-        .returningAll()
-        .executeTakeFirst();
-    } catch (err: any) {
-      if (err?.code === '23505') return undefined;
-      throw err;
-    }
+    return this.db
+      .insertInto('favorites')
+      .values(favorite)
+      .onConflict((oc) => oc.doNothing())
+      .returningAll()
+      .executeTakeFirst();
   }
 
   async deleteByUserAndPage(userId: string, pageId: string): Promise<void> {

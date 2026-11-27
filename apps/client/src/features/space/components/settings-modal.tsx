@@ -1,4 +1,4 @@
-import { Modal, Tabs, rem, Group, ScrollArea, Text } from "@mantine/core";
+import { Modal, Tabs, rem, ScrollArea, Text } from "@mantine/core";
 import SpaceMembersList from "@/features/space/components/space-members.tsx";
 import AddSpaceMembersModal from "@/features/space/components/add-space-members-modal.tsx";
 import React from "react";
@@ -11,7 +11,6 @@ import {
   SpaceCaslSubject,
 } from "@/features/space/permissions/permissions.type.ts";
 import { useTranslation } from "react-i18next";
-import useUserRole from "@/hooks/use-user-role.tsx";
 
 interface SpaceSettingsModalProps {
   spaceId: string;
@@ -29,7 +28,10 @@ export default function SpaceSettingsModal({
 
   const spaceRules = space?.membership?.permissions;
   const spaceAbility = useSpaceAbility(spaceRules);
-  const { isOwner } = useUserRole();
+  const canInviteMembers =
+    space &&
+    (!space.personalOwnerId || space.isDefaultPersonal) &&
+    spaceAbility.can(SpaceCaslAction.Manage, SpaceCaslSubject.Member);
   const canManageSettings = spaceAbility.can(
     SpaceCaslAction.Manage,
     SpaceCaslSubject.Settings,
@@ -78,21 +80,13 @@ export default function SpaceSettingsModal({
                     <div style={{ paddingBottom: "100px" }}>
                       <SpaceDetails
                         spaceId={space?.id}
-                        readOnly={!isOwner}
-                        canEditIcon={canManageSettings}
+                        canManageSettings={canManageSettings}
                       />
                     </div>
                   </ScrollArea>
                 </Tabs.Panel>
 
                 <Tabs.Panel value="members">
-                  <Group my="md" justify="flex-end">
-                    {spaceAbility.can(
-                      SpaceCaslAction.Manage,
-                      SpaceCaslSubject.Member,
-                    ) && <AddSpaceMembersModal spaceId={space?.id} />}
-                  </Group>
-
                   <SpaceMembersList
                     spaceId={space?.id}
                     personalOwnerId={space?.personalOwnerId}
@@ -100,6 +94,11 @@ export default function SpaceSettingsModal({
                       SpaceCaslAction.Manage,
                       SpaceCaslSubject.Member,
                     )}
+                    action={
+                      canInviteMembers ? (
+                        <AddSpaceMembersModal spaceId={space?.id} />
+                      ) : undefined
+                    }
                   />
                 </Tabs.Panel>
 

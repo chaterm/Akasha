@@ -9,6 +9,7 @@ import {
 import {
   IAddSpaceMember,
   IChangeSpaceMemberRole,
+  ICreateSpace,
   IRemoveSpaceMember,
   ISpace,
   SpaceQueryParams,
@@ -82,7 +83,7 @@ export function useCreateSpaceMutation() {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
 
-  return useMutation<ISpace, Error, Partial<ISpace>>({
+  return useMutation<ISpace, Error, ICreateSpace>({
     mutationFn: (data) => createSpace(data),
     onSuccess: () => {
       queryClient.invalidateQueries({
@@ -166,6 +167,8 @@ export function useDeleteSpaceMutation() {
       queryClient.invalidateQueries({
         predicate: (item) => ["spaces"].includes(item.queryKey[0] as string),
       });
+      queryClient.invalidateQueries({ queryKey: ["favorites", "space"] });
+      queryClient.invalidateQueries({ queryKey: ["favorite-ids", "space"] });
     },
     onError: (error) => notifyError(error, "Failed to delete space"),
   });

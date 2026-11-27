@@ -39,6 +39,18 @@ export class SpacePaginationOptions {
   role?: SpaceRole;
 
   @IsOptional()
-  @IsIn(['public', 'personal'])
-  type?: 'public' | 'personal';
+  @IsIn(['public', 'personal', 'created-personal', 'favorites'])
+  type?: 'public' | 'personal' | 'created-personal' | 'favorites';
+
+  @IsOptional()
+  @IsIn(['default', 'created'])
+  personalKind?: 'default' | 'created';
+
+  @IsOptional()
+  @IsBoolean()
+  sortByType?: boolean;
+
+  @IsOptional()
+  @IsString()
+  ownerQuery?: string;
 }

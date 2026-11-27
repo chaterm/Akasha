@@ -26,7 +26,10 @@ export function useFavoritesQuery(type?: FavoriteType, spaceId?: string) {
   });
 }
 
-export function useFavoriteIds(type: FavoriteType, spaceId?: string): Set<string> {
+export function useFavoriteIds(
+  type: FavoriteType,
+  spaceId?: string,
+): Set<string> {
   const { data } = useQuery({
     queryKey: ["favorite-ids", type, spaceId],
     queryFn: () => getFavoriteIds(type, spaceId),
@@ -63,6 +66,11 @@ export function useAddFavoriteMutation() {
       queryClient.invalidateQueries({
         queryKey: ["favorites", variables.type],
       });
+      if (variables.type === "space") {
+        queryClient.invalidateQueries({
+          queryKey: ["spaces", { type: "favorites" }],
+        });
+      }
     },
   });
 }
@@ -86,6 +94,11 @@ export function useRemoveFavoriteMutation() {
       queryClient.invalidateQueries({
         queryKey: ["favorites", variables.type],
       });
+      if (variables.type === "space") {
+        queryClient.invalidateQueries({
+          queryKey: ["spaces", { type: "favorites" }],
+        });
+      }
     },
   });
 }

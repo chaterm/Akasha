@@ -8,9 +8,14 @@ import type { KnowledgeSpaceIndexMode } from "@/features/page/services/page-serv
 import { QueryParams } from "@/lib/types.ts";
 
 export type SpaceType = "public" | "personal";
+export type SpaceFilterType = SpaceType | "created-personal" | "favorites";
+export type PersonalSpaceKind = "default" | "created";
+export type SpaceView = "list" | "cards";
 
 export interface SpaceQueryParams extends QueryParams {
-  type?: SpaceType;
+  type?: SpaceFilterType;
+  personalKind?: PersonalSpaceKind;
+  sortByType?: boolean;
 }
 
 export interface ISpaceSharingSettings {
@@ -31,6 +36,13 @@ export interface ISpaceSettings {
   knowledge?: ISpaceKnowledgeSettings;
 }
 
+export interface SpaceMetadataPermissions {
+  icon: boolean;
+  name: boolean;
+  slug: boolean;
+  description: boolean;
+}
+
 export interface ISpace {
   id: string;
   name: string;
@@ -40,15 +52,24 @@ export interface ISpace {
   hostname: string;
   creatorId: string;
   personalOwnerId: string | null;
+  isDefaultPersonal: boolean;
   createdAt: Date;
   updatedAt: Date;
   memberCount?: number;
   spaceId?: string;
   membership?: IMembership;
+  metadataPermissions?: SpaceMetadataPermissions;
   settings?: ISpaceSettings;
   disablePublicSharing?: boolean;
   allowViewerComments?: boolean;
   knowledgeIndexMode?: KnowledgeSpaceIndexMode;
+}
+
+export interface ICreateSpace {
+  name: string;
+  slug: string;
+  description?: string;
+  type: SpaceType;
 }
 
 interface IMembership {

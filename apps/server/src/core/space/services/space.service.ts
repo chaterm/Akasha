@@ -17,7 +17,10 @@ import { executeTx } from '@akasha/db/utils';
 import { InjectKysely } from 'nestjs-kysely';
 import { Feature } from '../../../common/features';
 import { SpaceMemberService } from './space-member.service';
-import { SpaceRole } from '../../../common/helpers/types/permission';
+import {
+  isWorkspaceAdmin,
+  SpaceRole,
+} from '../../../common/helpers/types/permission';
 import { SpaceMemberRepo } from '@akasha/db/repos/space/space-member.repo';
 import { nanoIdGen } from '../../../common/helpers';
 import { QueueJob, QueueName } from 'src/integrations/queue/constants';
@@ -123,6 +126,7 @@ export class SpaceService {
         name: createSpaceDto.name ?? 'untitled space',
         description: createSpaceDto.description ?? '',
         creatorId: userId,
+        personalOwnerId: createSpaceDto.type === 'personal' ? userId : null,
         workspaceId: workspaceId,
         slug: createSpaceDto.slug,
       },
@@ -301,18 +305,27 @@ export class SpaceService {
   async deleteSpace(
     spaceId: string,
     workspaceId: string,
-    actorId?: string,
+    actor: Pick<User, 'id' | 'role'>,
   ): Promise<void> {
     const space = await this.spaceRepo.findById(spaceId, workspaceId);
     if (!space) {
       throw new NotFoundException('Space not found');
     }
-    if (space.personalOwnerId) {
+    if (space.isDefaultPersonal) {
       throw new BadRequestException(
         errorBody(
           ErrorCode.PERSONAL_SPACE_PROTECTED,
-          'Personal spaces cannot be deleted',
+          'The default personal space cannot be deleted',
         ),
+      );
+    }
+    if (
+      space.personalOwnerId &&
+      space.creatorId !== actor.id &&
+      !isWorkspaceAdmin(actor.role)
+    ) {
+      throw new ForbiddenException(
+        'Only the creator or a workspace admin can delete this personal space',
       );
     }
 
@@ -322,7 +335,7 @@ export class SpaceService {
     await this.analyticsEventRepo
       .insertSpaceDeleted({
         workspaceId,
-        userId: actorId,
+        userId: actor.id,
         spaceId,
         spaceCreatedAt: new Date(space.createdAt),
         name: space.name,
@@ -354,18 +367,23 @@ export class SpaceService {
     workspaceId: string,
     trx?: KyselyTransaction,
   ): Promise<Space> {
-    const existingSpace = await this.spaceRepo.findPersonalSpaceForUser({
-      userId: user.id,
-      workspaceId,
-      trx,
-    });
-    if (existingSpace) {
-      return existingSpace;
-    }
-
     return executeTx(
       this.db,
       async (activeTrx) => {
+        await this.spaceRepo.lockPersonalSpacesForUser(
+          user.id,
+          workspaceId,
+          activeTrx,
+        );
+        const existingSpace = await this.spaceRepo.findPersonalSpaceForUser({
+          userId: user.id,
+          workspaceId,
+          trx: activeTrx,
+        });
+        if (existingSpace) {
+          return existingSpace;
+        }
+
         const space = await this.spaceRepo.insertPersonalSpace(
           {
             name: user.name ? `${user.name}(${user.email})` : user.email,

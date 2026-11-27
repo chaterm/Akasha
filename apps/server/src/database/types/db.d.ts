@@ -1005,6 +1005,7 @@ export interface Spaces {
   deletedAt: Timestamp | null;
   description: string | null;
   id: Generated<string>;
+  isDefaultPersonal: Generated<boolean>;
   knowledgeGeneration: Generated<number>;
   logo: string | null;
   name: string | null;

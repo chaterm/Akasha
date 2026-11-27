@@ -1,4 +1,6 @@
 import React, { useState } from "react";
+import { useAtomValue } from "jotai";
+import { currentUserAtom } from "@/features/user/atoms/current-user-atom.ts";
 import { useSpaceQuery } from "@/features/space/queries/space-query.ts";
 import { EditSpaceForm } from "@/features/space/components/edit-space-form.tsx";
 import { Button, Divider, Text, Title } from "@mantine/core";
@@ -24,17 +26,30 @@ import useUserRole from "@/hooks/use-user-role.tsx";
 
 interface SpaceDetailsProps {
   spaceId: string;
-  readOnly?: boolean;
-  canEditIcon?: boolean;
+  canManageSettings: boolean;
 }
 export default function SpaceDetails({
   spaceId,
-  readOnly,
-  canEditIcon,
+  canManageSettings,
 }: SpaceDetailsProps) {
   const { t } = useTranslation();
   const { data: space, isLoading, refetch } = useSpaceQuery(spaceId);
-  const { isAdmin } = useUserRole();
+  const currentUserId = useAtomValue(currentUserAtom)?.user?.id;
+  const { isAdmin, isOwner } = useUserRole();
+  const isPersonal = space && isPersonalSpace(space);
+  const canManagePersonalSpace =
+    isPersonal &&
+    canManageSettings &&
+    (isAdmin || space.personalOwnerId === currentUserId);
+  const canManageSelfCreatedSpace =
+    canManagePersonalSpace &&
+    !space.isDefaultPersonal &&
+    (isAdmin || space.creatorId === currentUserId);
+  const canExportSpace = isOwner || canManagePersonalSpace;
+  const canDeleteSpace =
+    space &&
+    !space.isDefaultPersonal &&
+    (isPersonal ? canManageSelfCreatedSpace : isOwner);
   const [exportOpened, { open: openExportModal, close: closeExportModal }] =
     useDisclosure(false);
   const [isIconUploading, setIsIconUploading] = useState(false);
@@ -90,11 +105,11 @@ export default function SpaceDetails({
               onUpload={handleIconUpload}
               onRemove={handleIconRemove}
               isLoading={isIconUploading}
-              disabled={readOnly && !canEditIcon}
+              disabled={!space.metadataPermissions?.icon}
             />
           </div>
 
-          <EditSpaceForm space={space} readOnly={readOnly} />
+          <EditSpaceForm key={space.id} space={space} />
 
           {/* Workspace admins only, like the knowledge diagnostics page. */}
           {isAdmin && (
@@ -104,7 +119,7 @@ export default function SpaceDetails({
             </>
           )}
 
-          {!readOnly && (
+          {canExportSpace && (
             <>
               <Divider my="lg" />
 
@@ -120,30 +135,30 @@ export default function SpaceDetails({
                 </ResponsiveSettingsControl>
               </ResponsiveSettingsRow>
 
-              {!isPersonalSpace(space) && (
-                <>
-                  <Divider my="lg" />
-
-                  <ResponsiveSettingsRow>
-                    <ResponsiveSettingsContent>
-                      <Text size="md">{t("Delete space")}</Text>
-                      <Text size="sm" c="dimmed">
-                        {t("Delete this space with all its pages and data.")}
-                      </Text>
-                    </ResponsiveSettingsContent>
-                    <ResponsiveSettingsControl>
-                      <DeleteSpaceModal space={space} />
-                    </ResponsiveSettingsControl>
-                  </ResponsiveSettingsRow>
-                </>
-              )}
-
               <ExportModal
                 type="space"
                 id={space.id}
                 open={exportOpened}
                 onClose={closeExportModal}
               />
+            </>
+          )}
+
+          {canDeleteSpace && (
+            <>
+              <Divider my="lg" />
+
+              <ResponsiveSettingsRow>
+                <ResponsiveSettingsContent>
+                  <Text size="md">{t("Delete space")}</Text>
+                  <Text size="sm" c="dimmed">
+                    {t("Delete this space with all its pages and data.")}
+                  </Text>
+                </ResponsiveSettingsContent>
+                <ResponsiveSettingsControl>
+                  <DeleteSpaceModal space={space} />
+                </ResponsiveSettingsControl>
+              </ResponsiveSettingsRow>
             </>
           )}
         </div>

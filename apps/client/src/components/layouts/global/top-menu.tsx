@@ -11,6 +11,7 @@ import {
   IconCheck,
   IconChevronDown,
   IconDeviceDesktop,
+  IconFolder,
   IconHome,
   IconLogout,
   IconMoon,
@@ -74,6 +75,13 @@ export default function TopMenu() {
             {t("Personal space")}
           </Menu.Item>
         )}
+        <Menu.Item
+          component={Link}
+          to="/spaces?type=created-personal"
+          leftSection={<IconFolder size={16} />}
+        >
+          {t("My spaces")}
+        </Menu.Item>
 
         {isOwner && (
           <Menu.Item

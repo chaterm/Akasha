@@ -6,6 +6,7 @@ const API_KEY_ACCESS = Symbol('apiKeyAccess');
 export type ApiKeyAccess = {
   apiKeyId: string;
   personalSpaceId: string | null;
+  personalSpaceIds?: string[];
   keyType?: ApiKeyType;
   credentialVersion?: number;
 };

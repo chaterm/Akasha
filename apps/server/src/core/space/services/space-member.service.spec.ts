@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { SpaceRole } from '../../../common/helpers/types/permission';
 import { SpaceMemberService } from './space-member.service';
 
@@ -26,6 +26,25 @@ describe('SpaceMemberService personal space owner protection', () => {
     };
     return service;
   }
+
+  it.each([{ userIds: ['user-2'] }, { groupIds: ['group-1'] }])(
+    'rejects adding members to a self-created personal space: %j',
+    async (invitees) => {
+      const service = createService();
+      service.spaceRepo.findById.mockResolvedValue({
+        personalOwnerId,
+        isDefaultPersonal: false,
+      });
+
+      await expect(
+        service.addMembersToSpaceBatch(
+          { ...invitees, spaceId: 'personal-1', role: SpaceRole.READER },
+          { id: personalOwnerId },
+          workspaceId,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    },
+  );
 
   it('rejects removing the owner from a personal space', async () => {
     const service = createService();

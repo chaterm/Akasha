@@ -16,6 +16,7 @@ type StarButtonProps = {
   spaceId?: string;
   name?: string;
   size?: number;
+  isFavorited?: boolean;
 };
 
 function getEntityId(props: StarButtonProps): string | undefined {
@@ -32,7 +33,8 @@ export default function StarButton(props: StarButtonProps) {
   const removeMutation = useRemoveFavoriteMutation();
 
   const entityId = getEntityId(props);
-  const isFavorited = entityId ? favoriteIds.has(entityId) : false;
+  const isFavorited =
+    props.isFavorited ?? (entityId ? favoriteIds.has(entityId) : false);
   const isPending = addMutation.isPending || removeMutation.isPending;
 
   const handleToggle = (e: React.MouseEvent) => {
