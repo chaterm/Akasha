@@ -2,7 +2,7 @@ import { validate } from 'class-validator';
 import { SpacePaginationOptions } from './space-pagination-options.dto';
 
 describe('SpacePaginationOptions', () => {
-  it.each(['public', 'personal'] as const)(
+  it.each(['public', 'personal', 'created-personal', 'favorites'] as const)(
     'accepts the %s space type',
     async (type) => {
       const pagination = new SpacePaginationOptions();

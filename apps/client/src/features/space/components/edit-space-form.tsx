@@ -1,6 +1,15 @@
-import { Group, Box, Button, TextInput, Stack, Textarea } from "@mantine/core";
+import {
+  Group,
+  Box,
+  Button,
+  TextInput,
+  Stack,
+  Textarea,
+  Text,
+} from "@mantine/core";
 import React from "react";
 import { useForm } from "@mantine/form";
+import { modals } from "@mantine/modals";
 import { zod4Resolver } from "mantine-form-zod-resolver";
 import { z } from "zod/v4";
 import { useUpdateSpaceMutation } from "@/features/space/queries/space-query.ts";
@@ -21,16 +30,24 @@ const formSchema = z.object({
 });
 
 type FormValues = z.infer<typeof formSchema>;
+const validateForm = zod4Resolver(formSchema);
 interface EditSpaceFormProps {
   space: ISpace;
-  readOnly?: boolean;
 }
-export function EditSpaceForm({ space, readOnly }: EditSpaceFormProps) {
+export function EditSpaceForm({ space }: EditSpaceFormProps) {
   const { t } = useTranslation();
   const updateSpaceMutation = useUpdateSpaceMutation();
+  const permissions = space.metadataPermissions;
 
   const form = useForm<FormValues>({
-    validate: zod4Resolver(formSchema),
+    validate: (values) => {
+      const errors = validateForm(values);
+      return {
+        name: permissions?.name ? errors.name : null,
+        slug: permissions?.slug ? errors.slug : null,
+        description: permissions?.description ? errors.description : null,
+      };
+    },
     initialValues: {
       name: space?.name,
       description: space?.description || "",
@@ -38,27 +55,36 @@ export function EditSpaceForm({ space, readOnly }: EditSpaceFormProps) {
     },
   });
 
-  const handleSubmit = async (values: {
-    name?: string;
-    description?: string;
-    slug?: string;
-  }) => {
-    const spaceData: Partial<ISpace> = {
-      spaceId: space.id,
-    };
-    if (form.isDirty("name")) {
-      spaceData.name = values.name;
+  const editableFields = (["name", "slug", "description"] as const).filter(
+    (field) => permissions?.[field],
+  );
+  const changedFields = editableFields.filter((field) => form.isDirty(field));
+  const handleSubmit = (values: FormValues) => {
+    if (!changedFields.length) return;
+    const spaceData: Partial<ISpace> = { spaceId: space.id };
+    for (const field of changedFields) {
+      spaceData[field] = values[field];
     }
-    if (form.isDirty("description")) {
-      spaceData.description = values.description;
+    const save = () =>
+      updateSpaceMutation.mutate(spaceData, {
+        onSuccess: () => form.resetDirty(values),
+      });
+    if (spaceData.slug !== undefined) {
+      modals.openConfirmModal({
+        title: t("Change space identifier"),
+        children: (
+          <Text size="sm">
+            {t(
+              "Changing the identifier changes the space link. Existing links may stop working.",
+            )}
+          </Text>
+        ),
+        labels: { confirm: t("Save"), cancel: t("Cancel") },
+        onConfirm: save,
+      });
+    } else {
+      save();
     }
-
-    if (form.isDirty("slug")) {
-      spaceData.slug = values.slug;
-    }
-
-    await updateSpaceMutation.mutateAsync(spaceData);
-    form.resetDirty();
   };
 
   return (
@@ -71,7 +97,7 @@ export function EditSpaceForm({ space, readOnly }: EditSpaceFormProps) {
               label={t("Name")}
               placeholder={t("e.g Sales")}
               variant="filled"
-              readOnly={readOnly}
+              readOnly={!permissions?.name}
               {...form.getInputProps("name")}
             />
 
@@ -79,7 +105,7 @@ export function EditSpaceForm({ space, readOnly }: EditSpaceFormProps) {
               id="slug"
               label={t("Slug")}
               variant="filled"
-              readOnly={readOnly}
+              readOnly={!permissions?.slug}
               {...form.getInputProps("slug")}
             />
 
@@ -88,7 +114,7 @@ export function EditSpaceForm({ space, readOnly }: EditSpaceFormProps) {
               label={t("Description")}
               placeholder={t("e.g Space for sales team to collaborate")}
               variant="filled"
-              readOnly={readOnly}
+              readOnly={!permissions?.description}
               autosize
               minRows={1}
               maxRows={3}
@@ -96,9 +122,13 @@ export function EditSpaceForm({ space, readOnly }: EditSpaceFormProps) {
             />
           </Stack>
 
-          {!readOnly && (
+          {editableFields.length > 0 && (
             <Group justify="flex-end" mt="md">
-              <Button type="submit" disabled={!form.isDirty()}>
+              <Button
+                type="submit"
+                disabled={!changedFields.length}
+                loading={updateSpaceMutation.isPending}
+              >
                 {t("Save")}
               </Button>
             </Group>

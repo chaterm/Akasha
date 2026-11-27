@@ -2,6 +2,7 @@ import api from "@/lib/api-client";
 import {
   IAddSpaceMember,
   IChangeSpaceMemberRole,
+  ICreateSpace,
   IExportSpaceParams,
   IRemoveSpaceMember,
   ISpace,
@@ -23,7 +24,7 @@ export async function getSpaceById(spaceId: string): Promise<ISpace> {
   return req.data;
 }
 
-export async function createSpace(data: Partial<ISpace>): Promise<ISpace> {
+export async function createSpace(data: ICreateSpace): Promise<ISpace> {
   const req = await api.post<ISpace>("/spaces/create", data);
   return req.data;
 }

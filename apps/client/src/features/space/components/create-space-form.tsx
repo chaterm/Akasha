@@ -16,6 +16,7 @@ import { useCreateSpaceMutation } from "@/features/space/queries/space-query.ts"
 import { computeSpaceSlug } from "@/lib";
 import { getSpaceUrl } from "@/lib/config.ts";
 import { useTranslation } from "react-i18next";
+import { SpaceType } from "@/features/space/types/space.types";
 
 const formSchema = z.object({
   name: z.string().trim().min(2).max(100),
@@ -32,8 +33,9 @@ const formSchema = z.object({
 });
 type FormValues = z.infer<typeof formSchema>;
 
-export function CreateSpaceForm() {
+export function CreateSpaceForm({ type }: { type: SpaceType }) {
   const { t } = useTranslation();
+  const isPrivate = type === "personal";
   const createSpaceMutation = useCreateSpaceMutation();
   const navigate = useNavigate();
 
@@ -61,15 +63,12 @@ export function CreateSpaceForm() {
     }
   }, [form.values.name]);
 
-  const handleSubmit = async (data: {
-    name?: string;
-    slug?: string;
-    description?: string;
-  }) => {
+  const handleSubmit = async (data: FormValues) => {
     const spaceData = {
       name: data.name,
       slug: data.slug,
       description: data.description,
+      type,
     };
 
     const createdSpace = await createSpaceMutation.mutateAsync(spaceData);
@@ -85,7 +84,7 @@ export function CreateSpaceForm() {
 
   return (
     <>
-      <Box maw="500" mx="auto">
+      <Box w="100%">
         <form
           onSubmit={form.onSubmit(
             (values) => handleSubmit(values),
@@ -99,8 +98,11 @@ export function CreateSpaceForm() {
             <TextInput
               withAsterisk
               id="name"
+              w="100%"
               label={t("Space name")}
-              placeholder={t("e.g Product Team")}
+              placeholder={
+                isPrivate ? t("e.g Reading notes") : t("e.g Product Team")
+              }
               variant="filled"
               data-autofocus
               errorProps={{ role: "alert" }}
@@ -110,8 +112,9 @@ export function CreateSpaceForm() {
             <TextInput
               withAsterisk
               id="slug"
+              w="100%"
               label={t("Space slug")}
-              placeholder={t("e.g product")}
+              placeholder={isPrivate ? t("e.g readingnotes") : t("e.g product")}
               variant="filled"
               errorProps={{ role: "alert" }}
               {...form.getInputProps("slug")}
@@ -119,8 +122,13 @@ export function CreateSpaceForm() {
 
             <Textarea
               id="description"
+              w="100%"
               label={t("Space description")}
-              placeholder={t("e.g Space for product team")}
+              placeholder={
+                isPrivate
+                  ? t("e.g A place for reading notes and excerpts")
+                  : t("e.g Space for product team")
+              }
               variant="filled"
               autosize
               minRows={2}
@@ -131,7 +139,9 @@ export function CreateSpaceForm() {
           </Stack>
 
           <Group justify="flex-end" mt="md">
-            <Button type="submit">{t("Create")}</Button>
+            <Button type="submit" loading={createSpaceMutation.isPending}>
+              {t("Create")}
+            </Button>
           </Group>
         </form>
       </Box>

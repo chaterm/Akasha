@@ -79,10 +79,12 @@ export class UserController {
       memberCount,
     };
 
-    const personalSpace = await this.spaceRepo.findPersonalSpaceForUser({
+    const personalSpaceOptions = {
       userId: authUser.id,
       workspaceId: workspace.id,
-    });
+    };
+    const personalSpaces =
+      await this.spaceRepo.findPersonalSpacesForUser(personalSpaceOptions);
     const apiKeyAccess = getApiKeyAccess(authUser);
     const workspaceSettings = (workspace.settings ?? {}) as Record<string, any>;
     const latestSkillVersion = workspaceSettings?.ai?.skill?.latestVersion;
@@ -104,7 +106,9 @@ export class UserController {
     return {
       user: authUser,
       workspace: workspaceInfo,
-      personalSpaceId: personalSpace?.id ?? null,
+      personalSpaceId:
+        personalSpaces.find((space) => space.isDefaultPersonal)?.id ?? null,
+      personalSpaceIds: personalSpaces.filter(Boolean).map((space) => space.id),
       ...(apiKeyAccess
         ? {
             apiAccess: {

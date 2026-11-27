@@ -438,12 +438,32 @@ export class SpaceMemberRepo {
     if (allowedSpaceIds) {
       query = query.where('id', 'in', allowedSpaceIds);
     }
-    if (pagination.type) {
+    if (pagination.type === 'created-personal') {
+      query = query
+        .where('personalOwnerId', '=', pagination.ownerId)
+        .where((eb) =>
+          eb.or([
+            eb('isDefaultPersonal', '=', true),
+            eb('creatorId', '=', pagination.ownerId),
+          ]),
+        )
+        .where('deletedAt', 'is', null);
+    } else if (pagination.type === 'favorites') {
+      query = query
+        .where('deletedAt', 'is', null)
+        .where((eb) => this.spaceRepo.isFavoritedBy(eb, userId));
+    } else if (pagination.type) {
       query = query.where(
         'personalOwnerId',
         pagination.type === 'personal' ? 'is not' : 'is',
         null,
       );
+    }
+
+    if (pagination.type === 'personal' && pagination.personalKind) {
+      query = query
+        .where('isDefaultPersonal', '=', pagination.personalKind === 'default')
+        .where('deletedAt', 'is', null);
     }
 
     if (pagination.role) {
@@ -471,20 +491,6 @@ export class SpaceMemberRepo {
       );
     }
 
-    const count = await query
-      .clearSelect()
-      .select((eb) => eb.fn.countAll().as('total'))
-      .executeTakeFirstOrThrow();
-    const result = await executeWithCursorPagination(query, {
-      perPage: pagination.limit,
-      cursor: pagination.cursor,
-      beforeCursor: pagination.beforeCursor,
-      fields: [
-        { expression: 'name', direction: 'asc' },
-        { expression: 'id', direction: 'asc' },
-      ],
-      parseCursor: (cursor) => ({ name: cursor.name, id: cursor.id }),
-    });
-    return { ...result, meta: { ...result.meta, total: Number(count.total) } };
+    return this.spaceRepo.paginateSpaces(query, pagination);
   }
 }

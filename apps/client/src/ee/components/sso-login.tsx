@@ -39,7 +39,7 @@ function autoLoginDisabled(): boolean {
 }
 
 export default function SsoLogin() {
-  const { data, isLoading } = useWorkspacePublicDataQuery();
+  const { data } = useWorkspacePublicDataQuery();
   const { data: currentUser } = useCurrentUser();
   const [ldapModalOpened, setLdapModalOpened] = useState(false);
   const [selectedLdapProvider, setSelectedLdapProvider] =
@@ -62,7 +62,7 @@ export default function SsoLogin() {
 
   useEffect(() => {
     if (autoRedirectedRef.current) return;
-    if (!data.authProviders || data.authProviders.length !== 1) return;
+    if (data?.authProviders?.length !== 1) return;
     const onlyProvider = data.authProviders[0];
     if (onlyProvider.type === SSO_PROVIDER.LDAP) return;
 

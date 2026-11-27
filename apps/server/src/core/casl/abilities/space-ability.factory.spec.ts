@@ -5,7 +5,152 @@ import {
   SpaceCaslAction,
   SpaceCaslSubject,
 } from '../interfaces/space-ability.type';
-import SpaceAbilityFactory from './space-ability.factory';
+import SpaceAbilityFactory, {
+  getSpaceMetadataPermissions,
+} from './space-ability.factory';
+
+describe('space metadata permissions', () => {
+  const defaultSpace = {
+    personalOwnerId: 'owner',
+    creatorId: 'original-creator',
+    isDefaultPersonal: true,
+  };
+  const privateSpace = {
+    personalOwnerId: 'owner',
+    creatorId: 'owner',
+    isDefaultPersonal: false,
+  };
+  const publicSpace = {
+    personalOwnerId: null,
+    creatorId: 'owner',
+    isDefaultPersonal: false,
+  };
+
+  it.each([
+    [
+      'default owner',
+      defaultSpace,
+      'owner',
+      UserRole.MEMBER,
+      true,
+      true,
+      false,
+    ],
+    [
+      'invited default admin',
+      defaultSpace,
+      'guest',
+      UserRole.MEMBER,
+      true,
+      false,
+      false,
+    ],
+    [
+      'public space admin',
+      publicSpace,
+      'guest',
+      UserRole.MEMBER,
+      true,
+      true,
+      false,
+    ],
+    [
+      'private creator',
+      privateSpace,
+      'owner',
+      UserRole.MEMBER,
+      true,
+      true,
+      false,
+    ],
+    [
+      'other private space admin',
+      privateSpace,
+      'guest',
+      UserRole.MEMBER,
+      true,
+      false,
+      false,
+    ],
+    [
+      'member with read or edit access',
+      publicSpace,
+      'guest',
+      UserRole.MEMBER,
+      false,
+      false,
+      false,
+    ],
+    [
+      'workspace admin on default',
+      defaultSpace,
+      'guest',
+      UserRole.ADMIN,
+      true,
+      true,
+      true,
+    ],
+    [
+      'workspace admin on private',
+      privateSpace,
+      'guest',
+      UserRole.ADMIN,
+      true,
+      true,
+      true,
+    ],
+    [
+      'workspace owner on public',
+      publicSpace,
+      'guest',
+      UserRole.OWNER,
+      true,
+      true,
+      true,
+    ],
+  ] as const)(
+    'applies the field policy for %s',
+    (_label, space, id, role, manage, edit, slug) => {
+      expect(getSpaceMetadataPermissions(space, { id, role }, manage)).toEqual({
+        icon: edit,
+        name: edit,
+        description: edit,
+        slug,
+      });
+    },
+  );
+
+  it('rejects icon changes by an invited default-space admin', async () => {
+    const spaceRepo = {
+      findById: jest
+        .fn()
+        .mockResolvedValue({ id: 'default-1', ...defaultSpace }),
+    };
+    const spaceMemberRepo = {
+      getUserSpaceRoles: jest
+        .fn()
+        .mockResolvedValue([{ role: SpaceRole.ADMIN }]),
+    };
+    const factory = new SpaceAbilityFactory(
+      spaceMemberRepo as any,
+      spaceRepo as any,
+    );
+    const user = { role: UserRole.MEMBER, workspaceId: 'workspace-1' };
+
+    await expect(
+      factory.assertCanEditSpaceIcon(
+        { ...user, id: 'guest' } as any,
+        'default-1',
+      ),
+    ).rejects.toThrow('Forbidden');
+    await expect(
+      factory.assertCanEditSpaceIcon(
+        { ...user, id: 'owner' } as any,
+        'default-1',
+      ),
+    ).resolves.toBe('default-1');
+  });
+});
 
 describe('SpaceAbilityFactory API key policy', () => {
   const member = {

@@ -321,7 +321,7 @@ export class AttachmentController {
     }
 
     const attachmentType = file.fields?.type?.value;
-    const spaceId = file.fields?.spaceId?.value;
+    let spaceId = file.fields?.spaceId?.value;
 
     if (!attachmentType) {
       throw new BadRequestException('attachment type is required');
@@ -353,12 +353,7 @@ export class AttachmentController {
         throw new BadRequestException('spaceId is required');
       }
 
-      const spaceAbility = await this.spaceAbility.createForUser(user, spaceId);
-      if (
-        spaceAbility.cannot(SpaceCaslAction.Manage, SpaceCaslSubject.Settings)
-      ) {
-        throw new ForbiddenException();
-      }
+      spaceId = await this.spaceAbility.assertCanEditSpaceIcon(user, spaceId);
     }
 
     try {
@@ -554,14 +549,11 @@ export class AttachmentController {
         );
       }
 
-      const spaceAbility = await this.spaceAbility.createForUser(user, spaceId);
-      if (
-        spaceAbility.cannot(SpaceCaslAction.Manage, SpaceCaslSubject.Settings)
-      ) {
-        throw new ForbiddenException();
-      }
-
-      await this.attachmentService.removeSpaceIcon(spaceId, workspace.id);
+      const authorizedSpaceId = await this.spaceAbility.assertCanEditSpaceIcon(
+        user,
+        spaceId,
+      );
+      await this.attachmentService.removeSpaceIcon(authorizedSpaceId, workspace.id);
       return;
     }
 

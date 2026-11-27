@@ -1,7 +1,12 @@
 import { PaginationOptions } from '../../pagination/pagination-options';
 
 export interface SpaceListOptions extends PaginationOptions {
-  type?: 'public' | 'personal';
+  type?: 'public' | 'personal' | 'created-personal' | 'favorites';
+  ownerId?: string;
+  favoriteUserId?: string;
+  personalKind?: 'default' | 'created';
+  sortByType?: boolean;
+  ownerQuery?: string;
 }
 
 export interface UserSpaceRole {

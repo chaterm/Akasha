@@ -286,6 +286,10 @@ export function defaultEncodeCursor<
         cursor.set(key, value);
         break;
 
+      case 'boolean':
+        cursor.set(key, String(value));
+        break;
+
       case 'number':
       case 'bigint':
         cursor.set(key, value.toString(10));
