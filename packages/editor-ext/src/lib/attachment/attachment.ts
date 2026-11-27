@@ -14,7 +14,16 @@ export interface AttachmentAttributes {
   size?: number;
   attachmentId?: string;
   placeholder?: string;
+  modifiedAt?: string;
+  modifiedBy?: string;
+  comment?: string;
 }
+
+const fileListAttributes = {
+  modifiedAt: 'data-attachment-modified-at',
+  modifiedBy: 'data-attachment-modified-by',
+  comment: 'data-attachment-comment',
+} as const;
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -41,6 +50,18 @@ export const Attachment = Node.create<AttachmentOptions>({
   },
   addAttributes() {
     return {
+      ...Object.fromEntries(
+        Object.entries(fileListAttributes).map(([name, attribute]) => [
+          name,
+          {
+            default: null,
+            parseHTML: (element: HTMLElement) =>
+              element.getAttribute(attribute) || null,
+            renderHTML: (attrs: Record<string, unknown>) =>
+              attrs[name] ? { [attribute]: attrs[name] } : {},
+          },
+        ]),
+      ),
       url: {
         default: '',
         parseHTML: (element) => {
@@ -95,6 +116,8 @@ export const Attachment = Node.create<AttachmentOptions>({
   },
 
   renderHTML({ HTMLAttributes }) {
+    const url = sanitizeUrl(HTMLAttributes['data-attachment-url']);
+    const name = String(HTMLAttributes['data-attachment-name'] ?? '');
     return [
       'div',
       mergeAttributes(
@@ -102,15 +125,9 @@ export const Attachment = Node.create<AttachmentOptions>({
         this.options.HTMLAttributes,
         HTMLAttributes,
       ),
-      [
-        'a',
-        {
-          href: sanitizeUrl(HTMLAttributes['data-attachment-url']),
-          class: 'attachment',
-          target: 'blank',
-        },
-        `${HTMLAttributes['data-attachment-name']}`,
-      ],
+      url
+        ? ['a', { href: url, class: 'attachment', target: '_blank' }, name]
+        : ['span', name],
     ];
   },
 

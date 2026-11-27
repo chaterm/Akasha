@@ -7,6 +7,7 @@ import {
   IconCaretRightFilled,
   IconChevronDown,
   IconDatabase,
+  IconFiles,
   IconInfoCircle,
   IconLayoutGrid,
   IconList,
@@ -75,6 +76,12 @@ export const MoreInsertsGroup: FC<Props> = ({ editor, templateMode }) => {
           onClick={() => editor.chain().focus().insertPanel().run()}
         >
           {t("Panel")}
+        </Menu.Item>
+        <Menu.Item
+          leftSection={<IconFiles size={16} />}
+          onClick={() => editor.chain().focus().insertFileList().run()}
+        >
+          {t("File list")}
         </Menu.Item>
         <Menu.Item
           leftSection={<IconInfoCircle size={16} />}
