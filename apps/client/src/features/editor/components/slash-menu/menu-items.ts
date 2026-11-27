@@ -14,6 +14,7 @@ import {
   IconMovie,
   IconMusic,
   IconPaperclip,
+  IconFiles,
   IconFileTypePdf,
   IconPhoto,
   IconTable,
@@ -373,6 +374,16 @@ const CommandGroups: SlashMenuGroupedItemsType = {
           input.remove();
         };
         input.click();
+      },
+    },
+    {
+      title: "File list",
+      shortcut: "files",
+      description: "Insert a list of downloadable files",
+      searchTerms: ["filelist", "attachments", "file list", "文件列表", "附件列表"],
+      icon: IconFiles,
+      command: ({ editor, range }: CommandProps) => {
+        editor.chain().focus().deleteRange(range).insertFileList().run();
       },
     },
     {

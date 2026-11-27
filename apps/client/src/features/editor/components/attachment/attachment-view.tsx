@@ -6,8 +6,22 @@ import { useHover } from "@mantine/hooks";
 import { formatBytes } from "@/lib";
 import { useTranslation } from "react-i18next";
 import { useCallback } from "react";
+import { FileListRow } from "./file-list-view";
 
 export default function AttachmentView(props: NodeViewProps) {
+  const pos = props.getPos();
+  const { doc } = props.editor.state;
+  if (
+    typeof pos === "number" &&
+    pos <= doc.content.size &&
+    doc.resolve(pos).parent.type.name === "fileList"
+  ) {
+    return <FileListRow node={props.node} />;
+  }
+  return <StandaloneAttachmentView {...props} />;
+}
+
+function StandaloneAttachmentView(props: NodeViewProps) {
   const { t } = useTranslation();
   const { editor, node, getPos, selected } = props;
   const { url, name, size, mime, attachmentId, placeholder } = node.attrs;

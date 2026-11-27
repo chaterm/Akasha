@@ -38,11 +38,13 @@ const MIME_ICONS: Array<{ prefix: string; icon: Icon; color: string }> = [
 interface AttachmentFileIconProps {
   fileExt?: string;
   mimeType?: string;
+  size?: number;
 }
 
 export function AttachmentFileIcon({
   fileExt,
   mimeType,
+  size = 40,
 }: AttachmentFileIconProps) {
   const byExt = fileExt ? EXT_ICONS[fileExt.toLowerCase()] : undefined;
   const byMime = mimeType
@@ -52,8 +54,8 @@ export function AttachmentFileIcon({
     byMime ?? { icon: IconFile, color: "gray" };
 
   return (
-    <ThemeIcon variant="light" color={color} size={40} radius="md">
-      <FileIcon size={22} stroke={1.5} />
+    <ThemeIcon variant="light" color={color} size={size} radius="md">
+      <FileIcon size={Math.ceil(size * 0.55)} stroke={1.5} />
     </ThemeIcon>
   );
 }

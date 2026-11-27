@@ -354,6 +354,52 @@ describe('ConfluenceImportService extractAndClean script/style removal', () => {
   });
 });
 
+describe('ConfluenceImportService attachment lists', () => {
+  it('keeps the visible revision and its details while retaining the historical file metadata', () => {
+    const raw = `
+      <div id="main-content">
+        <div class="plugin_attachments_container">
+          <table class="attachments">
+            <tr class="attachment-row" data-attachment-id="12">
+              <td><a class="filename" href="/download/attachments/10/Report.xlsx?api=v2"
+                data-filename="Report.xlsx">Report.xlsx</a>
+                <span class="attachment-comment">Revised figures</span></td>
+              <td class="modified-column"><span>2025-03-28</span> by <a>Editor</a></td>
+            </tr>
+            <tr class="attachment-summary hidden"><td>Hidden details</td></tr>
+          </table>
+          <form><img src="images/icons/wait.gif"></form>
+        </div>
+        <p>Page content</p>
+      </div>
+      <div class="greybox">
+        <a href="attachments/10/11.xlsx">Report.xlsx</a><br>
+        <a href="attachments/10/12.xlsx">Report.xlsx</a><br>
+        <a href="attachments/10/13.pdf">Other.pdf</a>
+      </div>`;
+    const { cleanedHtml, pageAttachments } = (
+      createHarness().service as any
+    ).extractAndClean(raw);
+
+    expect(cleanedHtml).toContain('data-type="fileList"');
+    expect(cleanedHtml).toContain(
+      'data-attachment-url="attachments/10/12.xlsx"',
+    );
+    expect(cleanedHtml).toContain('data-attachment-modified-at="2025-03-28"');
+    expect(cleanedHtml).toContain('data-attachment-modified-by="Editor"');
+    expect(cleanedHtml).toContain('data-attachment-comment="Revised figures"');
+    expect(cleanedHtml).toContain('<p>Page content</p>');
+    expect(cleanedHtml).not.toMatch(/11\.xlsx|Hidden details|wait\.gif/);
+    expect(
+      pageAttachments.map(({ href, includeInBody }) => [href, includeInBody]),
+    ).toEqual([
+      ['attachments/10/11.xlsx', false],
+      ['attachments/10/12.xlsx', false],
+      ['attachments/10/13.pdf', undefined],
+    ]);
+  });
+});
+
 describe('ConfluenceImportService materializeDataUriImages', () => {
   const PNG_1X1 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';

@@ -1,0 +1,85 @@
+.list {
+  --file-list-columns: minmax(0, 3fr) minmax(115px, 1fr);
+}
+
+.header,
+.row {
+  display: grid;
+  grid-template-columns: var(--file-list-columns);
+  align-items: start;
+  gap: var(--mantine-spacing-sm);
+  padding: 8px 10px;
+}
+
+.header {
+  border-bottom: 2px solid var(--mantine-color-default-border);
+  font-weight: 600;
+}
+
+.row {
+  position: relative;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}
+
+.row:hover,
+.row:global(.ProseMirror-selectednode) {
+  background: var(--mantine-color-default-hover);
+}
+
+.filename {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.filename a {
+  text-decoration: none;
+}
+
+.filename a:hover {
+  text-decoration: underline;
+}
+
+.comment,
+.modified,
+.empty {
+  color: var(--mantine-color-dimmed);
+  font-size: var(--mantine-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.modified time {
+  white-space: nowrap;
+}
+
+.empty {
+  padding: 8px 10px;
+}
+
+.dropZone {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 64px;
+  margin-top: var(--mantine-spacing-xs);
+  padding: 8px;
+  border: 1px dashed var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-sm);
+  background: transparent;
+  color: var(--mantine-color-dimmed);
+  cursor: pointer;
+}
+
+.dropZone:hover,
+.dropZone:focus-visible,
+.dropZone[data-dragging] {
+  background: var(--mantine-color-default-hover);
+}
+
+.dropZone:disabled {
+  cursor: progress;
+}

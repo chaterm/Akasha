@@ -14,7 +14,10 @@ import { getProsemirrorContent } from '../../common/helpers/prosemirror/utils';
 import { executeTx } from '@akasha/db/utils';
 import { KyselyTransaction } from '@akasha/db/types/kysely.types';
 import { ImportService } from '../../integrations/import/services/import.service';
-import { ImportAttachmentService } from '../../integrations/import/services/import-attachment.service';
+import {
+  AttachmentInfo,
+  ImportAttachmentService,
+} from '../../integrations/import/services/import-attachment.service';
 import { PageService } from '../../core/page/services/page.service';
 import { BacklinkRepo } from '@akasha/db/repos/backlink/backlink.repo';
 import { buildAttachmentCandidates } from '../../integrations/import/utils/import.utils';
@@ -27,6 +30,7 @@ import {
 } from './confluence-page-mapping';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
 import { transformConfluencePanels } from './confluence-panel.utils';
+import { transformConfluenceFileLists } from './confluence-file-list.utils';
 
 interface ConfluencePageNode {
   id: string;
@@ -36,12 +40,6 @@ interface ConfluencePageNode {
   filePath: string;
   parentPageId: string | null;
   position?: string;
-}
-
-interface AttachmentInfo {
-  href: string;
-  fileName: string;
-  mimeType: string;
 }
 
 const BRUSH_TO_LANGUAGE: Record<string, string> = {
@@ -471,6 +469,7 @@ export class ConfluenceImportService {
 
     $('script').remove();
     $('style').remove();
+    transformConfluenceFileLists($, pageAttachments);
 
     $('h1, h2, h3, h4, h5, h6')
       .find('a[href^="#"]')

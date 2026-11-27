@@ -21,10 +21,11 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { QueueJob, QueueName } from '../../queue/constants';
 
-interface AttachmentInfo {
+export interface AttachmentInfo {
   href: string;
   fileName: string;
   mimeType: string;
+  includeInBody?: boolean;
 }
 
 interface DrawioPair {
@@ -68,6 +69,7 @@ export class ImportAttachmentService {
     } = opts;
 
     const attachmentTasks: (() => Promise<void>)[] = [];
+    const failedAttachmentIds = new Set<string>();
     const limit = pLimit(this.CONCURRENT_UPLOADS);
     const uploadStats = {
       total: 0,
@@ -215,8 +217,8 @@ export class ImportAttachmentService {
 
       const apiFilePath = `/api/files/${attachmentId}/${fileNameWithExt}`;
 
-      attachmentTasks.push(() =>
-        this.uploadWithRetry({
+      attachmentTasks.push(async () => {
+        const uploaded = await this.uploadWithRetry({
           abs,
           storageFilePath,
           attachmentId,
@@ -225,8 +227,9 @@ export class ImportAttachmentService {
           pageId,
           fileTask,
           uploadStats,
-        }),
-      );
+        });
+        if (!uploaded) failedAttachmentIds.add(attachmentId);
+      });
 
       return {
         attachmentId,
@@ -238,11 +241,12 @@ export class ImportAttachmentService {
     };
 
     const processFile = (relPath: string) => {
-      const cached = processed.get(relPath);
+      const absPath = attachmentCandidates.get(relPath)!;
+      const cached = processed.get(absPath);
       if (cached) return cached;
 
       const fresh = uploadOnce(relPath);
-      processed.set(relPath, fresh);
+      processed.set(absPath, fresh);
       return fresh;
     };
 
@@ -360,15 +364,32 @@ export class ImportAttachmentService {
       const $oldDiv = $(el);
       const rawUrl = cleanUrlString($oldDiv.attr('data-attachment-url') ?? '')!;
       if (!rawUrl || rawUrl.startsWith('http')) continue;
+      const inFileList = $oldDiv.parent().is('div[data-type="fileList"]');
 
       const relPath = resolveRelativeAttachmentPath(
         rawUrl,
         pageDir,
         attachmentCandidates,
       );
-      if (!relPath) continue;
+      if (!relPath) {
+        if (inFileList && isConfluenceImport)
+          $oldDiv.removeAttr('data-attachment-url');
+        continue;
+      }
 
-      const { attachmentId, apiFilePath, abs } = processFile(relPath);
+      const { attachmentId, apiFilePath, abs, fileNameWithExt } =
+        processFile(relPath);
+      if (inFileList) {
+        $oldDiv
+          .attr('data-attachment-url', apiFilePath)
+          .attr('data-attachment-id', attachmentId)
+          .attr(
+            'data-attachment-mime',
+            $oldDiv.attr('data-attachment-mime') ||
+              getMimeType(fileNameWithExt),
+          );
+        continue;
+      }
       const fileName = path.basename(abs);
       const mime = getMimeType(abs);
 
@@ -548,17 +569,10 @@ export class ImportAttachmentService {
       if (!resolvedHref) continue;
 
       const absPath = attachmentCandidates.get(resolvedHref);
-      const alreadyProcessed =
-        processed.has(resolvedHref) ||
-        (absPath &&
-          Array.from(processed.values()).some(
-            (entry) => entry.abs === absPath,
-          ));
-      if (alreadyProcessed) {
-        continue;
-      }
+      if (processed.has(absPath)) continue;
 
       const { attachmentId, apiFilePath, abs } = processFile(resolvedHref);
+      if (attachment.includeInBody === false) continue;
       const mime = mimeType || getMimeType(abs);
 
       const $attachmentDiv = $('<div>')
@@ -590,6 +604,19 @@ export class ImportAttachmentService {
           'Some attachment uploads failed',
         );
       }
+    }
+
+    if (failedAttachmentIds.size) {
+      $('div[data-type="fileList"] > div[data-type="attachment"]').each(
+        (_, el) => {
+          const $file = $(el);
+          if (failedAttachmentIds.has($file.attr('data-attachment-id') ?? '')) {
+            $file
+              .removeAttr('data-attachment-id')
+              .removeAttr('data-attachment-url');
+          }
+        },
+      );
     }
 
     const elementsNeedingSize = $(
@@ -832,7 +859,7 @@ export class ImportAttachmentService {
       failed: number;
       failedFiles: string[];
     };
-  }): Promise<void> {
+  }): Promise<boolean> {
     const {
       abs,
       storageFilePath,
@@ -901,7 +928,7 @@ export class ImportAttachmentService {
 
         uploadStats.completed++;
 
-        return;
+        return true;
       } catch (error) {
         lastError = error as Error;
         this.logger.warn(
@@ -932,5 +959,6 @@ export class ImportAttachmentService {
       },
       'Failed to upload attachment after all retries',
     );
+    return false;
   }
 }
